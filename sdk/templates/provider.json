@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "provider_id": "examplehub",
+  "name": "Example Hub Provider",
+  "version": "0.1.0",
+  "api_version": "bazarr.provider-hub.v1",
+  "entry_module": "provider",
+  "entry_class": "ExampleProvider",
+  "config_schema": {"type": "object", "properties": {}},
+  "secret_fields": [],
+  "supported_media": ["movie", "episode"],
+  "languages": ["eng"],
+  "files": {"provider.py": "replace-with-sha256"},
+  "bundle_sha256": "replace-with-bundle-sha256",
+  "source": {
+    "type": "github",
+    "repo": "LavX/bazarr-provider-catalog",
+    "ref": "main",
+    "commit": "0000000000000000000000000000000000000000",
+    "path": "providers/example",
+    "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+    "trusted": true
+  },
+  "dependencies": {"requirements": []}
+}

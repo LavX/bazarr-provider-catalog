@@ -1,0 +1,38 @@
+{
+  "api_version": "bazarr.provider-hub.v1",
+  "bundle_sha256": "6d67691f4fc0ce1ffe5614f21541d1d10e8e4fcf6c4046e9e6b686354264683a",
+  "config_schema": {
+    "properties": {},
+    "type": "object"
+  },
+  "dependencies": {
+    "requirements": []
+  },
+  "description": "Deterministic no-network provider used to verify Provider Hub catalog tooling.",
+  "entry_class": "SmokeProvider",
+  "entry_module": "provider",
+  "files": {
+    "provider.py": "d5ca8fb8a116e23164d5e21e8721258d4e7cca4d043eef54b3de1d88cacc8d00"
+  },
+  "languages": [
+    "eng"
+  ],
+  "name": "SmokeHub",
+  "provider_id": "smokehub",
+  "schema_version": 1,
+  "secret_fields": [],
+  "source": {
+    "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+    "commit": "0000000000000000000000000000000000000000",
+    "path": "providers/smoke",
+    "ref": "main",
+    "repo": "LavX/bazarr-provider-catalog",
+    "trusted": true,
+    "type": "github"
+  },
+  "supported_media": [
+    "movie",
+    "episode"
+  ],
+  "version": "0.1.0"
+}

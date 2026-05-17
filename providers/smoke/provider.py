@@ -1,0 +1,77 @@
+import base64
+import hashlib
+
+PROVIDER_ID = "smokehub"
+_SUBTITLE_ID = "smokehub-fixed-eng"
+_SRT_TEXT = """1
+00:00:01,000 --> 00:00:02,500
+SmokeHub deterministic subtitle.
+"""
+
+
+def _language_payload(language):
+    if isinstance(language, dict):
+        payload = dict(language)
+    else:
+        payload = {"alpha3": str(language)}
+    payload.setdefault("alpha3", payload.get("alpha2") or "eng")
+    payload.setdefault("hi", False)
+    payload.setdefault("forced", False)
+    return payload
+
+
+class SmokeProvider:
+    def search(self, video, languages, config):
+        del config
+        video = video or {}
+        kind = video.get("kind") or "movie"
+        if kind not in ("movie", "episode"):
+            return []
+
+        language = next(
+            (_language_payload(item) for item in languages or [] if _language_payload(item).get("alpha3") == "eng"),
+            None,
+        )
+        if language is None:
+            return []
+
+        title = video.get("title") or video.get("series") or video.get("name") or "Smoke Title"
+        matches = ["title"] if kind == "movie" else ["series", "season", "episode"]
+        return [
+            {
+                "provider": PROVIDER_ID,
+                "id": _SUBTITLE_ID,
+                "language": language,
+                "release_info": f"SmokeHub.Fixed.{kind}.{title}",
+                "filename": "smokehub.en.srt",
+                "matches": matches,
+                "score": 100,
+                "score_without_hash": 100,
+                "score_out_of": 100,
+                "hash_verifiable": False,
+                "hearing_impaired_verifiable": True,
+                "hearing_impaired": False,
+                "display": {"source": "official-smoke"},
+                "provider_payload": {
+                    "provider": PROVIDER_ID,
+                    "schema": 1,
+                    "subtitle_id": _SUBTITLE_ID,
+                    "kind": kind,
+                    "language": "eng",
+                },
+            }
+        ]
+
+    def download(self, provider_payload, language, config):
+        del language, config
+        if (provider_payload or {}).get("subtitle_id") != _SUBTITLE_ID:
+            raise ValueError("unknown smoke subtitle")
+        content = _SRT_TEXT.encode("utf-8")
+        return {
+            "content_b64": base64.b64encode(content).decode("ascii"),
+            "content_sha256": hashlib.sha256(content).hexdigest(),
+            "content_type": "application/x-subrip",
+            "format": "srt",
+            "encoding": "utf-8",
+            "empty": False,
+        }
