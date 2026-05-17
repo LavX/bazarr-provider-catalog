@@ -1,8 +1,28 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "6d67691f4fc0ce1ffe5614f21541d1d10e8e4fcf6c4046e9e6b686354264683a",
+  "bundle_sha256": "323c998e3da510fa9cfdc0223ec66ad6bf91a2c93e603d71ea7fc6f04a98ecaf",
   "config_schema": {
-    "properties": {},
+    "additionalProperties": false,
+    "properties": {
+      "api_token": {
+        "description": "Token used only to prove secrets reach the worker without leaking into result payloads.",
+        "minLength": 1,
+        "secret": true,
+        "title": "API token",
+        "type": "string"
+      },
+      "profile_name": {
+        "default": "smoke-profile",
+        "description": "Public test profile echoed in non-secret search metadata.",
+        "minLength": 1,
+        "title": "Profile name",
+        "type": "string"
+      }
+    },
+    "required": [
+      "profile_name",
+      "api_token"
+    ],
     "type": "object"
   },
   "dependencies": {
@@ -12,7 +32,7 @@
   "entry_class": "SmokeProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "d5ca8fb8a116e23164d5e21e8721258d4e7cca4d043eef54b3de1d88cacc8d00"
+    "provider.py": "cdcb2c4cc0d886022a4da1443586b64bdfac1ea273e0804c352ae22a9ed1668d"
   },
   "languages": [
     "eng"
@@ -20,7 +40,9 @@
   "name": "SmokeHub",
   "provider_id": "smokehub",
   "schema_version": 1,
-  "secret_fields": [],
+  "secret_fields": [
+    "api_token"
+  ],
   "source": {
     "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
     "commit": "0000000000000000000000000000000000000000",

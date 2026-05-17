@@ -6,8 +6,25 @@
   "api_version": "bazarr.provider-hub.v1",
   "entry_module": "provider",
   "entry_class": "ExampleProvider",
-  "config_schema": {"type": "object", "properties": {}},
-  "secret_fields": [],
+  "config_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["api_token"],
+    "properties": {
+      "api_token": {
+        "type": "string",
+        "title": "API token",
+        "secret": true,
+        "minLength": 1
+      },
+      "use_hash": {
+        "type": "boolean",
+        "title": "Use hash matching",
+        "default": true
+      }
+    }
+  },
+  "secret_fields": ["api_token"],
   "supported_media": ["movie", "episode"],
   "languages": ["eng"],
   "files": {"provider.py": "replace-with-sha256"},
@@ -21,5 +38,7 @@
     "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
     "trusted": true
   },
-  "dependencies": {"requirements": []}
+  "dependencies": {
+    "requirements": []
+  }
 }

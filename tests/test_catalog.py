@@ -12,6 +12,7 @@ EXPECTED_SRT = """1
 00:00:01,000 --> 00:00:02,500
 SmokeHub deterministic subtitle.
 """
+SMOKE_CONFIG = {"profile_name": "smoke-profile", "api_token": "smoke-secret-token"}
 
 
 class CatalogStructureTests(unittest.TestCase):
@@ -19,8 +20,9 @@ class CatalogStructureTests(unittest.TestCase):
         catalog = json.loads((ROOT / "catalog.json").read_text(encoding="utf-8"))
 
         self.assertEqual(catalog["schema_version"], 1)
-        self.assertEqual(len(catalog["providers"]), 1)
-        manifest = catalog["providers"][0]["manifest"]
+        provider_ids = {item["manifest"]["provider_id"] for item in catalog["providers"]}
+        self.assertEqual(provider_ids, {"smokehub", "supersubtitles_demo"})
+        manifest = next(item["manifest"] for item in catalog["providers"] if item["manifest"]["provider_id"] == "smokehub")
         self.assertEqual(manifest["provider_id"], "smokehub")
         self.assertEqual(manifest["version"], "0.1.0")
         self.assertEqual(manifest["source"]["path"], "providers/smoke")
@@ -35,8 +37,30 @@ class CatalogStructureTests(unittest.TestCase):
         self.assertEqual(manifest["supported_media"], ["movie", "episode"])
         self.assertEqual(manifest["languages"], ["eng"])
         self.assertEqual(manifest["dependencies"], {"requirements": []})
+        self.assertEqual(manifest["config_schema"]["required"], ["profile_name", "api_token"])
+        self.assertEqual(manifest["secret_fields"], ["api_token"])
+        self.assertTrue(manifest["config_schema"]["properties"]["api_token"]["secret"])
         self.assertRegex(manifest["files"]["provider.py"], r"^[0-9a-f]{64}$")
         self.assertRegex(manifest["bundle_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_supersubtitles_demo_manifest_shows_dependency_lock(self):
+        manifest = json.loads((ROOT / "providers/supersubtitles_demo/provider.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(manifest["provider_id"], "supersubtitles_demo")
+        self.assertEqual(manifest["entry_class"], "SuperSubtitlesDemoProvider")
+        self.assertEqual(manifest["secret_fields"], ["api_token"])
+        self.assertEqual(
+            manifest["dependencies"]["requirements"],
+            [
+                {
+                    "name": "humanfriendly",
+                    "version": "10.0",
+                    "hashes": [
+                        "sha256:1697e1a8a8f550fd43c2865cd84542fc175a61dcb779b6fee18cf6b6ccba1477"
+                    ],
+                }
+            ],
+        )
 
     def test_catalog_entry_has_fields_bazarr_refresh_uses(self):
         catalog = json.loads((ROOT / "catalog.json").read_text(encoding="utf-8"))
@@ -61,7 +85,7 @@ class SmokeProviderTests(unittest.TestCase):
         results = self.provider.search(
             video={"kind": "movie", "title": "Any Movie"},
             languages=[{"alpha3": "eng", "hi": False, "forced": False}],
-            config={},
+            config=SMOKE_CONFIG,
         )
 
         self.assertEqual(len(results), 1)
@@ -71,18 +95,33 @@ class SmokeProviderTests(unittest.TestCase):
         self.assertEqual(candidate["language"]["alpha3"], "eng")
         self.assertIn("title", candidate["matches"])
         self.assertEqual(candidate["provider_payload"]["subtitle_id"], "smokehub-fixed-eng")
+        self.assertEqual(candidate["provider_payload"]["profile_name"], "smoke-profile")
+        self.assertNotIn("smoke-secret-token", json.dumps(candidate, sort_keys=True))
 
     def test_search_rejects_unsupported_media_or_language(self):
-        self.assertEqual(self.provider.search(video={"kind": "movie"}, languages=[{"alpha3": "fra"}], config={}), [])
-        self.assertEqual(self.provider.search(video={"kind": "series"}, languages=[{"alpha3": "eng"}], config={}), [])
+        self.assertEqual(self.provider.search(video={"kind": "movie"}, languages=[{"alpha3": "fra"}], config=SMOKE_CONFIG), [])
+        self.assertEqual(self.provider.search(video={"kind": "series"}, languages=[{"alpha3": "eng"}], config=SMOKE_CONFIG), [])
+
+    def test_search_requires_secret_config(self):
+        with self.assertRaisesRegex(ValueError, "api_token"):
+            self.provider.search(
+                video={"kind": "movie"},
+                languages=[{"alpha3": "eng"}],
+                config={"profile_name": "smoke-profile"},
+            )
 
     def test_download_returns_fixed_utf8_srt_payload(self):
-        content = self.provider.download({"subtitle_id": "smokehub-fixed-eng"}, {"alpha3": "eng"}, {})
+        content = self.provider.download(
+            {"subtitle_id": "smokehub-fixed-eng", "profile_name": "smoke-profile"},
+            {"alpha3": "eng"},
+            SMOKE_CONFIG,
+        )
         data = base64.b64decode(content["content_b64"].encode("ascii"), validate=True)
 
         self.assertFalse(content["empty"])
         self.assertEqual(hashlib.sha256(data).hexdigest(), content["content_sha256"])
         self.assertEqual(data.decode("utf-8"), EXPECTED_SRT)
+        self.assertNotIn("smoke-secret-token", json.dumps(content, sort_keys=True))
 
 
 class SdkCliTests(unittest.TestCase):
@@ -115,6 +154,15 @@ class SdkCliTests(unittest.TestCase):
 
     def test_smoke_test_runs_worker_shape_contract(self):
         result = self.run_cli("smoke-test")
+
+        self.assertIn("smokehub ok", result.stdout)
+
+    def test_smoke_test_accepts_config_json(self):
+        result = self.run_cli(
+            "smoke-test",
+            "--config-json",
+            json.dumps({"profile_name": "cli-profile", "api_token": "cli-secret"}),
+        )
 
         self.assertIn("smokehub ok", result.stdout)
 

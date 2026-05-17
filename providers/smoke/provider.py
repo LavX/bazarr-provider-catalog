@@ -3,6 +3,8 @@ import hashlib
 
 PROVIDER_ID = "smokehub"
 _SUBTITLE_ID = "smokehub-fixed-eng"
+_PROFILE_KEY = "profile_name"
+_TOKEN_KEY = "api_token"
 _SRT_TEXT = """1
 00:00:01,000 --> 00:00:02,500
 SmokeHub deterministic subtitle.
@@ -20,9 +22,20 @@ def _language_payload(language):
     return payload
 
 
+def _require_config(config):
+    config = dict(config or {})
+    profile_name = str(config.get(_PROFILE_KEY) or "").strip()
+    api_token = str(config.get(_TOKEN_KEY) or "").strip()
+    if not profile_name:
+        raise ValueError("SmokeHub profile_name is required")
+    if not api_token:
+        raise ValueError("SmokeHub api_token is required")
+    return profile_name
+
+
 class SmokeProvider:
     def search(self, video, languages, config):
-        del config
+        profile_name = _require_config(config)
         video = video or {}
         kind = video.get("kind") or "movie"
         if kind not in ("movie", "episode"):
@@ -42,7 +55,7 @@ class SmokeProvider:
                 "provider": PROVIDER_ID,
                 "id": _SUBTITLE_ID,
                 "language": language,
-                "release_info": f"SmokeHub.Fixed.{kind}.{title}",
+                "release_info": f"SmokeHub.{profile_name}.Fixed.{kind}.{title}",
                 "filename": "smokehub.en.srt",
                 "matches": matches,
                 "score": 100,
@@ -51,21 +64,29 @@ class SmokeProvider:
                 "hash_verifiable": False,
                 "hearing_impaired_verifiable": True,
                 "hearing_impaired": False,
-                "display": {"source": "official-smoke"},
+                "display": {
+                    "source": "official-smoke",
+                    "profile_name": profile_name,
+                    "auth": "present",
+                },
                 "provider_payload": {
                     "provider": PROVIDER_ID,
                     "schema": 1,
                     "subtitle_id": _SUBTITLE_ID,
                     "kind": kind,
                     "language": "eng",
+                    "profile_name": profile_name,
                 },
             }
         ]
 
     def download(self, provider_payload, language, config):
-        del language, config
+        del language
+        profile_name = _require_config(config)
         if (provider_payload or {}).get("subtitle_id") != _SUBTITLE_ID:
             raise ValueError("unknown smoke subtitle")
+        if (provider_payload or {}).get("profile_name") != profile_name:
+            raise ValueError("SmokeHub profile_name mismatch")
         content = _SRT_TEXT.encode("utf-8")
         return {
             "content_b64": base64.b64encode(content).decode("ascii"),

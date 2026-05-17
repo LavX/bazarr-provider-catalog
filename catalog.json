@@ -4,9 +4,29 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "6d67691f4fc0ce1ffe5614f21541d1d10e8e4fcf6c4046e9e6b686354264683a",
+        "bundle_sha256": "323c998e3da510fa9cfdc0223ec66ad6bf91a2c93e603d71ea7fc6f04a98ecaf",
         "config_schema": {
-          "properties": {},
+          "additionalProperties": false,
+          "properties": {
+            "api_token": {
+              "description": "Token used only to prove secrets reach the worker without leaking into result payloads.",
+              "minLength": 1,
+              "secret": true,
+              "title": "API token",
+              "type": "string"
+            },
+            "profile_name": {
+              "default": "smoke-profile",
+              "description": "Public test profile echoed in non-secret search metadata.",
+              "minLength": 1,
+              "title": "Profile name",
+              "type": "string"
+            }
+          },
+          "required": [
+            "profile_name",
+            "api_token"
+          ],
           "type": "object"
         },
         "dependencies": {
@@ -16,7 +36,7 @@
         "entry_class": "SmokeProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "d5ca8fb8a116e23164d5e21e8721258d4e7cca4d043eef54b3de1d88cacc8d00"
+          "provider.py": "cdcb2c4cc0d886022a4da1443586b64bdfac1ea273e0804c352ae22a9ed1668d"
         },
         "languages": [
           "eng"
@@ -24,11 +44,106 @@
         "name": "SmokeHub",
         "provider_id": "smokehub",
         "schema_version": 1,
-        "secret_fields": [],
+        "secret_fields": [
+          "api_token"
+        ],
         "source": {
           "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
           "commit": "0000000000000000000000000000000000000000",
           "path": "providers/smoke",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.0"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "fa56503c20554b94d9429a4b40212fa74b586fe4f70d94f19e2e3d17c98055fd",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "api_token": {
+              "description": "Secret token used by the worker. It must not appear in search or download payloads.",
+              "minLength": 1,
+              "secret": true,
+              "title": "API token",
+              "type": "string"
+            },
+            "base_url": {
+              "default": "https://example.invalid/supersubtitles",
+              "description": "SuperSubtitles-compatible endpoint.",
+              "title": "Base URL",
+              "type": "string"
+            },
+            "search_mode": {
+              "default": "balanced",
+              "description": "Controls how broad the demo search pretends to be.",
+              "enum": [
+                "strict",
+                "balanced",
+                "broad"
+              ],
+              "title": "Search mode",
+              "type": "string"
+            },
+            "use_hash": {
+              "default": true,
+              "description": "Pretend to prefer hash matches when the video payload has hashes.",
+              "title": "Use hash matching",
+              "type": "boolean"
+            },
+            "username": {
+              "description": "Demo account name sent to the provider worker.",
+              "title": "Username",
+              "type": "string"
+            }
+          },
+          "required": [
+            "base_url",
+            "username",
+            "api_token"
+          ],
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:1697e1a8a8f550fd43c2865cd84542fc175a61dcb779b6fee18cf6b6ccba1477"
+              ],
+              "name": "humanfriendly",
+              "version": "10.0"
+            }
+          ]
+        },
+        "description": "No-network SuperSubtitles-style demo provider that proves config, secrets, and isolated wheel installs.",
+        "entry_class": "SuperSubtitlesDemoProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "e73b0b38e3de85b245126f6d9c83e0cebc6d012492af8f6f2ba6f9a7d4b39203"
+        },
+        "languages": [
+          "eng",
+          "hun"
+        ],
+        "name": "SuperSubtitles Demo",
+        "provider_id": "supersubtitles_demo",
+        "schema_version": 1,
+        "secret_fields": [
+          "api_token"
+        ],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/supersubtitles_demo",
           "ref": "main",
           "repo": "LavX/bazarr-provider-catalog",
           "trusted": true,

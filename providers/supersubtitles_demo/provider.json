@@ -1,0 +1,91 @@
+{
+  "api_version": "bazarr.provider-hub.v1",
+  "bundle_sha256": "fa56503c20554b94d9429a4b40212fa74b586fe4f70d94f19e2e3d17c98055fd",
+  "config_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "api_token": {
+        "description": "Secret token used by the worker. It must not appear in search or download payloads.",
+        "minLength": 1,
+        "secret": true,
+        "title": "API token",
+        "type": "string"
+      },
+      "base_url": {
+        "default": "https://example.invalid/supersubtitles",
+        "description": "SuperSubtitles-compatible endpoint.",
+        "title": "Base URL",
+        "type": "string"
+      },
+      "search_mode": {
+        "default": "balanced",
+        "description": "Controls how broad the demo search pretends to be.",
+        "enum": [
+          "strict",
+          "balanced",
+          "broad"
+        ],
+        "title": "Search mode",
+        "type": "string"
+      },
+      "use_hash": {
+        "default": true,
+        "description": "Pretend to prefer hash matches when the video payload has hashes.",
+        "title": "Use hash matching",
+        "type": "boolean"
+      },
+      "username": {
+        "description": "Demo account name sent to the provider worker.",
+        "title": "Username",
+        "type": "string"
+      }
+    },
+    "required": [
+      "base_url",
+      "username",
+      "api_token"
+    ],
+    "type": "object"
+  },
+  "dependencies": {
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:1697e1a8a8f550fd43c2865cd84542fc175a61dcb779b6fee18cf6b6ccba1477"
+        ],
+        "name": "humanfriendly",
+        "version": "10.0"
+      }
+    ]
+  },
+  "description": "No-network SuperSubtitles-style demo provider that proves config, secrets, and isolated wheel installs.",
+  "entry_class": "SuperSubtitlesDemoProvider",
+  "entry_module": "provider",
+  "files": {
+    "provider.py": "e73b0b38e3de85b245126f6d9c83e0cebc6d012492af8f6f2ba6f9a7d4b39203"
+  },
+  "languages": [
+    "eng",
+    "hun"
+  ],
+  "name": "SuperSubtitles Demo",
+  "provider_id": "supersubtitles_demo",
+  "schema_version": 1,
+  "secret_fields": [
+    "api_token"
+  ],
+  "source": {
+    "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+    "commit": "0000000000000000000000000000000000000000",
+    "path": "providers/supersubtitles_demo",
+    "ref": "main",
+    "repo": "LavX/bazarr-provider-catalog",
+    "trusted": true,
+    "type": "github"
+  },
+  "supported_media": [
+    "movie",
+    "episode"
+  ],
+  "version": "0.1.0"
+}

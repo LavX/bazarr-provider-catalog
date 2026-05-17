@@ -3,6 +3,7 @@ import base64
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import sys
 from pathlib import Path, PurePosixPath
@@ -11,6 +12,15 @@ SCHEMA_VERSION = 1
 CATALOG_NAME = "Bazarr Provider Catalog"
 API_VERSION = "bazarr.provider-hub.v1"
 EXPECTED_SMOKE_PROVIDER_ID = "smokehub"
+DEFAULT_SMOKE_CONFIG = {
+    "profile_name": "smoke-profile",
+    "api_token": "smoke-secret-token",
+}
+DEFAULT_SMOKE_VIDEOS = (
+    {"kind": "movie", "title": "Smoke Movie"},
+    {"kind": "episode", "series": "Smoke Show", "season": 1, "episode": 2},
+)
+DEFAULT_SMOKE_LANGUAGES = ({"alpha3": "eng", "hi": False, "forced": False},)
 EXPECTED_SMOKE_SUBTITLE = """1
 00:00:01,000 --> 00:00:02,500
 SmokeHub deterministic subtitle.
@@ -18,7 +28,11 @@ SmokeHub deterministic subtitle.
 _HEX_SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 _HEX_COMMIT_RE = re.compile(r"^[a-f0-9]{40}$")
 _PROVIDER_ID_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
+_CONFIG_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_ENTRY_MODULE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 ALLOWED_MEDIA = {"movie", "episode"}
+SUPPORTED_CONFIG_TYPES = {"string", "boolean", "number", "integer"}
+DISALLOWED_SCHEMA_KEYS = {"$ref", "oneOf", "anyOf", "allOf", "not", "items"}
 
 
 class CatalogError(Exception):
@@ -98,6 +112,49 @@ def validate_dependency_lock(manifest_path, dependencies):
                 raise CatalogError(f"{manifest_path} dependency {name} has invalid hash")
 
 
+def validate_config_schema(manifest_path, config_schema, secret_fields):
+    if config_schema.get("type") != "object":
+        raise CatalogError(f"{manifest_path} config_schema.type must be object")
+    if any(key in config_schema for key in DISALLOWED_SCHEMA_KEYS):
+        raise CatalogError(f"{manifest_path} config_schema contains unsupported composition keys")
+
+    properties = config_schema.get("properties", {})
+    if not isinstance(properties, dict):
+        raise CatalogError(f"{manifest_path} config_schema.properties must be an object")
+
+    required = config_schema.get("required", [])
+    if not isinstance(required, list) or any(not isinstance(item, str) for item in required):
+        raise CatalogError(f"{manifest_path} config_schema.required must be a string list")
+
+    for key, field in properties.items():
+        if not isinstance(key, str) or not _CONFIG_KEY_RE.match(key):
+            raise CatalogError(f"{manifest_path} config key is invalid: {key}")
+        if not isinstance(field, dict):
+            raise CatalogError(f"{manifest_path} config field {key} must be an object")
+        if any(item in field for item in DISALLOWED_SCHEMA_KEYS | {"properties"}):
+            raise CatalogError(f"{manifest_path} config field {key} contains unsupported nested schema")
+        field_type = field.get("type")
+        if field_type not in SUPPORTED_CONFIG_TYPES:
+            raise CatalogError(f"{manifest_path} config field {key} has unsupported type")
+        enum = field.get("enum")
+        if enum is not None:
+            if not isinstance(enum, list) or not enum:
+                raise CatalogError(f"{manifest_path} config field {key} enum must be a non-empty list")
+            if any(not isinstance(item, (str, int, float, bool)) for item in enum):
+                raise CatalogError(f"{manifest_path} config field {key} enum must use scalar values")
+
+    for key in required:
+        if key not in properties:
+            raise CatalogError(f"{manifest_path} required config field is not declared: {key}")
+
+    for key in secret_fields:
+        field = properties.get(key)
+        if field is None:
+            raise CatalogError(f"{manifest_path} secret field is not declared in config_schema: {key}")
+        if field.get("type") != "string":
+            raise CatalogError(f"{manifest_path} secret field must be a string: {key}")
+
+
 def validate_manifest(root, provider_dir, seen_ids):
     manifest_path = provider_dir / "provider.json"
     manifest = read_json(manifest_path)
@@ -114,12 +171,15 @@ def validate_manifest(root, provider_dir, seen_ids):
     for field in ("name", "version", "entry_module", "entry_class"):
         if not isinstance(manifest.get(field), str) or not manifest[field]:
             raise CatalogError(f"{manifest_path} {field} must be a non-empty string")
+    if not _ENTRY_MODULE_RE.match(manifest["entry_module"]):
+        raise CatalogError(f"{manifest_path} entry_module must be a simple Python module name")
     if manifest.get("api_version") != API_VERSION:
         raise CatalogError(f"{manifest_path} api_version must be {API_VERSION}")
     if not isinstance(manifest.get("config_schema"), dict):
         raise CatalogError(f"{manifest_path} config_schema must be an object")
     if not isinstance(manifest.get("secret_fields"), list) or any(not isinstance(item, str) for item in manifest["secret_fields"]):
         raise CatalogError(f"{manifest_path} secret_fields must be a string list")
+    validate_config_schema(manifest_path, manifest["config_schema"], manifest["secret_fields"])
     if not isinstance(manifest.get("supported_media"), list) or not manifest["supported_media"] or any(item not in ALLOWED_MEDIA for item in manifest["supported_media"]):
         raise CatalogError(f"{manifest_path} supported_media is invalid")
     if not isinstance(manifest.get("languages"), list) or not manifest["languages"] or any(not isinstance(item, str) or not item for item in manifest["languages"]):
@@ -152,6 +212,9 @@ def validate_manifest(root, provider_dir, seen_ids):
                 raise CatalogError(f"undeclared python file: {rel}")
         if path.is_file() and path.suffix not in {".py", ".json"}:
             raise CatalogError(f"unexpected file: {path}")
+    entry_file = safe_rel_path(f"{manifest['entry_module']}.py")
+    if entry_file not in declared_files:
+        raise CatalogError(f"{manifest_path} entry_module must resolve to a declared file: {entry_file}")
 
     if manifest.get("bundle_sha256") != bundle_sha256(manifest, provider_dir):
         raise CatalogError(f"{manifest_path} bundle_sha256 is stale")
@@ -219,14 +282,84 @@ def load_provider_class(provider_dir, manifest):
     if spec is None or spec.loader is None:
         raise CatalogError(f"cannot import provider module: {path}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        raise CatalogError(f"cannot import provider module {path}: {exc}") from exc
     cls = getattr(module, manifest["entry_class"], None)
     if cls is None:
         raise CatalogError(f"missing provider class: {manifest['entry_class']}")
     return cls
 
 
-def smoke_test(root, provider_id=EXPECTED_SMOKE_PROVIDER_ID):
+def _load_config(config_file=None, config_json=None, secret_specs=None, defaults=None):
+    config = dict(defaults or {})
+    if config_file:
+        file_config = read_json(Path(config_file))
+        if not isinstance(file_config, dict):
+            raise CatalogError("--config-file must contain a JSON object")
+        config.update(file_config)
+    if config_json:
+        try:
+            inline_config = json.loads(config_json)
+        except json.JSONDecodeError as exc:
+            raise CatalogError(f"--config-json must be a JSON object: {exc}") from exc
+        if not isinstance(inline_config, dict):
+            raise CatalogError("--config-json must be a JSON object")
+        config.update(inline_config)
+    for spec in secret_specs or []:
+        if "=" not in spec:
+            raise CatalogError("--secret must use FIELD=ENV_VAR")
+        field, env_var = spec.split("=", 1)
+        if not _CONFIG_KEY_RE.match(field):
+            raise CatalogError(f"--secret field is invalid: {field}")
+        if not env_var:
+            raise CatalogError("--secret requires an environment variable name")
+        if env_var not in os.environ:
+            raise CatalogError(f"environment variable is not set: {env_var}")
+        config[field] = os.environ[env_var]
+    return config
+
+
+def _load_video_fixtures(paths):
+    if not paths:
+        return [dict(item) for item in DEFAULT_SMOKE_VIDEOS]
+    videos = []
+    for path in paths:
+        payload = read_json(Path(path))
+        if isinstance(payload, dict):
+            videos.append(payload)
+        elif isinstance(payload, list) and all(isinstance(item, dict) for item in payload):
+            videos.extend(payload)
+        else:
+            raise CatalogError(f"video fixture must be an object or object list: {path}")
+    if not videos:
+        raise CatalogError("at least one video fixture is required")
+    return videos
+
+
+def _language_payloads(language_codes):
+    codes = language_codes or ["eng"]
+    return [{"alpha3": code, "hi": False, "forced": False} for code in codes]
+
+
+def _assert_secret_not_leaked(config, secret_fields, payload, context):
+    serialized = json.dumps(payload, sort_keys=True)
+    for field in secret_fields:
+        value = config.get(field)
+        if isinstance(value, str) and value and value in serialized:
+            raise CatalogError(f"secret field {field} leaked through {context}")
+
+
+def smoke_test(
+    root,
+    provider_id=EXPECTED_SMOKE_PROVIDER_ID,
+    config=None,
+    videos=None,
+    languages=None,
+    expect_min_results=1,
+    skip_download=False,
+):
     root = Path(root).resolve()
     catalog = validate_catalog(root)
     manifest = next((item["manifest"] for item in catalog["providers"] if item["manifest"]["provider_id"] == provider_id), None)
@@ -235,29 +368,47 @@ def smoke_test(root, provider_id=EXPECTED_SMOKE_PROVIDER_ID):
 
     provider_dir = root / manifest["source"]["path"]
     provider = load_provider_class(provider_dir, manifest)()
-    for video in (
-        {"kind": "movie", "title": "Smoke Movie"},
-        {"kind": "episode", "series": "Smoke Show", "season": 1, "episode": 2},
-    ):
-        results = provider.search(video=video, languages=[{"alpha3": "eng", "hi": False, "forced": False}], config={})
-        if len(results) != 1:
+    is_official_smoke = provider_id == EXPECTED_SMOKE_PROVIDER_ID
+    secret_fields = manifest.get("secret_fields") or []
+    config = dict(config or {})
+    videos = videos or [dict(item) for item in DEFAULT_SMOKE_VIDEOS]
+    languages = languages or [dict(item) for item in DEFAULT_SMOKE_LANGUAGES]
+    requested_language_codes = {item.get("alpha3") for item in languages if isinstance(item, dict)}
+    last_candidate = None
+    for video in videos:
+        try:
+            results = provider.search(video=video, languages=languages, config=config)
+        except Exception as exc:
+            raise CatalogError(f"{provider_id} search failed: {exc}") from exc
+        if len(results) < expect_min_results:
+            raise CatalogError(f"{provider_id} returned {len(results)} candidates, expected at least {expect_min_results}")
+        if is_official_smoke and len(results) != 1:
             raise CatalogError(f"{provider_id} returned {len(results)} candidates, expected 1")
         candidate = results[0]
         if candidate.get("provider") != provider_id:
             raise CatalogError(f"{provider_id} returned wrong provider id")
-        if not isinstance(candidate.get("language"), dict) or candidate["language"].get("alpha3") != "eng":
+        if not isinstance(candidate.get("language"), dict) or candidate["language"].get("alpha3") not in requested_language_codes:
             raise CatalogError(f"{provider_id} returned invalid language payload")
         if not isinstance(candidate.get("provider_payload"), dict):
             raise CatalogError(f"{provider_id} returned no provider_payload")
+        _assert_secret_not_leaked(config, secret_fields, candidate, f"{provider_id} search")
+        last_candidate = candidate
 
-    content = provider.download(results[0]["provider_payload"], {"alpha3": "eng"}, {})
+    if skip_download:
+        return provider_id
+
+    try:
+        content = provider.download(last_candidate["provider_payload"], {"alpha3": "eng"}, config)
+    except Exception as exc:
+        raise CatalogError(f"{provider_id} download failed: {exc}") from exc
     if not isinstance(content, dict) or content.get("empty") is not False:
         raise CatalogError(f"{provider_id} download must return a content payload")
     data = base64.b64decode(content["content_b64"].encode("ascii"), validate=True)
     if hashlib.sha256(data).hexdigest() != content.get("content_sha256"):
         raise CatalogError(f"{provider_id} download hash mismatch")
-    if data.decode("utf-8") != EXPECTED_SMOKE_SUBTITLE:
+    if is_official_smoke and data.decode("utf-8") != EXPECTED_SMOKE_SUBTITLE:
         raise CatalogError(f"{provider_id} download content does not match fixed SRT")
+    _assert_secret_not_leaked(config, secret_fields, content, f"{provider_id} download")
     return provider_id
 
 
@@ -294,7 +445,17 @@ def command_build_catalog(args):
 
 
 def command_smoke_test(args):
-    provider_id = smoke_test(args.root, args.provider)
+    defaults = DEFAULT_SMOKE_CONFIG if args.provider == EXPECTED_SMOKE_PROVIDER_ID else {}
+    config = _load_config(args.config_file, args.config_json, args.secret, defaults=defaults)
+    provider_id = smoke_test(
+        args.root,
+        args.provider,
+        config=config,
+        videos=_load_video_fixtures(args.video_fixture),
+        languages=_language_payloads(args.language),
+        expect_min_results=args.expect_min_results,
+        skip_download=args.skip_download,
+    )
     print(f"{provider_id} ok")
     return 0
 
@@ -320,6 +481,34 @@ def build_parser():
     smoke = subparsers.add_parser("smoke-test", help="run the deterministic smoke provider contract")
     smoke.add_argument("root", nargs="?", default=".", help="catalog root directory")
     smoke.add_argument("--provider", default=EXPECTED_SMOKE_PROVIDER_ID, help="provider id to smoke test")
+    smoke.add_argument("--config-json", help="JSON object merged into the provider config")
+    smoke.add_argument("--config-file", help="path to a JSON object merged into the provider config")
+    smoke.add_argument(
+        "--secret",
+        action="append",
+        default=[],
+        metavar="FIELD=ENV_VAR",
+        help="read a secret config field from an environment variable",
+    )
+    smoke.add_argument(
+        "--video-fixture",
+        action="append",
+        default=[],
+        help="JSON video fixture object, or list of objects, to use for search",
+    )
+    smoke.add_argument(
+        "--language",
+        action="append",
+        default=[],
+        help="language alpha3 code to request, default eng",
+    )
+    smoke.add_argument(
+        "--expect-min-results",
+        type=int,
+        default=1,
+        help="minimum expected candidates per video fixture",
+    )
+    smoke.add_argument("--skip-download", action="store_true", help="only run search")
     smoke.set_defaults(func=command_smoke_test)
     return parser
 
