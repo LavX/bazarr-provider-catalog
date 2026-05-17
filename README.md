@@ -6,7 +6,6 @@ Official catalog for Bazarr Provider Hub providers.
 
 - `catalog.json`: embedded Provider Hub V1 catalog manifests.
 - `providers/smoke/`: deterministic no-network smoke provider for install and worker checks.
-- `providers/supersubtitles_demo/`: deterministic SuperSubtitles-style provider that exercises auth, settings, and venv wheel installs.
 - `sdk/`: standalone authoring tools and templates.
 - `tests/`: catalog validation tests that do not import Bazarr internals.
 
@@ -21,7 +20,7 @@ python3 -B -m sdk smoke-test --provider myprovider --config-json '{"api_token":"
 python3 -B -m unittest discover -s tests
 ```
 
-Use `providers/supersubtitles_demo/` as the richer example when your provider needs settings, secrets, or PyPI dependencies.
+Use `providers/smoke/` as the reference example for settings, secrets, and PyPI dependencies.
 
 ## Common Commands
 

@@ -21,7 +21,7 @@ class CatalogStructureTests(unittest.TestCase):
 
         self.assertEqual(catalog["schema_version"], 1)
         provider_ids = {item["manifest"]["provider_id"] for item in catalog["providers"]}
-        self.assertEqual(provider_ids, {"smokehub", "supersubtitles_demo"})
+        self.assertEqual(provider_ids, {"smokehub"})
         manifest = next(item["manifest"] for item in catalog["providers"] if item["manifest"]["provider_id"] == "smokehub")
         self.assertEqual(manifest["provider_id"], "smokehub")
         self.assertEqual(manifest["version"], "0.1.0")
@@ -36,19 +36,6 @@ class CatalogStructureTests(unittest.TestCase):
         self.assertEqual(manifest["entry_class"], "SmokeProvider")
         self.assertEqual(manifest["supported_media"], ["movie", "episode"])
         self.assertEqual(manifest["languages"], ["eng"])
-        self.assertEqual(manifest["dependencies"], {"requirements": []})
-        self.assertEqual(manifest["config_schema"]["required"], ["profile_name", "api_token"])
-        self.assertEqual(manifest["secret_fields"], ["api_token"])
-        self.assertTrue(manifest["config_schema"]["properties"]["api_token"]["secret"])
-        self.assertRegex(manifest["files"]["provider.py"], r"^[0-9a-f]{64}$")
-        self.assertRegex(manifest["bundle_sha256"], r"^[0-9a-f]{64}$")
-
-    def test_supersubtitles_demo_manifest_shows_dependency_lock(self):
-        manifest = json.loads((ROOT / "providers/supersubtitles_demo/provider.json").read_text(encoding="utf-8"))
-
-        self.assertEqual(manifest["provider_id"], "supersubtitles_demo")
-        self.assertEqual(manifest["entry_class"], "SuperSubtitlesDemoProvider")
-        self.assertEqual(manifest["secret_fields"], ["api_token"])
         self.assertEqual(
             manifest["dependencies"]["requirements"],
             [
@@ -61,6 +48,11 @@ class CatalogStructureTests(unittest.TestCase):
                 }
             ],
         )
+        self.assertEqual(manifest["config_schema"]["required"], ["profile_name", "api_token"])
+        self.assertEqual(manifest["secret_fields"], ["api_token"])
+        self.assertTrue(manifest["config_schema"]["properties"]["api_token"]["secret"])
+        self.assertRegex(manifest["files"]["provider.py"], r"^[0-9a-f]{64}$")
+        self.assertRegex(manifest["bundle_sha256"], r"^[0-9a-f]{64}$")
 
     def test_catalog_entry_has_fields_bazarr_refresh_uses(self):
         catalog = json.loads((ROOT / "catalog.json").read_text(encoding="utf-8"))
@@ -71,6 +63,7 @@ class CatalogStructureTests(unittest.TestCase):
         self.assertTrue(manifest["version"])
 
 
+@unittest.skipUnless(importlib.util.find_spec("humanfriendly"), "requires smokehub provider dependencies")
 class SmokeProviderTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -152,11 +145,13 @@ class SdkCliTests(unittest.TestCase):
 
         self.assertEqual(generated, checked_in)
 
+    @unittest.skipUnless(importlib.util.find_spec("humanfriendly"), "requires smokehub provider dependencies")
     def test_smoke_test_runs_worker_shape_contract(self):
         result = self.run_cli("smoke-test")
 
         self.assertIn("smokehub ok", result.stdout)
 
+    @unittest.skipUnless(importlib.util.find_spec("humanfriendly"), "requires smokehub provider dependencies")
     def test_smoke_test_accepts_config_json(self):
         result = self.run_cli(
             "smoke-test",

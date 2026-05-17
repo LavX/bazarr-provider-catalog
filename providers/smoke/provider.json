@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "323c998e3da510fa9cfdc0223ec66ad6bf91a2c93e603d71ea7fc6f04a98ecaf",
+  "bundle_sha256": "be88b89891125d78f99daebcf884062aabf7ee43c490bcf1f5951ce61dd920f0",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -26,13 +26,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:1697e1a8a8f550fd43c2865cd84542fc175a61dcb779b6fee18cf6b6ccba1477"
+        ],
+        "name": "humanfriendly",
+        "version": "10.0"
+      }
+    ]
   },
-  "description": "Deterministic no-network provider used to verify Provider Hub catalog tooling.",
+  "description": "Deterministic no-network provider used to verify Provider Hub config, secrets, dependencies, and worker tooling.",
   "entry_class": "SmokeProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "cdcb2c4cc0d886022a4da1443586b64bdfac1ea273e0804c352ae22a9ed1668d"
+    "provider.py": "92bbc963b85a838cadea95ca37433b1d584ac1e77c25150c41a1ebb20da7c783"
   },
   "languages": [
     "eng"

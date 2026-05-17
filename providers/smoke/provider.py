@@ -22,6 +22,14 @@ def _language_payload(language):
     return payload
 
 
+def _format_dependency_marker():
+    try:
+        from humanfriendly import format_size
+    except ImportError as exc:
+        raise RuntimeError("humanfriendly dependency is required") from exc
+    return format_size(1536, binary=True)
+
+
 def _require_config(config):
     config = dict(config or {})
     profile_name = str(config.get(_PROFILE_KEY) or "").strip()
@@ -50,6 +58,7 @@ class SmokeProvider:
 
         title = video.get("title") or video.get("series") or video.get("name") or "Smoke Title"
         matches = ["title"] if kind == "movie" else ["series", "season", "episode"]
+        dependency_marker = _format_dependency_marker()
         return [
             {
                 "provider": PROVIDER_ID,
@@ -68,6 +77,7 @@ class SmokeProvider:
                     "source": "official-smoke",
                     "profile_name": profile_name,
                     "auth": "present",
+                    "dependency": dependency_marker,
                 },
                 "provider_payload": {
                     "provider": PROVIDER_ID,
