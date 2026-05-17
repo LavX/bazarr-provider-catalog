@@ -24,7 +24,7 @@ class CatalogStructureTests(unittest.TestCase):
         self.assertEqual(provider_ids, {"smokehub"})
         manifest = next(item["manifest"] for item in catalog["providers"] if item["manifest"]["provider_id"] == "smokehub")
         self.assertEqual(manifest["provider_id"], "smokehub")
-        self.assertEqual(manifest["version"], "0.1.0")
+        self.assertEqual(manifest["version"], "0.2.0")
         self.assertEqual(manifest["source"]["path"], "providers/smoke")
 
     def test_smoke_manifest_matches_provider_hub_v1_contract(self):
