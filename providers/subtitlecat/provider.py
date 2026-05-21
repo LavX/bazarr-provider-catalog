@@ -161,7 +161,37 @@ def _release_tokens(text):
 
 
 def _has_token(release_tokens, candidates):
-    return any(token.lower() in release_tokens for token in candidates)
+    """Return True if any synonym in ``candidates`` is present in the release.
+
+    Each entry may be a single token (``"bluray"``) or a multi-word value
+    (``"DTS-HD"``, ``"WEB-DL"``); multi-word entries are split into
+    alphanumeric chunks and require every chunk to appear in the release.
+    """
+    for token in candidates:
+        if not token:
+            continue
+        chunks = [c for c in re.split(r"[^A-Za-z0-9]+", str(token).lower()) if c]
+        if not chunks:
+            continue
+        if all(chunk in release_tokens for chunk in chunks):
+            return True
+    return False
+
+
+def _multi_token_present(release_tokens, value):
+    """Return True if every alphanumeric chunk of ``value`` is in the release.
+
+    Used as a fallback for video metadata values that arrive as multi-word
+    strings (e.g. ``"DTS-HD MA"``, ``"Blu-ray Remux"``, release groups with
+    dots/dashes). The single-token form misses these; this splits ``value``
+    on any non-alphanumeric run and requires every chunk to appear.
+    """
+    if not value:
+        return False
+    chunks = [c for c in re.split(r"[^A-Za-z0-9]+", str(value).lower()) if c]
+    if not chunks:
+        return False
+    return all(chunk in release_tokens for chunk in chunks)
 
 
 def derive_matches(video, candidate_title):
@@ -220,8 +250,12 @@ def derive_matches(video, candidate_title):
     # Release-name matches (apply to both movies and episodes)
     source = video.get("source")
     if source:
-        token_list = _SOURCE_TOKENS.get(source, [source])
-        if _has_token(candidate_release_tokens, token_list):
+        token_list = _SOURCE_TOKENS.get(source)
+        if token_list and _has_token(candidate_release_tokens, token_list):
+            matches.append("source")
+        elif token_list is None and _multi_token_present(
+            candidate_release_tokens, source
+        ):
             matches.append("source")
 
     resolution = video.get("resolution")
@@ -230,30 +264,38 @@ def derive_matches(video, candidate_title):
 
     video_codec = video.get("video_codec")
     if video_codec:
-        token_list = _VIDEO_CODEC_TOKENS.get(video_codec, [video_codec])
-        if _has_token(candidate_release_tokens, token_list):
+        token_list = _VIDEO_CODEC_TOKENS.get(video_codec)
+        if token_list and _has_token(candidate_release_tokens, token_list):
+            matches.append("video_codec")
+        elif token_list is None and _multi_token_present(
+            candidate_release_tokens, video_codec
+        ):
             matches.append("video_codec")
 
     audio_codec = video.get("audio_codec")
     if audio_codec:
-        token_list = _AUDIO_CODEC_TOKENS.get(audio_codec, [audio_codec])
-        if _has_token(candidate_release_tokens, token_list):
+        token_list = _AUDIO_CODEC_TOKENS.get(audio_codec)
+        if token_list and _has_token(candidate_release_tokens, token_list):
+            matches.append("audio_codec")
+        elif token_list is None and _multi_token_present(
+            candidate_release_tokens, audio_codec
+        ):
             matches.append("audio_codec")
 
     release_group = video.get("release_group")
-    if release_group and str(release_group).lower() in candidate_release_tokens:
+    if release_group and _multi_token_present(
+        candidate_release_tokens, release_group
+    ):
         matches.append("release_group")
 
     streaming_service = video.get("streaming_service")
-    if streaming_service and str(streaming_service).lower() in candidate_release_tokens:
+    if streaming_service and _multi_token_present(
+        candidate_release_tokens, streaming_service
+    ):
         matches.append("streaming_service")
 
     edition = video.get("edition")
-    if edition and any(
-        token.lower() in candidate_release_tokens
-        for token in str(edition).split()
-        if token
-    ):
+    if edition and _multi_token_present(candidate_release_tokens, edition):
         matches.append("edition")
 
     return matches
@@ -583,6 +625,7 @@ class SubtitlecatProvider:
                         "hash_verifiable": False,
                         "hearing_impaired_verifiable": False,
                         "hearing_impaired": False,
+                        "page_link": candidate["detail_url"],
                         "display": {
                             "source": "subtitlecat",
                             "title": candidate["title"],

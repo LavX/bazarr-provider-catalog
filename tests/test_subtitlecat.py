@@ -170,6 +170,117 @@ class ComputeScoreTests(unittest.TestCase):
         self.assertEqual(score, 60)
 
 
+class DeriveMatchesTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_movie_emits_title_year_source_video_codec_for_full_match(self):
+        matches = self.mod.derive_matches(
+            {
+                "kind": "movie",
+                "title": "Interstellar",
+                "year": 2014,
+                "source": "Blu-ray",
+                "video_codec": "H.264",
+            },
+            "Interstellar.2014.1080p.BluRay.x264.YIFY",
+        )
+        self.assertIn("title", matches)
+        self.assertIn("year", matches)
+        self.assertIn("source", matches)
+        self.assertIn("video_codec", matches)
+
+    def test_release_group_matches_via_multi_token_fallback(self):
+        matches = self.mod.derive_matches(
+            {
+                "kind": "movie",
+                "title": "Two Witches",
+                "year": 2021,
+                "release_group": "MTeam",
+            },
+            "Two.Witches.2021.BluRay.1080p.DTS-HD.MA.5.1.x264-MTeam",
+        )
+        self.assertIn("release_group", matches)
+
+    def test_audio_codec_dts_hd_ma_matches_via_multi_token_fallback(self):
+        matches = self.mod.derive_matches(
+            {
+                "kind": "movie",
+                "title": "Two Witches",
+                "year": 2021,
+                "audio_codec": "DTS-HD MA",
+            },
+            "Two.Witches.2021.BluRay.1080p.DTS-HD.MA.5.1.x264-MTeam",
+        )
+        self.assertIn("audio_codec", matches)
+
+    def test_audio_codec_canonical_dts_hd_uses_synonym_table(self):
+        matches = self.mod.derive_matches(
+            {
+                "kind": "movie",
+                "title": "Two Witches",
+                "year": 2021,
+                "audio_codec": "DTS-HD",
+            },
+            "Two.Witches.2021.BluRay.1080p.DTS-HD.MA.5.1.x264-MTeam",
+        )
+        self.assertIn("audio_codec", matches)
+
+    def test_resolution_match_lowercased(self):
+        matches = self.mod.derive_matches(
+            {"kind": "movie", "title": "Two Witches", "resolution": "1080p"},
+            "Two.Witches.2021.1080p.BluRay.x264-RARBG",
+        )
+        self.assertIn("resolution", matches)
+
+    def test_release_group_does_not_match_when_absent(self):
+        matches = self.mod.derive_matches(
+            {
+                "kind": "movie",
+                "title": "Two Witches",
+                "release_group": "RARBG",
+            },
+            "Two.Witches.2021.BluRay.1080p.x264-MTeam",
+        )
+        self.assertNotIn("release_group", matches)
+
+    def test_episode_emits_series_season_episode_and_tokens(self):
+        matches = self.mod.derive_matches(
+            {
+                "kind": "episode",
+                "series": "Breaking Bad",
+                "season": 1,
+                "episode": 2,
+                "source": "Blu-ray",
+                "video_codec": "H.265",
+            },
+            "Breaking.Bad.S01E02.1080p.BluRay.x265",
+        )
+        self.assertIn("series", matches)
+        self.assertIn("season", matches)
+        self.assertIn("episode", matches)
+        self.assertIn("source", matches)
+        self.assertIn("video_codec", matches)
+
+
+class MultiTokenPresentTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_empty_value_is_false(self):
+        tokens = self.mod._release_tokens("anything")
+        self.assertFalse(self.mod._multi_token_present(tokens, ""))
+        self.assertFalse(self.mod._multi_token_present(tokens, None))
+
+    def test_all_chunks_present(self):
+        tokens = self.mod._release_tokens("Two.Witches.DTS-HD.MA.1080p")
+        self.assertTrue(self.mod._multi_token_present(tokens, "DTS-HD MA"))
+
+    def test_missing_chunk_fails(self):
+        tokens = self.mod._release_tokens("Two.Witches.AAC.1080p")
+        self.assertFalse(self.mod._multi_token_present(tokens, "DTS-HD MA"))
+
+
 class SubtitlecatProviderSearchTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
@@ -186,6 +297,34 @@ class SubtitlecatProviderSearchTests(unittest.TestCase):
 
         provider._http_get = stub  # noqa: SLF001 - test override
         return provider, called
+
+    def test_search_results_include_page_link_for_clickthrough(self):
+        search_url = (
+            "https://www.subtitlecat.com/index.php?search=Interstellar%202014"
+        )
+        empty_detail = b"<html><body></body></html>"
+        responses = {search_url: SEARCH_FIXTURE}
+        for entry in self.mod.parse_search_results(SEARCH_FIXTURE):
+            responses[entry["detail_url"]] = empty_detail
+        detail_url = (
+            "https://www.subtitlecat.com/subs/1459/"
+            "Interstellar_2014_Bluray_720p_AAC_HEVC_x265.English.html"
+        )
+        responses[detail_url] = DETAIL_FIXTURE
+
+        provider, _ = self._provider_with_stub(responses)
+        results = provider.search(
+            video={"kind": "movie", "title": "Interstellar", "year": 2014},
+            languages=[
+                {"alpha3": "eng", "alpha2": "en", "hi": False, "forced": False}
+            ],
+            config={"include_machine_translated": True, "request_delay_ms": 0},
+        )
+        self.assertGreater(len(results), 0)
+        for item in results:
+            self.assertIn("page_link", item)
+            self.assertTrue(item["page_link"].startswith("https://www.subtitlecat.com/subs/"))
+            self.assertEqual(item["page_link"], item["display"]["detail_url"])
 
     def test_search_returns_only_languages_with_download_anchors(self):
         search_url = (
