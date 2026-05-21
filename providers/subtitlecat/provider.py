@@ -121,6 +121,144 @@ def compute_score(video, candidate_title):
     return 60
 
 
+# Release-name match tables. Keys are the values bazarr/subliminal exposes on
+# the Video object; the inner list is the set of synonymous tokens we'll look
+# for inside a release title. Matching is case-insensitive on tokenized text.
+_SOURCE_TOKENS = {
+    "Blu-ray": ["bluray", "blueray", "brrip", "bdrip", "bd"],
+    "Web": ["web", "webrip", "webdl", "web-dl"],
+    "WEB-DL": ["webdl", "web-dl", "web"],
+    "WEBRip": ["webrip", "web-rip", "web"],
+    "HDTV": ["hdtv"],
+    "DVD": ["dvd", "dvdrip"],
+    "TS": ["ts", "telesync"],
+    "CAM": ["cam", "camrip"],
+    "HDRip": ["hdrip"],
+}
+_VIDEO_CODEC_TOKENS = {
+    "H.264": ["h264", "x264"],
+    "H.265": ["h265", "x265", "hevc"],
+    "DivX": ["divx"],
+    "XviD": ["xvid"],
+}
+_AUDIO_CODEC_TOKENS = {
+    "AC3": ["ac3", "dd"],
+    "EAC3": ["eac3", "ddp", "dd+"],
+    "AAC": ["aac"],
+    "DTS": ["dts"],
+    "DTS-HD": ["dtshd", "dts-hd"],
+    "FLAC": ["flac"],
+    "MP3": ["mp3"],
+    "TrueHD": ["truehd"],
+}
+
+
+def _release_tokens(text):
+    if not text:
+        return set()
+    # Treat any non-alphanumeric run as a separator. Lowercased for matching.
+    return {chunk for chunk in re.split(r"[^A-Za-z0-9]+", str(text).lower()) if chunk}
+
+
+def _has_token(release_tokens, candidates):
+    return any(token.lower() in release_tokens for token in candidates)
+
+
+def derive_matches(video, candidate_title):
+    """Compute the subliminal-shaped match set for a candidate.
+
+    These keys feed into bazarr's downstream score calculation
+    (``custom_libs/subliminal_patch/score.py``). Movie weights total ~180 and
+    episode weights total ~360 (excluding hash). Returning more keys lifts
+    the displayed score; the function only adds a key if the video metadata
+    actually appears in the candidate's release name.
+    """
+    if not video:
+        return []
+    candidate_norm = _normalize(candidate_title)
+    candidate_compact = candidate_norm.replace(" ", "")
+    candidate_tokens = set(_normalize_tokens(candidate_title))
+    candidate_release_tokens = _release_tokens(candidate_title)
+    matches = []
+    kind = video.get("kind")
+
+    if kind == "movie":
+        title_tokens = _normalize_tokens(video.get("title"))
+        if title_tokens and all(t in candidate_tokens for t in title_tokens):
+            matches.append("title")
+        year = video.get("year")
+        if year and str(year) in candidate_tokens:
+            matches.append("year")
+    elif kind == "episode":
+        series_tokens = _normalize_tokens(video.get("series"))
+        if series_tokens and all(t in candidate_tokens for t in series_tokens):
+            matches.append("series")
+        try:
+            season = int(video.get("season"))
+            episode = int(video.get("episode"))
+        except (TypeError, ValueError):
+            season = episode = None
+        if season is not None and f"s{season:02d}" in candidate_compact:
+            matches.append("season")
+        if (
+            season is not None
+            and episode is not None
+            and f"s{season:02d}e{episode:02d}" in candidate_compact
+        ):
+            matches.append("episode")
+        year = video.get("year")
+        if year and str(year) in candidate_tokens:
+            matches.append("year")
+        episode_title_tokens = _normalize_tokens(video.get("episode_title"))
+        if (
+            episode_title_tokens
+            and len(episode_title_tokens) > 1
+            and all(t in candidate_tokens for t in episode_title_tokens)
+        ):
+            matches.append("title")
+
+    # Release-name matches (apply to both movies and episodes)
+    source = video.get("source")
+    if source:
+        token_list = _SOURCE_TOKENS.get(source, [source])
+        if _has_token(candidate_release_tokens, token_list):
+            matches.append("source")
+
+    resolution = video.get("resolution")
+    if resolution and str(resolution).lower() in candidate_release_tokens:
+        matches.append("resolution")
+
+    video_codec = video.get("video_codec")
+    if video_codec:
+        token_list = _VIDEO_CODEC_TOKENS.get(video_codec, [video_codec])
+        if _has_token(candidate_release_tokens, token_list):
+            matches.append("video_codec")
+
+    audio_codec = video.get("audio_codec")
+    if audio_codec:
+        token_list = _AUDIO_CODEC_TOKENS.get(audio_codec, [audio_codec])
+        if _has_token(candidate_release_tokens, token_list):
+            matches.append("audio_codec")
+
+    release_group = video.get("release_group")
+    if release_group and str(release_group).lower() in candidate_release_tokens:
+        matches.append("release_group")
+
+    streaming_service = video.get("streaming_service")
+    if streaming_service and str(streaming_service).lower() in candidate_release_tokens:
+        matches.append("streaming_service")
+
+    edition = video.get("edition")
+    if edition and any(
+        token.lower() in candidate_release_tokens
+        for token in str(edition).split()
+        if token
+    ):
+        matches.append("edition")
+
+    return matches
+
+
 _DOWNLOAD_RE = re.compile(
     rb'<a[^>]+id="download_([a-z]{2,3})"[^>]+href="(/?subs/\d+/[^"]+-([a-z]{2,3})\.srt)"',
     re.IGNORECASE,
@@ -334,6 +472,10 @@ def _sleep(config):
 
 
 def _matches_for(video):
+    # Kept only for backwards compatibility in case external code imports it.
+    # search() now uses derive_matches(video, candidate_title) for the per-
+    # candidate set so that release-name attributes can contribute to the
+    # downstream subliminal score.
     kind = (video or {}).get("kind")
     if kind == "movie":
         if video.get("year"):
@@ -434,7 +576,7 @@ class SubtitlecatProvider:
                         "filename": (
                             f"subtitlecat.{candidate['detail_id']}.{alpha2}.srt"
                         ),
-                        "matches": _matches_for(video),
+                        "matches": derive_matches(video, candidate["title"]),
                         "score": score,
                         "score_without_hash": score,
                         "score_out_of": 100,
