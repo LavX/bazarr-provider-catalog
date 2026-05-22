@@ -36,7 +36,7 @@
       }
     ]
   },
-  "description": "Deterministic no-network provider used to verify Provider Hub config, secrets, dependencies, and worker tooling.",
+  "description": "[SMOKETEST]Deterministic no-network provider used to verify Provider Hub config, secrets, dependencies, and worker tooling.",
   "entry_class": "SmokeProvider",
   "entry_module": "provider",
   "files": {

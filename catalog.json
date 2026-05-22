@@ -40,7 +40,7 @@
             }
           ]
         },
-        "description": "Deterministic no-network provider used to verify Provider Hub config, secrets, dependencies, and worker tooling.",
+        "description": "[SMOKETEST]Deterministic no-network provider used to verify Provider Hub config, secrets, dependencies, and worker tooling.",
         "entry_class": "SmokeProvider",
         "entry_module": "provider",
         "files": {
@@ -69,6 +69,113 @@
           "episode"
         ],
         "version": "0.2.0"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "15d6d51a2429b2963b9a4c836be709343cfce5b0164ea396efaf0644e9bc5ecb",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "include_machine_translated": {
+              "default": true,
+              "description": "When off, only return the original-language file. The site caches Google-Translate-derived files from previous visitors; toggle this off if you do not want them.",
+              "title": "Include machine-translated subtitles",
+              "type": "boolean"
+            },
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between HTTP calls to subtitlecat.com.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Scrapes subtitlecat.com for community subtitle files. No login or API key required.",
+        "entry_class": "SubtitlecatProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "4dd2ffe2c80b813ff0ab2d86caf2c0954ba6291cb838cd391b4bf58fd01b57c2"
+        },
+        "languages": [
+          "eng",
+          "spa",
+          "fra",
+          "deu",
+          "ita",
+          "por",
+          "pol",
+          "rus",
+          "tur",
+          "ara",
+          "hin",
+          "ind",
+          "nld",
+          "zho",
+          "jpn",
+          "kor",
+          "ces",
+          "ell",
+          "hun",
+          "ron",
+          "bul",
+          "swe",
+          "dan",
+          "nor",
+          "fin",
+          "ukr",
+          "slk",
+          "hrv",
+          "srp",
+          "slv",
+          "lit",
+          "lav",
+          "est",
+          "vie",
+          "tha",
+          "msa",
+          "fil",
+          "heb",
+          "fas",
+          "urd",
+          "ben",
+          "tam",
+          "tel",
+          "mar",
+          "kan",
+          "mal",
+          "sin",
+          "kat",
+          "hye",
+          "aze",
+          "kaz",
+          "uzb"
+        ],
+        "name": "SubtitleCat",
+        "provider_id": "subtitlecat",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/subtitlecat",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.5"
       }
     }
   ],
