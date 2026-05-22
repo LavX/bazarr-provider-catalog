@@ -1,22 +1,24 @@
-# Writing a Real Scraper Provider — Worked Example
+# Writing a Subtitle Scraper Provider for Bazarr+ — Worked Example
 
-> **Audience:** Developers writing their first Provider Hub catalog plugin against a third-party website that has no API.
-> **Worked example:** `providers/subtitlecat/` — the first production catalog plugin. This guide walks the full journey from "I want to add site X" to "the manifest is in `catalog.json`". Every step references real files and commands.
+> **Audience:** Developers writing their first [Bazarr+](https://github.com/LavX/bazarr) Provider Hub catalog plugin against a third-party subtitle website that has no API.
+> **Worked example:** [`providers/subtitlecat/`](../providers/subtitlecat/) — the first production catalog plugin. This guide walks the full journey from "I want to add subtitle site X" to "the manifest is in `catalog.json` and Bazarr+ installs it from the Marketplace". Every step references real files and commands.
 
-The shorter [Provider Author Quickstart](../README.md#provider-author-quickstart) covers the SDK commands; this guide fills in the parts that the quickstart skips: how to reverse-engineer the target site, how to keep the code testable without hitting the network, and the actual decisions you have to make.
+Bazarr+ is an enhanced Bazarr fork that loads subtitle providers from an external catalog (this repo) and runs each in an isolated worker. Shipping a provider through the catalog is the fastest way to add a new subtitle source to Bazarr+ — no Bazarr release cycle, no rebuild, just a Marketplace install.
+
+The shorter [Bazarr+ Provider Author Quickstart](../README.md#writing-your-own-provider) in the README covers the SDK commands; this guide fills in the parts that the quickstart skips: how to reverse-engineer the target site, how to keep the code testable without hitting the network, and the actual decisions you have to make.
 
 ---
 
 ## 0. Decide where the provider lives
 
-There are two ways to ship a Bazarr+ provider:
+There are two ways to ship a Bazarr+ subtitle provider:
 
 | Option | Where it lives | When to pick |
 | --- | --- | --- |
-| **Built-in Subliminal-patch provider** | The main `bazarr` repo, under `custom_libs/subliminal_patch/providers/` | The provider is a core, always-on capability; you control the bazarr release cycle. |
-| **Provider Hub catalog plugin** | This repo (`bazarr-provider-catalog`), under `providers/<id>/` | You want to ship and iterate independently of Bazarr releases, the Marketplace is the install channel, the plugin runs in worker isolation. |
+| **Built-in Subliminal-patch provider** | The [Bazarr+ repo](https://github.com/LavX/bazarr), under `custom_libs/subliminal_patch/providers/` | The provider is a core, always-on capability; you control the Bazarr+ release cycle. |
+| **Provider Hub catalog plugin** | This repo (`bazarr-provider-catalog`), under `providers/<id>/` | You want to ship and iterate independently of Bazarr+ releases; the Bazarr+ Marketplace is the install channel; the plugin runs in worker isolation. |
 
-This guide is for **catalog plugins**. The shape is the same as `providers/smoke/`: one `provider.py`, one `provider.json`. Two files. The worker imports `provider.py` and calls `search()` and `download()`.
+This guide is for **catalog plugins**. The shape is the same as [`providers/smoke/`](../providers/smoke/): one `provider.py`, one `provider.json`. Two files. The Bazarr+ Provider Hub worker imports `provider.py` and calls `search()` and `download()`.
 
 ---
 

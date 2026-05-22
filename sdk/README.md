@@ -1,6 +1,8 @@
-# Provider Hub SDK
+# Bazarr+ Provider Hub SDK
 
-This SDK is authoring tooling only. Installed providers do not import it at runtime.
+Authoring tooling for building subtitle provider plugins distributed through the [Bazarr+](https://github.com/LavX/bazarr) Provider Hub catalog. Installed providers do not import this SDK at runtime — Bazarr+ runs each plugin in an isolated worker with only its declared dependencies.
+
+> New here? Start at the repo [README](../README.md) and the [provider author guide](../docs/writing-a-scraper-provider.md). Looking for the Bazarr+ app itself? It lives at [LavX/bazarr](https://github.com/LavX/bazarr) — docs at [lavx.github.io/bazarr](https://lavx.github.io/bazarr/).
 
 ## Commands
 
