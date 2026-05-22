@@ -167,6 +167,44 @@ class HyphenatedLanguageDownloadTests(unittest.TestCase):
         _, downloads = self.mod.parse_detail_languages(html)
         self.assertIn("he", downloads)
 
+    def test_exact_alpha2_overrides_earlier_regional_variant(self):
+        # If a page lists both ``pt-BR`` and ``pt`` download anchors for the
+        # same base language, the exact base anchor must be the one stored
+        # in the downloads dict regardless of order.
+        html = (
+            b'<html><body>'
+            b'<a id="download_pt-BR" href="/subs/1/foo-pt-BR.srt">PT-BR</a>'
+            b'<a id="download_pt" href="/subs/1/foo-pt.srt">PT</a>'
+            b'</body></html>'
+        )
+        _, downloads = self.mod.parse_detail_languages(html)
+        self.assertIn("pt", downloads)
+        self.assertTrue(downloads["pt"].endswith("foo-pt.srt"))
+
+    def test_exact_alpha2_wins_when_listed_after_regional(self):
+        html = (
+            b'<html><body>'
+            b'<a id="download_pt" href="/subs/1/foo-pt.srt">PT</a>'
+            b'<a id="download_pt-BR" href="/subs/1/foo-pt-BR.srt">PT-BR</a>'
+            b'</body></html>'
+        )
+        _, downloads = self.mod.parse_detail_languages(html)
+        self.assertIn("pt", downloads)
+        self.assertTrue(downloads["pt"].endswith("foo-pt.srt"))
+
+    def test_only_regional_variant_present_first_wins(self):
+        # Pre-existing behaviour: with no exact base anchor on the page, the
+        # first regional variant for that base is the one kept.
+        html = (
+            b'<html><body>'
+            b'<a id="download_pt-BR" href="/subs/1/foo-pt-BR.srt">PT-BR</a>'
+            b'<a id="download_pt-PT" href="/subs/1/foo-pt-PT.srt">PT-PT</a>'
+            b'</body></html>'
+        )
+        _, downloads = self.mod.parse_detail_languages(html)
+        self.assertIn("pt", downloads)
+        self.assertTrue(downloads["pt"].endswith("foo-pt-BR.srt"))
+
     def test_alpha3_fre_canonicalises_to_fr(self):
         html = (
             b'<html><body>'
@@ -644,6 +682,98 @@ class SubtitlecatProviderSearchTests(unittest.TestCase):
         for item in results:
             self.assertEqual(item["language"]["alpha3"], "spa")
         self.assertEqual(results, [])
+
+    def test_search_dedup_runs_before_per_query_cap(self):
+        # Precise page returns one row; the loose page repeats that row plus
+        # MAX_CANDIDATES_PER_QUERY-1 new ones. With dedup applied before the
+        # cap, the loose pass should still surface a new candidate.
+        precise_url = (
+            "https://www.subtitlecat.com/index.php?search=Foo%20Bar%202024"
+        )
+        loose_url = "https://www.subtitlecat.com/index.php?search=Foo%20Bar"
+        precise_html = (
+            b'<html><body>'
+            b'<a href="/subs/1/Foo_Bar_2024_A.html">Foo Bar 2024 A</a>'
+            b'</body></html>'
+        )
+        rows = b'<a href="/subs/1/Foo_Bar_2024_A.html">Foo Bar 2024 A</a>'
+        for n in range(self.mod.MAX_CANDIDATES_PER_QUERY):
+            rows += (
+                f'<a href="/subs/{100 + n}/Foo_Bar_loose_{n}.html">L{n}</a>'
+                .encode()
+            )
+        loose_html = b'<html><body>' + rows + b'</body></html>'
+        empty_detail = b'<html><body></body></html>'
+        # Detail-page response that has a real English download anchor so
+        # at least one candidate produces a usable result on each pass.
+        detail_with_en = (
+            b'<html><body>'
+            b'<a id="download_en" href="/subs/100/Foo-en.srt">EN</a>'
+            b'English-orig.srt'
+            b'</body></html>'
+        )
+        responses = {
+            precise_url: precise_html,
+            loose_url: loose_html,
+            # Precise page's single candidate has no usable language, so we
+            # know the loose-fallback ran for the assertion.
+            "https://www.subtitlecat.com/subs/1/Foo_Bar_2024_A.html": empty_detail,
+            "https://www.subtitlecat.com/subs/100/Foo_Bar_loose_0.html": detail_with_en,
+        }
+        for n in range(1, self.mod.MAX_CANDIDATES_PER_QUERY):
+            responses[
+                f"https://www.subtitlecat.com/subs/{100 + n}/Foo_Bar_loose_{n}.html"
+            ] = empty_detail
+        provider, _ = self._provider_with_stub(responses)
+        results = provider.search(
+            video={"kind": "movie", "title": "Foo Bar", "year": 2024},
+            languages=[{"alpha3": "eng", "alpha2": "en"}],
+            config={"include_machine_translated": True, "request_delay_ms": 0},
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["language"]["alpha2"], "en")
+
+    def test_search_continues_when_a_detail_page_raises(self):
+        search_url = (
+            "https://www.subtitlecat.com/index.php?search=Alpha%202024"
+        )
+        search_html = (
+            b'<html><body>'
+            b'<a href="/subs/700/Alpha_2024_BAD.html">Alpha 2024 BAD</a>'
+            b'<a href="/subs/701/Alpha_2024_OK.html">Alpha 2024 OK</a>'
+            b'</body></html>'
+        )
+        good_detail = (
+            b'<html><body>'
+            b'<a id="download_en" href="/subs/701/alpha-en.srt">EN</a>'
+            b'English-orig.srt'
+            b'</body></html>'
+        )
+        responses = {
+            search_url: search_html,
+            "https://www.subtitlecat.com/subs/701/Alpha_2024_OK.html": good_detail,
+            # /subs/700/... intentionally absent so the stub raises on it.
+        }
+
+        provider = self.mod.SubtitlecatProvider()
+        called = []
+
+        def stub(url, timeout=15):
+            called.append(url)
+            if url in responses:
+                return responses[url]
+            raise OSError("boom")
+
+        provider._http_get = stub  # noqa: SLF001
+        results = provider.search(
+            video={"kind": "movie", "title": "Alpha", "year": 2024},
+            languages=[{"alpha3": "eng", "alpha2": "en"}],
+            config={"include_machine_translated": True, "request_delay_ms": 0},
+        )
+        # The first candidate raised; the search must still surface the
+        # second candidate's results instead of bubbling the exception.
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["language"]["alpha2"], "en")
 
     def test_search_falls_back_when_precise_results_all_filtered(self):
         precise_url = (

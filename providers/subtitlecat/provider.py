@@ -534,6 +534,7 @@ def parse_detail_languages(html_bytes):
     if not html_bytes:
         return (None, {})
     downloads = {}
+    exact_alpha2 = set()
     for match in _DOWNLOAD_RE.finditer(html_bytes):
         code = match.group(1).decode("ascii", errors="replace").lower()
         url_suffix = match.group(2).decode("utf-8", errors="replace")
@@ -543,7 +544,14 @@ def parse_detail_languages(html_bytes):
         # tags (``zh-CN`` -> ``zh``), remaps deprecated codes
         # (``iw`` -> ``he``), and folds alpha3 ids (``fil`` -> ``tl``).
         base = _canonical_alpha2(code)
-        downloads.setdefault(base, f"{BASE_URL}/{_safe_url(path)}")
+        is_exact = "-" not in code
+        if is_exact:
+            # An exact base-language anchor always wins over any regional
+            # variant we may have stored earlier for the same alpha2.
+            downloads[base] = f"{BASE_URL}/{_safe_url(path)}"
+            exact_alpha2.add(base)
+        elif base not in exact_alpha2 and base not in downloads:
+            downloads[base] = f"{BASE_URL}/{_safe_url(path)}"
     return (_detect_source_language(html_bytes), downloads)
 
 
@@ -717,16 +725,27 @@ class SubtitlecatProvider:
             )
             _sleep(config)
             html = self._http_get(url)
-            page_results = parse_search_results(html)[:MAX_CANDIDATES_PER_QUERY]
+            # Apply MAX_CANDIDATES_PER_QUERY after dedup, otherwise the
+            # precise query can fill the first ``N`` slots with IDs that
+            # appear again in the loose page and starve the fallback of
+            # any new candidates to process.
             new_candidates = []
-            for entry in page_results:
+            for entry in parse_search_results(html):
                 if entry["detail_id"] in seen_ids:
                     continue
                 seen_ids.add(entry["detail_id"])
                 new_candidates.append(entry)
+                if len(new_candidates) >= MAX_CANDIDATES_PER_QUERY:
+                    break
             for candidate in new_candidates:
                 _sleep(config)
-                detail_html = self._http_get(candidate["detail_url"])
+                try:
+                    detail_html = self._http_get(candidate["detail_url"])
+                except Exception:
+                    # A transient HTTP/timeout error on one detail page must
+                    # not poison the whole search; skip it and try the next
+                    # candidate so partial results still surface.
+                    continue
                 source_alpha2, downloads = parse_detail_languages(detail_html)
                 for alpha2, srt_url in downloads.items():
                     if alpha2 not in requested_alpha2:
