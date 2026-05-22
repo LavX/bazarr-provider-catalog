@@ -32,7 +32,7 @@ def build_queries(video):
     video = video or {}
     kind = video.get("kind")
     if kind == "movie":
-        title = (video.get("title") or "").strip()
+        title = (_coerce_text(video.get("title")) or "").strip()
         if not title:
             return []
         year = video.get("year")
@@ -40,7 +40,7 @@ def build_queries(video):
             return [f"{title} {year}", title]
         return [title]
     if kind == "episode":
-        series = (video.get("series") or "").strip()
+        series = (_coerce_text(video.get("series")) or "").strip()
         season = video.get("season")
         episode = video.get("episode")
         if not series or season is None or episode is None:
@@ -69,19 +69,67 @@ def _strip_tags(text_bytes):
     )
 
 
-_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
+_NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
 
 
 def _normalize(text):
     if not text:
         return ""
+    # NFKD decomposition strips diacritics on Latin script while leaving CJK
+    # and other non-Latin codepoints intact, so they survive normalization
+    # and contribute to title/series matching.
     decomposed = unicodedata.normalize("NFKD", text)
-    ascii_text = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
-    return _NON_ALNUM_RE.sub(" ", ascii_text.lower()).strip()
+    folded = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    return _NON_ALNUM_RE.sub(" ", folded.lower()).strip()
 
 
 def _normalize_tokens(text):
-    return [token for token in _normalize(text).split(" ") if token]
+    return [token for token in _normalize(_coerce_text(text)).split(" ") if token]
+
+
+def _coerce_text(value):
+    """Collapse a video-metadata value to a single hashable string.
+
+    Subliminal occasionally serialises multi-value fields (notably
+    ``audio_codec`` and ``source``) as a Python ``list`` inside the worker
+    payload. Passing a list straight into ``dict.get`` or ``str.lower``
+    raises ``TypeError: unhashable type: 'list'`` and crashes search.
+    Strings pass through unchanged; lists/tuples are space-joined; anything
+    else falls back to ``str()``.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        joined = " ".join(str(v) for v in value if v not in (None, ""))
+        return joined or None
+    return str(value)
+
+
+def _season_tag_in(candidate_compact, season):
+    """True when ``candidate_compact`` contains ``s<season>`` (padded or not).
+
+    Accepts ``s1``/``s01``/``s001`` and rejects extensions like ``s10`` when
+    looking for season 1. ``candidate_compact`` is the normalized title with
+    spaces stripped.
+    """
+    return (
+        re.search(rf"s0*{int(season)}(?!\d)", candidate_compact) is not None
+    )
+
+
+def _episode_tag_in(candidate_compact, season, episode):
+    """True when ``candidate_compact`` contains ``s<season>e<episode>``.
+
+    Padding is optional on both numbers: ``s1e2``, ``s01e2``, ``s1e02`` and
+    ``s01e02`` all match. No trailing boundary is enforced because the
+    compact form glues ``S01E02`` directly to neighbouring tokens like
+    ``1080p`` once whitespace is removed; the season prefix ``s`` paired
+    with the canonical ``e`` separator is already a strong enough signal.
+    """
+    pattern = rf"s0*{int(season)}e0*{int(episode)}"
+    return re.search(pattern, candidate_compact) is not None
 
 
 def compute_score(video, candidate_title):
@@ -110,10 +158,15 @@ def compute_score(video, candidate_title):
         series_tokens = _normalize_tokens(video.get("series"))
         if series_tokens and all(t in candidate_tokens for t in series_tokens):
             try:
-                tag = f"s{int(video.get('season')):02d}e{int(video.get('episode')):02d}"
+                season = int(video.get("season"))
+                episode = int(video.get("episode"))
             except (TypeError, ValueError):
-                tag = None
-            if tag and tag in candidate_norm_compact:
+                season = episode = None
+            if (
+                season is not None
+                and episode is not None
+                and _episode_tag_in(candidate_norm_compact, season, episode)
+            ):
                 return 95
             return 85
         return 60
@@ -228,12 +281,12 @@ def derive_matches(video, candidate_title):
             episode = int(video.get("episode"))
         except (TypeError, ValueError):
             season = episode = None
-        if season is not None and f"s{season:02d}" in candidate_compact:
+        if season is not None and _season_tag_in(candidate_compact, season):
             matches.append("season")
         if (
             season is not None
             and episode is not None
-            and f"s{season:02d}e{episode:02d}" in candidate_compact
+            and _episode_tag_in(candidate_compact, season, episode)
         ):
             matches.append("episode")
         year = video.get("year")
@@ -247,8 +300,10 @@ def derive_matches(video, candidate_title):
         ):
             matches.append("title")
 
-    # Release-name matches (apply to both movies and episodes)
-    source = video.get("source")
+    # Release-name matches (apply to both movies and episodes). Each field
+    # is coerced to a single string up front because bazarr/subliminal may
+    # hand us list-valued metadata (e.g. multiple audio codecs).
+    source = _coerce_text(video.get("source"))
     if source:
         token_list = _SOURCE_TOKENS.get(source)
         if token_list and _has_token(candidate_release_tokens, token_list):
@@ -258,11 +313,11 @@ def derive_matches(video, candidate_title):
         ):
             matches.append("source")
 
-    resolution = video.get("resolution")
-    if resolution and str(resolution).lower() in candidate_release_tokens:
+    resolution = _coerce_text(video.get("resolution"))
+    if resolution and resolution.lower() in candidate_release_tokens:
         matches.append("resolution")
 
-    video_codec = video.get("video_codec")
+    video_codec = _coerce_text(video.get("video_codec"))
     if video_codec:
         token_list = _VIDEO_CODEC_TOKENS.get(video_codec)
         if token_list and _has_token(candidate_release_tokens, token_list):
@@ -272,7 +327,7 @@ def derive_matches(video, candidate_title):
         ):
             matches.append("video_codec")
 
-    audio_codec = video.get("audio_codec")
+    audio_codec = _coerce_text(video.get("audio_codec"))
     if audio_codec:
         token_list = _AUDIO_CODEC_TOKENS.get(audio_codec)
         if token_list and _has_token(candidate_release_tokens, token_list):
@@ -282,19 +337,19 @@ def derive_matches(video, candidate_title):
         ):
             matches.append("audio_codec")
 
-    release_group = video.get("release_group")
+    release_group = _coerce_text(video.get("release_group"))
     if release_group and _multi_token_present(
         candidate_release_tokens, release_group
     ):
         matches.append("release_group")
 
-    streaming_service = video.get("streaming_service")
+    streaming_service = _coerce_text(video.get("streaming_service"))
     if streaming_service and _multi_token_present(
         candidate_release_tokens, streaming_service
     ):
         matches.append("streaming_service")
 
-    edition = video.get("edition")
+    edition = _coerce_text(video.get("edition"))
     if edition and _multi_token_present(candidate_release_tokens, edition):
         matches.append("edition")
 
@@ -302,7 +357,8 @@ def derive_matches(video, candidate_title):
 
 
 _DOWNLOAD_RE = re.compile(
-    rb'<a[^>]+id="download_([a-z]{2,3})"[^>]+href="(/?subs/\d+/[^"]+-([a-z]{2,3})\.srt)"',
+    rb'<a[^>]+id="download_([a-z]{2,3}(?:-[a-z0-9]{2,4})?)"'
+    rb'[^>]+href="(/?subs/\d+/[^"]+-([a-z]{2,3}(?:-[a-z0-9]{2,4})?)\.srt)"',
     re.IGNORECASE,
 )
 _ORIG_FILENAME_RE = re.compile(
@@ -398,7 +454,11 @@ def parse_detail_languages(html_bytes):
         code = match.group(1).decode("ascii", errors="replace").lower()
         url_suffix = match.group(2).decode("utf-8", errors="replace")
         path = url_suffix.lstrip("/")
-        downloads[code] = f"{BASE_URL}/{_safe_url(path)}"
+        # Regional tags like ``zh-CN`` collapse to their base alpha2 so they
+        # match the request set keyed on alpha2. Existing two/three-letter
+        # entries pass through unchanged.
+        base = code.split("-", 1)[0]
+        downloads.setdefault(base, f"{BASE_URL}/{_safe_url(path)}")
     return (_detect_source_language(html_bytes), downloads)
 
 
@@ -562,7 +622,8 @@ class SubtitlecatProvider:
         if not queries:
             return []
 
-        candidates = []
+        include_mt = config.get("include_machine_translated", True)
+        results = []
         seen_ids = set()
         for query in queries:
             url = (
@@ -572,74 +633,70 @@ class SubtitlecatProvider:
             _sleep(config)
             html = self._http_get(url)
             page_results = parse_search_results(html)[:MAX_CANDIDATES_PER_QUERY]
+            new_candidates = []
             for entry in page_results:
                 if entry["detail_id"] in seen_ids:
                     continue
                 seen_ids.add(entry["detail_id"])
-                candidates.append(entry)
-            if candidates:
-                # Precise query already produced candidates; skip the loose
-                # fallback entirely.
-                break
-
-        if not candidates:
-            return []
-
-        include_mt = config.get("include_machine_translated", True)
-        results = []
-        for candidate in candidates:
-            _sleep(config)
-            detail_html = self._http_get(candidate["detail_url"])
-            source_alpha2, downloads = parse_detail_languages(detail_html)
-            for alpha2, srt_url in downloads.items():
-                if alpha2 not in requested_alpha2:
-                    continue
-                if (
-                    not include_mt
-                    and source_alpha2
-                    and alpha2 != source_alpha2
-                ):
-                    continue
-                alpha3 = _alpha3_for(alpha2)
-                if not alpha3:
-                    continue
-                score = compute_score(video, candidate["title"])
-                results.append(
-                    {
-                        "provider": PROVIDER_ID,
-                        "id": f"subtitlecat-{candidate['detail_id']}-{alpha3}",
-                        "language": {
-                            "alpha3": alpha3,
-                            "alpha2": alpha2,
-                            "hi": False,
-                            "forced": False,
-                        },
-                        "release_info": candidate["title"],
-                        "filename": (
-                            f"subtitlecat.{candidate['detail_id']}.{alpha2}.srt"
-                        ),
-                        "matches": derive_matches(video, candidate["title"]),
-                        "score": score,
-                        "score_without_hash": score,
-                        "score_out_of": 100,
-                        "hash_verifiable": False,
-                        "hearing_impaired_verifiable": False,
-                        "hearing_impaired": False,
-                        "page_link": candidate["detail_url"],
-                        "display": {
-                            "source": "subtitlecat",
-                            "title": candidate["title"],
-                            "detail_url": candidate["detail_url"],
-                        },
-                        "provider_payload": {
+                new_candidates.append(entry)
+            for candidate in new_candidates:
+                _sleep(config)
+                detail_html = self._http_get(candidate["detail_url"])
+                source_alpha2, downloads = parse_detail_languages(detail_html)
+                for alpha2, srt_url in downloads.items():
+                    if alpha2 not in requested_alpha2:
+                        continue
+                    if (
+                        not include_mt
+                        and source_alpha2
+                        and alpha2 != source_alpha2
+                    ):
+                        continue
+                    alpha3 = _alpha3_for(alpha2)
+                    if not alpha3:
+                        continue
+                    score = compute_score(video, candidate["title"])
+                    results.append(
+                        {
                             "provider": PROVIDER_ID,
-                            "schema": 1,
-                            "subtitle_url": srt_url,
-                            "detail_id": candidate["detail_id"],
-                            "language": alpha3,
-                        },
-                    }
-                )
+                            "id": f"subtitlecat-{candidate['detail_id']}-{alpha3}",
+                            "language": {
+                                "alpha3": alpha3,
+                                "alpha2": alpha2,
+                                "hi": False,
+                                "forced": False,
+                            },
+                            "release_info": candidate["title"],
+                            "filename": (
+                                f"subtitlecat.{candidate['detail_id']}.{alpha2}.srt"
+                            ),
+                            "matches": derive_matches(video, candidate["title"]),
+                            "score": score,
+                            "score_without_hash": score,
+                            "score_out_of": 100,
+                            "hash_verifiable": False,
+                            "hearing_impaired_verifiable": False,
+                            "hearing_impaired": False,
+                            "page_link": candidate["detail_url"],
+                            "display": {
+                                "source": "subtitlecat",
+                                "title": candidate["title"],
+                                "detail_url": candidate["detail_url"],
+                            },
+                            "provider_payload": {
+                                "provider": PROVIDER_ID,
+                                "schema": 1,
+                                "subtitle_url": srt_url,
+                                "detail_id": candidate["detail_id"],
+                                "language": alpha3,
+                            },
+                        }
+                    )
+            # Fall back to the loose query only if the precise one produced
+            # no usable results after language and machine-translation
+            # filtering — not just because it returned zero search rows.
+            if results:
+                break
         return results
 
     def download(self, provider_payload, language, config):

@@ -120,6 +120,166 @@ class ParseDetailLanguagesTests(unittest.TestCase):
         self.assertEqual(downloads, {})
 
 
+class HyphenatedLanguageDownloadTests(unittest.TestCase):
+    """Regional tags such as zh-CN must not be silently dropped."""
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_regional_tag_collapses_to_base_alpha2(self):
+        html = (
+            b'<html><body>'
+            b'<a id="download_zh-CN" href="/subs/1/foo-zh-CN.srt">Chinese (Simplified)</a>'
+            b'</body></html>'
+        )
+        _, downloads = self.mod.parse_detail_languages(html)
+        self.assertIn("zh", downloads)
+        self.assertTrue(downloads["zh"].endswith("foo-zh-CN.srt"))
+
+    def test_plain_two_letter_codes_still_parsed(self):
+        html = (
+            b'<html><body>'
+            b'<a id="download_en" href="/subs/2/bar-en.srt">English</a>'
+            b'</body></html>'
+        )
+        _, downloads = self.mod.parse_detail_languages(html)
+        self.assertIn("en", downloads)
+
+    def test_plain_three_letter_codes_still_parsed(self):
+        html = (
+            b'<html><body>'
+            b'<a id="download_fil" href="/subs/3/baz-fil.srt">Filipino</a>'
+            b'</body></html>'
+        )
+        _, downloads = self.mod.parse_detail_languages(html)
+        self.assertIn("fil", downloads)
+
+
+class NormalizationNonLatinTests(unittest.TestCase):
+    """Non-Latin titles must survive normalization so matches still fire."""
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_cjk_title_tokens_preserved(self):
+        tokens = self.mod._normalize_tokens("流浪地球")
+        self.assertEqual(tokens, ["流浪地球"])
+
+    def test_cjk_title_scores_full_match(self):
+        score = self.mod.compute_score(
+            {"kind": "movie", "title": "流浪地球", "year": 2019},
+            "流浪地球 2019 1080p BluRay x264",
+        )
+        self.assertEqual(score, 100)
+
+    def test_cyrillic_series_match(self):
+        matches = self.mod.derive_matches(
+            {"kind": "episode", "series": "Кухня", "season": 1, "episode": 2},
+            "Кухня S01E02 HDTV",
+        )
+        self.assertIn("series", matches)
+        self.assertIn("season", matches)
+        self.assertIn("episode", matches)
+
+    def test_latin_diacritic_still_folded(self):
+        # Existing behaviour: Café == cafe after NFKD + lowercase.
+        tokens = self.mod._normalize_tokens("Café Society")
+        self.assertEqual(tokens, ["cafe", "society"])
+
+
+class ListValuedMetadataTests(unittest.TestCase):
+    """Subliminal sometimes passes list-valued fields; the provider must
+    coerce them to a string rather than crashing with ``TypeError: cannot
+    use 'list' as a dict key``.
+    """
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_audio_codec_as_list_does_not_raise(self):
+        matches = self.mod.derive_matches(
+            {
+                "kind": "movie",
+                "title": "Two Witches",
+                "year": 2021,
+                "audio_codec": ["DTS-HD", "MA"],
+            },
+            "Two.Witches.2021.BluRay.1080p.DTS-HD.MA.5.1.x264-MTeam",
+        )
+        self.assertIn("audio_codec", matches)
+
+    def test_source_as_list_does_not_raise(self):
+        matches = self.mod.derive_matches(
+            {
+                "kind": "movie",
+                "title": "X",
+                "year": 2021,
+                "source": ["Blu-ray"],
+            },
+            "X.2021.BluRay.1080p.x264",
+        )
+        self.assertIn("source", matches)
+
+    def test_video_codec_as_list_does_not_raise(self):
+        matches = self.mod.derive_matches(
+            {
+                "kind": "movie",
+                "title": "X",
+                "year": 2021,
+                "video_codec": ["H.264"],
+            },
+            "X.2021.x264",
+        )
+        self.assertIn("video_codec", matches)
+
+    def test_title_as_list_does_not_raise_in_build_queries(self):
+        # Defensive: even if title arrives wrapped in a list, build_queries
+        # should not raise — it should just return an empty or coerced
+        # result. The first element is what would typically be intended.
+        queries = self.mod.build_queries(
+            {"kind": "movie", "title": ["Interstellar"], "year": 2014}
+        )
+        self.assertEqual(queries, ["Interstellar 2014", "Interstellar"])
+
+
+class UnpaddedEpisodeTagTests(unittest.TestCase):
+    """Releases that emit ``S1E2`` (no zero padding) must still score."""
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_unpadded_episode_scores_95(self):
+        score = self.mod.compute_score(
+            {"kind": "episode", "series": "Breaking Bad", "season": 1, "episode": 2},
+            "Breaking.Bad.S1E2.1080p.BluRay.x265",
+        )
+        self.assertEqual(score, 95)
+
+    def test_mixed_padding_scores_95(self):
+        score = self.mod.compute_score(
+            {"kind": "episode", "series": "Breaking Bad", "season": 1, "episode": 2},
+            "Breaking.Bad.S01E2.1080p.BluRay.x265",
+        )
+        self.assertEqual(score, 95)
+
+    def test_derive_matches_picks_up_unpadded_season_and_episode(self):
+        matches = self.mod.derive_matches(
+            {"kind": "episode", "series": "Breaking Bad", "season": 1, "episode": 2},
+            "Breaking.Bad.S1E2.HDTV",
+        )
+        self.assertIn("season", matches)
+        self.assertIn("episode", matches)
+
+    def test_season_match_does_not_fire_on_higher_season(self):
+        # season=1 must not match when the release is S12E03.
+        matches = self.mod.derive_matches(
+            {"kind": "episode", "series": "Breaking Bad", "season": 1, "episode": 2},
+            "Breaking.Bad.S12E03.HDTV",
+        )
+        self.assertNotIn("season", matches)
+        self.assertNotIn("episode", matches)
+
+
 class ComputeScoreTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
@@ -379,19 +539,29 @@ class SubtitlecatProviderSearchTests(unittest.TestCase):
         search_url = (
             "https://www.subtitlecat.com/index.php?search=Interstellar%202014"
         )
+        loose_url = (
+            "https://www.subtitlecat.com/index.php?search=Interstellar"
+        )
         detail_url = (
             "https://www.subtitlecat.com/subs/1459/"
             "Interstellar_2014_Bluray_720p_AAC_HEVC_x265.English.html"
         )
         empty_detail = b"<html><body></body></html>"
-        responses = {search_url: SEARCH_FIXTURE, detail_url: DETAIL_FIXTURE}
+        empty_search = b"<html><body>No results</body></html>"
+        responses = {
+            search_url: SEARCH_FIXTURE,
+            loose_url: empty_search,
+            detail_url: DETAIL_FIXTURE,
+        }
         for entry in self.mod.parse_search_results(SEARCH_FIXTURE):
             responses.setdefault(entry["detail_url"], empty_detail)
 
         provider, _ = self._provider_with_stub(responses)
         # Requesting Spanish — the fixture's source is English, so Spanish
         # download anchors (if present) would be machine-translated. With the
-        # flag off, they must be filtered out.
+        # flag off, the precise query yields zero usable results, so the
+        # provider falls back to the loose query which here also returns
+        # nothing.
         results = provider.search(
             video={"kind": "movie", "title": "Interstellar", "year": 2014},
             languages=[{"alpha3": "spa", "alpha2": "es"}],
@@ -400,6 +570,57 @@ class SubtitlecatProviderSearchTests(unittest.TestCase):
         for item in results:
             self.assertEqual(item["language"]["alpha3"], "spa")
         self.assertEqual(results, [])
+
+    def test_search_falls_back_when_precise_results_all_filtered(self):
+        precise_url = (
+            "https://www.subtitlecat.com/index.php?search=Movie%20X%202021"
+        )
+        loose_url = (
+            "https://www.subtitlecat.com/index.php?search=Movie%20X"
+        )
+        precise_search = (
+            b'<html><body>'
+            b'<a href="/subs/9001/Movie_X_2021.English.html">Movie X 2021</a>'
+            b"</body></html>"
+        )
+        # Precise candidate's detail page has only an English download anchor,
+        # but the request is for German with MT off and source=en — so this
+        # precise candidate gets filtered. The loose query returns a candidate
+        # that actually has a German download.
+        precise_detail = (
+            b'<html><body>'
+            b'<a id="download_en" href="/subs/9001/movie-x-en.srt">EN</a>'
+            b'English-orig.srt'
+            b"</body></html>"
+        )
+        loose_search = (
+            b'<html><body>'
+            b'<a href="/subs/9002/Movie_X_2021_de.html">Movie X 2021 German</a>'
+            b"</body></html>"
+        )
+        loose_detail = (
+            b'<html><body>'
+            b'<a id="download_de" href="/subs/9002/movie-x-de.srt">DE</a>'
+            b'German-orig.srt'
+            b"</body></html>"
+        )
+        responses = {
+            precise_url: precise_search,
+            loose_url: loose_search,
+            "https://www.subtitlecat.com/subs/9001/Movie_X_2021.English.html": precise_detail,
+            "https://www.subtitlecat.com/subs/9002/Movie_X_2021_de.html": loose_detail,
+        }
+        provider, called = self._provider_with_stub(responses)
+        results = provider.search(
+            video={"kind": "movie", "title": "Movie X", "year": 2021},
+            languages=[{"alpha3": "deu", "alpha2": "de"}],
+            config={"include_machine_translated": False, "request_delay_ms": 0},
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["language"]["alpha2"], "de")
+        # Both precise and loose search URLs must have been called.
+        self.assertIn(precise_url, called)
+        self.assertIn(loose_url, called)
 
 
 class SubtitlecatProviderDownloadTests(unittest.TestCase):
