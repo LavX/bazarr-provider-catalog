@@ -107,29 +107,30 @@ def _coerce_text(value):
     return str(value)
 
 
-def _season_tag_in(candidate_compact, season):
-    """True when ``candidate_compact`` contains ``s<season>`` (padded or not).
+def _season_tag_in(candidate_norm, season):
+    """True when ``candidate_norm`` contains a ``s<season>`` tag.
 
-    Accepts ``s1``/``s01``/``s001`` and rejects extensions like ``s10`` when
-    looking for season 1. ``candidate_compact`` is the normalized title with
-    spaces stripped.
+    Operates on the *spaced* normalized form (e.g. ``"breaking bad s01e02
+    1080p"``). Accepts ``s1``/``s01``/``s001``; rejects ``s12`` when looking
+    for season 1 (next char is a digit). Matching either ``e`` or a word
+    boundary after the season number lets ``s01`` inside ``s01e02`` count
+    while still excluding the ``s12``/``s10`` case.
     """
-    return (
-        re.search(rf"s0*{int(season)}(?!\d)", candidate_compact) is not None
-    )
+    pattern = rf"\bs0*{int(season)}(?=e|\W|$)"
+    return re.search(pattern, candidate_norm) is not None
 
 
-def _episode_tag_in(candidate_compact, season, episode):
-    """True when ``candidate_compact`` contains ``s<season>e<episode>``.
+def _episode_tag_in(candidate_norm, season, episode):
+    """True when ``candidate_norm`` contains ``s<season>e<episode>``.
 
-    Padding is optional on both numbers: ``s1e2``, ``s01e2``, ``s1e02`` and
-    ``s01e02`` all match. No trailing boundary is enforced because the
-    compact form glues ``S01E02`` directly to neighbouring tokens like
-    ``1080p`` once whitespace is removed; the season prefix ``s`` paired
-    with the canonical ``e`` separator is already a strong enough signal.
+    Operates on the spaced normalized form so that a real word boundary
+    follows the episode number. This rejects spurious prefix matches: a
+    request for episode 2 must not match a candidate tagged ``S01E20``.
+    Padding is optional on both numbers (``s1e2`` and ``s01e02`` both
+    match).
     """
-    pattern = rf"s0*{int(season)}e0*{int(episode)}"
-    return re.search(pattern, candidate_compact) is not None
+    pattern = rf"\bs0*{int(season)}e0*{int(episode)}\b"
+    return re.search(pattern, candidate_norm) is not None
 
 
 def compute_score(video, candidate_title):
@@ -141,7 +142,7 @@ def compute_score(video, candidate_title):
     - 85:  episode series present, no SxxExx tag.
     - 60:  candidate looks unrelated.
     """
-    candidate_norm_compact = _normalize(candidate_title).replace(" ", "")
+    candidate_norm = _normalize(candidate_title)
     candidate_tokens = set(_normalize_tokens(candidate_title))
     kind = (video or {}).get("kind")
 
@@ -165,7 +166,7 @@ def compute_score(video, candidate_title):
             if (
                 season is not None
                 and episode is not None
-                and _episode_tag_in(candidate_norm_compact, season, episode)
+                and _episode_tag_in(candidate_norm, season, episode)
             ):
                 return 95
             return 85
@@ -259,7 +260,6 @@ def derive_matches(video, candidate_title):
     if not video:
         return []
     candidate_norm = _normalize(candidate_title)
-    candidate_compact = candidate_norm.replace(" ", "")
     candidate_tokens = set(_normalize_tokens(candidate_title))
     candidate_release_tokens = _release_tokens(candidate_title)
     matches = []
@@ -281,12 +281,12 @@ def derive_matches(video, candidate_title):
             episode = int(video.get("episode"))
         except (TypeError, ValueError):
             season = episode = None
-        if season is not None and _season_tag_in(candidate_compact, season):
+        if season is not None and _season_tag_in(candidate_norm, season):
             matches.append("season")
         if (
             season is not None
             and episode is not None
-            and _episode_tag_in(candidate_compact, season, episode)
+            and _episode_tag_in(candidate_norm, season, episode)
         ):
             matches.append("episode")
         year = video.get("year")
@@ -364,6 +364,50 @@ _DOWNLOAD_RE = re.compile(
 _ORIG_FILENAME_RE = re.compile(
     rb"([A-Za-z0-9_\.\-]+?)\.([A-Za-z]+)-orig\.srt", re.IGNORECASE
 )
+# Loose fallback for ``...-orig.srt`` URLs that do not embed a named-language
+# token. We extract the trailing 2-3 letter language code from the path so
+# the source language can still be detected and the machine-translation
+# filter is not silently bypassed.
+_ORIG_CODE_RE = re.compile(
+    # Case-sensitive on purpose: the base language code is always lowercase
+    # in subtitlecat URLs, while the regional suffix may be upper/lowercase
+    # (``en``, ``zh-CN``). Forcing lowercase on the base keeps the pattern
+    # from greedily swallowing a filename stem like ``Foo-iw`` and treating
+    # it as a single code.
+    rb"(?:^|[/_.\-])([a-z]{2,3}(?:-[A-Za-z0-9]{2,4})?)-orig\.srt"
+)
+
+# Subtitlecat occasionally serves download anchors with deprecated alpha2
+# codes or 3-letter alpha3 ids that do not match the canonical 2-letter set
+# bazarr produces from ``Language.alpha2``. Map them so requested ``he``
+# matches anchors emitted as ``iw``, ``tl`` matches ``fil``, etc.
+_DOWNLOAD_ID_ALIASES = {
+    "iw": "he",   # deprecated Hebrew
+    "in": "id",   # deprecated Indonesian
+    "ji": "yi",   # deprecated Yiddish
+    "fil": "tl",  # bazarr canonical for Filipino is "tl"
+    # ISO 639-2/B bibliographic codes — the rest of the file uses 639-2/T,
+    # but subtitlecat sometimes emits these older 3-letter aliases.
+    "alb": "sq",
+    "arm": "hy",
+    "baq": "eu",
+    "bur": "my",
+    "chi": "zh",
+    "cze": "cs",
+    "dut": "nl",
+    "fre": "fr",
+    "geo": "ka",
+    "ger": "de",
+    "gre": "el",
+    "ice": "is",
+    "mac": "mk",
+    "may": "ms",
+    "per": "fa",
+    "rum": "ro",
+    "slo": "sk",
+    "tib": "bo",
+    "wel": "cy",
+}
 
 _LANGUAGE_NAME_TO_ALPHA2 = {
     "english": "en",
@@ -421,13 +465,53 @@ _LANGUAGE_NAME_TO_ALPHA2 = {
 }
 
 
+def _canonical_alpha2(code):
+    """Map a subtitlecat language id to a canonical bazarr alpha2.
+
+    Handles three forms:
+
+    - Regional tags such as ``zh-CN`` are stripped to their base (``zh``).
+    - Deprecated 2-letter codes (``iw``, ``in``, ``ji``) and Filipino's
+      ``fil`` alpha3 are remapped via :data:`_DOWNLOAD_ID_ALIASES`.
+    - Other alpha3 codes (``fre``, ``ger``, ``dut``...) resolve through
+      :data:`_ALPHA3_TO_ALPHA2`.
+
+    Anything that doesn't match a known mapping is returned lowercased,
+    unchanged — search() will then compare against the requested set as-is.
+    """
+    code = (code or "").lower()
+    base = code.split("-", 1)[0]
+    if base in _DOWNLOAD_ID_ALIASES:
+        return _DOWNLOAD_ID_ALIASES[base]
+    if len(base) == 3 and base in _ALPHA3_TO_ALPHA2:
+        return _ALPHA3_TO_ALPHA2[base]
+    return base
+
+
 def _detect_source_language(html_bytes):
-    """Best-effort detection of the original-language tag from the page."""
+    """Best-effort detection of the original-language tag from the page.
+
+    Two patterns are tried, in order:
+
+    1. ``X.English-orig.srt`` form — extract the named language and map it
+       through :data:`_LANGUAGE_NAME_TO_ALPHA2`.
+    2. ``X-en-orig.srt`` / ``X-zh-CN-orig.srt`` form — the trailing
+       language code is canonicalised via :func:`_canonical_alpha2`.
+
+    When neither pattern hits, returns ``None`` (callers then skip the
+    machine-translation filter for that page).
+    """
     match = _ORIG_FILENAME_RE.search(html_bytes)
-    if not match:
-        return None
-    candidate = match.group(2).decode("ascii", errors="replace").lower()
-    return _LANGUAGE_NAME_TO_ALPHA2.get(candidate)
+    if match:
+        candidate = match.group(2).decode("ascii", errors="replace").lower()
+        named = _LANGUAGE_NAME_TO_ALPHA2.get(candidate)
+        if named:
+            return named
+    match = _ORIG_CODE_RE.search(html_bytes)
+    if match:
+        raw = match.group(1).decode("ascii", errors="replace").lower()
+        return _canonical_alpha2(raw)
+    return None
 
 
 def _safe_url(path):
@@ -454,10 +538,11 @@ def parse_detail_languages(html_bytes):
         code = match.group(1).decode("ascii", errors="replace").lower()
         url_suffix = match.group(2).decode("utf-8", errors="replace")
         path = url_suffix.lstrip("/")
-        # Regional tags like ``zh-CN`` collapse to their base alpha2 so they
-        # match the request set keyed on alpha2. Existing two/three-letter
-        # entries pass through unchanged.
-        base = code.split("-", 1)[0]
+        # Canonicalise the anchor id so it lines up with the alpha2 set
+        # bazarr produces from ``Language.alpha2``. This collapses regional
+        # tags (``zh-CN`` -> ``zh``), remaps deprecated codes
+        # (``iw`` -> ``he``), and folds alpha3 ids (``fil`` -> ``tl``).
+        base = _canonical_alpha2(code)
         downloads.setdefault(base, f"{BASE_URL}/{_safe_url(path)}")
     return (_detect_source_language(html_bytes), downloads)
 

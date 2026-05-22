@@ -100,7 +100,10 @@ class ParseDetailLanguagesTests(unittest.TestCase):
         for code, url in downloads.items():
             self.assertRegex(code, r"^[a-z]{2,3}$")
             self.assertTrue(url.startswith("https://www.subtitlecat.com/subs/"))
-            self.assertTrue(url.endswith(f"-{code}.srt"))
+            # URL may end with the raw anchor id (e.g. ``-fil.srt``) while
+            # the dict key is the canonical alpha2 (``tl``); we only assert
+            # the file is an .srt under /subs/.
+            self.assertTrue(url.endswith(".srt"))
 
     def test_excludes_translate_only_languages(self):
         # Languages with only <button id="xx">Translate</button> must not
@@ -145,14 +148,33 @@ class HyphenatedLanguageDownloadTests(unittest.TestCase):
         _, downloads = self.mod.parse_detail_languages(html)
         self.assertIn("en", downloads)
 
-    def test_plain_three_letter_codes_still_parsed(self):
+    def test_filipino_alpha3_canonicalises_to_tl(self):
         html = (
             b'<html><body>'
             b'<a id="download_fil" href="/subs/3/baz-fil.srt">Filipino</a>'
             b'</body></html>'
         )
         _, downloads = self.mod.parse_detail_languages(html)
-        self.assertIn("fil", downloads)
+        self.assertIn("tl", downloads)
+        self.assertNotIn("fil", downloads)
+
+    def test_deprecated_hebrew_iw_canonicalises_to_he(self):
+        html = (
+            b'<html><body>'
+            b'<a id="download_iw" href="/subs/4/foo-iw.srt">Hebrew</a>'
+            b'</body></html>'
+        )
+        _, downloads = self.mod.parse_detail_languages(html)
+        self.assertIn("he", downloads)
+
+    def test_alpha3_fre_canonicalises_to_fr(self):
+        html = (
+            b'<html><body>'
+            b'<a id="download_fre" href="/subs/5/foo-fre.srt">French</a>'
+            b'</body></html>'
+        )
+        _, downloads = self.mod.parse_detail_languages(html)
+        self.assertIn("fr", downloads)
 
 
 class NormalizationNonLatinTests(unittest.TestCase):
@@ -278,6 +300,58 @@ class UnpaddedEpisodeTagTests(unittest.TestCase):
         )
         self.assertNotIn("season", matches)
         self.assertNotIn("episode", matches)
+
+    def test_episode_match_rejects_prefix_e2_inside_e20(self):
+        # P1 from Codex: episode 2 must not match a release tagged S01E20.
+        matches = self.mod.derive_matches(
+            {"kind": "episode", "series": "Breaking Bad", "season": 1, "episode": 2},
+            "Breaking.Bad.S01E20.1080p.WEB-DL",
+        )
+        self.assertNotIn("episode", matches)
+        score = self.mod.compute_score(
+            {"kind": "episode", "series": "Breaking Bad", "season": 1, "episode": 2},
+            "Breaking.Bad.S01E20.1080p.WEB-DL",
+        )
+        self.assertEqual(score, 85)  # series matched, not the episode tag
+
+    def test_episode_match_rejects_prefix_e2_inside_e21_unpadded(self):
+        # Also covers the unpadded boundary case ``S1E21`` -> not episode 2.
+        matches = self.mod.derive_matches(
+            {"kind": "episode", "series": "Breaking Bad", "season": 1, "episode": 2},
+            "Breaking.Bad.S1E21.HDTV",
+        )
+        self.assertNotIn("episode", matches)
+
+
+class OrigSourceDetectionTests(unittest.TestCase):
+    """Source-language detection used to gate the include_machine_translated
+    filter. Codex P2: also recognise ``-XX-orig.srt`` URLs that lack a named
+    language token, otherwise MT filtering silently no-ops.
+    """
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_named_language_orig_filename_detected(self):
+        html = b'<a href="/subs/1/Foo.English-orig.srt">orig</a>'
+        self.assertEqual(self.mod._detect_source_language(html), "en")
+
+    def test_code_only_orig_filename_detected(self):
+        html = b'<a href="/subs/1/Foo-en-orig.srt">orig</a>'
+        self.assertEqual(self.mod._detect_source_language(html), "en")
+
+    def test_regional_code_orig_filename_canonicalised(self):
+        html = b'<a href="/subs/1/Foo-zh-CN-orig.srt">orig</a>'
+        self.assertEqual(self.mod._detect_source_language(html), "zh")
+
+    def test_deprecated_iw_orig_filename_mapped_to_he(self):
+        html = b'<a href="/subs/1/Foo-iw-orig.srt">orig</a>'
+        self.assertEqual(self.mod._detect_source_language(html), "he")
+
+    def test_no_orig_marker_returns_none(self):
+        self.assertIsNone(
+            self.mod._detect_source_language(b'<a href="/subs/1/Foo.srt">x</a>')
+        )
 
 
 class ComputeScoreTests(unittest.TestCase):
