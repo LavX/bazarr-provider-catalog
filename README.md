@@ -6,6 +6,7 @@ Official catalog for Bazarr Provider Hub providers.
 
 - `catalog.json`: embedded Provider Hub V1 catalog manifests.
 - `providers/smoke/`: deterministic no-network smoke provider for install and worker checks.
+- `providers/subtitlecat/`: first production community provider; scrapes subtitlecat.com using stdlib only. Worked example referenced by [docs/writing-a-scraper-provider.md](docs/writing-a-scraper-provider.md).
 - `sdk/`: standalone authoring tools and templates.
 - `tests/`: catalog validation tests that do not import Bazarr internals.
 

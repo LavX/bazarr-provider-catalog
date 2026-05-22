@@ -159,8 +159,13 @@ For subtitlecat that means:
 | `parse_search_results(html)` | raw HTML bytes | list of `{detail_id, detail_url, title}` |
 | `parse_detail_languages(html)` | raw HTML bytes | tuple `(source_alpha2, {alpha2: download_url})` |
 | `compute_score(video, candidate_title)` | video + a candidate's release title | int in [60, 100] |
+| `derive_matches(video, candidate_title)` | video + candidate release title | subliminal-shaped match-key list (`title`, `year`, `series`, `season`, `episode`, `source`, `resolution`, `video_codec`, `audio_codec`, `release_group`, ...) |
 
 The class wires them together and owns one method nobody mocks: `_http_get(url)`.
+
+> **Why `derive_matches` matters.** Bazarr's downstream scoring (`subliminal_patch/score.py`) weights each returned match key. A provider that only returns `title`/`year` shows up far lower than one that surfaces `source`/`resolution`/`video_codec` when the release name supports it. Treat `derive_matches` as the *ranking signal*, not optional metadata.
+
+A handful of smaller helpers tend to grow alongside these as you handle real-world quirks: a Unicode-aware normaliser so CJK titles match, a `_canonical_alpha2` table that folds deprecated language codes (`iw`→`he`) and ISO 639-2/B alpha3 (`fre`→`fr`) onto bazarr's canonical alpha2 set, a `_coerce_text` that collapses list-valued metadata (subliminal sometimes hands you `audio_codec=['DTS-HD','MA']` — passing a list to `dict.get` raises `TypeError: unhashable type: 'list'`), and boundary-aware tag matchers so episode 2 doesn't false-match `S01E20`. Look at `providers/subtitlecat/provider.py` for concrete shapes; the unit tests next to each helper document the cases they're meant to survive.
 
 ---
 
@@ -308,7 +313,7 @@ git commit -m "Add <provider> provider
 - **Catching exceptions in `_http_get`.** Let urllib raise. The orchestration layer (`search()`) decides whether to surface or swallow.
 - **Hardcoding the User-Agent's version.** A realistic, stable UA is fine; a UA that pretends to be Chrome 117 in 2026 looks bot-y.
 - **Returning Bazarr-internal types from the worker.** The plugin lives in an isolated process and talks to the hub via plain dicts. Never `import subliminal` or `import babelfish` from a plugin.
-- **Catching network errors and converting to empty results.** A network error is not a "no results" — the scheduler must see the difference.
+- **Swallowing a top-level search failure into an empty list.** If the search URL itself fails (DNS, 5xx, timeout), let the exception propagate. A network error is not a "no results"; the scheduler must see the difference. *Per-candidate* detail-page errors are a different case: skipping one failed detail fetch so the other candidates still surface results is fine, and arguably required for resilience — what you must not do is collapse the *entire* search into `[]` because something fetched halfway through went wrong.
 
 ---
 
