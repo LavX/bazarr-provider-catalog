@@ -1,9 +1,9 @@
-# Writing a Subtitle Scraper Provider for Bazarr+ — Worked Example
+# Writing a Subtitle Scraper Provider for Bazarr+: Worked Example
 
 > **Audience:** Developers writing their first [Bazarr+](https://github.com/LavX/bazarr) Provider Hub catalog plugin against a third-party subtitle website that has no API.
-> **Worked example:** [`providers/subtitlecat/`](../providers/subtitlecat/) — the first production catalog plugin. This guide walks the full journey from "I want to add subtitle site X" to "the manifest is in `catalog.json` and Bazarr+ installs it from the Marketplace". Every step references real files and commands.
+> **Worked example:** [`providers/subtitlecat/`](../providers/subtitlecat/), the first production catalog plugin. This guide walks the full journey from "I want to add subtitle site X" to "the manifest is in `catalog.json` and Bazarr+ installs it from the Marketplace". Every step references real files and commands.
 
-Bazarr+ is an enhanced Bazarr fork that loads subtitle providers from an external catalog (this repo) and runs each in an isolated worker. Shipping a provider through the catalog is the fastest way to add a new subtitle source to Bazarr+ — no Bazarr release cycle, no rebuild, just a Marketplace install.
+Bazarr+ is an enhanced Bazarr fork that loads subtitle providers from an external catalog (this repo) and runs each in an isolated worker. Shipping a provider through the catalog is the fastest way to add a new subtitle source to Bazarr+: no Bazarr release cycle, no rebuild, just a Marketplace install.
 
 The shorter [Bazarr+ Provider Author Quickstart](../README.md#writing-your-own-provider) in the README covers the SDK commands; this guide fills in the parts that the quickstart skips: how to reverse-engineer the target site, how to keep the code testable without hitting the network, and the actual decisions you have to make.
 
@@ -26,13 +26,13 @@ This guide is for **catalog plugins**. The shape is the same as [`providers/smok
 
 Before writing a single line of Python, you need to understand:
 
-1. **The search URL pattern** — how do you turn "Interstellar (2014)" into an HTTP request?
-2. **The result list structure** — what HTML markers identify a single search result?
-3. **The detail page structure** — how does each result expose its downloadable subtitle files?
-4. **The download flow** — does the SRT come back as a direct response, behind an auth wall, or behind some kind of redirect / token?
-5. **Anti-bot signals** — CAPTCHAs, login walls, IP rate limits, JS challenges.
+1. **The search URL pattern**: how do you turn "Interstellar (2014)" into an HTTP request?
+2. **The result list structure**: what HTML markers identify a single search result?
+3. **The detail page structure**: how does each result expose its downloadable subtitle files?
+4. **The download flow**: does the SRT come back as a direct response, behind an auth wall, or behind some kind of redirect / token?
+5. **Anti-bot signals**: CAPTCHAs, login walls, IP rate limits, JS challenges.
 
-Do this with `curl` and your eyeballs. Tools like Chrome DevTools' Network tab are useful, but the goal is to find the simplest, most stable HTTP request shape — not to replay a JS-driven UI.
+Do this with `curl` and your eyeballs. Tools like Chrome DevTools' Network tab are useful, but the goal is to find the simplest, most stable HTTP request shape, not to replay a JS-driven UI.
 
 ### Worked example: subtitlecat.com
 
@@ -56,7 +56,7 @@ So:
 - Each result is an anchor with **relative** `href="subs/<id>/<filename>.html"` (no leading slash; URL-encoded path).
 - Result `<id>` is numeric and unique per upload.
 
-> **Lesson learned:** The first regex I wrote used `href="/subs/..."` (with leading slash), which matched nothing in the search-results fixture. Always grep the actual captured HTML before locking in your parser — assumptions about leading slashes, quote types, and casing fail half the time. Capture, then verify.
+> **Lesson learned:** The first regex I wrote used `href="/subs/..."` (with leading slash), which matched nothing in the search-results fixture. Always grep the actual captured HTML before locking in your parser. Assumptions about leading slashes, quote types, and casing fail half the time. Capture, then verify.
 
 ### Look at the detail page
 
@@ -104,9 +104,9 @@ curl -sL -A "..." "https://www.subtitlecat.com/subs/1459/..." \
   -o tests/fixtures/subtitlecat_detail_interstellar.html
 ```
 
-> **Best practice:** Use a realistic browser User-Agent on the capture. Some sites serve a different (e.g. legacy or anti-bot) layout to plain `curl` — your fixture should match what the plugin's runtime UA will receive.
+> **Best practice:** Use a realistic browser User-Agent on the capture. Some sites serve a different (e.g. legacy or anti-bot) layout to plain `curl`. Your fixture should match what the plugin's runtime UA will receive.
 
-Spot-check the fixtures with the same `grep` commands you used to discover the structure. If grep returns empty, the capture is bad (a Cloudflare interstitial, a 503, etc.) — recapture before moving on.
+Spot-check the fixtures with the same `grep` commands you used to discover the structure. If grep returns empty, the capture is bad (a Cloudflare interstitial, a 503, etc.), so recapture before moving on.
 
 ---
 
@@ -149,7 +149,7 @@ The smoke provider (`providers/smoke/provider.py`) is the canonical reference fo
 
 The provider class has exactly one job: hold HTTP plumbing and orchestrate. Everything else (query building, HTML parsing, scoring) should be a **module-level pure function** that takes inputs and returns outputs. Why:
 
-- Pure functions are trivially unit-tested with captured fixtures — no monkeypatching, no mocks.
+- Pure functions are trivially unit-tested with captured fixtures, no monkeypatching, no mocks.
 - The class becomes a thin wrapper, so tests for `search()` only need to stub `_http_get`.
 - Future you (or someone else) can change the HTTP layer without touching parser logic.
 
@@ -167,7 +167,7 @@ The class wires them together and owns one method nobody mocks: `_http_get(url)`
 
 > **Why `derive_matches` matters.** Bazarr's downstream scoring (`subliminal_patch/score.py`) weights each returned match key. A provider that only returns `title`/`year` shows up far lower than one that surfaces `source`/`resolution`/`video_codec` when the release name supports it. Treat `derive_matches` as the *ranking signal*, not optional metadata.
 
-A handful of smaller helpers tend to grow alongside these as you handle real-world quirks: a Unicode-aware normaliser so CJK titles match, a `_canonical_alpha2` table that folds deprecated language codes (`iw`→`he`) and ISO 639-2/B alpha3 (`fre`→`fr`) onto bazarr's canonical alpha2 set, a `_coerce_text` that collapses list-valued metadata (subliminal sometimes hands you `audio_codec=['DTS-HD','MA']` — passing a list to `dict.get` raises `TypeError: unhashable type: 'list'`), and boundary-aware tag matchers so episode 2 doesn't false-match `S01E20`. Look at `providers/subtitlecat/provider.py` for concrete shapes; the unit tests next to each helper document the cases they're meant to survive.
+A handful of smaller helpers tend to grow alongside these as you handle real-world quirks: a Unicode-aware normaliser so CJK titles match, a `_canonical_alpha2` table that folds deprecated language codes (`iw`→`he`) and ISO 639-2/B alpha3 (`fre`→`fr`) onto bazarr's canonical alpha2 set, a `_coerce_text` that collapses list-valued metadata (subliminal sometimes hands you `audio_codec=['DTS-HD','MA']`, and passing a list to `dict.get` raises `TypeError: unhashable type: 'list'`), and boundary-aware tag matchers so episode 2 doesn't false-match `S01E20`. Look at `providers/subtitlecat/provider.py` for concrete shapes; the unit tests next to each helper document the cases they're meant to survive.
 
 ---
 
@@ -205,10 +205,10 @@ def _load_provider_module():
 
 For each pure function, write 4–6 small cases covering:
 
-- **Happy path** — well-formed input produces the expected output.
-- **Edge case** — empty input, malformed input, fields missing from the video dict.
-- **Negative case** — the function should return an empty list / empty dict / `None`, not raise.
-- **Boundary case** — values at the limits (e.g. `S10E11` to ensure zero-padding doesn't break on double-digit seasons).
+- **Happy path**: well-formed input produces the expected output.
+- **Edge case**: empty input, malformed input, fields missing from the video dict.
+- **Negative case**: the function should return an empty list / empty dict / `None`, not raise.
+- **Boundary case**: values at the limits (e.g. `S10E11` to ensure zero-padding doesn't break on double-digit seasons).
 
 For the integration tests (the `SubtitlecatProvider.search()` flow), you do need to stub HTTP. The smallest viable pattern is to monkeypatch `_http_get` on the provider instance:
 
@@ -231,12 +231,12 @@ Pass a `{url: html_bytes}` map. Every URL the production code touches must be in
 
 The class is small. It owns:
 
-- A single HTTP-fetch method (`_http_get`) that uses `urllib.request` from the stdlib. No `requests`, no `httpx` — fewer pinned wheels is better.
+- A single HTTP-fetch method (`_http_get`) that uses `urllib.request` from the stdlib. No `requests`, no `httpx`. Fewer pinned wheels is better.
 - A User-Agent constant and a timeout constant. Hardcode both; don't make them config knobs.
 - `search()` that calls the helpers in order: build queries, hit the search endpoint, parse, visit candidates, filter languages, emit dicts.
 - `download()` that hits one URL and returns the standard download payload.
 
-Politeness lever: a single `request_delay_ms` config knob, plus a `_sleep(config)` helper that the orchestration calls between HTTP requests. No retries — let exceptions surface so the worker reports them cleanly.
+Politeness lever: a single `request_delay_ms` config knob, plus a `_sleep(config)` helper that the orchestration calls between HTTP requests. No retries. Let exceptions surface so the worker reports them cleanly.
 
 ### Why no retries?
 
@@ -303,7 +303,7 @@ git commit -m "Add <provider> provider
 <single sentence about what it does, single sentence about how>"
 ```
 
-> **Don't push to `main`** until you've smoke-tested. The catalog.json on main is what every Bazarr+ install consumes via the Marketplace — a broken provider on main breaks installs in the wild.
+> **Don't push to `main`** until you've smoke-tested. The catalog.json on main is what every Bazarr+ install consumes via the Marketplace, and a broken provider on main breaks installs in the wild.
 
 ---
 
@@ -315,11 +315,11 @@ git commit -m "Add <provider> provider
 - **Catching exceptions in `_http_get`.** Let urllib raise. The orchestration layer (`search()`) decides whether to surface or swallow.
 - **Hardcoding the User-Agent's version.** A realistic, stable UA is fine; a UA that pretends to be Chrome 117 in 2026 looks bot-y.
 - **Returning Bazarr-internal types from the worker.** The plugin lives in an isolated process and talks to the hub via plain dicts. Never `import subliminal` or `import babelfish` from a plugin.
-- **Swallowing a top-level search failure into an empty list.** If the search URL itself fails (DNS, 5xx, timeout), let the exception propagate. A network error is not a "no results"; the scheduler must see the difference. *Per-candidate* detail-page errors are a different case: skipping one failed detail fetch so the other candidates still surface results is fine, and arguably required for resilience — what you must not do is collapse the *entire* search into `[]` because something fetched halfway through went wrong.
+- **Swallowing a top-level search failure into an empty list.** If the search URL itself fails (DNS, 5xx, timeout), let the exception propagate. A network error is not a "no results"; the scheduler must see the difference. *Per-candidate* detail-page errors are a different case: skipping one failed detail fetch so the other candidates still surface results is fine, and arguably required for resilience. What you must not do is collapse the *entire* search into `[]` because something fetched halfway through went wrong.
 
 ---
 
-## Appendix A — Common HTML parsing patterns
+## Appendix A: Common HTML parsing patterns
 
 `html.parser` (stdlib) is more annoying than `BeautifulSoup` for tree walking, but compiled regex on raw bytes is faster and dependency-free. Use regex when the structure is shallow and the markers are unambiguous. Switch to `html.parser` if you need to count nested tags or track state.
 
@@ -341,11 +341,11 @@ def _strip_tags(b):
     return _WS_RE.sub(b" ", _TAG_RE.sub(b"", b)).strip().decode("utf-8", errors="replace")
 ```
 
-Note the `r` for **raw** string + `b` for **bytes** — `urllib.request` returns bytes, and treating HTML as bytes throughout avoids encoding surprises until the very last `.decode(...)` step.
+Note the `r` for **raw** string + `b` for **bytes**: `urllib.request` returns bytes, and treating HTML as bytes throughout avoids encoding surprises until the very last `.decode(...)` step.
 
 ---
 
-## Appendix B — Encoding fallback for SRT downloads
+## Appendix B: Encoding fallback for SRT downloads
 
 SRT files are messy in the wild. Use a small chain:
 
@@ -357,18 +357,18 @@ except UnicodeDecodeError:
     encoding = "latin-1"
 ```
 
-You don't need to actually decode and re-encode — the worker passes the body as base64 and the encoding string. Bazarr's downstream pipeline handles re-encoding to the user's chosen output charset.
+You don't need to actually decode and re-encode. The worker passes the body as base64 and the encoding string, and Bazarr's downstream pipeline handles re-encoding to the user's chosen output charset.
 
-Reject obviously-binary responses (`b"\x00"` in the first 4 bytes is a classic non-text signature) defensively by returning `empty: True` — better than uploading binary garbage as a subtitle.
+Reject obviously-binary responses (`b"\x00"` in the first 4 bytes is a classic non-text signature) defensively by returning `empty: True`. Better than uploading binary garbage as a subtitle.
 
 ---
 
-## Appendix C — Sanity-check checklist before commit
+## Appendix C: Sanity-check checklist before commit
 
 - [ ] `python3 -B -m unittest discover -s tests` passes locally.
 - [ ] `python3 -B -m sdk validate` passes.
 - [ ] `python3 -B -m sdk smoke-test --provider <id> ...` returns `ok` for at least one movie fixture and one episode fixture.
 - [ ] `git status --short` shows no `__pycache__` or fixture caches accidentally staged.
 - [ ] `catalog.json` regenerated and the diff makes sense.
-- [ ] Manifest's `languages` array is the *declared* set (Marketplace card) — the runtime filters down further.
+- [ ] Manifest's `languages` array is the *declared* set (Marketplace card); the runtime filters down further.
 - [ ] No third-party deps unless absolutely necessary, and if any, every wheel hash is pinned in `dependencies.requirements`.

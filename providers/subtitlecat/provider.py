@@ -386,7 +386,7 @@ _DOWNLOAD_ID_ALIASES = {
     "in": "id",   # deprecated Indonesian
     "ji": "yi",   # deprecated Yiddish
     "fil": "tl",  # bazarr canonical for Filipino is "tl"
-    # ISO 639-2/B bibliographic codes — the rest of the file uses 639-2/T,
+    # ISO 639-2/B bibliographic codes. The rest of the file uses 639-2/T,
     # but subtitlecat sometimes emits these older 3-letter aliases.
     "alb": "sq",
     "arm": "hy",
@@ -477,7 +477,7 @@ def _canonical_alpha2(code):
       :data:`_ALPHA3_TO_ALPHA2`.
 
     Anything that doesn't match a known mapping is returned lowercased,
-    unchanged — search() will then compare against the requested set as-is.
+    unchanged, search() will then compare against the requested set as-is.
     """
     code = (code or "").lower()
     base = code.split("-", 1)[0]
@@ -493,9 +493,9 @@ def _detect_source_language(html_bytes):
 
     Two patterns are tried, in order:
 
-    1. ``X.English-orig.srt`` form — extract the named language and map it
+    1. ``X.English-orig.srt`` form: extract the named language and map it
        through :data:`_LANGUAGE_NAME_TO_ALPHA2`.
-    2. ``X-en-orig.srt`` / ``X-zh-CN-orig.srt`` form — the trailing
+    2. ``X-en-orig.srt`` / ``X-zh-CN-orig.srt`` form: the trailing
        language code is canonicalised via :func:`_canonical_alpha2`.
 
     When neither pattern hits, returns ``None`` (callers then skip the
@@ -528,7 +528,7 @@ def parse_detail_languages(html_bytes):
     """Return ``(source_alpha2, {alpha2: absolute_download_url})``.
 
     Only entries with a real Download anchor are returned. Translate-only
-    languages (rendered as ``<button>``) are skipped — subtitlecat translates
+    languages (rendered as ``<button>``) are skipped. Subtitlecat translates
     them via client-side JS, which the worker cannot replicate.
     """
     if not html_bytes:
@@ -798,7 +798,7 @@ class SubtitlecatProvider:
                     )
             # Fall back to the loose query only if the precise one produced
             # no usable results after language and machine-translation
-            # filtering — not just because it returned zero search rows.
+            # filtering, not just because it returned zero search rows.
             if results:
                 break
         return results

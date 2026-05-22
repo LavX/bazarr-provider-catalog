@@ -1,6 +1,6 @@
 # Bazarr+ Provider Catalog
 
-> Official community catalog of subtitle provider plugins for the **[Bazarr+](https://github.com/LavX/bazarr) Provider Hub** — load extra subtitle sources into your Bazarr+ install without waiting on a new release.
+> Official community catalog of subtitle provider plugins for the **[Bazarr+](https://github.com/LavX/bazarr) Provider Hub**. Load extra subtitle sources into your Bazarr+ install without waiting on a new release.
 
 [![Bazarr+](https://img.shields.io/badge/Built%20for-Bazarr%2B-2ea44f?logo=github)](https://github.com/LavX/bazarr)
 [![Bazarr+ Docs](https://img.shields.io/badge/Docs-lavx.github.io%2Fbazarr-blue)](https://lavx.github.io/bazarr/)
@@ -9,9 +9,9 @@
 
 ## What is this?
 
-[Bazarr+](https://github.com/LavX/bazarr) is an enhanced fork of Bazarr that adds a **Provider Hub** — a plugin system that loads subtitle providers from an external catalog and runs each one in an isolated worker. This repo is that catalog.
+[Bazarr+](https://github.com/LavX/bazarr) is an enhanced fork of Bazarr that adds a **Provider Hub**: a plugin system that loads subtitle providers from an external catalog and runs each one in an isolated worker. This repo is that catalog.
 
-If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, install providers from here via the Bazarr+ Marketplace to expand your subtitle sources beyond the built-in providers — no rebuild, no restart of Sonarr/Radarr.
+If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, install providers from here via the Bazarr+ Marketplace to expand your subtitle sources beyond the built-in providers, with no rebuild and no restart of Sonarr/Radarr.
 
 ## Providers in this catalog
 
@@ -20,27 +20,27 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`subtitlecat`](providers/subtitlecat/) | 0.1.5 | Scrapes [subtitlecat.com](https://www.subtitlecat.com) (no login, no API key). Worked example for the [scraper authoring guide](docs/writing-a-scraper-provider.md). |
 | [`smoke`](providers/smoke/) | latest | Deterministic no-network fixture for install / worker sanity checks. Not a real subtitle source. |
 
-More coming. [Contribute](#contributing) your own — every provider here ships independently of Bazarr+ releases.
+More coming. [Contribute](#contributing) your own. Every provider here ships independently of Bazarr+ releases.
 
 ## Install a provider into Bazarr+
 
-1. Open **Bazarr+** → Settings → Providers → Marketplace.
+1. Open **Bazarr+** → Subtitle Hub → Marketplace.
 2. Point the catalog source at this repo's `catalog.json`:
    ```
    https://raw.githubusercontent.com/LavX/bazarr-provider-catalog/main/catalog.json
    ```
 3. Browse the Marketplace, click **Install** on the provider you want, and restart Bazarr+ when prompted.
-4. Configure the provider from the regular Providers settings page — each plugin advertises its own config schema.
+4. Configure the provider from the regular Providers settings page. Each plugin advertises its own config schema.
 
 > See the [Bazarr+ documentation](https://lavx.github.io/bazarr/) for the broader install / config flow.
 
 ## Layout
 
-- `catalog.json` — embedded Provider Hub V1 catalog manifest. This is the file Bazarr+ fetches.
-- `providers/smoke/` — deterministic no-network smoke provider for install and worker checks.
-- `providers/subtitlecat/` — first production community provider; scrapes subtitlecat.com using stdlib only. Worked example referenced by [docs/writing-a-scraper-provider.md](docs/writing-a-scraper-provider.md).
-- `sdk/` — standalone authoring tools and templates ([SDK reference](sdk/README.md)).
-- `tests/` — catalog validation tests that do not import Bazarr internals.
+- `catalog.json`: embedded Provider Hub V1 catalog manifest. This is the file Bazarr+ fetches.
+- `providers/smoke/`: deterministic no-network smoke provider for install and worker checks.
+- `providers/subtitlecat/`: first production community provider, scrapes subtitlecat.com using stdlib only. Worked example referenced by [docs/writing-a-scraper-provider.md](docs/writing-a-scraper-provider.md).
+- `sdk/`: standalone authoring tools and templates, see the [SDK reference](sdk/README.md).
+- `tests/`: catalog validation tests that do not import Bazarr internals.
 
 ## Writing your own provider
 
@@ -70,7 +70,7 @@ python3 -B -m sdk smoke-test      # exercise a provider against the worker contr
 python3 -B -m unittest discover -s tests
 ```
 
-Provider manifests declare pure Python `.py` files only. Dependencies, when needed, must be pinned wheel requirements with SHA256 hashes — see the [SDK reference](sdk/README.md).
+Provider manifests declare pure Python `.py` files only. Dependencies, when needed, must be pinned wheel requirements with SHA256 hashes. See the [SDK reference](sdk/README.md).
 
 ## Contributing
 
@@ -84,7 +84,7 @@ Pull requests welcome. A good provider PR:
 
 ## Related
 
-- **[Bazarr+](https://github.com/LavX/bazarr)** — the enhanced Bazarr fork that consumes this catalog. Adds AI translation via OpenRouter, OpenSubtitles.org scraper, provider priority, API key encryption, batch translation, mass subtitle sync, advanced filters, and security hardening.
+- **[Bazarr+](https://github.com/LavX/bazarr)**: the enhanced Bazarr fork that consumes this catalog. Adds AI translation via OpenRouter, OpenSubtitles.org scraper, provider priority, API key encryption, batch translation, mass subtitle sync, advanced filters, and security hardening.
 - [Bazarr+ Documentation](https://lavx.github.io/bazarr/)
 - [Bazarr (upstream)](https://github.com/morpheus65535/bazarr)
 

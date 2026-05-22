@@ -294,7 +294,7 @@ class ListValuedMetadataTests(unittest.TestCase):
 
     def test_title_as_list_does_not_raise_in_build_queries(self):
         # Defensive: even if title arrives wrapped in a list, build_queries
-        # should not raise — it should just return an empty or coerced
+        # should not raise, it should just return an empty or coerced
         # result. The first element is what would typically be intended.
         queries = self.mod.build_queries(
             {"kind": "movie", "title": ["Interstellar"], "year": 2014}
@@ -669,7 +669,7 @@ class SubtitlecatProviderSearchTests(unittest.TestCase):
             responses.setdefault(entry["detail_url"], empty_detail)
 
         provider, _ = self._provider_with_stub(responses)
-        # Requesting Spanish — the fixture's source is English, so Spanish
+        # Requesting Spanish: the fixture's source is English, so Spanish
         # download anchors (if present) would be machine-translated. With the
         # flag off, the precise query yields zero usable results, so the
         # provider falls back to the loose query which here also returns
@@ -788,7 +788,7 @@ class SubtitlecatProviderSearchTests(unittest.TestCase):
             b"</body></html>"
         )
         # Precise candidate's detail page has only an English download anchor,
-        # but the request is for German with MT off and source=en — so this
+        # but the request is for German with MT off and source=en, so this
         # precise candidate gets filtered. The loose query returns a candidate
         # that actually has a German download.
         precise_detail = (
