@@ -4,6 +4,64 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "31e2d3b5ead0a16a1edee74bfd38c1e2c1f93efc730a46027dec1a04481b3664",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between HTTP calls to fansubs.ru.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:8757e1e3757e32962e229cab2432efc1f15f210823cc96ccba0f6a39d17370c9"
+              ],
+              "name": "rarfile",
+              "version": "4.2"
+            }
+          ]
+        },
+        "description": "Scrapes fansubs.ru for Russian anime and Asian cinema subtitle releases. No login or API key required.",
+        "entry_class": "FansubsProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "fe12830a68ac2e41911d85d9b482550f502b6d2573febbad36260f69569178bb"
+        },
+        "languages": [
+          "rus"
+        ],
+        "name": "Fansubs.ru",
+        "provider_id": "fansubs",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/fansubs",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.0"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "be88b89891125d78f99daebcf884062aabf7ee43c490bcf1f5951ce61dd920f0",
         "config_schema": {
           "additionalProperties": false,
