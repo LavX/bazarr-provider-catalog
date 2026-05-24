@@ -4,7 +4,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "31e2d3b5ead0a16a1edee74bfd38c1e2c1f93efc730a46027dec1a04481b3664",
+        "bundle_sha256": "94786e561312cbc1970b186b4516b01ffef79e0b37294a688fb11217da1bec75",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -34,7 +34,7 @@
         "entry_class": "FansubsProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "fe12830a68ac2e41911d85d9b482550f502b6d2573febbad36260f69569178bb"
+          "provider.py": "8e89bf2fea90e3821e052abd48ffd97dbe5081f599958761b09ee7224b2ee217"
         },
         "languages": [
           "rus"

@@ -275,6 +275,8 @@ def _extract_rar_files(body):
     except Exception:
         if shutil.which("unar"):
             return _extract_rar_files_with_unar(body)
+        if shutil.which("7z") or shutil.which("7zz"):
+            return _extract_rar_files_with_7z(body)
         raise
 
 
@@ -308,6 +310,39 @@ def _extract_rar_files_with_unar(body):
         if result.returncode != 0:
             message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
             raise RuntimeError(f"unar failed to extract Fansubs RAR: {message}")
+        files = []
+        for root, _dirs, filenames in os.walk(output_dir):
+            for filename in filenames:
+                path = os.path.join(root, filename)
+                rel = os.path.relpath(path, output_dir)
+                if not _subtitle_extension(rel):
+                    continue
+                with open(path, "rb") as handle:
+                    files.append((rel, handle.read()))
+        if not files:
+            raise ValueError("fansubs RAR contains no supported subtitle files")
+        return files
+
+
+def _extract_rar_files_with_7z(body):
+    sevenzip = shutil.which("7z") or shutil.which("7zz")
+    if not sevenzip:
+        raise RuntimeError("Fansubs RAR fallback requires 7z")
+    with tempfile.TemporaryDirectory() as temp_dir:
+        archive_path = os.path.join(temp_dir, "fansubs.rar")
+        output_dir = os.path.join(temp_dir, "out")
+        os.mkdir(output_dir)
+        with open(archive_path, "wb") as handle:
+            handle.write(body)
+        result = subprocess.run(
+            [sevenzip, "x", "-y", f"-o{output_dir}", archive_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if result.returncode != 0:
+            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
+            raise RuntimeError(f"7z failed to extract Fansubs RAR: {message}")
         files = []
         for root, _dirs, filenames in os.walk(output_dir):
             for filename in filenames:
