@@ -17,7 +17,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 
 | Provider | Version | Notes |
 | --- | --- | --- |
-| [`fansubs`](providers/fansubs/) | 0.1.2 | Scrapes [fansubs.ru](http://fansubs.ru) for Russian anime and Asian cinema subtitles. No login or API key. |
+| [`fansubs`](providers/fansubs/) | 0.1.3 | Scrapes [fansubs.ru](http://fansubs.ru) for Russian anime and Asian cinema subtitles. No login or API key. |
 | [`subtitlecat`](providers/subtitlecat/) | 0.1.5 | Scrapes [subtitlecat.com](https://www.subtitlecat.com) (no login, no API key). Worked example for the [scraper authoring guide](docs/writing-a-scraper-provider.md). |
 | [`smoke`](providers/smoke/) | latest | Deterministic no-network fixture for install / worker sanity checks. Not a real subtitle source. |
 

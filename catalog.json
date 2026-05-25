@@ -4,7 +4,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "3f99681a3a21deb96ef85c85df4bf939eb7c329736ad249cc0657d7e042b45db",
+        "bundle_sha256": "3b7cda4bb20f475c0224de84e76abd92e451f1e5392d5cb6adbc3730efe2412d",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -132,7 +132,7 @@
         "entry_class": "FansubsProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "165814c089820109e7102cd80b7e0db18808ee468e0e802f866ff915c39961b1"
+          "provider.py": "2837c2af3a3b528da049f0602749abc77c0be429d9621fce9c7e469c35265cb9"
         },
         "languages": [
           "rus"
@@ -154,7 +154,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.2"
+        "version": "0.1.3"
       }
     },
     {

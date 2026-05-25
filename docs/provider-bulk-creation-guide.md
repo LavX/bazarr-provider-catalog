@@ -26,7 +26,7 @@ Do not stop at "the provider appears in native search". The compat path is what 
 
 Prefer a catalog plugin unless the provider must ship as a built-in Bazarr+ capability. Catalog plugins are faster to iterate, version independently, and run in isolated workers.
 
-Prefer an official API connection over scraping when one exists and covers the required search and download behavior. APIs are usually more stable, easier to test, less likely to trigger anti-bot systems, and clearer to operate under rate limits.
+Use the official API first when one exists and covers the required search and download behavior. Treat scraping as the fallback, not the default. APIs are usually more stable, easier to test, less likely to trigger anti-bot systems, and clearer to operate under rate limits.
 
 Use scraping only when:
 

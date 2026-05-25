@@ -302,16 +302,23 @@ class FansubsProviderDownloadTests(unittest.TestCase):
         self.assertEqual(result["format"], "ass")
 
     def test_rar_extraction_falls_back_to_unar_when_rarfile_read_fails(self):
+        def which(command):
+            return "/usr/bin/unar" if command == "unar" else None
+
         with mock.patch.object(self.mod, "py7zz", None):
-            with mock.patch.object(
-                self.mod, "_extract_rar_files_with_rarfile", side_effect=OSError("bad rar")
-            ):
-                with mock.patch.object(
-                    self.mod,
-                    "_extract_rar_files_with_unar",
-                    return_value=[("Devil May Cry - 08.srt", b"episode eight")],
-                ) as fallback:
-                    files = self.mod._extract_rar_files(b"rar bytes")
+            with mock.patch.object(self.mod, "rarfile", object()):
+                with mock.patch.object(self.mod.shutil, "which", side_effect=which):
+                    with mock.patch.object(
+                        self.mod,
+                        "_extract_rar_files_with_rarfile",
+                        side_effect=OSError("bad rar"),
+                    ):
+                        with mock.patch.object(
+                            self.mod,
+                            "_extract_rar_files_with_unar",
+                            return_value=[("Devil May Cry - 08.srt", b"episode eight")],
+                        ) as fallback:
+                            files = self.mod._extract_rar_files(b"rar bytes")
 
         self.assertEqual(files, [("Devil May Cry - 08.srt", b"episode eight")])
         fallback.assert_called_once_with(b"rar bytes")

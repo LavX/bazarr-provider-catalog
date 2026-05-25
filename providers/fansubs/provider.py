@@ -188,24 +188,51 @@ def _parse_author(author_html):
 
 _NUMBER_RE = re.compile(r"(?<!\d)(\d{1,3})(?!\d)")
 _RANGE_RE = re.compile(r"(?<!\d)(\d{1,3})\s*-\s*(\d{1,3})(?!\d)")
+_SEASON_RE = re.compile(
+    r"(?:season|сезон|сез\.?|s)\s*0*(\d{1,2})\b",
+    re.IGNORECASE,
+)
 
 
-def episode_range_matches(title, episode):
+def _episode_match_kind(title, episode):
+    """Return "matched", "missed", or "absent" for a subtitle title vs. episode."""
     try:
         episode = int(episode)
     except (TypeError, ValueError):
-        return True
+        return "absent"
     text = _coerce_text(title) or ""
     saw_marker = False
     for start, end in _RANGE_RE.findall(text):
         saw_marker = True
         if int(start) <= episode <= int(end):
-            return True
+            return "matched"
     for number in _NUMBER_RE.findall(text):
         saw_marker = True
         if int(number) == episode:
+            return "matched"
+    return "missed" if saw_marker else "absent"
+
+
+def episode_range_matches(title, episode):
+    return _episode_match_kind(title, episode) != "missed"
+
+
+def episode_explicitly_matches(title, episode):
+    return _episode_match_kind(title, episode) == "matched"
+
+
+def _season_in_text(text, season):
+    try:
+        season = int(season)
+    except (TypeError, ValueError):
+        return None
+    coerced = _coerce_text(text) or ""
+    found = False
+    for marker in _SEASON_RE.findall(coerced):
+        found = True
+        if int(marker) == season:
             return True
-    return not saw_marker
+    return False if found else None
 
 
 def select_subtitle_file(names, video):
@@ -462,8 +489,8 @@ def _requested_russian_language(languages):
             return {
                 "alpha3": SUPPORTED_ALPHA3,
                 "alpha2": SUPPORTED_ALPHA2,
-                "hi": bool(language.get("hi", False)),
-                "forced": bool(language.get("forced", False)),
+                "hi": False,
+                "forced": False,
             }
     return None
 
@@ -483,9 +510,13 @@ def derive_matches(video, media_title, subtitle_title):
         series = _normalize(video.get("series"))
         if series and series in media_norm:
             matches.append("series")
-        if video.get("season") is not None:
-            matches.append("season")
-        if episode_range_matches(subtitle_title, video.get("episode")):
+        season = video.get("season")
+        if season is not None:
+            for source in (subtitle_title, media_title):
+                if _season_in_text(source, season) is True:
+                    matches.append("season")
+                    break
+        if episode_explicitly_matches(subtitle_title, video.get("episode")):
             matches.append("episode")
         year = video.get("year")
         if year and str(year) in media_norm:
@@ -540,7 +571,9 @@ class FansubsProvider:
             return response.read()
 
     def _http_post(self, url, data, timeout=HTTP_TIMEOUT_SECONDS):
-        encoded = urllib.parse.urlencode(data, encoding="cp1251").encode("ascii")
+        encoded = urllib.parse.urlencode(
+            data, encoding="cp1251", errors="replace"
+        ).encode("ascii")
         request = urllib.request.Request(
             url,
             data=encoded,
@@ -576,10 +609,15 @@ class FansubsProvider:
                     f"{BASE_URL}/search.php",
                     {"query": query},
                 )
-            for media in parse_search_results(body)[:MAX_CANDIDATES_PER_QUERY]:
+            fresh_media = []
+            for media in parse_search_results(body):
                 if media["media_id"] in seen_media:
                     continue
                 seen_media.add(media["media_id"])
+                fresh_media.append(media)
+                if len(fresh_media) >= MAX_CANDIDATES_PER_QUERY:
+                    break
+            for media in fresh_media:
                 _sleep(config)
                 try:
                     detail_body = self._http_get(media["detail_url"])
@@ -631,8 +669,15 @@ class FansubsProvider:
 
     def _subtitle_matches_video(self, subtitle, video):
         video = video or {}
-        if video.get("kind") == "episode":
-            return episode_range_matches(subtitle["title"], video.get("episode"))
+        if video.get("kind") != "episode":
+            return True
+        if not episode_range_matches(subtitle["title"], video.get("episode")):
+            return False
+        season = video.get("season")
+        if season is not None:
+            for source in (subtitle.get("title"), subtitle.get("media_title")):
+                if _season_in_text(source, season) is False:
+                    return False
         return True
 
     def download(self, provider_payload, language, config):
