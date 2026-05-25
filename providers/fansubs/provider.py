@@ -16,8 +16,13 @@ import zipfile
 
 try:
     import rarfile
-except ImportError:  # pragma: no cover, dependency is declared in manifest
+except ImportError:  # pragma: no cover, optional system fallback
     rarfile = None
+
+try:
+    import py7zz
+except ImportError:  # pragma: no cover, dependency is declared in manifest
+    py7zz = None
 
 PROVIDER_ID = "fansubs"
 BASE_URL = "http://fansubs.ru"
@@ -233,13 +238,12 @@ def _subtitle_extension(name):
 
 
 def _is_rar_archive(body):
-    if rarfile is None or not body:
+    if not body:
         return False
-    stream = io.BytesIO(body)
-    try:
-        return rarfile.is_rarfile(stream)
-    except Exception:
-        return False
+    return (
+        body.startswith(b"Rar!\x1a\x07\x00")
+        or body.startswith(b"Rar!\x1a\x07\x01\x00")
+    )
 
 
 def _setup_rar_tools():
@@ -270,14 +274,59 @@ def _setup_rar_tools():
 
 
 def _extract_rar_files(body):
-    try:
-        return _extract_rar_files_with_rarfile(body)
-    except Exception:
-        if shutil.which("unar"):
+    errors = []
+    if py7zz is not None:
+        try:
+            return _extract_rar_files_with_py7zz(body)
+        except Exception as error:
+            errors.append(error)
+    if rarfile is not None:
+        try:
+            return _extract_rar_files_with_rarfile(body)
+        except Exception as error:
+            errors.append(error)
+    if shutil.which("unar"):
+        try:
             return _extract_rar_files_with_unar(body)
-        if shutil.which("7z") or shutil.which("7zz"):
+        except Exception as error:
+            errors.append(error)
+    if shutil.which("7z") or shutil.which("7zz"):
+        try:
             return _extract_rar_files_with_7z(body)
-        raise
+        except Exception as error:
+            errors.append(error)
+    if errors:
+        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
+        raise RuntimeError(f"Fansubs RAR extraction failed: {details}") from errors[-1]
+    raise RuntimeError("Fansubs RAR extraction requires py7zz, unar, unrar, or 7z")
+
+
+def _collect_extracted_subtitle_files(output_dir):
+    files = []
+    for root, _dirs, filenames in os.walk(output_dir):
+        for filename in filenames:
+            path = os.path.join(root, filename)
+            rel = os.path.relpath(path, output_dir)
+            if not _subtitle_extension(rel):
+                continue
+            with open(path, "rb") as handle:
+                files.append((rel, handle.read()))
+    if not files:
+        raise ValueError("fansubs RAR contains no supported subtitle files")
+    return files
+
+
+def _extract_rar_files_with_py7zz(body):
+    if py7zz is None:
+        raise RuntimeError("Fansubs bundled py7zz extractor is unavailable")
+    with tempfile.TemporaryDirectory() as temp_dir:
+        archive_path = os.path.join(temp_dir, "fansubs.rar")
+        output_dir = os.path.join(temp_dir, "out")
+        os.mkdir(output_dir)
+        with open(archive_path, "wb") as handle:
+            handle.write(body)
+        py7zz.extract_archive(archive_path, output_dir)
+        return _collect_extracted_subtitle_files(output_dir)
 
 
 def _extract_rar_files_with_rarfile(body):
@@ -310,18 +359,7 @@ def _extract_rar_files_with_unar(body):
         if result.returncode != 0:
             message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
             raise RuntimeError(f"unar failed to extract Fansubs RAR: {message}")
-        files = []
-        for root, _dirs, filenames in os.walk(output_dir):
-            for filename in filenames:
-                path = os.path.join(root, filename)
-                rel = os.path.relpath(path, output_dir)
-                if not _subtitle_extension(rel):
-                    continue
-                with open(path, "rb") as handle:
-                    files.append((rel, handle.read()))
-        if not files:
-            raise ValueError("fansubs RAR contains no supported subtitle files")
-        return files
+        return _collect_extracted_subtitle_files(output_dir)
 
 
 def _extract_rar_files_with_7z(body):
@@ -343,18 +381,7 @@ def _extract_rar_files_with_7z(body):
         if result.returncode != 0:
             message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
             raise RuntimeError(f"7z failed to extract Fansubs RAR: {message}")
-        files = []
-        for root, _dirs, filenames in os.walk(output_dir):
-            for filename in filenames:
-                path = os.path.join(root, filename)
-                rel = os.path.relpath(path, output_dir)
-                if not _subtitle_extension(rel):
-                    continue
-                with open(path, "rb") as handle:
-                    files.append((rel, handle.read()))
-        if not files:
-            raise ValueError("fansubs RAR contains no supported subtitle files")
-        return files
+        return _collect_extracted_subtitle_files(output_dir)
 
 
 def extract_download(body, filename="", content_type="", video=None):

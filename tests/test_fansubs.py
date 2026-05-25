@@ -2,6 +2,7 @@ import base64
 import hashlib
 import importlib.util
 import io
+import os
 import unittest
 import zipfile
 from pathlib import Path
@@ -301,34 +302,69 @@ class FansubsProviderDownloadTests(unittest.TestCase):
         self.assertEqual(result["format"], "ass")
 
     def test_rar_extraction_falls_back_to_unar_when_rarfile_read_fails(self):
-        with mock.patch.object(
-            self.mod, "_extract_rar_files_with_rarfile", side_effect=OSError("bad rar")
-        ):
+        with mock.patch.object(self.mod, "py7zz", None):
             with mock.patch.object(
-                self.mod,
-                "_extract_rar_files_with_unar",
-                return_value=[("Devil May Cry - 08.srt", b"episode eight")],
-            ) as fallback:
-                files = self.mod._extract_rar_files(b"rar bytes")
+                self.mod, "_extract_rar_files_with_rarfile", side_effect=OSError("bad rar")
+            ):
+                with mock.patch.object(
+                    self.mod,
+                    "_extract_rar_files_with_unar",
+                    return_value=[("Devil May Cry - 08.srt", b"episode eight")],
+                ) as fallback:
+                    files = self.mod._extract_rar_files(b"rar bytes")
 
         self.assertEqual(files, [("Devil May Cry - 08.srt", b"episode eight")])
         fallback.assert_called_once_with(b"rar bytes")
+
+    def test_rar_extraction_prefers_bundled_py7zz_when_available(self):
+        with mock.patch.object(self.mod, "py7zz", object()):
+            with mock.patch.object(
+                self.mod,
+                "_extract_rar_files_with_py7zz",
+                return_value=[("Devil May Cry - 08.ass", b"episode eight")],
+                create=True,
+            ) as bundled:
+                with mock.patch.object(
+                    self.mod,
+                    "_extract_rar_files_with_rarfile",
+                    side_effect=AssertionError("system rarfile should not be used"),
+                ):
+                    files = self.mod._extract_rar_files(b"rar bytes")
+
+        self.assertEqual(files, [("Devil May Cry - 08.ass", b"episode eight")])
+        bundled.assert_called_once_with(b"rar bytes")
+
+    def test_bundled_py7zz_extractor_collects_subtitle_files(self):
+        class FakePy7zz:
+            @staticmethod
+            def extract_archive(_archive_path, output_dir):
+                path = os.path.join(output_dir, "Devil May Cry - 08.ass")
+                with open(path, "wb") as handle:
+                    handle.write(b"episode eight")
+                with open(os.path.join(output_dir, "readme.txt"), "wb") as handle:
+                    handle.write(b"ignore me")
+
+        with mock.patch.object(self.mod, "py7zz", FakePy7zz):
+            files = self.mod._extract_rar_files_with_py7zz(b"rar bytes")
+
+        self.assertEqual(files, [("Devil May Cry - 08.ass", b"episode eight")])
 
     def test_rar_extraction_falls_back_to_7z_when_only_7z_is_available(self):
         def which(command):
             return "/usr/bin/7z" if command == "7z" else None
 
-        with mock.patch.object(
-            self.mod, "_extract_rar_files_with_rarfile", side_effect=OSError("bad rar")
-        ):
-            with mock.patch.object(self.mod.shutil, "which", side_effect=which):
-                with mock.patch.object(
-                    self.mod,
-                    "_extract_rar_files_with_7z",
-                    return_value=[("Devil May Cry - 08.srt", b"episode eight")],
-                    create=True,
-                ) as fallback:
-                    files = self.mod._extract_rar_files(b"rar bytes")
+        with mock.patch.object(self.mod, "py7zz", None):
+            with mock.patch.object(
+                self.mod, "_extract_rar_files_with_rarfile", side_effect=OSError("bad rar")
+            ):
+                with mock.patch.object(self.mod.shutil, "which", side_effect=which):
+                    with mock.patch.object(
+                        self.mod,
+                        "_extract_rar_files_with_7z",
+                        return_value=[("Devil May Cry - 08.srt", b"episode eight")],
+                        create=True,
+                    ) as fallback:
+                        files = self.mod._extract_rar_files(b"rar bytes")
 
         self.assertEqual(files, [("Devil May Cry - 08.srt", b"episode eight")])
         fallback.assert_called_once_with(b"rar bytes")
