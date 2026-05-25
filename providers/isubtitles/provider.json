@@ -1,0 +1,80 @@
+{
+  "api_version": "bazarr.provider-hub.v1",
+  "bundle_sha256": "75900a34c7f4fbdb293400074db36864999f8787fb2c9919009434bf4296f5e1",
+  "config_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "request_delay_ms": {
+        "default": 0,
+        "description": "Optional politeness delay between HTTP calls to isubtitles.org.",
+        "maximum": 5000,
+        "minimum": 0,
+        "title": "Delay between requests (ms)",
+        "type": "integer"
+      }
+    },
+    "type": "object"
+  },
+  "dependencies": {
+    "requirements": []
+  },
+  "description": "Scrapes isubtitles.org title and language pages for downloadable subtitle ZIP files.",
+  "entry_class": "ISubtitlesProvider",
+  "entry_module": "provider",
+  "files": {
+    "provider.py": "a3f009b73c8e416dd106302b81d41242736cd376e16ad453827170c8ab246669"
+  },
+  "languages": [
+    "ara",
+    "ben",
+    "bul",
+    "ces",
+    "dan",
+    "deu",
+    "ell",
+    "eng",
+    "fas",
+    "fin",
+    "fra",
+    "heb",
+    "hrv",
+    "hun",
+    "ind",
+    "ita",
+    "kor",
+    "msa",
+    "nld",
+    "nor",
+    "pol",
+    "por",
+    "ron",
+    "rus",
+    "sin",
+    "spa",
+    "swe",
+    "tam",
+    "tha",
+    "tur",
+    "ukr",
+    "vie",
+    "zho"
+  ],
+  "name": "iSubtitles",
+  "provider_id": "isubtitles",
+  "schema_version": 1,
+  "secret_fields": [],
+  "source": {
+    "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+    "commit": "0000000000000000000000000000000000000000",
+    "path": "providers/isubtitles",
+    "ref": "main",
+    "repo": "LavX/bazarr-provider-catalog",
+    "trusted": true,
+    "type": "github"
+  },
+  "supported_media": [
+    "movie",
+    "episode"
+  ],
+  "version": "0.1.0"
+}

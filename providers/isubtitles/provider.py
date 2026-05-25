@@ -1,0 +1,507 @@
+"""iSubtitles.org provider for the Bazarr+ Provider Hub catalog."""
+
+import base64 as _base64
+import hashlib as _hashlib
+import html
+import io
+import os
+import re
+import time
+import unicodedata
+import urllib.parse
+import urllib.request
+import zipfile
+
+PROVIDER_ID = "isubtitles"
+BASE_URL = "https://isubtitles.org"
+HTTP_TIMEOUT_SECONDS = 15
+MAX_TITLE_PAGES = 3
+MAX_RESULTS = 25
+SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt")
+USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
+)
+
+LANGUAGES = {
+    "ara": {"alpha2": "ar", "slug": "arabic", "name": "Arabic"},
+    "ben": {"alpha2": "bn", "slug": "bengali", "name": "Bengali"},
+    "bul": {"alpha2": "bg", "slug": "bulgarian", "name": "Bulgarian"},
+    "ces": {"alpha2": "cs", "slug": "czech", "name": "Czech"},
+    "dan": {"alpha2": "da", "slug": "danish", "name": "Danish"},
+    "deu": {"alpha2": "de", "slug": "german", "name": "German"},
+    "ell": {"alpha2": "el", "slug": "greek", "name": "Greek"},
+    "eng": {"alpha2": "en", "slug": "english", "name": "English"},
+    "fas": {"alpha2": "fa", "slug": "farsi-persian", "name": "Farsi/Persian"},
+    "fin": {"alpha2": "fi", "slug": "finnish", "name": "Finnish"},
+    "fra": {"alpha2": "fr", "slug": "french", "name": "French"},
+    "heb": {"alpha2": "he", "slug": "hebrew", "name": "Hebrew"},
+    "hrv": {"alpha2": "hr", "slug": "croatian", "name": "Croatian"},
+    "hun": {"alpha2": "hu", "slug": "hungarian", "name": "Hungarian"},
+    "ind": {"alpha2": "id", "slug": "indonesian", "name": "Indonesian"},
+    "ita": {"alpha2": "it", "slug": "italian", "name": "Italian"},
+    "kor": {"alpha2": "ko", "slug": "korean", "name": "Korean"},
+    "msa": {"alpha2": "ms", "slug": "malay", "name": "Malay"},
+    "nld": {"alpha2": "nl", "slug": "dutch", "name": "Dutch"},
+    "nor": {"alpha2": "no", "slug": "norwegian", "name": "Norwegian"},
+    "pol": {"alpha2": "pl", "slug": "polish", "name": "Polish"},
+    "por": {"alpha2": "pt", "slug": "portuguese", "name": "Portuguese"},
+    "ron": {"alpha2": "ro", "slug": "romanian", "name": "Romanian"},
+    "rus": {"alpha2": "ru", "slug": "russian", "name": "Russian"},
+    "sin": {"alpha2": "si", "slug": "sinhala", "name": "Sinhala"},
+    "spa": {"alpha2": "es", "slug": "spanish", "name": "Spanish"},
+    "swe": {"alpha2": "sv", "slug": "swedish", "name": "Swedish"},
+    "tam": {"alpha2": "ta", "slug": "tamil", "name": "Tamil"},
+    "tha": {"alpha2": "th", "slug": "thai", "name": "Thai"},
+    "tur": {"alpha2": "tr", "slug": "turkish", "name": "Turkish"},
+    "ukr": {"alpha2": "uk", "slug": "ukrainian", "name": "Ukrainian"},
+    "vie": {"alpha2": "vi", "slug": "vietnamese", "name": "Vietnamese"},
+    "zho": {"alpha2": "zh", "slug": "chinese-bg-code", "name": "Chinese"},
+}
+_SLUG_TO_ALPHA3 = {value["slug"]: key for key, value in LANGUAGES.items()}
+_ALPHA2_TO_ALPHA3 = {value["alpha2"]: key for key, value in LANGUAGES.items()}
+
+_MOVIE_LINK_RE = re.compile(
+    rb"<h3>\s*<a\b[^>]*href=['\"](?P<href>/[^'\"]+-subtitles)['\"][^>]*>(?P<title>.*?)</a>\s*</h3>",
+    re.I | re.S,
+)
+_DOWNLOAD_ROW_RE = re.compile(
+    rb"<tr\b[^>]*>(?P<body>(?:(?!</tr>).)*?/download/(?:(?!</tr>).)*)</tr>",
+    re.I | re.S,
+)
+_DOWNLOAD_RE = re.compile(
+    rb"href=['\"](?P<href>/download/(?P<slug>[^/]+)/(?P<language>[^/]+)/(?P<id>\d+))['\"]",
+    re.I,
+)
+_LINK_TEXT_RE = re.compile(rb"<a\b[^>]*>(?P<text>.*?)</a>", re.I | re.S)
+_TAG_RE = re.compile(rb"<[^>]+>")
+_WS_BYTES_RE = re.compile(rb"\s+")
+_WS_RE = re.compile(r"\s+")
+_NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
+_YEAR_RE = re.compile(r"\((\d{4})\)")
+
+
+def build_queries(video):
+    video = video or {}
+    if video.get("kind") == "movie":
+        title = _coerce_text(video.get("title"))
+        if not title:
+            return []
+        year = video.get("year")
+        return [f"{title} {year}", title] if year else [title]
+    if video.get("kind") == "episode":
+        series = _coerce_text(video.get("series"))
+        if not series:
+            return []
+        try:
+            tag = f"S{int(video.get('season')):02d}E{int(video.get('episode')):02d}"
+        except (TypeError, ValueError):
+            return []
+        return [f"{series} {tag}", series]
+    return []
+
+
+def parse_search_results(body):
+    results = []
+    seen = set()
+    for match in _MOVIE_LINK_RE.finditer(body or b""):
+        href = _decode(match.group("href"))
+        slug = href.rsplit("/", 1)[-1].removesuffix("-subtitles")
+        if slug in seen:
+            continue
+        title = _strip_tags(match.group("title"))
+        seen.add(slug)
+        results.append(
+            {
+                "slug": slug,
+                "title": title,
+                "year": _year_from_title(title),
+                "url": _absolute_url(href),
+            }
+        )
+    return results
+
+
+def parse_subtitle_rows(body):
+    rows = []
+    for row_match in _DOWNLOAD_ROW_RE.finditer(body or b""):
+        row = row_match.group("body")
+        download_match = _DOWNLOAD_RE.search(row)
+        if not download_match:
+            continue
+        language_slug = _decode(download_match.group("language")).lower()
+        alpha3 = _SLUG_TO_ALPHA3.get(language_slug)
+        if not alpha3:
+            continue
+        release_cell = _cell_by_title(row, "Release / Movie")
+        release_names = [_strip_tags(match.group("text")) for match in _LINK_TEXT_RE.finditer(release_cell)]
+        release_names = [name for name in release_names if name]
+        if not release_names:
+            continue
+        subtitle_id = _decode(download_match.group("id"))
+        slug = _decode(download_match.group("slug"))
+        rows.append(
+            {
+                "subtitle_id": subtitle_id,
+                "slug": slug,
+                "language": alpha3,
+                "language_slug": language_slug,
+                "release_info": " | ".join(release_names),
+                "download_url": _absolute_url(_decode(download_match.group("href"))),
+                "page_url": _absolute_url(f"/{slug}/{language_slug}/{subtitle_id}"),
+                "file_count": _int_from_text(_strip_tags(_cell_by_title(row, "File"))),
+                "size": _strip_tags(_cell_by_title(row, "Size")),
+                "updated": _strip_tags(_cell_by_title(row, "Created")),
+                "comment": _strip_tags(_cell_by_title(row, "Comment")),
+            }
+        )
+    return rows
+
+
+def derive_matches(video, candidate_title):
+    if not video:
+        return []
+    candidate_norm = _normalize(candidate_title)
+    candidate_tokens = set(_tokens(candidate_title))
+    matches = []
+    if video.get("kind") == "movie":
+        title_tokens = _tokens(video.get("title"))
+        if title_tokens and all(token in candidate_tokens for token in title_tokens):
+            matches.append("title")
+        if video.get("year") and str(video.get("year")) in candidate_tokens:
+            matches.append("year")
+        return matches
+
+    if video.get("kind") == "episode":
+        series_tokens = _tokens(video.get("series"))
+        if series_tokens and all(token in candidate_tokens for token in series_tokens):
+            matches.append("series")
+        try:
+            season = int(video.get("season"))
+            episode = int(video.get("episode"))
+        except (TypeError, ValueError):
+            season = episode = None
+        if season is not None and _season_tag_in(candidate_norm, season):
+            matches.append("season")
+        if season is not None and episode is not None and _episode_tag_in(candidate_norm, season, episode):
+            matches.append("episode")
+        title_tokens = _tokens(video.get("title"))
+        if title_tokens and len(title_tokens) > 1 and all(token in candidate_tokens for token in title_tokens):
+            matches.append("title")
+    return matches
+
+
+class ISubtitlesProvider:
+    def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        if referer:
+            headers["Referer"] = referer
+        request = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.read()
+
+    def search(self, video, languages, config):
+        requested = [_alpha3_for_language(language) for language in languages or []]
+        requested = [language for language in requested if language in LANGUAGES]
+        if not requested:
+            return []
+        results = []
+        seen = set()
+        for query in build_queries(video):
+            _sleep(config)
+            search_url = f"{BASE_URL}/search?{urllib.parse.urlencode({'kwd': query})}"
+            title_pages = _rank_title_pages(video, parse_search_results(self._http_get(search_url)))
+            for title_page in title_pages[:MAX_TITLE_PAGES]:
+                for alpha3 in requested:
+                    language_slug = LANGUAGES[alpha3]["slug"]
+                    list_url = f"{BASE_URL}/{title_page['slug']}/{language_slug}"
+                    _sleep(config)
+                    rows = parse_subtitle_rows(self._http_get(list_url, referer=search_url))
+                    for row in rows:
+                        if row["language"] != alpha3 or not _row_matches_video(video, row, title_page):
+                            continue
+                        key = (row["subtitle_id"], row["language"])
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        results.append(self._result(video, title_page, row))
+                        if len(results) >= MAX_RESULTS:
+                            return _sort_results(results)
+                if results:
+                    return _sort_results(results)
+            if results:
+                return _sort_results(results)
+        return _sort_results(results)
+
+    def _result(self, video, title_page, row):
+        language = LANGUAGES[row["language"]]
+        candidate_title = f"{title_page['title']} {row['release_info']} {row.get('comment', '')}"
+        matches = derive_matches(video, candidate_title)
+        score = _score_from_matches(video, matches, row)
+        filename = f"isubtitles.{_slug(row['release_info'])}.{language['alpha2']}.zip"
+        return {
+            "provider": PROVIDER_ID,
+            "id": f"isubtitles-{row['subtitle_id']}-{row['language']}",
+            "language": {
+                "alpha3": row["language"],
+                "alpha2": language["alpha2"],
+                "hi": _looks_hearing_impaired(row),
+                "forced": False,
+            },
+            "release_info": row["release_info"],
+            "filename": filename,
+            "matches": matches,
+            "score": score,
+            "score_without_hash": score,
+            "score_out_of": 100,
+            "hash_verifiable": False,
+            "hearing_impaired_verifiable": False,
+            "hearing_impaired": _looks_hearing_impaired(row),
+            "page_link": row["page_url"],
+            "display": {
+                "source": "isubtitles",
+                "title": title_page["title"],
+                "release": row["release_info"],
+                "size": row["size"],
+                "updated": row["updated"],
+            },
+            "provider_payload": {
+                "provider": PROVIDER_ID,
+                "schema": 1,
+                "subtitle_id": row["subtitle_id"],
+                "url": row["download_url"],
+                "page_url": row["page_url"],
+                "filename": filename,
+                "season": (video or {}).get("season"),
+                "episode": (video or {}).get("episode"),
+                "language": row["language"],
+            },
+        }
+
+    def download(self, provider_payload, language, config):
+        del language, config
+        payload = provider_payload or {}
+        url = payload.get("url")
+        if not url:
+            raise ValueError("isubtitles download requires url")
+        body = self._http_get(url, referer=payload.get("page_url"))
+        return extract_download(body, payload)
+
+
+def extract_download(body, payload=None):
+    payload = payload or {}
+    if not body:
+        return _content_payload(b"", "srt", empty=True)
+    stream = io.BytesIO(body)
+    if zipfile.is_zipfile(stream):
+        with zipfile.ZipFile(stream) as archive:
+            selected = select_subtitle_file(archive.namelist(), payload)
+            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
+    return _content_payload(body, _subtitle_extension(payload.get("filename", "")) or "srt")
+
+
+def select_subtitle_file(names, payload):
+    candidates = [name for name in names if _subtitle_extension(name)]
+    if not candidates:
+        raise ValueError("isubtitles archive contains no supported subtitle files")
+    try:
+        season = int((payload or {}).get("season"))
+        episode = int((payload or {}).get("episode"))
+    except (TypeError, ValueError):
+        season = episode = None
+    if season is None or episode is None:
+        return candidates[0]
+
+    def score(name):
+        normalized = _normalize(os.path.basename(name))
+        if _episode_tag_in(normalized, season, episode):
+            return 100
+        if re.search(rf"\be0*{episode}\b", normalized):
+            return 80
+        return 0
+
+    return max(candidates, key=score)
+
+
+def _rank_title_pages(video, pages):
+    ranked = []
+    wanted_tokens = _tokens((video or {}).get("series") or (video or {}).get("title"))
+    wanted_norm = _normalize((video or {}).get("series") or (video or {}).get("title"))
+    for index, page in enumerate(pages):
+        title_without_year = _YEAR_RE.sub("", page["title"]).strip()
+        page_tokens = set(_tokens(title_without_year))
+        score = 0
+        if wanted_tokens and all(token in page_tokens for token in wanted_tokens):
+            score = 80
+        if wanted_norm and _normalize(title_without_year) == wanted_norm:
+            score = 110
+        if (video or {}).get("year") and page.get("year") == int(video.get("year")):
+            score += 10
+        if score:
+            ranked.append((page, score, index))
+    ranked.sort(key=lambda item: (-item[1], item[2]))
+    return [page for page, _score, _index in ranked]
+
+
+def _row_matches_video(video, row, title_page):
+    video = video or {}
+    candidate_title = f"{title_page['title']} {row['release_info']} {row.get('comment', '')}"
+    matches = derive_matches(video, candidate_title)
+    if video.get("kind") == "movie":
+        return "title" in matches
+    if video.get("kind") != "episode" or "series" not in matches:
+        return False
+    if "episode" in matches:
+        return True
+    return "season" in matches and row.get("file_count", 0) > 1
+
+
+def _score_from_matches(video, matches, row):
+    if (video or {}).get("kind") == "movie":
+        return 95 if "year" in matches else 85
+    if "episode" in matches:
+        return 95
+    if "season" in matches and row.get("file_count", 0) > 1:
+        return 85
+    return 70
+
+
+def _sort_results(results):
+    return sorted(results, key=lambda item: item["score"], reverse=True)
+
+
+def _cell_by_title(row, title):
+    pattern = re.compile(
+        rb"<td\b[^>]*data-title=['\"]" + re.escape(title.encode("utf-8")) + rb"['\"][^>]*>(?P<body>.*?)</td>",
+        re.I | re.S,
+    )
+    match = pattern.search(row or b"")
+    return match.group("body") if match else b""
+
+
+def _season_tag_in(candidate_norm, season):
+    return re.search(rf"\bs0*{int(season)}(?=e|\W|$)", candidate_norm) is not None
+
+
+def _episode_tag_in(candidate_norm, season, episode):
+    return re.search(rf"\bs0*{int(season)}e0*{int(episode)}\b", candidate_norm) is not None
+
+
+def _subtitle_extension(name):
+    lowered = (name or "").lower()
+    for extension in SUBTITLE_EXTENSIONS:
+        if lowered.endswith(extension):
+            return extension[1:]
+    return None
+
+
+def _content_payload(content, subtitle_format, empty=False):
+    if empty:
+        return {
+            "content_b64": "",
+            "content_sha256": "",
+            "content_type": _content_type(subtitle_format),
+            "format": subtitle_format,
+            "encoding": "utf-8",
+            "empty": True,
+        }
+    encoding = "utf-8"
+    try:
+        content.decode("utf-8")
+    except UnicodeDecodeError:
+        encoding = "latin-1"
+    return {
+        "content_b64": _base64.b64encode(content).decode("ascii"),
+        "content_sha256": _hashlib.sha256(content).hexdigest(),
+        "content_type": _content_type(subtitle_format),
+        "format": subtitle_format,
+        "encoding": encoding,
+        "empty": False,
+    }
+
+
+def _content_type(subtitle_format):
+    if subtitle_format in {"ass", "ssa"}:
+        return "text/x-ssa"
+    if subtitle_format == "vtt":
+        return "text/vtt"
+    return "application/x-subrip"
+
+
+def _alpha3_for_language(language):
+    if not isinstance(language, dict):
+        return None
+    alpha3 = (language.get("alpha3") or "").lower()
+    if alpha3:
+        return alpha3
+    return _ALPHA2_TO_ALPHA3.get((language.get("alpha2") or "").lower())
+
+
+def _sleep(config):
+    delay_ms = (config or {}).get("request_delay_ms", 0) or 0
+    if delay_ms > 0:
+        time.sleep(min(delay_ms, 5000) / 1000.0)
+
+
+def _looks_hearing_impaired(row):
+    text = f"{row.get('release_info', '')} {row.get('comment', '')}".lower()
+    return " sdh" in f" {text} " or " hi" in f" {text} " or "hearing impaired" in text
+
+
+def _year_from_title(title):
+    match = _YEAR_RE.search(title or "")
+    return int(match.group(1)) if match else None
+
+
+def _int_from_text(text):
+    match = re.search(r"\d+", text or "")
+    return int(match.group(0)) if match else 0
+
+
+def _absolute_url(path):
+    return urllib.parse.urljoin(BASE_URL + "/", path)
+
+
+def _strip_tags(value):
+    stripped = _TAG_RE.sub(b"", value or b"")
+    stripped = _WS_BYTES_RE.sub(b" ", stripped).strip()
+    return _WS_RE.sub(" ", html.unescape(_decode(stripped)).replace("\xa0", " ")).strip()
+
+
+def _tokens(value):
+    return [token for token in _normalize(_coerce_text(value)).split(" ") if token]
+
+
+def _normalize(value):
+    if value is None:
+        return ""
+    decomposed = unicodedata.normalize("NFKD", str(value))
+    folded = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    return _NON_ALNUM_RE.sub(" ", folded.lower()).strip()
+
+
+def _coerce_text(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        joined = " ".join(str(item) for item in value if item not in (None, ""))
+        return joined or None
+    return str(value)
+
+
+def _slug(value):
+    return "-".join(_tokens(value)) or "release"
+
+
+def _decode(value):
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return value.decode("utf-8", errors="replace")
