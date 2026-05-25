@@ -17,7 +17,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 
 | Provider | Version | Notes |
 | --- | --- | --- |
-| [`fansubs`](providers/fansubs/) | 0.1.0 | Scrapes [fansubs.ru](http://fansubs.ru) for Russian anime and Asian cinema subtitles. No login or API key. |
+| [`fansubs`](providers/fansubs/) | 0.1.2 | Scrapes [fansubs.ru](http://fansubs.ru) for Russian anime and Asian cinema subtitles. No login or API key. |
 | [`subtitlecat`](providers/subtitlecat/) | 0.1.5 | Scrapes [subtitlecat.com](https://www.subtitlecat.com) (no login, no API key). Worked example for the [scraper authoring guide](docs/writing-a-scraper-provider.md). |
 | [`smoke`](providers/smoke/) | latest | Deterministic no-network fixture for install / worker sanity checks. Not a real subtitle source. |
 
@@ -49,6 +49,10 @@ More coming. [Contribute](#contributing) your own. Every provider here ships ind
 Want to add another subtitle source? Start with the full walkthrough:
 
 **→ [docs/writing-a-scraper-provider.md](docs/writing-a-scraper-provider.md)**
+
+Adding providers in batches? Use the practical checklist:
+
+**→ [docs/provider-bulk-creation-guide.md](docs/provider-bulk-creation-guide.md)**
 
 The 5-minute version:
 
@@ -82,7 +86,7 @@ Pull requests welcome. A good provider PR:
 - Adds `tests/test_<id>.py` exercising query building, parsing, scoring, and the search/download flow against captured HTML fixtures in `tests/fixtures/`.
 - Bumps and regenerates `catalog.json` (`python3 -B -m sdk build-catalog`).
 - Passes `python3 -B -m sdk validate` and `python3 -B -m unittest discover -s tests`.
-- Follows the patterns in [docs/writing-a-scraper-provider.md](docs/writing-a-scraper-provider.md).
+- Follows the patterns in [docs/writing-a-scraper-provider.md](docs/writing-a-scraper-provider.md) and the bulk checklist in [docs/provider-bulk-creation-guide.md](docs/provider-bulk-creation-guide.md).
 
 ## Related
 
