@@ -160,6 +160,57 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "07f42d7d63a4abe071b7189a55bb58db825bdaa7dea352dd1a9adc02b3902f26",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between HTTP calls to kitsunekko.net.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Scrapes kitsunekko.net static subtitle directories for anime subtitle files. Zip archives are supported.",
+        "entry_class": "KitsunekkoProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "2abf3f90fb431559c7db7591a35de33707c938245e25f0abc11a1965cf1feaa4"
+        },
+        "languages": [
+          "eng",
+          "jpn"
+        ],
+        "name": "Kitsunekko",
+        "provider_id": "kitsunekko",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/kitsunekko",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.0"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "be88b89891125d78f99daebcf884062aabf7ee43c490bcf1f5951ce61dd920f0",
         "config_schema": {
           "additionalProperties": false,
