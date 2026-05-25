@@ -230,6 +230,69 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "6c6eb0e8355dd693256b4adb4ff80553bda1bdbb30c254f4ebefe640f2f2e69f",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between HTTP calls to subhd.tv.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Scrapes subhd.tv for community subtitle files. No login or API key required.",
+        "entry_class": "SubHDProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "bcdcb4aa0c93602d004afacb031bc6e60293a12e8ac0c24c57514c54f1fe8514"
+        },
+        "languages": [
+          "zho",
+          "eng",
+          "fra",
+          "spa",
+          "jpn",
+          "kor",
+          "deu",
+          "ara",
+          "por",
+          "ita",
+          "nld",
+          "tur",
+          "pol",
+          "swe"
+        ],
+        "name": "SubHD",
+        "provider_id": "subhd",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/subhd",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.0"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "94e3744f5daac8effa567393bb19d7c7b97eb3a094e1ac85bac0ba82566b6376",
         "config_schema": {
           "additionalProperties": false,
