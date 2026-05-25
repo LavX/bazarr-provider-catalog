@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<update>
+  <posts>
+    <post postID="568110">
+      <postText><![CDATA[
+        <div class="baseSC">
+          <h2>Deutsche und Englische Untertitel:</h2>
+          <div id="a1" style="display:block;">
+            <table>
+              <thead>
+                <tr><th>Episode</th><th><img src="creative/bilder/flags/de.png" /> WEB</th></tr>
+              </thead>
+              <tbody>
+                <tr class="aktiv">
+                  <td class="release">E01 - "The Code"</td>
+                  <td><a href="index.php?page=Attachment&amp;attachmentID=300350&amp;h=c7acdf6f69ede53d5a332e3e59798b44d18395e3">ION10</a></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div id="a3" style="display:none;">
+            <table>
+              <thead>
+                <tr><th>Episode</th><th><img src="creative/bilder/flags/uk.png" /> WEB</th></tr>
+              </thead>
+              <tbody>
+                <tr class="aktiv">
+                  <td class="release">E01 - "The Code"</td>
+                  <td><a href="index.php?page=Attachment&amp;attachmentID=300168&amp;h=643d7f6f5c8270a8d86a042d5feb1c1e9402aedf">ION10</a></td>
+                </tr>
+                <tr class="aktiv">
+                  <td class="release">E02 - "Bad Batch"</td>
+                  <td><a href="index.php?page=Attachment&amp;attachmentID=300169&amp;h=8f82d862a99b590ec0bdf55d482a581954f5c1f2">ION10</a></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ]]></postText>
+    </post>
+  </posts>
+</update>
