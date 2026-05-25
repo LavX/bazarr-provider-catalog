@@ -4,6 +4,92 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "3400abf4f3c5523b7e496093495467109f817dac93124719b8da6ad5ddc606e7",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between HTTP calls to bollynook.com.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Scrapes BollyNook Bollywood movie subtitle pages for downloadable ZIP files. Movie-only provider.",
+        "entry_class": "BollyNookProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "4403e529c831897b1448412742e24ac4c05b405d69d58d7c84dcf1de2b65a97d"
+        },
+        "languages": [
+          "ara",
+          "bul",
+          "ces",
+          "dan",
+          "deu",
+          "ell",
+          "eng",
+          "fas",
+          "fin",
+          "fra",
+          "heb",
+          "hin",
+          "hrv",
+          "hun",
+          "ind",
+          "ita",
+          "jpn",
+          "kor",
+          "lav",
+          "lit",
+          "msa",
+          "nld",
+          "nor",
+          "pol",
+          "por",
+          "ron",
+          "rus",
+          "sin",
+          "slk",
+          "slv",
+          "spa",
+          "srp",
+          "swe",
+          "tha",
+          "tur",
+          "ukr",
+          "vie",
+          "zho"
+        ],
+        "name": "BollyNook",
+        "provider_id": "bollynook",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/bollynook",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie"
+        ],
+        "version": "0.1.0"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "3b7cda4bb20f475c0224de84e76abd92e451f1e5392d5cb6adbc3730efe2412d",
         "config_schema": {
           "additionalProperties": false,
