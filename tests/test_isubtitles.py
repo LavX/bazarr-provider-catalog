@@ -50,6 +50,44 @@ class ISubtitlesParserTests(unittest.TestCase):
         self.assertEqual(rows[0]["size"], "15.7KB")
         self.assertIn("s01e01", rows[0]["release_info"].lower())
 
+    def test_derive_matches_accepts_1x_episode_tags(self):
+        matches = self.mod.derive_matches(
+            {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1},
+            "Chernobyl [1x01] WEBRip",
+        )
+
+        self.assertIn("episode", matches)
+
+    def test_movie_row_rejects_mismatched_candidate_year(self):
+        self.assertFalse(
+            self.mod._row_matches_video(
+                {"kind": "movie", "title": "Suspiria", "year": 2018},
+                {"release_info": "Suspiria.1977.1080p", "comment": "", "file_count": 1},
+                {"title": "Suspiria - (1977)", "year": 1977},
+            )
+        )
+
+    def test_hearing_impaired_detection_uses_whole_word_tags(self):
+        self.assertFalse(
+            self.mod._looks_hearing_impaired(
+                {"release_info": "Pathaan Hindi WEBRip", "comment": "high quality"}
+            )
+        )
+        self.assertTrue(
+            self.mod._looks_hearing_impaired(
+                {"release_info": "Chernobyl HI WEBRip", "comment": ""}
+            )
+        )
+
+    def test_rank_title_pages_ignores_non_numeric_year(self):
+        pages = [{"title": "Chernobyl - (2019)", "year": 2019}]
+        ranked = self.mod._rank_title_pages(
+            {"kind": "movie", "title": "Chernobyl", "year": "N/A"},
+            pages,
+        )
+
+        self.assertEqual(ranked, pages)
+
 
 class ISubtitlesProviderTests(unittest.TestCase):
     def setUp(self):
@@ -112,6 +150,26 @@ class ISubtitlesProviderTests(unittest.TestCase):
         self.assertIn(b"Episode one", decoded)
         self.assertEqual(result["format"], "srt")
         self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
+
+    def test_download_selects_1x_episode_file_from_zip(self):
+        body = _zip_body(
+            {
+                "Chernobyl.S01E02.WEBRip.x264-ION10.srt": b"1\nEpisode two\n",
+                "Chernobyl.1x01.WEBRip.x264-ION10.srt": b"1\nEpisode one\n",
+            }
+        )
+
+        result = self.mod.extract_download(body, {"season": 1, "episode": 1})
+
+        decoded = base64.b64decode(result["content_b64"])
+        self.assertIn(b"Episode one", decoded)
+
+    def test_download_rejects_html_body_when_not_zip_or_subtitle(self):
+        with self.assertRaises(ValueError):
+            self.mod.extract_download(
+                b"<html><title>challenge</title></html>",
+                {"filename": "isubtitles.bad.zip"},
+            )
 
 
 if __name__ == "__main__":

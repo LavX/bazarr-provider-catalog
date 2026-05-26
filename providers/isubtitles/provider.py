@@ -301,7 +301,10 @@ def extract_download(body, payload=None):
         with zipfile.ZipFile(stream) as archive:
             selected = select_subtitle_file(archive.namelist(), payload)
             return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
-    return _content_payload(body, _subtitle_extension(payload.get("filename", "")) or "srt")
+    subtitle_format = _subtitle_extension(payload.get("filename", ""))
+    if not subtitle_format or _looks_like_html(body):
+        raise ValueError("isubtitles download did not return a supported subtitle file")
+    return _content_payload(body, subtitle_format)
 
 
 def select_subtitle_file(names, payload):
@@ -324,13 +327,18 @@ def select_subtitle_file(names, payload):
             return 80
         return 0
 
-    return max(candidates, key=score)
+    scored = [(score(name), index, name) for index, name in enumerate(candidates)]
+    best_score, _index, best_name = max(scored, key=lambda item: (item[0], -item[1]))
+    if best_score <= 0 and len(candidates) > 1:
+        raise ValueError("isubtitles archive contains no subtitle file for the requested episode")
+    return best_name
 
 
 def _rank_title_pages(video, pages):
     ranked = []
     wanted_tokens = _tokens((video or {}).get("series") or (video or {}).get("title"))
     wanted_norm = _normalize((video or {}).get("series") or (video or {}).get("title"))
+    wanted_year = _safe_int((video or {}).get("year"))
     for index, page in enumerate(pages):
         title_without_year = _YEAR_RE.sub("", page["title"]).strip()
         page_tokens = set(_tokens(title_without_year))
@@ -339,7 +347,7 @@ def _rank_title_pages(video, pages):
             score = 80
         if wanted_norm and _normalize(title_without_year) == wanted_norm:
             score = 110
-        if (video or {}).get("year") and page.get("year") == int(video.get("year")):
+        if wanted_year is not None and page.get("year") == wanted_year:
             score += 10
         if score:
             ranked.append((page, score, index))
@@ -352,6 +360,10 @@ def _row_matches_video(video, row, title_page):
     candidate_title = f"{title_page['title']} {row['release_info']} {row.get('comment', '')}"
     matches = derive_matches(video, candidate_title)
     if video.get("kind") == "movie":
+        wanted_year = _safe_int(video.get("year"))
+        candidate_year = title_page.get("year")
+        if wanted_year is not None and candidate_year is not None and candidate_year != wanted_year:
+            return False
         return "title" in matches
     if video.get("kind") != "episode" or "series" not in matches:
         return False
@@ -388,7 +400,12 @@ def _season_tag_in(candidate_norm, season):
 
 
 def _episode_tag_in(candidate_norm, season, episode):
-    return re.search(rf"\bs0*{int(season)}e0*{int(episode)}\b", candidate_norm) is not None
+    season = int(season)
+    episode = int(episode)
+    return (
+        re.search(rf"\bs0*{season}e0*{episode}\b", candidate_norm) is not None
+        or re.search(rf"\b0*{season}x0*{episode}\b", candidate_norm) is not None
+    )
 
 
 def _subtitle_extension(name):
@@ -449,7 +466,10 @@ def _sleep(config):
 
 def _looks_hearing_impaired(row):
     text = f"{row.get('release_info', '')} {row.get('comment', '')}".lower()
-    return " sdh" in f" {text} " or " hi" in f" {text} " or "hearing impaired" in text
+    return (
+        re.search(r"\b(?:sdh|hi)\b", text) is not None
+        or "hearing impaired" in text
+    )
 
 
 def _year_from_title(title):
@@ -460,6 +480,18 @@ def _year_from_title(title):
 def _int_from_text(text):
     match = re.search(r"\d+", text or "")
     return int(match.group(0)) if match else 0
+
+
+def _safe_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _looks_like_html(body):
+    sample = (body or b"").lstrip()[:512].lower()
+    return sample.startswith((b"<!doctype html", b"<html")) or b"<title" in sample
 
 
 def _absolute_url(path):
