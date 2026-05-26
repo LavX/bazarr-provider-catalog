@@ -1,0 +1,84 @@
+{
+  "api_version": "bazarr.provider-hub.v1",
+  "bundle_sha256": "d3ce19bd07eadbbc3576d590c3d1b5aa2b1089add7551faafbdf13d06b694011",
+  "config_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "request_delay_ms": {
+        "default": 0,
+        "description": "Optional politeness delay between HTTP calls to bollynook.com.",
+        "maximum": 5000,
+        "minimum": 0,
+        "title": "Delay between requests (ms)",
+        "type": "integer"
+      }
+    },
+    "type": "object"
+  },
+  "dependencies": {
+    "requirements": []
+  },
+  "description": "Scrapes BollyNook Bollywood movie subtitle pages for downloadable ZIP files. Movie-only provider.",
+  "entry_class": "BollyNookProvider",
+  "entry_module": "provider",
+  "files": {
+    "provider.py": "69ad7a22d17acfcf254e07a1caaa5099e5211c24afbe22ddf71f8f6a9a14e86e"
+  },
+  "languages": [
+    "ara",
+    "bul",
+    "ces",
+    "dan",
+    "deu",
+    "ell",
+    "eng",
+    "fas",
+    "fin",
+    "fra",
+    "heb",
+    "hin",
+    "hrv",
+    "hun",
+    "ind",
+    "ita",
+    "jpn",
+    "kor",
+    "lav",
+    "lit",
+    "msa",
+    "nld",
+    "nor",
+    "pol",
+    "por",
+    "ron",
+    "rus",
+    "sin",
+    "slk",
+    "slv",
+    "spa",
+    "srp",
+    "swe",
+    "tha",
+    "tur",
+    "ukr",
+    "vie",
+    "zho"
+  ],
+  "name": "BollyNook",
+  "provider_id": "bollynook",
+  "schema_version": 1,
+  "secret_fields": [],
+  "source": {
+    "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+    "commit": "0000000000000000000000000000000000000000",
+    "path": "providers/bollynook",
+    "ref": "main",
+    "repo": "LavX/bazarr-provider-catalog",
+    "trusted": true,
+    "type": "github"
+  },
+  "supported_media": [
+    "movie"
+  ],
+  "version": "0.1.0"
+}
