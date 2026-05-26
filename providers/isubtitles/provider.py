@@ -323,13 +323,16 @@ def select_subtitle_file(names, payload):
         normalized = _normalize(os.path.basename(name))
         if _episode_tag_in(normalized, season, episode):
             return 100
+        if _has_season_marker(normalized):
+            return 0
         if re.search(rf"\be0*{episode}\b", normalized):
             return 80
         return 0
 
     scored = [(score(name), index, name) for index, name in enumerate(candidates)]
     best_score, _index, best_name = max(scored, key=lambda item: (item[0], -item[1]))
-    if best_score <= 0 and len(candidates) > 1:
+    has_explicit_episode = any(_has_episode_marker(_normalize(os.path.basename(name))) for name in candidates)
+    if best_score <= 0 and (len(candidates) > 1 or has_explicit_episode):
         raise ValueError("isubtitles archive contains no subtitle file for the requested episode")
     return best_name
 
@@ -396,15 +399,36 @@ def _cell_by_title(row, title):
 
 
 def _season_tag_in(candidate_norm, season):
-    return re.search(rf"\bs0*{int(season)}(?=e|\W|$)", candidate_norm) is not None
+    season = int(season)
+    return (
+        re.search(rf"\bs0*{season}(?=\s*e|\W|$)", candidate_norm) is not None
+        or re.search(rf"\bseason\s+0*{season}\b", candidate_norm) is not None
+    )
 
 
 def _episode_tag_in(candidate_norm, season, episode):
     season = int(season)
     episode = int(episode)
     return (
-        re.search(rf"\bs0*{season}e0*{episode}\b", candidate_norm) is not None
-        or re.search(rf"\b0*{season}x0*{episode}\b", candidate_norm) is not None
+        re.search(rf"\bs0*{season}\s*e0*{episode}\b", candidate_norm) is not None
+        or re.search(rf"\b0*{season}\s*x\s*0*{episode}\b", candidate_norm) is not None
+        or re.search(rf"\bseason\s+0*{season}\s+episode\s+0*{episode}\b", candidate_norm) is not None
+    )
+
+
+def _has_season_marker(candidate_norm):
+    return (
+        re.search(r"\bs0*\d+\b", candidate_norm) is not None
+        or re.search(r"\bseason\s+0*\d+\b", candidate_norm) is not None
+    )
+
+
+def _has_episode_marker(candidate_norm):
+    return (
+        re.search(r"\bs0*\d+\s*e0*\d+\b", candidate_norm) is not None
+        or re.search(r"\b0*\d+\s*x\s*0*\d+\b", candidate_norm) is not None
+        or re.search(r"\be0*\d+\b", candidate_norm) is not None
+        or re.search(r"\bseason\s+0*\d+\s+episode\s+0*\d+\b", candidate_norm) is not None
     )
 
 

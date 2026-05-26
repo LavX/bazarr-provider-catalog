@@ -58,6 +58,22 @@ class ISubtitlesParserTests(unittest.TestCase):
 
         self.assertIn("episode", matches)
 
+    def test_derive_matches_accepts_separated_episode_tags(self):
+        matches = self.mod.derive_matches(
+            {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1},
+            "Chernobyl S01.E01 WEBRip",
+        )
+
+        self.assertIn("episode", matches)
+
+    def test_derive_matches_accepts_season_word_packs(self):
+        matches = self.mod.derive_matches(
+            {"kind": "episode", "series": "Succession", "season": 1, "episode": 1},
+            "Succession Season 1 Complete 720p WEB",
+        )
+
+        self.assertIn("season", matches)
+
     def test_movie_row_rejects_mismatched_candidate_year(self):
         self.assertFalse(
             self.mod._row_matches_video(
@@ -163,6 +179,30 @@ class ISubtitlesProviderTests(unittest.TestCase):
 
         decoded = base64.b64decode(result["content_b64"])
         self.assertIn(b"Episode one", decoded)
+
+    def test_download_rejects_single_file_archive_with_wrong_episode(self):
+        body = _zip_body(
+            {
+                "Chernobyl.S01E02.WEBRip.x264-ION10.srt": b"1\nEpisode two\n",
+            }
+        )
+
+        with self.assertRaises(ValueError):
+            self.mod.extract_download(body, {"season": 1, "episode": 1})
+
+    def test_download_avoids_cross_season_episode_fallback(self):
+        body = _zip_body(
+            {
+                "Chernobyl.S02.E01.WEBRip.x264-ION10.srt": b"1\nSeason two\n",
+                "Chernobyl.S01.E01.WEBRip.x264-ION10.srt": b"1\nSeason one\n",
+            }
+        )
+
+        result = self.mod.extract_download(body, {"season": 1, "episode": 1})
+
+        decoded = base64.b64decode(result["content_b64"])
+        self.assertIn(b"Season one", decoded)
+        self.assertNotIn(b"Season two", decoded)
 
     def test_download_rejects_html_body_when_not_zip_or_subtitle(self):
         with self.assertRaises(ValueError):
