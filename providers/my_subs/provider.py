@@ -357,6 +357,14 @@ def _alpha3_for(alpha2):
     return _ALPHA2_TO_ALPHA3.get(alpha2)
 
 
+def _candidate_matches_kind(candidate, kind):
+    if kind == "movie":
+        return candidate.get("media_type") == "movie"
+    if kind == "episode":
+        return candidate.get("media_type") == "episode"
+    return False
+
+
 def _downloads_count(pattern, data):
     match = pattern.search(data or b"")
     if not match:
@@ -583,7 +591,12 @@ class MySubsProvider:
             search_url = f"{BASE_URL}/search.php?key={urllib.parse.quote(query, safe='')}"
             _sleep(config)
             search_html = self._http_get(search_url)
-            for candidate in parse_search_results(search_html)[:MAX_CANDIDATES_PER_QUERY]:
+            candidates = [
+                candidate
+                for candidate in parse_search_results(search_html)
+                if _candidate_matches_kind(candidate, video.get("kind"))
+            ][:MAX_CANDIDATES_PER_QUERY]
+            for candidate in candidates:
                 detail_url = self._detail_url_for_candidate(candidate, video, config)
                 if not detail_url:
                     continue
@@ -611,7 +624,10 @@ class MySubsProvider:
             return candidate["detail_url"]
         if kind == "episode" and candidate.get("media_type") == "episode":
             _sleep(config)
-            show_html = self._http_get(candidate["detail_url"])
+            try:
+                show_html = self._http_get(candidate["detail_url"])
+            except Exception:
+                return None
             return find_episode_detail_url(
                 show_html,
                 video.get("season"),
@@ -622,12 +638,15 @@ class MySubsProvider:
     def _media_title(self, video, candidate):
         kind = (video or {}).get("kind")
         if kind == "movie":
-            title = _coerce_text(video.get("title")) or candidate.get("title") or ""
-            year = video.get("year") or candidate.get("year")
+            title = candidate.get("title") or _coerce_text(video.get("title")) or ""
+            year = candidate.get("year")
             return f"{title} ({year})" if year else title
         if kind == "episode":
-            series = _coerce_text(video.get("series")) or candidate.get("title") or ""
-            return f"{series} Season {video.get('season')} Episode {video.get('episode')}"
+            series = candidate.get("title") or _coerce_text(video.get("series")) or ""
+            try:
+                return f"{series} S{int(video.get('season')):02d}E{int(video.get('episode')):02d}"
+            except (TypeError, ValueError):
+                return series
         return candidate.get("title") or "My-Subs subtitle"
 
     def _result_from_entry(self, video, entry):

@@ -152,6 +152,82 @@ class MySubsProviderSearchTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
 
+    def test_episode_search_skips_failed_show_candidate(self):
+        search_html = b"""
+        <a href="/showlistsubtitles-9999-broken-show" title="Broken Show">Broken Show</a>
+        <a href="/showlistsubtitles-2965-chernobyl" title="Chernobyl">Chernobyl</a>
+        """
+        responses = {
+            "https://my-subs.co/search.php?key=Chernobyl": search_html,
+            "https://my-subs.co/showlistsubtitles-2965-chernobyl": SHOW_FIXTURE,
+            "https://my-subs.co/versions-2965-1-1-chernobyl-subtitles": DETAIL_FIXTURE,
+        }
+        provider = self.mod.MySubsProvider()
+
+        def stub(url, timeout=15, referer=None):
+            del timeout, referer
+            if url == "https://my-subs.co/showlistsubtitles-9999-broken-show":
+                raise TimeoutError("simulated timeout")
+            if url not in responses:
+                raise AssertionError(f"unexpected URL: {url}")
+            return responses[url]
+
+        provider._http_get = stub
+        results = provider.search(
+            video={"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1},
+            languages=[{"alpha3": "eng", "alpha2": "en", "hi": False, "forced": False}],
+            config={"request_delay_ms": 0},
+        )
+
+        self.assertGreater(len(results), 0)
+
+    def test_candidate_cap_applies_after_media_type_filtering(self):
+        movie_rows = "\n".join(
+            f'<a href="/film-versions-{index}-other-{index}-subtitles" '
+            f'title="Other {index}">Other {index} (200{index % 10})</a>'
+            for index in range(self.mod.MAX_CANDIDATES_PER_QUERY + 2)
+        ).encode("utf-8")
+        search_html = (
+            movie_rows
+            + b'<a href="/showlistsubtitles-2965-chernobyl" title="Chernobyl">Chernobyl</a>'
+        )
+        responses = {
+            "https://my-subs.co/search.php?key=Chernobyl": search_html,
+            "https://my-subs.co/showlistsubtitles-2965-chernobyl": SHOW_FIXTURE,
+            "https://my-subs.co/versions-2965-1-1-chernobyl-subtitles": DETAIL_FIXTURE,
+        }
+        provider = self.mod.MySubsProvider()
+
+        def stub(url, timeout=15, referer=None):
+            del timeout, referer
+            if url not in responses:
+                raise AssertionError(f"unexpected URL: {url}")
+            return responses[url]
+
+        provider._http_get = stub
+        results = provider.search(
+            video={"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1},
+            languages=[{"alpha3": "eng", "alpha2": "en", "hi": False, "forced": False}],
+            config={"request_delay_ms": 0},
+        )
+
+        self.assertGreater(len(results), 0)
+
+    def test_media_title_uses_candidate_metadata_for_scoring(self):
+        provider = self.mod.MySubsProvider()
+
+        movie_title = provider._media_title(
+            {"kind": "movie", "title": "Avatar", "year": 2009},
+            {"media_type": "movie", "title": "Avatar: The Way of Water", "year": 2022},
+        )
+        episode_title = provider._media_title(
+            {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1},
+            {"media_type": "episode", "title": "Chernovik"},
+        )
+
+        self.assertEqual(movie_title, "Avatar: The Way of Water (2022)")
+        self.assertEqual(episode_title, "Chernovik S01E01")
+
     def test_episode_search_uses_search_show_then_detail_page(self):
         responses = {
             "https://my-subs.co/search.php?key=Chernobyl": SEARCH_FIXTURE,
