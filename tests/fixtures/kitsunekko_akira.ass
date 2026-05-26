@@ -1,0 +1,6 @@
+[Script Info]
+ScriptType: v4.00+
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:01:57.80,0:02:02.81,Default,,0,0,0,,Groups of unemployed workers.
