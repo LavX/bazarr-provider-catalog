@@ -94,7 +94,7 @@ def build_queries(video):
     if not title:
         return []
     year = video.get("year")
-    return [title, f"{title} {year}"] if year else [title]
+    return [f"{title} {year}", title] if year else [title]
 
 
 def parse_search_results(body):
@@ -201,15 +201,17 @@ class BollyNookProvider:
                     if key in seen:
                         continue
                     _sleep(config)
-                    detail = parse_detail(self._http_request(row["url"], referer=f"{BASE_URL}/en/search/"), row["url"])
+                    try:
+                        detail_body = self._http_request(row["url"], referer=f"{BASE_URL}/en/search/")
+                        detail = parse_detail(detail_body, row["url"])
+                    except (OSError, ValueError):
+                        continue
                     if detail["language"] != alpha3 or not _row_matches_video(video, row, detail):
                         continue
                     seen.add(key)
                     results.append(self._result(video, row, detail))
                     if len(results) >= MAX_RESULTS:
                         return _sort_results(results)
-                if results:
-                    return _sort_results(results)
         return _sort_results(results)
 
     def _result(self, video, row, detail):
@@ -308,6 +310,12 @@ def _rank_search_results(video, rows):
 
 
 def _row_matches_video(video, row, detail):
+    wanted_year = _safe_int((video or {}).get("year"))
+    candidate_year = _safe_int((detail or {}).get("year"))
+    if candidate_year is None:
+        candidate_year = _safe_int((row or {}).get("year"))
+    if wanted_year is not None and candidate_year is not None and candidate_year != wanted_year:
+        return False
     matches = derive_matches(video, f"{detail['title']} {detail.get('year') or row.get('year') or ''}")
     return "title" in matches
 
@@ -397,6 +405,13 @@ def _sleep(config):
 def _year_from_title(title):
     match = _TITLE_YEAR_RE.search(title or "")
     return int(match.group(1)) if match else None
+
+
+def _safe_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _strip_tags(value):

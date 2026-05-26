@@ -31,6 +31,31 @@ def _zip_body(name, body):
     return stream.getvalue()
 
 
+def _search_row(movie_id, title, language_code="eng"):
+    slug = title.lower().replace(" ", "-").replace("/", "-")
+    return f"""
+    <li>
+      Movie:&nbsp;
+      <a href="/en/bollywood-movie-subtitles/{movie_id}/{slug}/">{title}</a>
+      <img src="/images/zastave/{language_code}.png" />
+      Published: 01.01.2024.
+    </li>
+    """.encode("utf-8")
+
+
+def _search_page(*rows):
+    return b"<ul>" + b"".join(rows) + b"</ul>"
+
+
+def _detail_page(title, year, language_code="eng", movie_id="22997"):
+    return f"""
+    <h1>{title}</h1>
+    <div>Year: <strong>{year}</strong></div>
+    <img src="/images/zastave/{language_code}.png" />
+    <a class="downloads" href="/uploaded_pictures/content/titlovi/{movie_id}-{title.lower()}-{language_code}.zip">Download</a>
+    """.encode("utf-8")
+
+
 class BollyNookParserTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
@@ -50,6 +75,21 @@ class BollyNookParserTests(unittest.TestCase):
         self.assertEqual(
             detail["download_url"],
             "https://www.bollynook.com/uploaded_pictures/content/titlovi/22997-pathaan-CD1-2023-eng.zip",
+        )
+
+    def test_movie_with_year_emits_precise_then_loose_query(self):
+        self.assertEqual(
+            self.mod.build_queries({"kind": "movie", "title": "Pathaan", "year": 2023}),
+            ["Pathaan 2023", "Pathaan"],
+        )
+
+    def test_row_matches_rejects_wrong_movie_year(self):
+        self.assertFalse(
+            self.mod._row_matches_video(
+                {"kind": "movie", "title": "Suspiria", "year": 2018},
+                {"title": "Suspiria - 1977", "year": 1977},
+                {"title": "Suspiria", "year": 1977},
+            )
         )
 
 
@@ -80,11 +120,95 @@ class BollyNookProviderTests(unittest.TestCase):
         )
 
         self.assertEqual(calls[0][0], "https://www.bollynook.com/en/search/")
-        self.assertEqual(calls[0][1], b"type=2&title=Pathaan&language=eng&submit=Search")
+        self.assertEqual(calls[0][1], b"type=2&title=Pathaan+2023&language=eng&submit=Search")
         self.assertEqual(results[0]["provider"], "bollynook")
         self.assertIn("title", results[0]["matches"])
         self.assertIn("year", results[0]["matches"])
         self.assertEqual(results[0]["provider_payload"]["movie_id"], "22997")
+
+    def test_search_returns_requested_languages_across_candidates(self):
+        provider = self.mod.BollyNookProvider()
+        search_body = _search_page(
+            _search_row("22997", "Pathaan - 2023", "eng"),
+            _search_row("22998", "Pathaan - 2023", "hin"),
+        )
+        responses = {
+            "https://www.bollynook.com/en/search/": search_body,
+            "https://www.bollynook.com/en/bollywood-movie-subtitles/22997/pathaan---2023/": _detail_page(
+                "Pathaan", 2023, "eng", "22997"
+            ),
+            "https://www.bollynook.com/en/bollywood-movie-subtitles/22998/pathaan---2023/": _detail_page(
+                "Pathaan", 2023, "hin", "22998"
+            ),
+        }
+
+        def stub(url, data=None, timeout=15, referer=None):
+            del data, timeout, referer
+            if url not in responses:
+                raise AssertionError(f"unexpected URL: {url}")
+            return responses[url]
+
+        provider._http_request = stub
+        results = provider.search(
+            {"kind": "movie", "title": "Pathaan", "year": 2023},
+            [{"alpha3": "eng", "alpha2": "en"}, {"alpha3": "hin", "alpha2": "hi"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual([result["language"]["alpha3"] for result in results], ["eng", "hin"])
+
+    def test_search_skips_failed_detail_fetch(self):
+        provider = self.mod.BollyNookProvider()
+        search_body = _search_page(
+            _search_row("22997", "Pathaan - 2023", "eng"),
+            _search_row("22998", "Pathaan - 2023", "eng"),
+        )
+        valid_url = "https://www.bollynook.com/en/bollywood-movie-subtitles/22998/pathaan---2023/"
+
+        def stub(url, data=None, timeout=15, referer=None):
+            del data, timeout, referer
+            if url == "https://www.bollynook.com/en/search/":
+                return search_body
+            if url == valid_url:
+                return _detail_page("Pathaan", 2023, "eng", "22998")
+            raise OSError("detail fetch failed")
+
+        provider._http_request = stub
+        results = provider.search(
+            {"kind": "movie", "title": "Pathaan", "year": 2023},
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual([result["provider_payload"]["movie_id"] for result in results], ["22998"])
+
+    def test_search_skips_malformed_detail_page(self):
+        provider = self.mod.BollyNookProvider()
+        search_body = _search_page(
+            _search_row("22997", "Pathaan - 2023", "eng"),
+            _search_row("22998", "Pathaan - 2023", "eng"),
+        )
+        malformed_url = "https://www.bollynook.com/en/bollywood-movie-subtitles/22997/pathaan---2023/"
+        valid_url = "https://www.bollynook.com/en/bollywood-movie-subtitles/22998/pathaan---2023/"
+
+        def stub(url, data=None, timeout=15, referer=None):
+            del data, timeout, referer
+            if url == "https://www.bollynook.com/en/search/":
+                return search_body
+            if url == malformed_url:
+                return b"<h1>Pathaan</h1>"
+            if url == valid_url:
+                return _detail_page("Pathaan", 2023, "eng", "22998")
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_request = stub
+        results = provider.search(
+            {"kind": "movie", "title": "Pathaan", "year": 2023},
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual([result["provider_payload"]["movie_id"] for result in results], ["22998"])
 
     def test_download_extracts_zip_subtitle(self):
         provider = self.mod.BollyNookProvider()
