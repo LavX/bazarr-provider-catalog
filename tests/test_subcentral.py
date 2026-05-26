@@ -27,6 +27,31 @@ THANK_XML = (FIXTURE_DIR / "subcentral_thank_blue_lights.xml").read_bytes()
 RAR_BODY = (FIXTURE_DIR / "subcentral_blue_lights_ion10.rar").read_bytes()
 
 
+def _thread_link(thread_id, title):
+    return (
+        f'<a href="index.php?page=Thread&amp;threadID={thread_id}&amp;s=ignored">'
+        f"{title}</a>"
+    ).encode("utf-8")
+
+
+def _visible_attachment(language_flag, attachment_id, hash_value="a" * 40):
+    return f"""
+        <div id="a1" style="display:block;">
+          <table>
+            <thead>
+              <tr><th>Episode</th><th><img src="creative/bilder/flags/{language_flag}.png" /> WEB</th></tr>
+            </thead>
+            <tbody>
+              <tr class="aktiv">
+                <td class="release">E01 - "The Code"</td>
+                <td><a href="index.php?page=Attachment&amp;attachmentID={attachment_id}&amp;h={hash_value}">ION10</a></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+    """.encode("utf-8")
+
+
 class SubCentralParserTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
@@ -42,6 +67,16 @@ class SubCentralParserTests(unittest.TestCase):
         self.assertEqual(rows[0]["thread_id"], "52021")
         self.assertEqual(rows[0]["season"], 1)
         self.assertEqual(rows[0]["url"], "https://www.subcentral.de/index.php?page=Thread&threadID=52021")
+
+    def test_parse_board_threads_includes_vo_only_subtitle_thread(self):
+        body = _thread_link(
+            "52099",
+            "Blue Lights - Staffel 1 - [VO-Subs: 06 | Aired: 06/06]",
+        )
+        rows = self.mod.parse_board_threads(body, "Blue Lights")
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["thread_id"], "52099")
 
     def test_parse_thread_gate_extracts_guest_thank_request(self):
         gate = self.mod.parse_thread_gate(THREAD_HTML)
@@ -87,6 +122,94 @@ class SubCentralParserTests(unittest.TestCase):
 class SubCentralProviderSearchTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
+
+    def test_search_skips_thread_with_missing_thank_gate(self):
+        provider = self.mod.SubCentralProvider()
+        board_html = b"\n".join(
+            [
+                _thread_link("11111", "Blue Lights - Staffel 1 - [DE-Subs: 01 | Aired: 01/06]"),
+                _thread_link("52021", "Blue Lights - Staffel 1 - [DE-Subs: 02 | Aired: 06/06]"),
+            ]
+        )
+        responses = {
+            "https://www.subcentral.de/": HOME_HTML,
+            "https://www.subcentral.de/index.php?page=Board&boardID=1253": board_html,
+            "https://www.subcentral.de/index.php?page=Thread&threadID=11111": b"<html>no attachments or thank gate</html>",
+            "https://www.subcentral.de/index.php?page=Thread&threadID=52021": THREAD_HTML,
+            "https://www.subcentral.de/index.php?action=Thank&output=xml&postID=568110&t=security-token&s=session-cookie-hash": THANK_XML,
+        }
+
+        def stub(url, timeout=15, referer=None):
+            del timeout, referer
+            if url not in responses:
+                raise AssertionError(f"unexpected URL: {url}")
+            return responses[url]
+
+        provider._http_get = stub
+        results = provider.search(
+            {"kind": "episode", "series": "Blue Lights", "season": 1, "episode": 1},
+            [{"alpha3": "deu", "alpha2": "de"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertGreater(len(results), 0)
+        self.assertEqual(results[0]["provider_payload"]["attachment_id"], "300350")
+
+    def test_search_returns_requested_languages_across_threads(self):
+        provider = self.mod.SubCentralProvider()
+        board_html = b"\n".join(
+            [
+                _thread_link("11111", "Blue Lights - Staffel 1 - [DE-Subs: 01 | Aired: 01/06]"),
+                _thread_link("22222", "Blue Lights - Staffel 1 - [VO-Subs: 01 | Aired: 01/06]"),
+            ]
+        )
+        responses = {
+            "https://www.subcentral.de/": HOME_HTML,
+            "https://www.subcentral.de/index.php?page=Board&boardID=1253": board_html,
+            "https://www.subcentral.de/index.php?page=Thread&threadID=11111": _visible_attachment("de", "300350"),
+            "https://www.subcentral.de/index.php?page=Thread&threadID=22222": _visible_attachment("uk", "300168", "b" * 40),
+        }
+
+        def stub(url, timeout=15, referer=None):
+            del timeout, referer
+            if url not in responses:
+                raise AssertionError(f"unexpected URL: {url}")
+            return responses[url]
+
+        provider._http_get = stub
+        results = provider.search(
+            {"kind": "episode", "series": "Blue Lights", "season": 1, "episode": 1},
+            [{"alpha3": "deu", "alpha2": "de"}, {"alpha3": "eng", "alpha2": "en"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(
+            {item["language"]["alpha3"] for item in results},
+            {"deu", "eng"},
+        )
+
+    def test_search_treats_missing_episode_as_no_results(self):
+        provider = self.mod.SubCentralProvider()
+        responses = {
+            "https://www.subcentral.de/": HOME_HTML,
+            "https://www.subcentral.de/index.php?page=Board&boardID=1253": BOARD_HTML,
+            "https://www.subcentral.de/index.php?page=Thread&threadID=52021": THREAD_HTML + b"\n" + THANK_XML,
+        }
+
+        def stub(url, timeout=15, referer=None):
+            del timeout, referer
+            if url not in responses:
+                raise AssertionError(f"unexpected URL: {url}")
+            return responses[url]
+
+        provider._http_get = stub
+        results = provider.search(
+            {"kind": "episode", "series": "Blue Lights", "season": 1},
+            [{"alpha3": "deu", "alpha2": "de"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(results, [])
 
     def test_search_reveals_guest_thank_gate_and_returns_requested_language(self):
         provider = self.mod.SubCentralProvider()

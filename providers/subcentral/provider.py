@@ -58,6 +58,7 @@ _WS_BYTES_RE = re.compile(rb"\s+")
 _NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
 _SEASON_RE = re.compile(r"(?:Staffel|Season|S)\s*0*(\d{1,2})\b", re.I)
 _EPISODE_RE = re.compile(r"\bE0*(\d{1,3})\b", re.I)
+_SUBTITLE_THREAD_RE = re.compile(r"\b(?:DE|VO|EN)-Subs\s*:", re.I)
 
 
 def parse_series_options(body):
@@ -85,7 +86,7 @@ def parse_board_threads(body, series_title):
         if thread_id in seen:
             continue
         title = _strip_tags(match.group("title"))
-        if not title or "[DE-Subs:" not in title:
+        if not title or not _SUBTITLE_THREAD_RE.search(title):
             continue
         seen.add(thread_id)
         rows.append(
@@ -189,6 +190,10 @@ class SubCentralProvider:
         requested = {lang for lang in requested if lang in SUPPORTED_LANGUAGES}
         if not requested:
             return []
+        try:
+            target_episode = int(video.get("episode"))
+        except (TypeError, ValueError):
+            return []
         _sleep(config)
         boards = _rank_boards(video, parse_series_options(self._http_get(HOME_URL)))
         results = []
@@ -204,7 +209,10 @@ class SubCentralProvider:
                 thread_body = self._http_get(thread["url"], referer=board["url"])
                 revealed = parse_revealed_attachments(thread_body)
                 if not revealed:
-                    gate = parse_thread_gate(thread_body)
+                    try:
+                        gate = parse_thread_gate(thread_body)
+                    except ValueError:
+                        continue
                     _sleep(config)
                     revealed = parse_revealed_attachments(
                         self._http_get(gate["thank_url"], referer=thread["url"])
@@ -212,7 +220,11 @@ class SubCentralProvider:
                 for attachment in revealed:
                     if attachment["language"] not in requested:
                         continue
-                    if int(attachment["episode"]) != int(video.get("episode")):
+                    try:
+                        attachment_episode = int(attachment["episode"])
+                    except (TypeError, ValueError):
+                        continue
+                    if attachment_episode != target_episode:
                         continue
                     merged = dict(attachment)
                     merged.update(
@@ -228,8 +240,6 @@ class SubCentralProvider:
                         continue
                     seen.add(key)
                     results.append(self._result(video, merged))
-                if results:
-                    return sorted(results, key=lambda item: item["score"], reverse=True)
         return sorted(results, key=lambda item: item["score"], reverse=True)
 
     def _result(self, video, item):
