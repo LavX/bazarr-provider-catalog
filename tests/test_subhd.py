@@ -229,6 +229,56 @@ class SubHDProviderDownloadTests(unittest.TestCase):
         self.assertEqual(base64.b64decode(result["content_b64"]), SRT_BODY)
         self.assertEqual(result["content_sha256"], hashlib.sha256(SRT_BODY).hexdigest())
 
+    def test_download_solves_captcha_and_retries_api(self):
+        provider = self.mod.SubHDProvider()
+        called = []
+        captcha_body = (
+            b'{"success":true,"pass":false,'
+            b'"msg":"<svg xmlns=\\"http://www.w3.org/2000/svg\\"></svg>","url":null}'
+        )
+
+        def get_stub(url, timeout=15, referer=None):
+            del timeout
+            called.append(("GET", url, referer))
+            if url == "https://subhd.tv/a/uhC1c2":
+                return DETAIL_EPISODE
+            if url == "https://subhd.tv/down/uhC1c2":
+                return b"<html>download page</html>"
+            if url == "https://dl.subhd.tv/2026/03/1772600046334.srt":
+                return SRT_BODY
+            raise AssertionError(f"unexpected GET: {url}")
+
+        def post_stub(url, payload, timeout=15, referer=None):
+            del timeout
+            called.append(("POST", url, referer, payload))
+            if payload == {"sid": "uhC1c2", "cap": ""}:
+                return captcha_body
+            if payload == {"sid": "uhC1c2", "cap": "57U1"}:
+                return API_DOWN
+            raise AssertionError(f"unexpected POST payload: {payload}")
+
+        provider._http_get = get_stub
+        provider._http_post_json = post_stub
+        provider._solve_captcha = lambda svg: "57U1"
+
+        result = provider.download(
+            {
+                "provider": "subhd",
+                "schema": 1,
+                "subtitle_id": "uhC1c2",
+                "detail_url": "https://subhd.tv/a/uhC1c2",
+                "download_url": "https://subhd.tv/down/uhC1c2",
+            },
+            {"alpha3": "zho", "alpha2": "zh"},
+            {},
+        )
+
+        self.assertEqual([item[3] for item in called if item[0] == "POST"], [
+            {"sid": "uhC1c2", "cap": ""},
+            {"sid": "uhC1c2", "cap": "57U1"},
+        ])
+        self.assertEqual(base64.b64decode(result["content_b64"]), SRT_BODY)
+
     def test_download_rejects_empty_final_file(self):
         provider = self.mod.SubHDProvider()
 
