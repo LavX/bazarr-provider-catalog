@@ -82,6 +82,51 @@ class ISubtitlesParserTests(unittest.TestCase):
 
         self.assertEqual(rows[0]["language"], "zho")
 
+    def test_parse_subtitle_rows_maps_browse_language_slugs(self):
+        cases = {
+            "albanian": "sqi",
+            "azerbaijani": "aze",
+            "belarusian": "bel",
+            "bosnian": "bos",
+            "burmese": "mya",
+            "cambodian-khmer": "khm",
+            "catalan": "cat",
+            "estonian": "est",
+            "georgian": "kat",
+            "icelandic": "isl",
+            "japanese": "jpn",
+            "kannada": "kan",
+            "kurdish": "kur",
+            "latvian": "lav",
+            "lithuanian": "lit",
+            "macedonian": "mkd",
+            "malayalam": "mal",
+            "pashto": "pus",
+            "serbian": "srp",
+            "slovak": "slk",
+            "slovenian": "slv",
+            "tagalog": "fil",
+            "telugu": "tel",
+            "urdu": "urd",
+            "ukranian": "ukr",
+        }
+        for language_slug, alpha3 in cases.items():
+            with self.subTest(language_slug=language_slug):
+                body = f"""
+                  <tr>
+                    <td data-title="Release / Movie"><a>Movie.2024.WEBRip</a></td>
+                    <td data-title="File">1</td>
+                    <td data-title="Size">20KB</td>
+                    <td data-title="Created">today</td>
+                    <td data-title="Comment"></td>
+                    <td><a href="/download/movie/{language_slug}/124">download</a></td>
+                  </tr>
+                """.encode("utf-8")
+
+                rows = self.mod.parse_subtitle_rows(body)
+
+                self.assertEqual(rows[0]["language"], alpha3)
+
     def test_derive_matches_accepts_1x_episode_tags(self):
         matches = self.mod.derive_matches(
             {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1},

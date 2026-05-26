@@ -74,6 +74,24 @@ class BollyNookParserTests(unittest.TestCase):
         self.assertEqual(rows[0]["title"], "Pathaan - 2023")
         self.assertEqual(rows[0]["language"], "eng")
 
+    def test_parse_search_results_maps_extra_site_language_codes(self):
+        cases = {
+            "alb": "sqi",
+            "ale": "aze",
+            "arm": "hye",
+            "arg": "arg",
+            "bel": "bel",
+            "bos": "bos",
+            "gle": "gle",
+            "mac": "mkd",
+        }
+        for site_code, alpha3 in cases.items():
+            with self.subTest(site_code=site_code):
+                rows = self.mod.parse_search_results(
+                    _search_page(_search_row("22997", "Pathaan - 2023", site_code))
+                )
+                self.assertEqual(rows[0]["language"], alpha3)
+
     def test_parse_detail_extracts_download_link(self):
         detail = self.mod.parse_detail(DETAIL_HTML, "https://www.bollynook.com/en/bollywood-movie-subtitles/22997/pathaan/")
         self.assertEqual(detail["title"], "Pathaan")
@@ -133,6 +151,35 @@ class BollyNookProviderTests(unittest.TestCase):
         self.assertIn("title", results[0]["matches"])
         self.assertIn("year", results[0]["matches"])
         self.assertEqual(results[0]["provider_payload"]["movie_id"], "22997")
+
+    def test_search_uses_extra_language_site_code(self):
+        provider = self.mod.BollyNookProvider()
+        responses = {
+            "https://www.bollynook.com/en/search/": _search_page(
+                _search_row("22997", "Pathaan - 2023", "alb")
+            ),
+            "https://www.bollynook.com/en/bollywood-movie-subtitles/22997/pathaan---2023/": _detail_page(
+                "Pathaan", 2023, "alb", "22997"
+            ),
+        }
+        calls = []
+
+        def stub(url, data=None, timeout=15, referer=None):
+            del timeout
+            calls.append((url, data, referer))
+            if url not in responses:
+                raise AssertionError(f"unexpected URL: {url}")
+            return responses[url]
+
+        provider._http_request = stub
+        results = provider.search(
+            {"kind": "movie", "title": "Pathaan", "year": 2023},
+            [{"alpha3": "sqi", "alpha2": "sq"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertIn(b"language=alb", calls[0][1])
+        self.assertEqual(results[0]["language"]["alpha3"], "sqi")
 
     def test_search_returns_requested_languages_across_candidates(self):
         provider = self.mod.BollyNookProvider()

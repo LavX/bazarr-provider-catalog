@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "889af796f1afb73cf5e114ece981846f8715c9d3fb934586cacadb388c0d4b3f",
+  "bundle_sha256": "8054a67329b35c23ee464f64d5bdaa7d829aca6745e51e432414cacf6e841230",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -23,7 +23,7 @@
   "entry_module": "provider",
   "files": {
     "captcha_templates.py": "92d62df74786303aac9b368f6be1b975abaef3ea285b1aca694a372372b056bf",
-    "provider.py": "9bf33510cbdad76ec4ea8d595abcebd036b9a1da0878fecaf2eaaf5818379181"
+    "provider.py": "1cf3e7197b8502b2918597141ed7e17b90ea10eac22f09d3282fb4e130c08991"
   },
   "languages": [
     "zho",
@@ -37,6 +37,7 @@
     "por",
     "ita",
     "nld",
+    "rus",
     "tur",
     "pol",
     "swe"
@@ -58,5 +59,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.2"
+  "version": "0.1.3"
 }

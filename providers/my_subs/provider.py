@@ -263,6 +263,7 @@ _LANGUAGE_NAME_TO_ALPHA2 = {
     "thai": "th",
     "malay": "ms",
     "filipino": "tl",
+    "tagalog": "tl",
     "hebrew": "he",
     "persian": "fa",
     "urdu": "ur",
@@ -284,6 +285,7 @@ _FLAG_TO_ALPHA2 = {
     "se": "sv",
     "vn": "vi",
     "al": "sq",
+    "ph": "tl",
 }
 _ALPHA3_TO_ALPHA2 = {
     "eng": "en",

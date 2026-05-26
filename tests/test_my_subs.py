@@ -135,6 +135,24 @@ class ParseSubtitleEntriesTests(unittest.TestCase):
         self.assertEqual(english[0]["release_info"], "2009")
         self.assertEqual(english[0]["downloads"], 9530)
 
+    def test_detail_maps_tagalog_ph_flag_to_filipino(self):
+        body = b"""
+        <a href="/downloads/tagalog-token" class="list-group-item">
+          <span class="flag-icon flag-icon-ph" title="Tagalog"></span> <i>Tagalog</i>
+          <strong>WEBRip</strong>
+          <div class="pull-right"><b>42</b><span class="glyphicon glyphicon-download-alt"></span></div>
+        </a>
+        """
+
+        entries = self.mod.parse_subtitle_entries(
+            body,
+            page_url="https://my-subs.co/film-versions-1-test-subtitles",
+            media_title="Test Movie",
+        )
+
+        self.assertEqual(entries[0]["language_alpha3"], "fil")
+        self.assertEqual(entries[0]["language_alpha2"], "tl")
+
 
 class DownloadGateTests(unittest.TestCase):
     def setUp(self):

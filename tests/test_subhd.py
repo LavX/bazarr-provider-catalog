@@ -77,6 +77,11 @@ class ParseSearchResultsTests(unittest.TestCase):
         self.assertIn("fra", multilingual["languages"])
         self.assertIn("spa", multilingual["languages"])
 
+    def test_russian_label_maps_to_russian(self):
+        block = '<span class="p-1 fw-bold">俄语</span>'.encode("utf-8")
+
+        self.assertEqual(self.mod._languages_from_block(block), ["rus"])
+
 
 class ParseDetailTests(unittest.TestCase):
     def setUp(self):

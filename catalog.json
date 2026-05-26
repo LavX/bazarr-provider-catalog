@@ -4,7 +4,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "d3ce19bd07eadbbc3576d590c3d1b5aa2b1089add7551faafbdf13d06b694011",
+        "bundle_sha256": "418a51393a876478e8eca61adcb2e81c2e26b99d93179b9b682d6eb75012322f",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -26,10 +26,14 @@
         "entry_class": "BollyNookProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "69ad7a22d17acfcf254e07a1caaa5099e5211c24afbe22ddf71f8f6a9a14e86e"
+          "provider.py": "2e70192fc07339a0e9e593ba62306a474fce6cfa2a5503e1a803e6164709be8f"
         },
         "languages": [
+          "arg",
           "ara",
+          "aze",
+          "bel",
+          "bos",
           "bul",
           "ces",
           "dan",
@@ -39,16 +43,19 @@
           "fas",
           "fin",
           "fra",
+          "gle",
           "heb",
           "hin",
           "hrv",
           "hun",
+          "hye",
           "ind",
           "ita",
           "jpn",
           "kor",
           "lav",
           "lit",
+          "mkd",
           "msa",
           "nld",
           "nor",
@@ -61,6 +68,7 @@
           "slv",
           "spa",
           "srp",
+          "sqi",
           "swe",
           "tha",
           "tur",
@@ -84,7 +92,7 @@
         "supported_media": [
           "movie"
         ],
-        "version": "0.1.0"
+        "version": "0.1.1"
       }
     },
     {
@@ -246,7 +254,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "892042f128ef7e7d8c4fc7d8b9baadfb609aaa8e53e75ea722f799fa4b450d00",
+        "bundle_sha256": "1baafbfe6f2db8ce4304e9613fb951259732f32bc9e53033cef952a3dab4a6f5",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -268,41 +276,79 @@
         "entry_class": "ISubtitlesProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "c6c63f029421a0d05f3dccd8093cf3f8f0aa0709075c2f8e99cff07c78074456"
+          "provider.py": "b58d3d27c97c68a46abf9b5dfc2f14439c8c74d1227ee270b32319d373323d2f"
         },
         "languages": [
+          "aze",
           "ara",
+          "bel",
           "ben",
+          "bos",
           "bul",
+          "cat",
           "ces",
           "dan",
           "deu",
           "ell",
           "eng",
+          "epo",
+          "est",
+          "eus",
           "fas",
+          "fil",
           "fin",
           "fra",
           "heb",
+          "hin",
           "hrv",
           "hun",
+          "hye",
           "ind",
+          "isl",
           "ita",
+          "jpn",
+          "kal",
+          "kan",
+          "kat",
+          "khm",
           "kor",
+          "kur",
+          "lav",
+          "lit",
+          "mal",
+          "mkd",
+          "mni",
+          "mon",
           "msa",
+          "mya",
+          "nep",
           "nld",
           "nor",
+          "pan",
           "pol",
           "por",
+          "pus",
+          "rhg",
           "ron",
           "rus",
           "sin",
+          "slk",
+          "slv",
+          "som",
           "spa",
+          "sqi",
+          "srp",
+          "sun",
+          "swa",
           "swe",
           "tam",
+          "tel",
           "tha",
           "tur",
           "ukr",
+          "urd",
           "vie",
+          "yor",
           "zho"
         ],
         "name": "iSubtitles",
@@ -322,7 +368,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.0"
+        "version": "0.1.1"
       }
     },
     {
@@ -440,7 +486,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "32a5baac45b82bc2b39aadb8d4de4b9095e82e22dce9847672c5bb2db4365314",
+        "bundle_sha256": "a441096543a8f94d4c795ef61855079f832ee9074e1493620cae14ef1fc33f82",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -462,7 +508,7 @@
         "entry_class": "MySubsProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "c42c24fb17844f81463d34e5314364447bbf5714af56b4c367cf037aa80a3b3b"
+          "provider.py": "91d1ae5b9c81454b551aed56f061db2e05cd90ab66e50f940d056f37c491514a"
         },
         "languages": [
           "eng",
@@ -525,7 +571,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.0"
+        "version": "0.1.1"
       }
     },
     {
@@ -757,7 +803,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "889af796f1afb73cf5e114ece981846f8715c9d3fb934586cacadb388c0d4b3f",
+        "bundle_sha256": "8054a67329b35c23ee464f64d5bdaa7d829aca6745e51e432414cacf6e841230",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -780,7 +826,7 @@
         "entry_module": "provider",
         "files": {
           "captcha_templates.py": "92d62df74786303aac9b368f6be1b975abaef3ea285b1aca694a372372b056bf",
-          "provider.py": "9bf33510cbdad76ec4ea8d595abcebd036b9a1da0878fecaf2eaaf5818379181"
+          "provider.py": "1cf3e7197b8502b2918597141ed7e17b90ea10eac22f09d3282fb4e130c08991"
         },
         "languages": [
           "zho",
@@ -794,6 +840,7 @@
           "por",
           "ita",
           "nld",
+          "rus",
           "tur",
           "pol",
           "swe"
@@ -815,7 +862,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.2"
+        "version": "0.1.3"
       }
     },
     {
