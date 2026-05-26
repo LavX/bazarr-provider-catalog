@@ -264,7 +264,10 @@ def extract_download(body, payload=None):
             subtitle_format = _subtitle_extension(selected[0]) or "srt"
             content = b"\n\n".join(archive.read(name) for name in selected)
             return _content_payload(content, subtitle_format)
-    return _content_payload(body, _subtitle_extension(payload.get("filename", "")) or "srt")
+    subtitle_format = _subtitle_extension(payload.get("filename", ""))
+    if not subtitle_format or _looks_like_html(body):
+        raise ValueError("moviesubtitles download did not return a supported subtitle file")
+    return _content_payload(body, subtitle_format)
 
 
 def select_subtitle_file(names):
@@ -275,9 +278,10 @@ def select_subtitle_files(names):
     candidates = [name for name in names if _subtitle_extension(name)]
     if not candidates:
         raise ValueError("moviesubtitles archive contains no supported subtitle files")
-    if _is_multipart_set(candidates):
-        return sorted(candidates, key=lambda name: (_part_index(name), name.lower()))
-    return [candidates[0]]
+    multipart = _multipart_subset(candidates)
+    if multipart:
+        return multipart
+    return [_primary_subtitle_file(candidates)]
 
 
 def _open_url(url, data=None, timeout=HTTP_TIMEOUT_SECONDS, referer=None, host_header=None, insecure=False):
@@ -456,16 +460,54 @@ def _part_index(name):
     return int(match.group(1)) if match else 0
 
 
-def _is_multipart_set(names):
-    if len(names) <= 1:
-        return False
-    extension = _subtitle_extension(names[0])
-    part_numbers = [_part_index(name) for name in names]
-    return (
-        all(number > 0 for number in part_numbers)
-        and len(set(part_numbers)) == len(part_numbers)
-        and all(_subtitle_extension(name) == extension for name in names)
-    )
+def _multipart_subset(names):
+    groups = {}
+    for name in names:
+        part_index = _part_index(name)
+        if part_index <= 0:
+            continue
+        groups.setdefault((_multipart_key(name), _subtitle_extension(name)), []).append(name)
+    valid_groups = []
+    for group in groups.values():
+        part_numbers = [_part_index(name) for name in group]
+        if len(group) > 1 and len(set(part_numbers)) == len(part_numbers):
+            valid_groups.append(group)
+    if not valid_groups:
+        return []
+    best_group = max(valid_groups, key=lambda group: (len(group), -min(_part_index(name) for name in group)))
+    return sorted(best_group, key=lambda name: (_part_index(name), name.lower()))
+
+
+def _multipart_key(name):
+    stem = os.path.splitext(os.path.basename(name))[0]
+    normalized = _normalize(stem)
+    return re.sub(r"\b(?:cd|part|disc|disk)\s*0*\d+\b", "", normalized).strip()
+
+
+def _primary_subtitle_file(names):
+    return sorted(enumerate(names), key=lambda item: (_variant_penalty(item[1]), _extension_priority(item[1]), item[0]))[0][1]
+
+
+def _variant_penalty(name):
+    tokens = set(_tokens(os.path.splitext(os.path.basename(name))[0]))
+    if tokens & {"hi", "sdh", "forced", "commentary"}:
+        return 1
+    if {"hearing", "impaired"} <= tokens:
+        return 1
+    return 0
+
+
+def _extension_priority(name):
+    extension = _subtitle_extension(name)
+    try:
+        return ["srt", "ass", "ssa", "vtt"].index(extension)
+    except ValueError:
+        return len(SUBTITLE_EXTENSIONS)
+
+
+def _looks_like_html(body):
+    sample = (body or b"").lstrip()[:512].lower()
+    return sample.startswith((b"<!doctype html", b"<html")) or b"<title" in sample
 
 
 def _allows_legacy_500_body(url):

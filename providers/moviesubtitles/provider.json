@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "841e53db9bf607ef3e1445ca2a5ca6e5e02dab2a751d9b703041500b6773da2d",
+  "bundle_sha256": "717b39eaa88b09e8516b3b048041f9e68b887dbb120715dd6072c2222fb7a008",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -22,7 +22,7 @@
   "entry_class": "MoviesubtitlesProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "0879d075b20f14d4efbca1eae04ed156521ad8ff72dbb26f170b7af04b53e106"
+    "provider.py": "e7f5c9f2802d7643d0cac675b438a9ff75224d27438a49d0ff433cd9db79330c"
   },
   "languages": [
     "ara",

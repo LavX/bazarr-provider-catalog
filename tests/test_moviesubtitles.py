@@ -170,6 +170,43 @@ class MoviesubtitlesProviderTests(unittest.TestCase):
         self.assertIn(b"Main track", decoded)
         self.assertNotIn(b"HI track", decoded)
 
+    def test_download_merges_multipart_subset_with_extra_track(self):
+        body = _zip_files(
+            {
+                "Movie.CD1.srt": b"1\n00:00:01,000 --> 00:00:02,000\nPart one\n",
+                "Movie.CD2.srt": b"1\n00:10:01,000 --> 00:10:02,000\nPart two\n",
+                "Movie.HI.srt": b"1\n00:00:01,000 --> 00:00:02,000\nHI full track\n",
+            }
+        )
+
+        result = self.mod.extract_download(body, {"filename": "movie.zip"})
+
+        decoded = base64.b64decode(result["content_b64"])
+        self.assertIn(b"Part one", decoded)
+        self.assertIn(b"Part two", decoded)
+        self.assertNotIn(b"HI full track", decoded)
+
+    def test_download_prefers_primary_track_over_hi_zip_member(self):
+        body = _zip_files(
+            {
+                "Movie.HI.srt": b"1\n00:00:01,000 --> 00:00:02,000\nHI track\n",
+                "Movie.srt": b"1\n00:00:01,000 --> 00:00:02,000\nMain track\n",
+            }
+        )
+
+        result = self.mod.extract_download(body, {"filename": "movie.zip"})
+
+        decoded = base64.b64decode(result["content_b64"])
+        self.assertIn(b"Main track", decoded)
+        self.assertNotIn(b"HI track", decoded)
+
+    def test_download_rejects_html_body_when_not_zip(self):
+        with self.assertRaises(ValueError):
+            self.mod.extract_download(
+                b"<html><title>download blocked</title></html>",
+                {"filename": "movie.zip"},
+            )
+
     def test_http_request_accepts_legacy_500_with_body(self):
         provider = self.mod.MoviesubtitlesProvider()
         error = urllib.error.HTTPError(
