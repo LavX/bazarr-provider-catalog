@@ -50,7 +50,7 @@ Before writing code, check the target site:
 
 Avoid sites that require a browser challenge or account automation unless you already have a supported helper service. Provider Hub workers should be deterministic HTTP clients, not headless browsers.
 
-When a site is hidden behind Cloudflare and no official API can replace the scrape, use a helper-service pattern like `opensubtitles-scraper` (https://github.com/LavX/opensubtitles-scraper): try a normal session first, detect Cloudflare challenge responses, fall back to a FlareSolverr, cache the returned cookies and User-Agent, and expose health or status so failures are visible. Keep this bypass explicit in config and tests. Do not silently add a browser dependency to a provider worker. 
+When a site is hidden behind Cloudflare and no official API can replace the scrape, use a helper-service pattern like `/home/lavx/opensubtitles-scraper/`: try a normal session first, detect Cloudflare challenge responses, fall back to FlareSolverr, cache the returned cookies and User-Agent, and expose health or status so failures are visible. Keep this bypass explicit in config and tests. Do not silently add a browser dependency to a provider worker.
 
 ## Discovery checklist
 
