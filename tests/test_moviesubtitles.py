@@ -142,6 +142,18 @@ class MoviesubtitlesProviderTests(unittest.TestCase):
         self.assertEqual(result["format"], "srt")
         self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
 
+    def test_download_extracts_sub_file_from_zip(self):
+        body = _zip_body(
+            "Interstellar.Bluray.YIFY.en.sub",
+            b"{1}{24}Movie line\n",
+        )
+
+        result = self.mod.extract_download(body, {"filename": "movie.zip"})
+
+        decoded = base64.b64decode(result["content_b64"])
+        self.assertIn(b"Movie line", decoded)
+        self.assertEqual(result["format"], "sub")
+
     def test_download_merges_multipart_zip_subtitles(self):
         body = _zip_files(
             {

@@ -22,7 +22,7 @@ PUBLIC_HOST = "www.moviesubtitles.org"
 HTTP_TIMEOUT_SECONDS = 15
 MAX_MOVIE_PAGES = 3
 MAX_RESULTS = 25
-SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt")
+SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
@@ -428,6 +428,8 @@ def _content_type(subtitle_format):
         return "text/x-ssa"
     if subtitle_format == "vtt":
         return "text/vtt"
+    if subtitle_format == "sub":
+        return "text/plain"
     return "application/x-subrip"
 
 
@@ -500,7 +502,7 @@ def _variant_penalty(name):
 def _extension_priority(name):
     extension = _subtitle_extension(name)
     try:
-        return ["srt", "ass", "ssa", "vtt"].index(extension)
+        return ["srt", "ass", "ssa", "vtt", "sub"].index(extension)
     except ValueError:
         return len(SUBTITLE_EXTENSIONS)
 
