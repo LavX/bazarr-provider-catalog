@@ -31,6 +31,14 @@ def _zip_body(name, body):
     return stream.getvalue()
 
 
+def _zip_files(files):
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, body in files.items():
+            archive.writestr(name, body)
+    return stream.getvalue()
+
+
 def _search_row(movie_id, title, language_code="eng"):
     slug = title.lower().replace(" ", "-").replace("/", "-")
     return f"""
@@ -232,6 +240,33 @@ class BollyNookProviderTests(unittest.TestCase):
         self.assertIn(b"Movie line", decoded)
         self.assertEqual(result["format"], "srt")
         self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
+
+    def test_download_selects_zip_member_for_requested_language(self):
+        provider = self.mod.BollyNookProvider()
+        body = _zip_files(
+            {
+                "Pathaan.2023.hin.srt": b"1\nHindi line\n",
+                "Pathaan.2023.eng.srt": b"1\nEnglish line\n",
+            }
+        )
+        provider._http_request = lambda url, data=None, timeout=15, referer=None: body
+
+        result = provider.download(
+            {
+                "provider": "bollynook",
+                "schema": 1,
+                "movie_id": "22997",
+                "url": "https://www.bollynook.com/uploaded_pictures/content/titlovi/22997-pathaan.zip",
+                "page_url": "https://www.bollynook.com/en/bollywood-movie-subtitles/22997/pathaan/",
+                "filename": "22997-pathaan.zip",
+            },
+            {"alpha3": "eng", "alpha2": "en"},
+            {},
+        )
+
+        decoded = base64.b64decode(result["content_b64"])
+        self.assertIn(b"English line", decoded)
+        self.assertNotIn(b"Hindi line", decoded)
 
 
 if __name__ == "__main__":

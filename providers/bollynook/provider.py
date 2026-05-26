@@ -257,8 +257,9 @@ class BollyNookProvider:
         }
 
     def download(self, provider_payload, language, config):
-        del language, config
-        payload = provider_payload or {}
+        del config
+        payload = dict(provider_payload or {})
+        payload.setdefault("language", _alpha3_for_language(language))
         url = payload.get("url")
         if not url:
             raise ValueError("bollynook download requires url")
@@ -273,15 +274,21 @@ def extract_download(body, payload=None):
     stream = io.BytesIO(body)
     if zipfile.is_zipfile(stream):
         with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist())
+            selected = select_subtitle_file(archive.namelist(), payload)
             return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
     return _content_payload(body, _subtitle_extension(payload.get("filename", "")) or "srt")
 
 
-def select_subtitle_file(names):
+def select_subtitle_file(names, payload=None):
     candidates = [name for name in names if _subtitle_extension(name)]
     if not candidates:
         raise ValueError("bollynook archive contains no supported subtitle files")
+    language_tokens = _language_tokens((payload or {}).get("language"))
+    if language_tokens:
+        scored = [(_language_score(name, language_tokens), index, name) for index, name in enumerate(candidates)]
+        best_score, _index, best_name = max(scored, key=lambda item: (item[0], -item[1]))
+        if best_score > 0:
+            return best_name
     return candidates[0]
 
 
@@ -412,6 +419,22 @@ def _safe_int(value):
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _language_tokens(alpha3):
+    meta = LANGUAGES.get((alpha3 or "").lower())
+    if not meta:
+        return set()
+    values = {alpha3, meta["alpha2"], meta["site_code"], meta["slug"], meta["name"]}
+    tokens = set()
+    for value in values:
+        tokens.update(_tokens(value))
+    return tokens
+
+
+def _language_score(name, language_tokens):
+    filename_tokens = set(_tokens(os.path.basename(name)))
+    return len(filename_tokens & language_tokens)
 
 
 def _strip_tags(value):

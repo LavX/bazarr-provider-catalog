@@ -4,7 +4,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "0d750e1f4ce25369d284d58adda96448a1b6e28c944486bed55a180083eed85c",
+        "bundle_sha256": "d3ce19bd07eadbbc3576d590c3d1b5aa2b1089add7551faafbdf13d06b694011",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -26,7 +26,7 @@
         "entry_class": "BollyNookProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "80067b3591b2acbe6f5ce5ce3ee939d5ccbdbecadbf38be5c7ad0e3909796503"
+          "provider.py": "69ad7a22d17acfcf254e07a1caaa5099e5211c24afbe22ddf71f8f6a9a14e86e"
         },
         "languages": [
           "ara",
