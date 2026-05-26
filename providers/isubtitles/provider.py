@@ -327,6 +327,8 @@ def select_subtitle_file(names, payload):
             return 0
         if re.search(rf"\be0*{episode}\b", normalized):
             return 80
+        if _numeric_episode_filename(name, episode):
+            return 70
         return 0
 
     scored = [(score(name), index, name) for index, name in enumerate(candidates)]
@@ -372,6 +374,9 @@ def _row_matches_video(video, row, title_page):
         return False
     if "episode" in matches:
         return True
+    season = _safe_int(video.get("season"))
+    if season is not None and _has_episode_marker_for_season(_normalize(candidate_title), season):
+        return False
     return "season" in matches and row.get("file_count", 0) > 1
 
 
@@ -409,11 +414,7 @@ def _season_tag_in(candidate_norm, season):
 def _episode_tag_in(candidate_norm, season, episode):
     season = int(season)
     episode = int(episode)
-    return (
-        re.search(rf"\bs0*{season}\s*e0*{episode}\b", candidate_norm) is not None
-        or re.search(rf"\b0*{season}\s*x\s*0*{episode}\b", candidate_norm) is not None
-        or re.search(rf"\bseason\s+0*{season}\s+episode\s+0*{episode}\b", candidate_norm) is not None
-    )
+    return episode in _episode_numbers_after_season(candidate_norm, season)
 
 
 def _has_season_marker(candidate_norm):
@@ -423,13 +424,36 @@ def _has_season_marker(candidate_norm):
     )
 
 
+def _has_episode_marker_for_season(candidate_norm, season):
+    return bool(_episode_numbers_after_season(candidate_norm, int(season)))
+
+
 def _has_episode_marker(candidate_norm):
     return (
-        re.search(r"\bs0*\d+\s*e0*\d+\b", candidate_norm) is not None
-        or re.search(r"\b0*\d+\s*x\s*0*\d+\b", candidate_norm) is not None
+        re.search(r"\bs0*\d+\s*e0*\d+(?:\s*e0*\d+)*\b", candidate_norm) is not None
+        or re.search(r"\b0*\d+\s*x\s*0*\d+(?:\s*x\s*0*\d+)*\b", candidate_norm) is not None
         or re.search(r"\be0*\d+\b", candidate_norm) is not None
-        or re.search(r"\bseason\s+0*\d+\s+episode\s+0*\d+\b", candidate_norm) is not None
+        or re.search(r"\bseason\s+0*\d+\s+episode\s+0*\d+(?:\s+episode\s+0*\d+)*\b", candidate_norm) is not None
     )
+
+
+def _episode_numbers_after_season(candidate_norm, season):
+    numbers = set()
+    patterns = (
+        rf"\bs0*{season}\s*e(?P<episodes>0*\d+(?:\s*e0*\d+)*)\b",
+        rf"\b0*{season}\s*x\s*(?P<episodes>0*\d+(?:\s*x\s*0*\d+)*)\b",
+        rf"\bseason\s+0*{season}\s+episode\s+(?P<episodes>0*\d+(?:\s+episode\s+0*\d+)*)\b",
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, candidate_norm):
+            for value in re.findall(r"\d+", match.group("episodes")):
+                numbers.add(int(value))
+    return numbers
+
+
+def _numeric_episode_filename(name, episode):
+    stem = os.path.splitext(os.path.basename(name or ""))[0]
+    return _safe_int(_normalize(stem)) == int(episode)
 
 
 def _subtitle_extension(name):

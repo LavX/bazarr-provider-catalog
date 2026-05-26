@@ -66,6 +66,14 @@ class ISubtitlesParserTests(unittest.TestCase):
 
         self.assertIn("episode", matches)
 
+    def test_derive_matches_accepts_combined_episode_tags(self):
+        matches = self.mod.derive_matches(
+            {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1},
+            "Chernobyl S01E01E02 WEBRip",
+        )
+
+        self.assertIn("episode", matches)
+
     def test_derive_matches_accepts_season_word_packs(self):
         matches = self.mod.derive_matches(
             {"kind": "episode", "series": "Succession", "season": 1, "episode": 1},
@@ -80,6 +88,15 @@ class ISubtitlesParserTests(unittest.TestCase):
                 {"kind": "movie", "title": "Suspiria", "year": 2018},
                 {"release_info": "Suspiria.1977.1080p", "comment": "", "file_count": 1},
                 {"title": "Suspiria - (1977)", "year": 1977},
+            )
+        )
+
+    def test_episode_row_rejects_explicit_mismatched_episode_pack(self):
+        self.assertFalse(
+            self.mod._row_matches_video(
+                {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1},
+                {"release_info": "Chernobyl S01E02 WEBRip", "comment": "", "file_count": 2},
+                {"title": "Chernobyl - (2019)", "year": 2019},
             )
         )
 
@@ -203,6 +220,20 @@ class ISubtitlesProviderTests(unittest.TestCase):
         decoded = base64.b64decode(result["content_b64"])
         self.assertIn(b"Season one", decoded)
         self.assertNotIn(b"Season two", decoded)
+
+    def test_download_selects_numeric_episode_file_from_season_pack(self):
+        body = _zip_body(
+            {
+                "01.srt": b"1\nEpisode one\n",
+                "02.srt": b"1\nEpisode two\n",
+            }
+        )
+
+        result = self.mod.extract_download(body, {"season": 1, "episode": 1})
+
+        decoded = base64.b64decode(result["content_b64"])
+        self.assertIn(b"Episode one", decoded)
+        self.assertNotIn(b"Episode two", decoded)
 
     def test_download_rejects_html_body_when_not_zip_or_subtitle(self):
         with self.assertRaises(ValueError):
