@@ -160,6 +160,88 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "892042f128ef7e7d8c4fc7d8b9baadfb609aaa8e53e75ea722f799fa4b450d00",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between HTTP calls to isubtitles.org.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Scrapes isubtitles.org title and language pages for downloadable subtitle ZIP files.",
+        "entry_class": "ISubtitlesProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "c6c63f029421a0d05f3dccd8093cf3f8f0aa0709075c2f8e99cff07c78074456"
+        },
+        "languages": [
+          "ara",
+          "ben",
+          "bul",
+          "ces",
+          "dan",
+          "deu",
+          "ell",
+          "eng",
+          "fas",
+          "fin",
+          "fra",
+          "heb",
+          "hrv",
+          "hun",
+          "ind",
+          "ita",
+          "kor",
+          "msa",
+          "nld",
+          "nor",
+          "pol",
+          "por",
+          "ron",
+          "rus",
+          "sin",
+          "spa",
+          "swe",
+          "tam",
+          "tha",
+          "tur",
+          "ukr",
+          "vie",
+          "zho"
+        ],
+        "name": "iSubtitles",
+        "provider_id": "isubtitles",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/isubtitles",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.0"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "32a5baac45b82bc2b39aadb8d4de4b9095e82e22dce9847672c5bb2db4365314",
         "config_schema": {
           "additionalProperties": false,
