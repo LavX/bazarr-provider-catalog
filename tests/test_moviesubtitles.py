@@ -156,6 +156,20 @@ class MoviesubtitlesProviderTests(unittest.TestCase):
         self.assertIn(b"Part one", decoded)
         self.assertIn(b"Part two", decoded)
 
+    def test_download_does_not_merge_unrelated_complete_tracks(self):
+        body = _zip_files(
+            {
+                "Movie.1080p.srt": b"1\n00:00:01,000 --> 00:00:02,000\nMain track\n",
+                "Movie.HI.srt": b"1\n00:00:01,000 --> 00:00:02,000\nHI track\n",
+            }
+        )
+
+        result = self.mod.extract_download(body, {"filename": "movie.zip"})
+
+        decoded = base64.b64decode(result["content_b64"])
+        self.assertIn(b"Main track", decoded)
+        self.assertNotIn(b"HI track", decoded)
+
     def test_http_request_accepts_legacy_500_with_body(self):
         provider = self.mod.MoviesubtitlesProvider()
         error = urllib.error.HTTPError(

@@ -275,7 +275,9 @@ def select_subtitle_files(names):
     candidates = [name for name in names if _subtitle_extension(name)]
     if not candidates:
         raise ValueError("moviesubtitles archive contains no supported subtitle files")
-    return sorted(candidates, key=lambda name: (_part_index(name), name.lower()))
+    if _is_multipart_set(candidates):
+        return sorted(candidates, key=lambda name: (_part_index(name), name.lower()))
+    return [candidates[0]]
 
 
 def _open_url(url, data=None, timeout=HTTP_TIMEOUT_SECONDS, referer=None, host_header=None, insecure=False):
@@ -452,6 +454,18 @@ def _part_index(name):
     normalized = _normalize(os.path.basename(name))
     match = re.search(r"\b(?:cd|part|disc|disk)\s*0*(\d+)\b", normalized)
     return int(match.group(1)) if match else 0
+
+
+def _is_multipart_set(names):
+    if len(names) <= 1:
+        return False
+    extension = _subtitle_extension(names[0])
+    part_numbers = [_part_index(name) for name in names]
+    return (
+        all(number > 0 for number in part_numbers)
+        and len(set(part_numbers)) == len(part_numbers)
+        and all(_subtitle_extension(name) == extension for name in names)
+    )
 
 
 def _allows_legacy_500_body(url):
