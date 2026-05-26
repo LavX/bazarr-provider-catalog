@@ -242,6 +242,67 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "736c566e46c8e5451f2e2ec3c546f92f58523546cea7229dc616dcf0eaa0af34",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between HTTP calls to moviesubtitles.org.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Scrapes moviesubtitles.org for movie subtitle ZIP files. Movie-only provider.",
+        "entry_class": "MoviesubtitlesProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "d4765340074af8244cc5e77426961161b4d7524b05f124aba70303745e1c2300"
+        },
+        "languages": [
+          "ara",
+          "deu",
+          "ell",
+          "eng",
+          "fra",
+          "hun",
+          "ita",
+          "pol",
+          "por",
+          "rus",
+          "spa",
+          "tur",
+          "ukr"
+        ],
+        "name": "Moviesubtitles",
+        "provider_id": "moviesubtitles",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/moviesubtitles",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie"
+        ],
+        "version": "0.1.0"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "32a5baac45b82bc2b39aadb8d4de4b9095e82e22dce9847672c5bb2db4365314",
         "config_schema": {
           "additionalProperties": false,
