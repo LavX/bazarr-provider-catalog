@@ -59,6 +59,12 @@ LANGUAGES = {
     "zho": {"alpha2": "zh", "slug": "chinese-bg-code", "name": "Chinese"},
 }
 _SLUG_TO_ALPHA3 = {value["slug"]: key for key, value in LANGUAGES.items()}
+_SLUG_TO_ALPHA3.update(
+    {
+        "big-5-code": "zho",
+        "brazillian-portuguese": "por",
+    }
+)
 _ALPHA2_TO_ALPHA3 = {value["alpha2"]: key for key, value in LANGUAGES.items()}
 
 _MOVIE_LINK_RE = re.compile(
@@ -320,12 +326,14 @@ def select_subtitle_file(names, payload):
         return candidates[0]
 
     def score(name):
-        normalized = _normalize(os.path.basename(name))
-        if _episode_tag_in(normalized, season, episode):
+        normalized_path = _normalize(name)
+        if _episode_tag_in(normalized_path, season, episode):
             return 100
-        if _has_season_marker(normalized):
+        if _season_tag_in(normalized_path, season) and _numeric_episode_filename(name, episode):
+            return 90
+        if _has_season_marker(normalized_path):
             return 0
-        if re.search(rf"\be0*{episode}\b", normalized):
+        if re.search(rf"\be0*{episode}\b", normalized_path):
             return 80
         if _numeric_episode_filename(name, episode):
             return 70
@@ -333,8 +341,11 @@ def select_subtitle_file(names, payload):
 
     scored = [(score(name), index, name) for index, name in enumerate(candidates)]
     best_score, _index, best_name = max(scored, key=lambda item: (item[0], -item[1]))
-    has_explicit_episode = any(_has_episode_marker(_normalize(os.path.basename(name))) for name in candidates)
-    if best_score <= 0 and (len(candidates) > 1 or has_explicit_episode):
+    has_explicit_marker = any(
+        _has_season_marker(_normalize(name)) or _has_episode_marker(_normalize(name))
+        for name in candidates
+    )
+    if best_score <= 0 and (len(candidates) > 1 or has_explicit_marker):
         raise ValueError("isubtitles archive contains no subtitle file for the requested episode")
     return best_name
 
@@ -419,7 +430,8 @@ def _episode_tag_in(candidate_norm, season, episode):
 
 def _has_season_marker(candidate_norm):
     return (
-        re.search(r"\bs0*\d+\b", candidate_norm) is not None
+        re.search(r"\bs0*\d+(?=\s*e|\b)", candidate_norm) is not None
+        or re.search(r"\b0*\d+\s*x\s*0*\d+\b", candidate_norm) is not None
         or re.search(r"\bseason\s+0*\d+\b", candidate_norm) is not None
     )
 
@@ -430,19 +442,27 @@ def _has_episode_marker_for_season(candidate_norm, season):
 
 def _has_episode_marker(candidate_norm):
     return (
-        re.search(r"\bs0*\d+\s*e0*\d+(?:\s*e0*\d+)*\b", candidate_norm) is not None
-        or re.search(r"\b0*\d+\s*x\s*0*\d+(?:\s*x\s*0*\d+)*\b", candidate_norm) is not None
+        re.search(r"\bs0*\d+\s*e\s*0*\d{1,3}(?:(?:\s*e\s*|\s+)0*\d{1,3})*\b", candidate_norm)
+        is not None
+        or re.search(r"\b0*\d+\s*x\s*0*\d{1,3}(?:(?:\s*x\s*|\s+)0*\d{1,3})*\b", candidate_norm)
+        is not None
         or re.search(r"\be0*\d+\b", candidate_norm) is not None
-        or re.search(r"\bseason\s+0*\d+\s+episode\s+0*\d+(?:\s+episode\s+0*\d+)*\b", candidate_norm) is not None
+        or re.search(
+            r"\bseason\s+0*\d+\s+(?:episode\s+|e\s*)0*\d{1,3}"
+            r"(?:(?:\s+(?:episode\s+|e\s*)|\s+)0*\d{1,3})*\b",
+            candidate_norm,
+        )
+        is not None
     )
 
 
 def _episode_numbers_after_season(candidate_norm, season):
     numbers = set()
     patterns = (
-        rf"\bs0*{season}\s*e(?P<episodes>0*\d+(?:\s*e0*\d+)*)\b",
-        rf"\b0*{season}\s*x\s*(?P<episodes>0*\d+(?:\s*x\s*0*\d+)*)\b",
-        rf"\bseason\s+0*{season}\s+episode\s+(?P<episodes>0*\d+(?:\s+episode\s+0*\d+)*)\b",
+        rf"\bs0*{season}\s*e\s*(?P<episodes>0*\d{{1,3}}(?:(?:\s*e\s*|\s+)0*\d{{1,3}})*)\b",
+        rf"\b0*{season}\s*x\s*(?P<episodes>0*\d{{1,3}}(?:(?:\s*x\s*|\s+)0*\d{{1,3}})*)\b",
+        rf"\bseason\s+0*{season}\s+(?:episode\s+|e\s*)"
+        rf"(?P<episodes>0*\d{{1,3}}(?:(?:\s+(?:episode|e)\s+|\s+)0*\d{{1,3}})*)\b",
     )
     for pattern in patterns:
         for match in re.finditer(pattern, candidate_norm):

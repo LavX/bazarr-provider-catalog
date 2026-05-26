@@ -50,6 +50,38 @@ class ISubtitlesParserTests(unittest.TestCase):
         self.assertEqual(rows[0]["size"], "15.7KB")
         self.assertIn("s01e01", rows[0]["release_info"].lower())
 
+    def test_parse_subtitle_rows_maps_brazillian_portuguese_slug(self):
+        body = b"""
+          <tr>
+            <td data-title="Release / Movie"><a>Movie.2024.WEBRip</a></td>
+            <td data-title="File">1</td>
+            <td data-title="Size">20KB</td>
+            <td data-title="Created">today</td>
+            <td data-title="Comment"></td>
+            <td><a href="/download/movie/brazillian-portuguese/123">download</a></td>
+          </tr>
+        """
+
+        rows = self.mod.parse_subtitle_rows(body)
+
+        self.assertEqual(rows[0]["language"], "por")
+
+    def test_parse_subtitle_rows_maps_big5_chinese_slug(self):
+        body = b"""
+          <tr>
+            <td data-title="Release / Movie"><a>Movie.2024.WEBRip</a></td>
+            <td data-title="File">1</td>
+            <td data-title="Size">20KB</td>
+            <td data-title="Created">today</td>
+            <td data-title="Comment"></td>
+            <td><a href="/download/movie/big-5-code/124">download</a></td>
+          </tr>
+        """
+
+        rows = self.mod.parse_subtitle_rows(body)
+
+        self.assertEqual(rows[0]["language"], "zho")
+
     def test_derive_matches_accepts_1x_episode_tags(self):
         matches = self.mod.derive_matches(
             {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1},
@@ -70,6 +102,30 @@ class ISubtitlesParserTests(unittest.TestCase):
         matches = self.mod.derive_matches(
             {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1},
             "Chernobyl S01E01E02 WEBRip",
+        )
+
+        self.assertIn("episode", matches)
+
+    def test_derive_matches_accepts_season_word_e_episode_tags(self):
+        matches = self.mod.derive_matches(
+            {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1},
+            "Chernobyl Season 1 E01 WEBRip",
+        )
+
+        self.assertIn("episode", matches)
+
+    def test_derive_matches_accepts_dash_multi_episode_tags(self):
+        matches = self.mod.derive_matches(
+            {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 2},
+            "Chernobyl S01E01-02 WEBRip",
+        )
+
+        self.assertIn("episode", matches)
+
+    def test_derive_matches_accepts_slash_multi_episode_tags(self):
+        matches = self.mod.derive_matches(
+            {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 2},
+            "Chernobyl S01E01/02 WEBRip",
         )
 
         self.assertIn("episode", matches)
@@ -96,6 +152,15 @@ class ISubtitlesParserTests(unittest.TestCase):
             self.mod._row_matches_video(
                 {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1},
                 {"release_info": "Chernobyl S01E02 WEBRip", "comment": "", "file_count": 2},
+                {"title": "Chernobyl - (2019)", "year": 2019},
+            )
+        )
+
+    def test_episode_row_rejects_season_word_mismatched_episode(self):
+        self.assertFalse(
+            self.mod._row_matches_video(
+                {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1},
+                {"release_info": "Chernobyl Season 1 E02 WEBRip", "comment": "", "file_count": 2},
                 {"title": "Chernobyl - (2019)", "year": 2019},
             )
         )
@@ -234,6 +299,20 @@ class ISubtitlesProviderTests(unittest.TestCase):
         decoded = base64.b64decode(result["content_b64"])
         self.assertIn(b"Episode one", decoded)
         self.assertNotIn(b"Episode two", decoded)
+
+    def test_download_scores_season_folder_paths(self):
+        body = _zip_body(
+            {
+                "Season 2/01.srt": b"1\nSeason two\n",
+                "Season 1/01.srt": b"1\nSeason one\n",
+            }
+        )
+
+        result = self.mod.extract_download(body, {"season": 1, "episode": 1})
+
+        decoded = base64.b64decode(result["content_b64"])
+        self.assertIn(b"Season one", decoded)
+        self.assertNotIn(b"Season two", decoded)
 
     def test_download_rejects_html_body_when_not_zip_or_subtitle(self):
         with self.assertRaises(ValueError):
