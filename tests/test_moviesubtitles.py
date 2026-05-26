@@ -2,6 +2,7 @@ import base64
 import hashlib
 import importlib.util
 import io
+import socket
 import urllib.error
 import unittest
 import zipfile
@@ -32,6 +33,14 @@ def _zip_body(name, body):
     return stream.getvalue()
 
 
+def _zip_files(files):
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, body in files.items():
+            archive.writestr(name, body)
+    return stream.getvalue()
+
+
 class MoviesubtitlesParserTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
@@ -49,6 +58,29 @@ class MoviesubtitlesParserTests(unittest.TestCase):
         self.assertEqual(rows[0]["rip"], "Bluray")
         self.assertEqual(rows[0]["release"], "YIFY")
         self.assertEqual(rows[0]["download_url"], "https://www.moviesubtitles.org/download-90389.html")
+
+    def test_parse_movie_subtitles_normalizes_portuguese_labels(self):
+        body = b"""
+          <a href="/subtitle-1.html" title="Download Portuguese subtitles"><b>Movie Portuguese</b></a>
+          <a href="/subtitle-2.html" title="Download Portugese(br) subtitles"><b>Movie Brazilian Portuguese</b></a>
+        """
+        rows = self.mod.parse_movie_subtitles(body)
+
+        self.assertEqual([row["language"] for row in rows], ["por", "por"])
+
+    def test_row_matches_rejects_wrong_movie_year(self):
+        self.assertFalse(
+            self.mod._row_matches_video(
+                {"kind": "movie", "title": "Suspiria", "year": 2018},
+                {"release_info": "Suspiria.1977.1080p"},
+                {"title": "Suspiria (1977)", "year": 1977},
+            )
+        )
+
+    def test_dns_error_detection_uses_exception_type(self):
+        error = urllib.error.URLError(socket.gaierror(11001, "getaddrinfo failed"))
+
+        self.assertTrue(self.mod._looks_like_dns_error(error))
 
 
 class MoviesubtitlesProviderTests(unittest.TestCase):
@@ -110,6 +142,20 @@ class MoviesubtitlesProviderTests(unittest.TestCase):
         self.assertEqual(result["format"], "srt")
         self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
 
+    def test_download_merges_multipart_zip_subtitles(self):
+        body = _zip_files(
+            {
+                "Movie.CD1.srt": b"1\n00:00:01,000 --> 00:00:02,000\nPart one\n",
+                "Movie.CD2.srt": b"1\n00:10:01,000 --> 00:10:02,000\nPart two\n",
+            }
+        )
+
+        result = self.mod.extract_download(body, {"filename": "movie.zip"})
+
+        decoded = base64.b64decode(result["content_b64"])
+        self.assertIn(b"Part one", decoded)
+        self.assertIn(b"Part two", decoded)
+
     def test_http_request_accepts_legacy_500_with_body(self):
         provider = self.mod.MoviesubtitlesProvider()
         error = urllib.error.HTTPError(
@@ -127,6 +173,26 @@ class MoviesubtitlesProviderTests(unittest.TestCase):
                 provider._http_request("https://www.moviesubtitles.org/search.php"),
                 SEARCH_HTML,
             )
+        finally:
+            self.mod._open_url = original
+
+    def test_http_request_rejects_500_body_for_downloads(self):
+        provider = self.mod.MoviesubtitlesProvider()
+
+        def raise_download_500(*args, **kwargs):
+            raise urllib.error.HTTPError(
+                "https://www.moviesubtitles.org/download-90389.html",
+                500,
+                "Internal Server Error",
+                {},
+                io.BytesIO(b"<html>server error</html>"),
+            )
+
+        original = self.mod._open_url
+        try:
+            self.mod._open_url = raise_download_500
+            with self.assertRaises(urllib.error.HTTPError):
+                provider._http_request("https://www.moviesubtitles.org/download-90389.html")
         finally:
             self.mod._open_url = original
 

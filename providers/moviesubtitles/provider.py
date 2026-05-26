@@ -6,6 +6,7 @@ import html
 import io
 import os
 import re
+import socket
 import ssl
 import time
 import unicodedata
@@ -36,7 +37,7 @@ LANGUAGES = {
     "hun": {"alpha2": "hu", "flag": "hu", "name": "hungarian"},
     "ita": {"alpha2": "it", "flag": "it", "name": "italian"},
     "pol": {"alpha2": "pl", "flag": "pl", "name": "polish"},
-    "por": {"alpha2": "pt", "flag": "br", "name": "portugese"},
+    "por": {"alpha2": "pt", "flag": "br", "name": "portuguese"},
     "rus": {"alpha2": "ru", "flag": "ru", "name": "russian"},
     "spa": {"alpha2": "es", "flag": "es", "name": "spanish"},
     "tur": {"alpha2": "tr", "flag": "tr", "name": "turkish"},
@@ -98,7 +99,7 @@ def parse_movie_subtitles(body):
         start = match.start()
         end = matches[index + 1].start() if index + 1 < len(matches) else len(body or b"")
         chunk = (body or b"")[start:end]
-        language_name = _decode(match.group("language")).lower().strip()
+        language_name = _normalize_language_label(_decode(match.group("language")))
         alpha3 = _LANGUAGE_NAME_TO_ALPHA3.get(language_name)
         if not alpha3:
             continue
@@ -145,7 +146,7 @@ class MoviesubtitlesProvider:
             return _open_url(url, data=data, timeout=timeout, referer=referer)
         except urllib.error.HTTPError as error:
             body = _read_http_error_body(error)
-            if error.code == 500 and body:
+            if error.code == 500 and body and _allows_legacy_500_body(url):
                 return body
             raise
         except urllib.error.URLError as error:
@@ -162,7 +163,7 @@ class MoviesubtitlesProvider:
                 )
             except urllib.error.HTTPError as fallback_error:
                 body = _read_http_error_body(fallback_error)
-                if fallback_error.code == 500 and body:
+                if fallback_error.code == 500 and body and _allows_legacy_500_body(url):
                     return body
                 raise
 
@@ -259,16 +260,22 @@ def extract_download(body, payload=None):
     stream = io.BytesIO(body)
     if zipfile.is_zipfile(stream):
         with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist())
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
+            selected = select_subtitle_files(archive.namelist())
+            subtitle_format = _subtitle_extension(selected[0]) or "srt"
+            content = b"\n\n".join(archive.read(name) for name in selected)
+            return _content_payload(content, subtitle_format)
     return _content_payload(body, _subtitle_extension(payload.get("filename", "")) or "srt")
 
 
 def select_subtitle_file(names):
+    return select_subtitle_files(names)[0]
+
+
+def select_subtitle_files(names):
     candidates = [name for name in names if _subtitle_extension(name)]
     if not candidates:
         raise ValueError("moviesubtitles archive contains no supported subtitle files")
-    return candidates[0]
+    return sorted(candidates, key=lambda name: (_part_index(name), name.lower()))
 
 
 def _open_url(url, data=None, timeout=HTTP_TIMEOUT_SECONDS, referer=None, host_header=None, insecure=False):
@@ -301,7 +308,15 @@ def _fallback_url(url):
 
 def _looks_like_dns_error(error):
     reason = getattr(error, "reason", error)
-    return "Name or service not known" in str(reason) or "Temporary failure in name resolution" in str(reason)
+    if isinstance(reason, socket.gaierror):
+        return True
+    if isinstance(reason, OSError) and getattr(reason, "errno", None) in {-2, -3, 8, 11001}:
+        return True
+    return (
+        "Name or service not known" in str(reason)
+        or "Temporary failure in name resolution" in str(reason)
+        or "getaddrinfo failed" in str(reason)
+    )
 
 
 def _rank_movie_pages(video, pages):
@@ -330,6 +345,10 @@ def _rank_movie_pages(video, pages):
 
 def _row_matches_video(video, row, movie_page):
     matches = derive_matches(video, f"{movie_page['title']} {row['release_info']}")
+    wanted_year = _safe_int((video or {}).get("year"))
+    candidate_year = movie_page.get("year")
+    if wanted_year is not None and candidate_year is not None and candidate_year != wanted_year:
+        return False
     return "title" in matches
 
 
@@ -355,6 +374,14 @@ def _alpha3_for_language(language):
     if alpha3:
         return alpha3
     return _ALPHA2_TO_ALPHA3.get((language.get("alpha2") or "").lower())
+
+
+def _normalize_language_label(label):
+    normalized = (label or "").lower().strip()
+    normalized = re.sub(r"\([^)]*\)", "", normalized).strip()
+    if normalized == "portugese":
+        return "portuguese"
+    return normalized
 
 
 def _subtitle_extension(name):
@@ -412,6 +439,24 @@ def _year_from_title(title):
 def _int_from_text(text):
     match = re.search(r"\d+", text or "")
     return int(match.group(0)) if match else 0
+
+
+def _safe_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _part_index(name):
+    normalized = _normalize(os.path.basename(name))
+    match = re.search(r"\b(?:cd|part|disc|disk)\s*0*(\d+)\b", normalized)
+    return int(match.group(1)) if match else 0
+
+
+def _allows_legacy_500_body(url):
+    path = urllib.parse.urlparse(url).path
+    return path.endswith("/search.php") or re.search(r"/movie-\d+\.html$", path) is not None
 
 
 def _strip_tags(value):
