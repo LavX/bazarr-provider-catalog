@@ -1,7 +1,9 @@
 import base64
 import hashlib
 import importlib.util
+import io
 import unittest
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,14 +49,23 @@ class ParseSearchResultsTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
 
+    def test_bilingual_chinese_labels_are_chinese_first(self):
+        block = (
+            '<span class="p-1 fw-bold">双语</span>'
+            '<span class="p-1 fw-bold">简体</span>'
+            '<span class="p-1 fw-bold">繁体</span>'
+            '<span class="p-1 fw-bold">英语</span>'
+        ).encode("utf-8")
+
+        self.assertEqual(self.mod._languages_from_block(block), ["zho"])
+
     def test_episode_search_extracts_subtitle_rows(self):
         rows = self.mod.parse_search_results(SEARCH_EPISODE)
         first = rows[0]
         self.assertEqual(first["subtitle_id"], "uhC1c2")
         self.assertEqual(first["media_id"], "27098632")
         self.assertIn("Chernobyl s01e01", first["release_info"])
-        self.assertIn("eng", first["languages"])
-        self.assertIn("zho", first["languages"])
+        self.assertEqual(first["languages"], ["zho"])
         self.assertEqual(first["download_count"], 82)
         self.assertEqual(first["detail_url"], "https://subhd.tv/a/uhC1c2")
 
@@ -77,16 +88,14 @@ class ParseDetailTests(unittest.TestCase):
         self.assertEqual(detail["download_url"], "https://subhd.tv/down/uhC1c2")
         self.assertIn("Chernobyl s01e01", detail["release_info"])
         self.assertEqual(detail["format"], "srt")
-        self.assertIn("eng", detail["languages"])
-        self.assertIn("zho", detail["languages"])
+        self.assertEqual(detail["languages"], ["zho"])
 
     def test_movie_detail_extracts_preview_file_and_metadata(self):
         detail = self.mod.parse_detail_page(DETAIL_MOVIE, "https://subhd.tv/a/PuCsoN")
         self.assertEqual(detail["subtitle_id"], "PuCsoN")
         self.assertEqual(detail["format"], "srt")
         self.assertEqual(detail["download_count"], 2343)
-        self.assertIn("eng", detail["languages"])
-        self.assertIn("zho", detail["languages"])
+        self.assertEqual(detail["languages"], ["zho"])
         self.assertIn("1776336311088.srt", detail["files"])
 
 
@@ -126,7 +135,7 @@ class SubHDProviderSearchTests(unittest.TestCase):
         provider._http_get = stub
         results = provider.search(
             {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1},
-            [{"alpha3": "eng", "alpha2": "en"}],
+            [{"alpha3": "zho", "alpha2": "zh"}],
             {"request_delay_ms": 0},
         )
 
@@ -134,10 +143,41 @@ class SubHDProviderSearchTests(unittest.TestCase):
         self.assertEqual(called[:2], list(responses))
         first = results[0]
         self.assertEqual(first["provider"], "subhd")
-        self.assertEqual(first["language"]["alpha3"], "eng")
+        self.assertEqual(first["language"]["alpha3"], "zho")
         self.assertIn("episode", first["matches"])
         self.assertEqual(first["provider_payload"]["subtitle_id"], "uhC1c2")
         self.assertEqual(first["provider_payload"]["download_url"], "https://subhd.tv/down/uhC1c2")
+
+    def test_search_rechecks_detail_languages_before_returning_english(self):
+        responses = {
+            "https://subhd.tv/search/Chernobyl%20S01E01": SEARCH_EPISODE.replace(
+                (
+                    '<span class="p-1 fw-bold">双语</span>\n'
+                    '            <span class="p-1 fw-bold">英语</span>'
+                    '<span class="p-1 fw-bold">简体</span>'
+                ).encode("utf-8"),
+                '<span class="p-1 fw-bold">英语</span>'.encode("utf-8"),
+                1,
+            ),
+            "https://subhd.tv/search/Chernobyl": SEARCH_EPISODE,
+            "https://subhd.tv/a/uhC1c2": DETAIL_EPISODE,
+        }
+        provider = self.mod.SubHDProvider()
+
+        def stub(url, timeout=15, referer=None):
+            del timeout, referer
+            if url not in responses:
+                raise AssertionError(f"unexpected URL: {url}")
+            return responses[url]
+
+        provider._http_get = stub
+        results = provider.search(
+            {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1},
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(results, [])
 
 
 class SubHDProviderDownloadTests(unittest.TestCase):
@@ -188,6 +228,43 @@ class SubHDProviderDownloadTests(unittest.TestCase):
         self.assertFalse(result["empty"])
         self.assertEqual(base64.b64decode(result["content_b64"]), SRT_BODY)
         self.assertEqual(result["content_sha256"], hashlib.sha256(SRT_BODY).hexdigest())
+
+    def test_download_rejects_empty_final_file(self):
+        provider = self.mod.SubHDProvider()
+
+        def get_stub(url, timeout=15, referer=None):
+            del timeout, referer
+            if url == "https://subhd.tv/a/uhC1c2":
+                return DETAIL_EPISODE
+            if url == "https://subhd.tv/down/uhC1c2":
+                return b"<html>download page</html>"
+            if url == "https://dl.subhd.tv/2026/03/1772600046334.srt":
+                return b""
+            raise AssertionError(f"unexpected GET: {url}")
+
+        provider._http_get = get_stub
+        provider._http_post_json = lambda url, payload, timeout=15, referer=None: API_DOWN
+
+        with self.assertRaisesRegex(ValueError, "empty subtitle"):
+            provider.download(
+                {
+                    "provider": "subhd",
+                    "schema": 1,
+                    "subtitle_id": "uhC1c2",
+                    "detail_url": "https://subhd.tv/a/uhC1c2",
+                    "download_url": "https://subhd.tv/down/uhC1c2",
+                },
+                {"alpha3": "zho", "alpha2": "zh"},
+                {},
+            )
+
+    def test_zip_extraction_rejects_empty_subtitle_member(self):
+        archive_body = io.BytesIO()
+        with zipfile.ZipFile(archive_body, "w") as archive:
+            archive.writestr("empty.srt", b"")
+
+        with self.assertRaisesRegex(ValueError, "empty subtitle"):
+            self.mod._extract_best_subtitle(archive_body.getvalue(), "zip")
 
 
 if __name__ == "__main__":

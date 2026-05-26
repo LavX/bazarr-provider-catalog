@@ -132,6 +132,13 @@ _LABEL_TO_ALPHA3 = {
     "\u6ce2\u5170\u8bed": "pol",
     "\u745e\u5178\u8bed": "swe",
 }
+_CHINESE_BILINGUAL_LABELS = {
+    "\u53cc\u8bed",
+    "\u4e2d\u82f1",
+    "\u4e2d\u82f1\u53cc\u8bed",
+    "\u7b80\u82f1",
+    "\u7e41\u82f1",
+}
 _ALPHA3_TO_ALPHA2 = {
     "zho": "zh",
     "eng": "en",
@@ -152,9 +159,11 @@ _ALPHA2_TO_ALPHA3 = {value: key for key, value in _ALPHA3_TO_ALPHA2.items()}
 
 
 def _languages_from_block(block):
+    labels = [_strip_tags(match.group("label")) for match in _LANG_LABEL_RE.finditer(block or b"")]
+    if any(label in _CHINESE_BILINGUAL_LABELS for label in labels):
+        return ["zho"]
     result = []
-    for match in _LANG_LABEL_RE.finditer(block or b""):
-        label = _strip_tags(match.group("label"))
+    for label in labels:
         alpha3 = _LABEL_TO_ALPHA3.get(label)
         if alpha3 and alpha3 not in result:
             result.append(alpha3)
@@ -383,8 +392,7 @@ class SubHDProvider:
             _sleep(config)
             rows = parse_search_results(self._http_get(url))
             for row in rows[:MAX_CANDIDATES_PER_QUERY]:
-                usable_languages = [lang for lang in row["languages"] if lang in requested]
-                if not usable_languages:
+                if row["languages"] and not any(lang in requested for lang in row["languages"]):
                     continue
                 _sleep(config)
                 try:
@@ -396,6 +404,9 @@ class SubHDProvider:
                     continue
                 merged = dict(row)
                 merged.update({key: value for key, value in detail.items() if value})
+                usable_languages = [lang for lang in merged.get("languages", []) if lang in requested]
+                if not usable_languages:
+                    continue
                 for alpha3 in usable_languages:
                     key = (merged["subtitle_id"], alpha3)
                     if key in seen:
@@ -488,19 +499,15 @@ def _extract_best_subtitle(body, fmt):
             raise ValueError("subhd archive contained no subtitle files")
         names.sort(key=lambda name: (not name.lower().endswith(".srt"), len(name), name.lower()))
         name = names[0]
-        return archive.read(name), name.rsplit(".", 1)[-1].lower()
+        content = archive.read(name)
+        if not content:
+            raise ValueError("subhd downloaded empty subtitle")
+        return content, name.rsplit(".", 1)[-1].lower()
 
 
 def _content_payload(body, fmt):
     if not body:
-        return {
-            "content_b64": "",
-            "content_sha256": "",
-            "content_type": _content_type(fmt),
-            "format": fmt,
-            "encoding": "utf-8",
-            "empty": True,
-        }
+        raise ValueError("subhd downloaded empty subtitle")
     try:
         body.decode("utf-8")
         encoding = "utf-8"
