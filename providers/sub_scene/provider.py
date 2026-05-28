@@ -317,7 +317,59 @@ def _get_subtitle_detail(url, delay_ms=0):
         return None
 
 
-def _download_subtitle(download_url, delay_ms=0):
+def _select_episode_file(srt_files, video):
+    """Select the best matching episode file from a ZIP archive."""
+    if not srt_files:
+        return None
+    
+    episode = (video or {}).get("episode")
+    season = (video or {}).get("season")
+    
+    if episode is None:
+        return srt_files[0]
+    
+    try:
+        episode_int = int(episode)
+    except (TypeError, ValueError):
+        return srt_files[0]
+    
+    try:
+        season_int = int(season)
+    except (TypeError, ValueError):
+        season_int = None
+    
+    def score(name):
+        base = name.lower()
+        # Prefer explicit SxxExx markers
+        if season_int is not None:
+            pattern = rf"s{season_int:02d}e{episode_int:02d}"
+            if pattern in base:
+                return 200
+            # Also match unpadded: s1e2
+            pattern_unpadded = rf"s{season_int}e{episode_int}"
+            if pattern_unpadded in base:
+                return 200
+        # Fallback: match episode number with E prefix and boundary
+        e_pattern = rf"e{episode_int:02d}(?!\d)"
+        if re.search(e_pattern, base):
+            return 100
+        e_pattern_unpadded = rf"e{episode_int}(?!\d)"
+        if re.search(e_pattern_unpadded, base):
+            return 100
+        return 0
+    
+    # Score all candidates and find the best match
+    scored = [(score(name), name) for name in srt_files]
+    best_score, best_name = max(scored, key=lambda x: x[0])
+    
+    # If no episode match found, return first file as fallback
+    if best_score == 0:
+        return srt_files[0]
+    
+    return best_name
+
+
+def _download_subtitle(download_url, delay_ms=0, video=None):
     """Download and extract subtitle ZIP file."""
     if delay_ms > 0:
         time.sleep(delay_ms / 1000.0)
@@ -331,7 +383,8 @@ def _download_subtitle(download_url, delay_ms=0):
             if not srt_files:
                 return None
             
-            srt_file = srt_files[0]
+            # Select episode-specific file if video metadata available
+            srt_file = _select_episode_file(srt_files, video)
             content = zf.read(srt_file)
             
             return {
@@ -428,6 +481,7 @@ class SubSceneProvider:
             return []
         
         results = []
+        seen_ids = set()
         queries = _build_search_queries(video)
         if not queries:
             return []
@@ -445,9 +499,15 @@ class SubSceneProvider:
                     if not lang_code or lang_code not in requested_alpha3:
                         continue
                     
-                    score = _calculate_score(video, subtitle)
                     subtitle_url = subtitle.get("url", "")
                     subtitle_id = subtitle_url.split("/")[-1] if subtitle_url else "unknown"
+                    
+                    # Deduplicate by subtitle ID
+                    if subtitle_id in seen_ids:
+                        continue
+                    seen_ids.add(subtitle_id)
+                    
+                    score = _calculate_score(video, subtitle)
                     
                     results.append({
                         "provider": PROVIDER_ID,
@@ -499,7 +559,9 @@ class SubSceneProvider:
         if not detail or not detail.get("download_url"):
             raise ValueError("sub_scene could not find download URL on detail page")
         
-        downloaded = _download_subtitle(detail["download_url"], delay_ms)
+        # Pass video metadata to select episode-specific file from ZIP
+        video = subtitle.get("video")
+        downloaded = _download_subtitle(detail["download_url"], delay_ms, video)
         if not downloaded:
             raise ValueError("sub_scene failed to download or extract subtitle file")
         
