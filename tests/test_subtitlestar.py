@@ -189,6 +189,22 @@ class ParseDetailPageTests(unittest.TestCase):
             ["https://dl2.subtitlestar.com/dlsub/movie.zip"],
         )
 
+    def test_normalizes_extra_slash_dlsub_relative_links(self):
+        html = """
+        <html>
+        <body>
+        <a href="dlsub//movie.zip">Download subtitle</a>
+        </body>
+        </html>
+        """.encode("utf-8")
+
+        details = self.mod.parse_detail_page(html)
+
+        self.assertEqual(
+            details["downloads"],
+            ["https://dl2.subtitlestar.com/dlsub/movie.zip"],
+        )
+
     def test_handles_empty_html(self):
         self.assertIsNone(self.mod.parse_detail_page(b""))
 
@@ -388,6 +404,44 @@ class SubtitlestarProviderSearchTests(unittest.TestCase):
 
         self.assertEqual(results, [])
 
+    def test_search_keeps_title_match_when_candidate_year_missing(self):
+        search_url = "https://subtitlestar.com/?s=Dune%202021&post_type=post"
+        fallback_search_url = "https://subtitlestar.com/?s=Dune&post_type=post"
+        detail_url = "https://subtitlestar.com/persian-subtitles-dune/"
+        search_html = b"""
+        <html>
+        <body>
+        <a href="https://subtitlestar.com/persian-subtitles-dune/">
+        <img alt="Dune" src="x.jpg">
+        </a>
+        </body>
+        </html>
+        """
+        detail_html = """
+        <html>
+        <head><title>Dune - SubtitleStar</title></head>
+        <body>
+        <a href="https://dl.subtitlestar.com/dlsub/dune.zip">Download</a>
+        </body>
+        </html>
+        """.encode("utf-8")
+        provider, _ = self._provider_with_stub(
+            {
+                search_url: search_html,
+                fallback_search_url: b"<html><body></body></html>",
+                detail_url: detail_html,
+            }
+        )
+
+        results = provider.search(
+            video={"kind": "movie", "title": "Dune", "year": 2021},
+            languages=[{"alpha3": "fas", "alpha2": "fa"}],
+            config={},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["matches"], ["title"])
+
 
 class SubtitlestarProviderDownloadTests(unittest.TestCase):
     def setUp(self):
@@ -440,6 +494,29 @@ class SubtitlestarProviderDownloadTests(unittest.TestCase):
 
         self.assertEqual(result["format"], "vtt")
         self.assertEqual(result["content_type"], "text/vtt")
+
+    def test_download_merges_multipart_movie_zip_subtitles(self):
+        import io
+        import zipfile
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("Movie.CD1.srt", "1\n00:00:01,000 --> 00:00:02,000\nPart one\n")
+            zf.writestr("Movie.CD2.srt", "1\n00:10:01,000 --> 00:10:02,000\nPart two\n")
+        body = zip_buffer.getvalue()
+        provider = self._provider_with_body(body)
+
+        result = provider.download(
+            provider_payload={
+                "download_url": "https://dl.subtitlestar.com/dlsub/movie.zip",
+                "video": {"kind": "movie", "title": "Movie", "year": 2024},
+            },
+            language={"alpha3": "fas", "alpha2": "fa"},
+            config={},
+        )
+
+        decoded = base64.b64decode(result["content_b64"])
+        self.assertIn(b"Part one", decoded)
+        self.assertIn(b"Part two", decoded)
 
 
 class SelectSubtitleFileTests(unittest.TestCase):
