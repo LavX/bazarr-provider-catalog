@@ -3,18 +3,35 @@
 import base64
 import hashlib
 import io
+import json
 import re
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
 from html.parser import HTMLParser
+
+try:
+    import cloudscraper
+except ImportError:  # pragma: no cover, dependency is declared in provider.json
+    cloudscraper = None
 
 PROVIDER_ID = "sub_scene"
 BASE_URL = "https://sub-scene.com"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+DEFAULT_FLARESOLVERR_TIMEOUT_MS = 60000
+CLOUDFLARE_STATUS_CODES = {403, 429, 503}
+CLOUDFLARE_BODY_MARKERS = (
+    "just a moment",
+    "challenge-platform",
+    "_cf_chl_opt",
+    "cf_chl",
+    "cf-chl",
+    "turnstile",
 )
 
 LANGUAGE_MAP = {
@@ -56,6 +73,19 @@ LANGUAGE_MAP = {
     "Ukrainian": "ukr",
     "Vietnamese": "vie",
 }
+
+
+class CloudflareBlockedError(RuntimeError):
+    """Raised when sub-scene.com presents an unresolved Cloudflare challenge."""
+
+
+class _MissingCloudscraper:
+    def create_scraper(self, *args, **kwargs):
+        raise CloudflareBlockedError("sub_scene cloudscraper dependency is not installed")
+
+
+if cloudscraper is None:  # pragma: no cover, dependency is declared in provider.json
+    cloudscraper = _MissingCloudscraper()
 
 
 class SubsceneSearchParser(HTMLParser):
@@ -237,11 +267,199 @@ class SubsceneSubtitleParser(HTMLParser):
             self.in_release_div = False
 
 
-def _http_get(url, timeout=30):
-    """Make HTTP GET request with proper headers."""
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read()
+def _normalize_headers(headers):
+    return {
+        str(key).lower(): str(value)
+        for key, value in (headers or {}).items()
+    }
+
+
+def _is_cloudflare_challenge(status_code, headers, body):
+    normalized_headers = _normalize_headers(headers)
+    if normalized_headers.get("cf-mitigated", "").lower() == "challenge":
+        return True
+
+    try:
+        status = int(status_code)
+    except (TypeError, ValueError):
+        status = 0
+    if status not in CLOUDFLARE_STATUS_CODES:
+        return False
+
+    body_text = (body or b"").decode("utf-8", errors="ignore").lower()
+    return any(marker in body_text for marker in CLOUDFLARE_BODY_MARKERS)
+
+
+def _is_cloudflare_exception(exc):
+    text = f"{exc.__class__.__name__} {exc}".lower()
+    return "cloudflare" in text or "challenge" in text
+
+
+def _flaresolverr_url(config):
+    return str((config or {}).get("flaresolverr_url") or "").strip()
+
+
+def _flaresolverr_timeout_ms(config):
+    try:
+        timeout = int((config or {}).get("flaresolverr_timeout_ms") or DEFAULT_FLARESOLVERR_TIMEOUT_MS)
+    except (TypeError, ValueError):
+        return DEFAULT_FLARESOLVERR_TIMEOUT_MS
+    return max(5000, min(timeout, 180000))
+
+
+def _cookie_header(cookies):
+    if not cookies:
+        return ""
+    return "; ".join(
+        f"{name}={value}"
+        for name, value in cookies.items()
+        if name and value is not None
+    )
+
+
+def _request_headers(state=None, referer=None):
+    state = state or {}
+    headers = {
+        "User-Agent": state.get("flaresolverr_user_agent") or USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    cookie = _cookie_header(state.get("flaresolverr_cookies"))
+    if cookie:
+        headers["Cookie"] = cookie
+    if referer:
+        headers["Referer"] = referer
+    return headers
+
+
+def _get_cloudscraper(state):
+    if state is None:
+        state = {}
+    scraper = state.get("cloudscraper")
+    if scraper is None:
+        scraper = cloudscraper.create_scraper(
+            browser={"custom": USER_AGENT},
+        )
+        state["cloudscraper"] = scraper
+    return scraper
+
+
+def _store_flaresolverr_solution(state, solution):
+    if state is None:
+        return
+    user_agent = solution.get("userAgent")
+    if user_agent:
+        state["flaresolverr_user_agent"] = user_agent
+
+    cookies = state.setdefault("flaresolverr_cookies", {})
+    for cookie in solution.get("cookies") or []:
+        name = cookie.get("name")
+        value = cookie.get("value")
+        if name and value is not None:
+            cookies[name] = value
+
+
+def _flaresolverr_get(url, timeout=30, config=None, state=None):
+    endpoint = _flaresolverr_url(config)
+    if not endpoint:
+        raise CloudflareBlockedError(
+            "sub_scene hit a Cloudflare challenge and no FlareSolverr URL is configured"
+        )
+
+    timeout_ms = _flaresolverr_timeout_ms(config)
+    payload = {
+        "cmd": "request.get",
+        "url": url,
+        "maxTimeout": timeout_ms,
+    }
+    cookies = (state or {}).get("flaresolverr_cookies")
+    if cookies:
+        payload["cookies"] = [
+            {"name": name, "value": value}
+            for name, value in cookies.items()
+        ]
+
+    request = urllib.request.Request(
+        endpoint,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(
+            request,
+            timeout=max(timeout, timeout_ms / 1000),
+        ) as response:
+            response_body = response.read()
+    except Exception as exc:
+        raise CloudflareBlockedError(f"sub_scene FlareSolverr request failed: {exc}") from exc
+
+    try:
+        payload = json.loads(response_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CloudflareBlockedError("sub_scene FlareSolverr returned invalid JSON") from exc
+
+    if payload.get("status") not in (None, "ok"):
+        message = payload.get("message") or "FlareSolverr did not solve the challenge"
+        raise CloudflareBlockedError(f"sub_scene {message}")
+
+    solution = payload.get("solution") or {}
+    response_text = solution.get("response")
+    if response_text is None:
+        raise CloudflareBlockedError("sub_scene FlareSolverr response had no page body")
+
+    if isinstance(response_text, bytes):
+        body = response_text
+    else:
+        body = str(response_text).encode("utf-8")
+
+    solution_status = solution.get("status") or 200
+    if _is_cloudflare_challenge(solution_status, solution.get("headers") or {}, body):
+        raise CloudflareBlockedError("sub_scene FlareSolverr response is still a Cloudflare challenge")
+
+    _store_flaresolverr_solution(state, solution)
+    return body
+
+
+def _http_get(url, timeout=30, config=None, state=None, referer=None):
+    """Make HTTP GET request with cloudscraper and optional FlareSolverr fallback."""
+    state = state if state is not None else {}
+    config = config or {}
+    try:
+        response = _get_cloudscraper(state).get(
+            url,
+            timeout=timeout,
+            headers=_request_headers(state, referer),
+        )
+    except Exception as exc:
+        if _flaresolverr_url(config) and _is_cloudflare_exception(exc):
+            return _flaresolverr_get(url, timeout=timeout, config=config, state=state)
+        raise
+
+    status_code = getattr(response, "status_code", 0)
+    headers = getattr(response, "headers", {}) or {}
+    body = getattr(response, "content", None)
+    if body is None:
+        body = str(getattr(response, "text", "")).encode("utf-8")
+
+    if _is_cloudflare_challenge(status_code, headers, body):
+        if _flaresolverr_url(config):
+            return _flaresolverr_get(url, timeout=timeout, config=config, state=state)
+        raise CloudflareBlockedError(
+            "sub_scene hit a Cloudflare challenge and no FlareSolverr URL is configured"
+        )
+
+    try:
+        status = int(status_code)
+    except (TypeError, ValueError):
+        status = 0
+    if status >= 400:
+        raise urllib.error.HTTPError(url, status, f"HTTP {status}", headers, None)
+
+    return body
 
 
 def _build_search_queries(video):
@@ -263,7 +481,7 @@ def _build_search_queries(video):
     return queries
 
 
-def _search_subscene(query, delay_ms=0):
+def _search_subscene(query, delay_ms=0, config=None, state=None):
     """Search subscene.best and return results."""
     if delay_ms > 0:
         time.sleep(delay_ms / 1000.0)
@@ -272,15 +490,17 @@ def _search_subscene(query, delay_ms=0):
     url = f"{BASE_URL}/search?query={encoded_query}"
     
     try:
-        html = _http_get(url)
+        html = _http_get(url, config=config, state=state)
         parser = SubsceneSearchParser()
         parser.feed(html.decode("utf-8", errors="ignore"))
         return parser.results
+    except CloudflareBlockedError:
+        raise
     except Exception:
         return []
 
 
-def _get_detail_page(url, delay_ms=0):
+def _get_detail_page(url, delay_ms=0, config=None, state=None):
     """Fetch and parse detail page."""
     if delay_ms > 0:
         time.sleep(delay_ms / 1000.0)
@@ -288,15 +508,17 @@ def _get_detail_page(url, delay_ms=0):
     full_url = f"{BASE_URL}{url}" if url.startswith("/") else url
     
     try:
-        html = _http_get(full_url)
+        html = _http_get(full_url, config=config, state=state)
         parser = SubsceneDetailParser()
         parser.feed(html.decode("utf-8", errors="ignore"))
         return parser.subtitles
+    except CloudflareBlockedError:
+        raise
     except Exception:
         return []
 
 
-def _get_subtitle_detail(url, delay_ms=0):
+def _get_subtitle_detail(url, delay_ms=0, config=None, state=None):
     """Fetch and parse subtitle detail page."""
     if delay_ms > 0:
         time.sleep(delay_ms / 1000.0)
@@ -304,7 +526,7 @@ def _get_subtitle_detail(url, delay_ms=0):
     full_url = f"{BASE_URL}{url}" if url.startswith("/") else url
     
     try:
-        html = _http_get(full_url)
+        html = _http_get(full_url, config=config, state=state)
         parser = SubsceneSubtitleParser()
         parser.feed(html.decode("utf-8", errors="ignore"))
         return {
@@ -313,6 +535,8 @@ def _get_subtitle_detail(url, delay_ms=0):
             "release_info": parser.release_info,
             "hearing_impaired": parser.hearing_impaired,
         }
+    except CloudflareBlockedError:
+        raise
     except Exception:
         return None
 
@@ -369,7 +593,7 @@ def _select_episode_file(srt_files, video):
     return best_name
 
 
-def _download_subtitle(download_url, delay_ms=0, video=None):
+def _download_subtitle(download_url, delay_ms=0, video=None, config=None, state=None):
     """Download and extract subtitle ZIP file."""
     if delay_ms > 0:
         time.sleep(delay_ms / 1000.0)
@@ -377,7 +601,7 @@ def _download_subtitle(download_url, delay_ms=0, video=None):
     full_url = f"{BASE_URL}{download_url}" if download_url.startswith("/") else download_url
     
     try:
-        zip_data = _http_get(full_url)
+        zip_data = _http_get(full_url, config=config, state=state)
         with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
             srt_files = [name for name in zf.namelist() if name.lower().endswith(".srt")]
             if not srt_files:
@@ -392,6 +616,8 @@ def _download_subtitle(download_url, delay_ms=0, video=None):
                 "filename": srt_file,
                 "format": "srt",
             }
+    except CloudflareBlockedError:
+        raise
     except Exception:
         return None
 
@@ -535,11 +761,15 @@ def _alpha3_for(language):
 class SubSceneProvider:
     """Sub-scene.com subtitle provider."""
 
+    def __init__(self):
+        self._http_state = {}
+
     def search(self, video, languages, config):
         """Search for subtitles matching the video."""
         if not video or not languages:
             return []
         
+        config = config or {}
         delay_ms = config.get("request_delay_ms", 0)
         requested_alpha3 = set()
         for lang in languages:
@@ -557,10 +787,10 @@ class SubSceneProvider:
             return []
         
         for query in queries:
-            search_results = _search_subscene(query, delay_ms)
+            search_results = _search_subscene(query, delay_ms, config, self._http_state)
             
             for result in search_results[:5]:
-                subtitles = _get_detail_page(result["url"], delay_ms)
+                subtitles = _get_detail_page(result["url"], delay_ms, config, self._http_state)
                 
                 for subtitle in subtitles:
                     lang_name = subtitle.get("language", "")
@@ -624,15 +854,22 @@ class SubSceneProvider:
         if not subtitle or not subtitle.get("url"):
             raise ValueError("sub_scene download requires url in provider_payload")
         
+        config = config or {}
         delay_ms = config.get("request_delay_ms", 0)
         
-        detail = _get_subtitle_detail(subtitle["url"], delay_ms)
+        detail = _get_subtitle_detail(subtitle["url"], delay_ms, config, self._http_state)
         if not detail or not detail.get("download_url"):
             raise ValueError("sub_scene could not find download URL on detail page")
         
         # Pass video metadata to select episode-specific file from ZIP
         video = subtitle.get("video")
-        downloaded = _download_subtitle(detail["download_url"], delay_ms, video)
+        downloaded = _download_subtitle(
+            detail["download_url"],
+            delay_ms,
+            video,
+            config,
+            self._http_state,
+        )
         if not downloaded:
             raise ValueError("sub_scene failed to download or extract subtitle file")
         

@@ -2,6 +2,7 @@
 
 import base64
 import io
+import json
 import sys
 import unittest
 import zipfile
@@ -10,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "providers" / "sub_scene"))
 
+import provider as subscene_module
 from provider import (
     LANGUAGE_MAP,
     SubSceneProvider,
@@ -21,6 +23,20 @@ from provider import (
     _get_language_code,
     _select_episode_file,
 )
+
+
+class FakeUrlopenResponse:
+    def __init__(self, body):
+        self.body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def read(self):
+        return self.body
 
 
 class TestLanguageMap(unittest.TestCase):
@@ -179,6 +195,111 @@ class TestSubsceneDetailParser(unittest.TestCase):
         self.assertEqual(len(parser.subtitles), 0)
 
 
+class TestCloudflareHttp(unittest.TestCase):
+    def test_detects_cloudflare_challenge_header_and_body(self):
+        self.assertTrue(
+            subscene_module._is_cloudflare_challenge(
+                403,
+                {"cf-mitigated": "challenge"},
+                b"<html><title>Just a moment...</title></html>",
+            )
+        )
+        self.assertTrue(
+            subscene_module._is_cloudflare_challenge(
+                503,
+                {},
+                b"<script>window._cf_chl_opt = {}</script>",
+            )
+        )
+        self.assertFalse(
+            subscene_module._is_cloudflare_challenge(
+                200,
+                {},
+                b"<html><body>Search results</body></html>",
+            )
+        )
+
+    def test_http_get_uses_cloudscraper_by_default(self):
+        response = MagicMock()
+        response.status_code = 200
+        response.headers = {}
+        response.content = b"<html>ok</html>"
+        scraper = MagicMock()
+        scraper.get.return_value = response
+
+        with patch("provider.cloudscraper.create_scraper", return_value=scraper) as create_scraper:
+            body = subscene_module._http_get(
+                "https://sub-scene.com/search?query=Dune",
+                config={},
+                state={},
+            )
+
+        self.assertEqual(body, b"<html>ok</html>")
+        create_scraper.assert_called_once()
+        scraper.get.assert_called_once()
+        self.assertEqual(scraper.get.call_args.kwargs["timeout"], 30)
+        self.assertIn("User-Agent", scraper.get.call_args.kwargs["headers"])
+
+    def test_http_get_uses_flaresolverr_fallback_after_cloudflare_challenge(self):
+        challenge_response = MagicMock()
+        challenge_response.status_code = 403
+        challenge_response.headers = {"cf-mitigated": "challenge"}
+        challenge_response.content = b"<html><title>Just a moment...</title></html>"
+        scraper = MagicMock()
+        scraper.get.return_value = challenge_response
+        state = {}
+        flaresolverr_payload = {
+            "status": "ok",
+            "solution": {
+                "status": 200,
+                "response": "<html>normal search results</html>",
+                "cookies": [
+                    {"name": "cf_clearance", "value": "token"},
+                    {"name": "session", "value": "abc"},
+                ],
+                "userAgent": "Mozilla/5.0 solved",
+            },
+        }
+
+        with patch("provider.cloudscraper.create_scraper", return_value=scraper), patch(
+            "provider.urllib.request.urlopen",
+            return_value=FakeUrlopenResponse(json.dumps(flaresolverr_payload).encode("utf-8")),
+        ) as urlopen:
+            body = subscene_module._http_get(
+                "https://sub-scene.com/search?query=Dune",
+                config={
+                    "flaresolverr_url": "http://flaresolverr:8191/v1",
+                    "flaresolverr_timeout_ms": 45000,
+                },
+                state=state,
+            )
+
+        self.assertEqual(body, b"<html>normal search results</html>")
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, "http://flaresolverr:8191/v1")
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(payload["cmd"], "request.get")
+        self.assertEqual(payload["maxTimeout"], 45000)
+        self.assertEqual(state["flaresolverr_cookies"]["cf_clearance"], "token")
+        self.assertEqual(state["flaresolverr_user_agent"], "Mozilla/5.0 solved")
+
+    def test_http_get_raises_visible_error_without_flaresolverr_fallback(self):
+        challenge_response = MagicMock()
+        challenge_response.status_code = 403
+        challenge_response.headers = {"cf-mitigated": "challenge"}
+        challenge_response.content = b"<html><title>Just a moment...</title></html>"
+        scraper = MagicMock()
+        scraper.get.return_value = challenge_response
+
+        with patch("provider.cloudscraper.create_scraper", return_value=scraper):
+            with self.assertRaises(subscene_module.CloudflareBlockedError):
+                subscene_module._http_get(
+                    "https://sub-scene.com/search?query=Dune",
+                    config={},
+                    state={},
+                )
+
+
 class TestSubsceneSubtitleParser(unittest.TestCase):
     def test_parse_download_url(self):
         html = """
@@ -325,6 +446,40 @@ class TestSubSceneProvider(unittest.TestCase):
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["provider_payload"]["url"], "/subtitle/123")
+
+    @patch("provider._search_subscene")
+    @patch("provider._get_detail_page")
+    def test_search_passes_cloudflare_config_to_helpers(self, mock_detail, mock_search):
+        mock_search.return_value = [
+            {"url": "/subscene/12345", "title": "Dune (2021)"}
+        ]
+        mock_detail.return_value = [
+            {
+                "url": "/subtitle/123",
+                "language": "English",
+                "release": "Dune.2021.1080p.BluRay",
+                "hi": False,
+            },
+        ]
+        config = {
+            "request_delay_ms": 0,
+            "flaresolverr_url": "http://flaresolverr:8191/v1",
+        }
+
+        results = self.provider.search(
+            {"kind": "movie", "title": "Dune", "year": 2021},
+            ["eng"],
+            config,
+        )
+
+        self.assertEqual(len(results), 1)
+        mock_search.assert_called_once_with("Dune 2021", 0, config, self.provider._http_state)
+        mock_detail.assert_called_once_with(
+            "/subscene/12345",
+            0,
+            config,
+            self.provider._http_state,
+        )
 
     @patch("provider._search_subscene")
     def test_search_no_results(self, mock_search):
