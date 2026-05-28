@@ -544,15 +544,10 @@ def _search_subscene(query, delay_ms=0, config=None, state=None):
     encoded_query = urllib.parse.quote(query)
     url = f"{BASE_URL}/search?query={encoded_query}"
     
-    try:
-        html = _http_get(url, config=config, state=state)
-        parser = SubsceneSearchParser()
-        parser.feed(html.decode("utf-8", errors="ignore"))
-        return parser.results
-    except CloudflareBlockedError:
-        raise
-    except Exception:
-        return []
+    html = _http_get(url, config=config, state=state)
+    parser = SubsceneSearchParser()
+    parser.feed(html.decode("utf-8", errors="ignore"))
+    return parser.results
 
 
 def _get_detail_page(url, delay_ms=0, config=None, state=None):
@@ -733,6 +728,19 @@ def _explicit_season_markers(text):
     return markers
 
 
+def _explicit_episode_markers(text):
+    markers = set()
+    text = _coerce_text(text).lower()
+    for pattern in (
+        r"\bs\d{1,2}e0*(\d{1,2})(?!\d)",
+        r"\bs\d{1,2}[\s._-]+e0*(\d{1,2})(?!\d)",
+        r"\be0*(\d{1,2})(?!\d)",
+    ):
+        for marker in re.finditer(pattern, text):
+            markers.add(int(marker.group(1)))
+    return markers
+
+
 def _derive_matches(video, result_title, subtitle):
     """Return Provider Hub match keys represented by the SubScene candidate."""
     video = video or {}
@@ -791,7 +799,7 @@ def _derive_matches(video, result_title, subtitle):
     return matches
 
 
-def _has_required_match(video, matches):
+def _has_required_match(video, matches, subtitle=None):
     video = video or {}
     matches = set(matches or [])
     if video.get("kind") == "movie":
@@ -802,7 +810,14 @@ def _has_required_match(video, matches):
     elif video.get("kind") == "episode":
         if video.get("series") and "series" not in matches:
             return False
-        if video.get("episode") is not None and "episode" not in matches:
+        if video.get("episode") is None:
+            return True
+        if "episode" in matches:
+            return True
+        release = (subtitle or {}).get("release", "")
+        if "season" in matches and not _explicit_episode_markers(release):
+            return True
+        if video.get("episode") is not None:
             return False
     return True
 
@@ -905,17 +920,17 @@ class SubSceneProvider:
                     
                     subtitle_url = subtitle.get("url", "")
                     subtitle_id = subtitle_url.split("/")[-1] if subtitle_url else "unknown"
-                    
-                    # Deduplicate by subtitle ID
+
                     if subtitle_id in seen_ids:
                         continue
-                    seen_ids.add(subtitle_id)
-                    
+
                     score = _calculate_score(video, subtitle)
                     matches = _derive_matches(video, result.get("title", ""), subtitle)
-                    if not _has_required_match(video, matches):
+                    if not _has_required_match(video, matches, subtitle):
                         continue
-                    
+
+                    seen_ids.add(subtitle_id)
+
                     results.append({
                         "provider": PROVIDER_ID,
                         "id": f"{PROVIDER_ID}_{subtitle_id}",

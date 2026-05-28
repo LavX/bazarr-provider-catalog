@@ -340,6 +340,16 @@ class TestCloudflareHttp(unittest.TestCase):
                     state={},
                 )
 
+    def test_search_subscene_surfaces_search_endpoint_failures(self):
+        with patch("provider._http_get", side_effect=TimeoutError("search timed out")):
+            with self.assertRaises(TimeoutError):
+                subscene_module._search_subscene(
+                    "Dune",
+                    delay_ms=0,
+                    config={},
+                    state={},
+                )
+
 
 class TestSubsceneSubtitleParser(unittest.TestCase):
     def test_parse_download_url(self):
@@ -531,6 +541,63 @@ class TestSubSceneProvider(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["provider_payload"]["url"], "/subtitle/2")
         self.assertIn("episode", results[0]["matches"])
+
+    @patch("provider._search_subscene")
+    @patch("provider._get_detail_page")
+    def test_search_allows_season_pack_episode_candidates(self, mock_detail, mock_search):
+        mock_search.return_value = [
+            {"url": "/subscene/154850", "title": "Breaking Bad"}
+        ]
+        mock_detail.return_value = [
+            {
+                "url": "/subtitle/season-pack",
+                "language": "English",
+                "release": "Breaking.Bad.S01.720p.BluRay",
+                "hi": False,
+            },
+        ]
+
+        results = self.provider.search(
+            {"kind": "episode", "series": "Breaking Bad", "season": 1, "episode": 5},
+            ["eng"],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertIn("season", results[0]["matches"])
+        self.assertNotIn("episode", results[0]["matches"])
+        self.assertEqual(results[0]["provider_payload"]["url"], "/subtitle/season-pack")
+
+    @patch("provider._search_subscene")
+    @patch("provider._get_detail_page")
+    def test_search_deduplicates_after_match_filtering(self, mock_detail, mock_search):
+        mock_search.return_value = [
+            {"url": "/subscene/154850", "title": "Breaking Bad"}
+        ]
+        mock_detail.return_value = [
+            {
+                "url": "/subtitle/123",
+                "language": "English",
+                "release": "Breaking.Bad.S02E05.720p.HDTV",
+                "hi": False,
+            },
+            {
+                "url": "/subtitle/123",
+                "language": "English",
+                "release": "Breaking.Bad.S01E05.720p.HDTV",
+                "hi": False,
+            },
+        ]
+
+        results = self.provider.search(
+            {"kind": "episode", "series": "Breaking Bad", "season": 1, "episode": 5},
+            ["eng"],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["release_info"], "Breaking.Bad.S01E05.720p.HDTV")
+        self.assertEqual(results[0]["provider_payload"]["url"], "/subtitle/123")
 
     @patch("provider._search_subscene")
     @patch("provider._get_detail_page")

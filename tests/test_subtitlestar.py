@@ -120,6 +120,23 @@ class ParseDetailPageTests(unittest.TestCase):
         self.assertGreater(len(details["downloads"]), 0)
         self.assertTrue(details["downloads"][0].endswith(".zip"))
 
+    def test_extracts_direct_download_host_links_without_button_class(self):
+        html = """
+        <html>
+        <body>
+        <a href="https://dl.subtitlestar.com/dlsub/dune-2021.zip">Download subtitle</a>
+        <a href="https://dl.subtitlestar.com/trailers/dune-2021.mp4">Trailer</a>
+        </body>
+        </html>
+        """.encode("utf-8")
+
+        details = self.mod.parse_detail_page(html)
+
+        self.assertEqual(
+            details["downloads"],
+            ["https://dl.subtitlestar.com/dlsub/dune-2021.zip"],
+        )
+
     def test_handles_empty_html(self):
         self.assertIsNone(self.mod.parse_detail_page(b""))
 
@@ -176,6 +193,15 @@ class DeriveMatchesTests(unittest.TestCase):
         )
         self.assertIn("series", matches)
 
+    def test_episode_unpadded_marker_emits_season_and_episode(self):
+        matches = self.mod.derive_matches(
+            {"kind": "episode", "series": "Show", "season": 1, "episode": 2},
+            "Show S1E02 720p",
+        )
+
+        self.assertIn("season", matches)
+        self.assertIn("episode", matches)
+
 
 class SubtitlestarProviderSearchTests(unittest.TestCase):
     def setUp(self):
@@ -220,6 +246,21 @@ class SubtitlestarProviderSearchTests(unittest.TestCase):
         )
         self.assertEqual(results, [])
 
+    def test_search_surfaces_search_endpoint_failures(self):
+        provider = self.mod.SubtitlestarProvider()
+
+        def fail(url, timeout=15):
+            raise TimeoutError("search endpoint timed out")
+
+        provider._http_get = fail
+
+        with self.assertRaises(TimeoutError):
+            provider.search(
+                video={"kind": "movie", "title": "Dune", "year": 2021},
+                languages=[{"alpha3": "fas", "alpha2": "fa"}],
+                config={},
+            )
+
 
 class SubtitlestarProviderDownloadTests(unittest.TestCase):
     def setUp(self):
@@ -258,6 +299,25 @@ class SubtitlestarProviderDownloadTests(unittest.TestCase):
             config={},
         )
         self.assertTrue(result["empty"])
+
+
+class SelectSubtitleFileTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_rejects_episode_only_match_when_explicit_season_conflicts(self):
+        with self.assertRaises(ValueError):
+            self.mod.select_subtitle_file(
+                ["Show.S01E01.srt", "Show.S01E02.srt"],
+                {"kind": "episode", "season": 2, "episode": 1},
+            )
+
+    def test_rejects_episode_only_match_when_separated_season_conflicts(self):
+        with self.assertRaises(ValueError):
+            self.mod.select_subtitle_file(
+                ["Show.S01.E01.srt", "Show.S01.E02.srt"],
+                {"kind": "episode", "season": 2, "episode": 1},
+            )
 
 
 if __name__ == "__main__":
