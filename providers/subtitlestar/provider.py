@@ -209,9 +209,9 @@ def _normalize(text):
 def _season_episode_marker(text):
     text = (_coerce_text(text) or "").lower()
     for pattern in (
-        r"\bs0*(\d{1,2})e0*(\d{1,2})(?!\d)",
-        r"\bs0*(\d{1,2})[\s._-]+e0*(\d{1,2})(?!\d)",
-        r"\b0*(\d{1,2})x0*(\d{1,2})(?!\d)",
+        r"\bs0*(\d{1,2})e0*(\d{1,3})(?!\d)",
+        r"\bs0*(\d{1,2})[\s._-]+e0*(\d{1,3})(?!\d)",
+        r"\b0*(\d{1,2})x0*(\d{1,3})(?!\d)",
     ):
         marker = re.search(pattern, text)
         if marker:
@@ -223,9 +223,10 @@ def _explicit_season_numbers(text):
     text = (_coerce_text(text) or "").lower()
     seasons = set()
     for pattern in (
-        r"\bs0*(\d{1,2})(?=e\d{1,2}(?!\d))",
-        r"\bs0*(\d{1,2})(?=[\s._-]+e\d{1,2}(?!\d))",
-        r"\b0*(\d{1,2})(?=x\d{1,2}(?!\d))",
+        r"\bs0*(\d{1,2})(?=e\d{1,3}(?!\d))",
+        r"\bs0*(\d{1,2})(?=[\s._-]+e\d{1,3}(?!\d))",
+        r"\b0*(\d{1,2})(?=x\d{1,3}(?!\d))",
+        r"\bseason\s*0*(\d{1,2})(?!\d)",
         r"\bs0*(\d{1,2})(?!\d)",
     ):
         for marker in re.finditer(pattern, text):
@@ -242,10 +243,10 @@ def _explicit_episode_numbers(text):
     text = (_coerce_text(text) or "").lower()
     episodes = set()
     for pattern in (
-        r"\bs0*\d{1,2}e0*(\d{1,2})(?!\d)",
-        r"\bs0*\d{1,2}[\s._-]+e0*(\d{1,2})(?!\d)",
-        r"\b0*\d{1,2}x0*(\d{1,2})(?!\d)",
-        r"\be0*(\d{1,2})(?!\d)",
+        r"\bs0*\d{1,2}e0*(\d{1,3})(?!\d)",
+        r"\bs0*\d{1,2}[\s._-]+e0*(\d{1,3})(?!\d)",
+        r"\b0*\d{1,2}x0*(\d{1,3})(?!\d)",
+        r"\be0*(\d{1,3})(?!\d)",
     ):
         for marker in re.finditer(pattern, text):
             episodes.add(int(marker.group(1)))
@@ -413,8 +414,8 @@ def select_subtitle_files(names, video):
         return [candidates[0]]
 
     def score(name):
-        base = os.path.basename(name).lower()
-        marker = _season_episode_marker(base)
+        normalized_name = name.lower()
+        marker = _season_episode_marker(normalized_name)
         if marker:
             marker_season, marker_episode = marker
             if marker_episode != episode_int:
@@ -423,12 +424,12 @@ def select_subtitle_files(names, video):
                 return 0
             return 200 if season_int is not None else 100
 
-        season_markers = _explicit_season_numbers(base)
+        season_markers = _explicit_season_numbers(normalized_name)
         if season_int is not None and season_markers and season_int not in season_markers:
             return 0
 
         # Fallback: match episode number with E prefix and boundary
-        if _episode_marker_matches(base, episode_int):
+        if _episode_marker_matches(normalized_name, episode_int):
             return 100
         return 0
 
@@ -439,9 +440,9 @@ def select_subtitle_files(names, video):
     # Reject if no episode match found
     if best_score == 0:
         if len(candidates) == 1:
-            base = os.path.basename(candidates[0]).lower()
-            if not _explicit_episode_numbers(base):
-                season_markers = _explicit_season_numbers(base)
+            normalized_name = candidates[0].lower()
+            if not _explicit_episode_numbers(normalized_name):
+                season_markers = _explicit_season_numbers(normalized_name)
                 if (
                     season_int is None
                     or not season_markers
@@ -451,7 +452,11 @@ def select_subtitle_files(names, video):
         raise ValueError(
             f"subtitlestar archive contains no subtitle matching episode {episode_int}"
         )
-    
+
+    matching_files = [name for score_value, name in scored if score_value == best_score]
+    multipart = _multipart_subset(matching_files)
+    if multipart:
+        return multipart
     return [best_name]
 
 
@@ -504,12 +509,19 @@ def extract_download(body, filename="", video=None):
             names = archive.namelist()
             selected_files = select_subtitle_files(names, video or {})
             subtitle_format = _subtitle_extension(selected_files[0]) or _format_from_filename(selected_files[0])
+            content = b"\n\n".join(archive.read(name) for name in selected_files)
+            if not content:
+                return _content_payload(b"", subtitle_format, empty=True)
             return _content_payload(
-                b"\n\n".join(archive.read(name) for name in selected_files),
+                content,
                 subtitle_format,
             )
 
-    return _content_payload(body, _format_from_filename(filename))
+    filename_path = urllib.parse.urlparse(filename or "").path.lower()
+    subtitle_format = _subtitle_extension(filename)
+    if filename_path.endswith(".zip") or not subtitle_format or _looks_like_html(body):
+        raise ValueError("subtitlestar download did not return a subtitle payload")
+    return _content_payload(body, subtitle_format)
 
 
 def _format_from_filename(filename):
@@ -552,6 +564,11 @@ def _content_type(subtitle_format):
     }.get(subtitle_format, "text/plain")
 
 
+def _looks_like_html(body):
+    sample = (body or b"").lstrip()[:200].lower()
+    return sample.startswith((b"<!doctype html", b"<html")) or b"<title" in sample
+
+
 def _requested_persian_language(languages):
     for language in languages or []:
         if not isinstance(language, dict):
@@ -580,6 +597,20 @@ def _filename_from_headers(headers):
     if not match:
         return ""
     return urllib.parse.unquote(match.group(1)).strip()
+
+
+def _candidate_scoring_title(video, candidate_title, details):
+    scoring_title = _coerce_text(candidate_title) or ""
+    detail_title = _coerce_text((details or {}).get("title")) or ""
+    if detail_title:
+        requested_title = video.get("title") if (video or {}).get("kind") == "movie" else video.get("series")
+        requested_tokens = set(_normalize(requested_title).split())
+        scoring_tokens = set(_normalize(scoring_title).split())
+        if requested_tokens and not requested_tokens.issubset(scoring_tokens):
+            scoring_title = detail_title
+    if (details or {}).get("year"):
+        scoring_title = f"{scoring_title} {details['year']}"
+    return scoring_title
 
 
 class SubtitlestarProvider:
@@ -626,10 +657,11 @@ class SubtitlestarProvider:
                 if not details or not details["downloads"]:
                     continue
                 
-                # Use detail-page year for scoring when available
-                scoring_title = candidate["title"]
-                if details.get("year"):
-                    scoring_title = f"{candidate['title']} {details['year']}"
+                scoring_title = _candidate_scoring_title(
+                    video,
+                    candidate["title"],
+                    details,
+                )
                 
                 score = compute_score(video, scoring_title)
                 matches = derive_matches(video, scoring_title)

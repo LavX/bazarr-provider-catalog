@@ -496,6 +496,45 @@ class SubtitlestarProviderSearchTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["matches"], ["title"])
 
+    def test_search_scores_against_detail_title_when_search_title_missing(self):
+        search_url = "https://subtitlestar.com/?s=Dune%202021&post_type=post"
+        fallback_search_url = "https://subtitlestar.com/?s=Dune&post_type=post"
+        detail_url = "https://subtitlestar.com/persian-subtitles-dune-2021/"
+        search_html = b"""
+        <html>
+        <body>
+        <a href="https://subtitlestar.com/persian-subtitles-dune-2021/">
+        <img alt="" src="x.jpg">
+        </a>
+        </body>
+        </html>
+        """
+        detail_html = """
+        <html>
+        <head><title>Dune 2021 - SubtitleStar</title></head>
+        <body>
+        <span><i class="icon-years"></i><a>2021</a></span>
+        <a href="https://dl.subtitlestar.com/dlsub/dune-2021.zip">Download</a>
+        </body>
+        </html>
+        """.encode("utf-8")
+        provider, _ = self._provider_with_stub(
+            {
+                search_url: search_html,
+                fallback_search_url: b"<html><body></body></html>",
+                detail_url: detail_html,
+            }
+        )
+
+        results = provider.search(
+            video={"kind": "movie", "title": "Dune", "year": 2021},
+            languages=[{"alpha3": "fas", "alpha2": "fa"}],
+            config={},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertIn("title", results[0]["matches"])
+
 
 class SubtitlestarProviderDownloadTests(unittest.TestCase):
     def setUp(self):
@@ -572,6 +611,37 @@ class SubtitlestarProviderDownloadTests(unittest.TestCase):
         self.assertIn(b"Part one", decoded)
         self.assertIn(b"Part two", decoded)
 
+    def test_download_rejects_html_body_from_zip_url(self):
+        provider = self._provider_with_body(b"<html><title>blocked</title></html>")
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                provider_payload={
+                    "download_url": "https://dl.subtitlestar.com/dlsub/movie.zip",
+                },
+                language={"alpha3": "fas", "alpha2": "fa"},
+                config={},
+            )
+
+    def test_download_marks_empty_archive_entry(self):
+        import io
+        import zipfile
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("Show.S01E05.srt", b"")
+        provider = self._provider_with_body(zip_buffer.getvalue())
+
+        result = provider.download(
+            provider_payload={
+                "download_url": "https://dl.subtitlestar.com/dlsub/show.zip",
+                "video": {"kind": "episode", "season": 1, "episode": 5},
+            },
+            language={"alpha3": "fas", "alpha2": "fa"},
+            config={},
+        )
+
+        self.assertTrue(result["empty"])
+
 
 class SelectSubtitleFileTests(unittest.TestCase):
     def setUp(self):
@@ -621,6 +691,40 @@ class SelectSubtitleFileTests(unittest.TestCase):
                 ["Show.S01E03.srt"],
                 {"kind": "episode", "season": 1, "episode": 2},
             )
+
+    def test_selects_three_digit_episode_file(self):
+        selected = self.mod.select_subtitle_file(
+            ["Show.S01E099.srt", "Show.S01E100.srt"],
+            {"kind": "episode", "season": 1, "episode": 100},
+        )
+
+        self.assertEqual(selected, "Show.S01E100.srt")
+
+    def test_rejects_three_digit_wrong_episode_file(self):
+        with self.assertRaises(ValueError):
+            self.mod.select_subtitle_file(
+                ["Show.S01E101.srt"],
+                {"kind": "episode", "season": 1, "episode": 100},
+            )
+
+    def test_rejects_folder_season_conflict(self):
+        with self.assertRaises(ValueError):
+            self.mod.select_subtitle_file(
+                ["Season 02/Show.E05.srt"],
+                {"kind": "episode", "season": 1, "episode": 5},
+            )
+
+    def test_selects_multipart_episode_group(self):
+        selected = self.mod.select_subtitle_files(
+            [
+                "Show.S01E05.CD1.srt",
+                "Show.S01E05.CD2.srt",
+                "Show.S01E06.CD1.srt",
+            ],
+            {"kind": "episode", "season": 1, "episode": 5},
+        )
+
+        self.assertEqual(selected, ["Show.S01E05.CD1.srt", "Show.S01E05.CD2.srt"])
 
 
 if __name__ == "__main__":
