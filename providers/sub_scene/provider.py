@@ -338,6 +338,24 @@ def _download_subtitle(download_url, delay_ms=0):
         return None
 
 
+def _coerce_text(value):
+    """Coerce value to string, handling lists/tuples."""
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple)):
+        return " ".join(str(item) for item in value if item)
+    return str(value)
+
+
+def _coerce_text(value):
+    """Coerce value to string, handling lists/tuples."""
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple)):
+        return " ".join(str(item) for item in value if item)
+    return str(value)
+
+
 def _calculate_score(video, subtitle):
     """Calculate match score based on video metadata."""
     score = 60
@@ -348,7 +366,7 @@ def _calculate_score(video, subtitle):
         if year and str(year) in release:
             score += 20
         
-        source = video.get("source", "").lower()
+        source = _coerce_text(video.get("source")).lower()
         if source:
             if "bluray" in source and "bluray" in release:
                 score += 10
@@ -357,7 +375,7 @@ def _calculate_score(video, subtitle):
             elif "hdtv" in source and "hdtv" in release:
                 score += 10
         
-        resolution = video.get("resolution", "").lower()
+        resolution = _coerce_text(video.get("resolution")).lower()
         if resolution and resolution in release:
             score += 10
     
@@ -428,8 +446,9 @@ class SubSceneProvider:
         results.sort(key=lambda x: x["score"], reverse=True)
         return results[:10]
 
-    def download(self, subtitle, config):
+    def download(self, provider_payload, language, config):
         """Download subtitle file."""
+        subtitle = provider_payload or {}
         if not subtitle or not subtitle.get("url"):
             return None
         
@@ -453,4 +472,5 @@ class SubSceneProvider:
             "format": downloaded["format"],
             "filename": downloaded["filename"],
             "hearing_impaired": detail.get("hearing_impaired", False),
+            "empty": False,
         }

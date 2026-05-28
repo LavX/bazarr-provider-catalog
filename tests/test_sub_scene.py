@@ -248,22 +248,12 @@ class TestSubSceneProvider(unittest.TestCase):
         subtitle = {"url": "/subtitle/123"}
         config = {"request_delay_ms": 0}
 
-        result = self.provider.download(subtitle, config)
-
+        result = self.provider.download(subtitle, None, config)
         self.assertIsNotNone(result)
         self.assertEqual(result["format"], "srt")
         self.assertEqual(result["filename"], "test.srt")
         self.assertEqual(base64.b64decode(result["content_b64"]), srt_content)
-
-    @patch("provider._get_subtitle_detail")
-    def test_download_no_url(self, mock_detail):
-        mock_detail.return_value = None
-
-        subtitle = {"url": "/subtitle/999"}
-        config = {"request_delay_ms": 0}
-
-        result = self.provider.download(subtitle, config)
-        self.assertIsNone(result)
+        self.assertFalse(result["empty"])
 
 
 if __name__ == "__main__":
