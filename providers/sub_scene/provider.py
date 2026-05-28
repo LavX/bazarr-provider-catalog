@@ -74,6 +74,46 @@ LANGUAGE_MAP = {
     "Vietnamese": "vie",
 }
 
+ALPHA3_TO_ALPHA2 = {
+    "ara": "ar",
+    "ben": "bn",
+    "bul": "bg",
+    "ces": "cs",
+    "dan": "da",
+    "deu": "de",
+    "ell": "el",
+    "eng": "en",
+    "fas": "fa",
+    "fin": "fi",
+    "fra": "fr",
+    "heb": "he",
+    "hin": "hi",
+    "hrv": "hr",
+    "hun": "hu",
+    "ind": "id",
+    "ita": "it",
+    "jpn": "ja",
+    "kor": "ko",
+    "msa": "ms",
+    "nld": "nl",
+    "nor": "no",
+    "pol": "pl",
+    "por": "pt",
+    "ron": "ro",
+    "rus": "ru",
+    "slk": "sk",
+    "slv": "sl",
+    "spa": "es",
+    "sqi": "sq",
+    "srp": "sr",
+    "swe": "sv",
+    "tha": "th",
+    "tur": "tr",
+    "ukr": "uk",
+    "vie": "vi",
+    "zho": "zh",
+}
+
 
 class CloudflareBlockedError(RuntimeError):
     """Raised when sub-scene.com presents an unresolved Cloudflare challenge."""
@@ -94,6 +134,8 @@ class SubsceneSearchParser(HTMLParser):
     def __init__(self):
         super().__init__()
         self.results = []
+        self.in_search_result = False
+        self.search_result_depth = 0
         self.in_title_div = False
         self.in_link = False
         self.current_href = None
@@ -101,7 +143,15 @@ class SubsceneSearchParser(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         attrs_dict = dict(attrs)
-        if tag == "div" and attrs_dict.get("class") == "title":
+        class_name = attrs_dict.get("class", "")
+        classes = class_name.split()
+        if tag == "div" and "search-result" in classes:
+            self.in_search_result = True
+            self.search_result_depth = 1
+        elif tag == "div" and self.in_search_result:
+            self.search_result_depth += 1
+
+        if tag == "div" and self.in_search_result and "title" in classes:
             self.in_title_div = True
         elif tag == "a" and self.in_title_div:
             href = attrs_dict.get("href", "")
@@ -124,6 +174,11 @@ class SubsceneSearchParser(HTMLParser):
                 })
         elif tag == "div" and self.in_title_div:
             self.in_title_div = False
+        if tag == "div" and self.in_search_result:
+            self.search_result_depth -= 1
+            if self.search_result_depth <= 0:
+                self.in_search_result = False
+                self.search_result_depth = 0
 
 
 class SubsceneDetailParser(HTMLParser):
@@ -707,6 +762,22 @@ def _derive_matches(video, result_title, subtitle):
     return matches
 
 
+def _has_required_match(video, matches):
+    video = video or {}
+    matches = set(matches or [])
+    if video.get("kind") == "movie":
+        if "title" not in matches:
+            return False
+        if video.get("year") and "year" not in matches:
+            return False
+    elif video.get("kind") == "episode":
+        if video.get("series") and "series" not in matches:
+            return False
+        if video.get("episode") is not None and "episode" not in matches:
+            return False
+    return True
+
+
 def _calculate_score(video, subtitle):
     """Calculate match score based on video metadata."""
     score = 60
@@ -742,6 +813,10 @@ def _calculate_score(video, subtitle):
 def _get_language_code(language_name):
     """Convert language name to ISO 639-2 code."""
     return LANGUAGE_MAP.get(language_name)
+
+
+def _alpha2_from_alpha3(alpha3):
+    return ALPHA3_TO_ALPHA2.get(str(alpha3 or "").lower(), str(alpha3 or "").lower())
 
 
 def _alpha2_for(language):
@@ -809,13 +884,15 @@ class SubSceneProvider:
                     
                     score = _calculate_score(video, subtitle)
                     matches = _derive_matches(video, result.get("title", ""), subtitle)
+                    if not _has_required_match(video, matches):
+                        continue
                     
                     results.append({
                         "provider": PROVIDER_ID,
                         "id": f"{PROVIDER_ID}_{subtitle_id}",
                         "language": {
                             "alpha3": lang_code,
-                            "alpha2": lang_code,
+                            "alpha2": _alpha2_from_alpha3(lang_code),
                             "hi": False,
                             "forced": False,
                         },

@@ -127,12 +127,14 @@ class TestSubsceneSearchParser(unittest.TestCase):
         html = """
         <html>
         <body>
+          <div class="search-result">
             <div class="title">
                 <a href="/subscene/12345">Dune (2021)</a>
             </div>
             <div class="title">
                 <a href="/subscene/67890">Dune Part Two (2024)</a>
             </div>
+          </div>
         </body>
         </html>
         """
@@ -148,6 +150,23 @@ class TestSubsceneSearchParser(unittest.TestCase):
         parser = SubsceneSearchParser()
         parser.feed(html)
         self.assertEqual(len(parser.results), 0)
+
+    def test_ignores_homepage_cards_outside_search_results(self):
+        html = """
+        <html>
+        <body>
+            <section class="popular">
+                <div class="title">
+                    <a href="/subscene/159141">Thunderbolts (Thunderbolts*)</a>
+                </div>
+            </section>
+        </body>
+        </html>
+        """
+        parser = SubsceneSearchParser()
+        parser.feed(html)
+
+        self.assertEqual(parser.results, [])
 
 
 class TestSubsceneDetailParser(unittest.TestCase):
@@ -390,6 +409,44 @@ class TestSubSceneProvider(unittest.TestCase):
         self.assertIn("year", results[0]["matches"])
         self.assertIn("source", results[0]["matches"])
         self.assertIn("resolution", results[0]["matches"])
+        self.assertEqual(results[0]["language"]["alpha2"], "en")
+
+    @patch("provider._search_subscene")
+    @patch("provider._get_detail_page")
+    def test_search_continues_after_unmatched_first_query(self, mock_detail, mock_search):
+        mock_search.side_effect = [
+            [{"url": "/subscene/159141", "title": "Thunderbolts (Thunderbolts*)"}],
+            [{"url": "/subscene/155629", "title": "Dune (2021)"}],
+        ]
+        mock_detail.side_effect = [
+            [
+                {
+                    "url": "/subtitle/3363858",
+                    "language": "English",
+                    "release": "Thunderbolts.2025.1080p.WEBRip",
+                    "hi": False,
+                },
+            ],
+            [
+                {
+                    "url": "/subtitle/3339944",
+                    "language": "English",
+                    "release": "Dune.2021.1080p.BluRay",
+                    "hi": False,
+                },
+            ],
+        ]
+
+        results = self.provider.search(
+            {"kind": "movie", "title": "Dune", "year": 2021},
+            ["eng"],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["provider_payload"]["url"], "/subtitle/3339944")
+        self.assertIn("year", results[0]["matches"])
+        self.assertEqual(mock_search.call_count, 2)
 
     @patch("provider._search_subscene")
     @patch("provider._get_detail_page")
@@ -415,6 +472,42 @@ class TestSubSceneProvider(unittest.TestCase):
         self.assertGreater(len(results), 0)
         self.assertIn("series", results[0]["matches"])
         self.assertIn("season", results[0]["matches"])
+        self.assertIn("episode", results[0]["matches"])
+
+    @patch("provider._search_subscene")
+    @patch("provider._get_detail_page")
+    def test_search_skips_episode_candidates_without_episode_match(self, mock_detail, mock_search):
+        mock_search.return_value = [
+            {"url": "/subscene/45027", "title": "Breaking Bad - No Half Measures"},
+            {"url": "/subscene/154850", "title": "Breaking Bad"},
+        ]
+        mock_detail.side_effect = [
+            [
+                {
+                    "url": "/subtitle/1",
+                    "language": "English",
+                    "release": "No Half Measures - Creating the Final Season of Breaking Bad",
+                    "hi": False,
+                },
+            ],
+            [
+                {
+                    "url": "/subtitle/2",
+                    "language": "English",
+                    "release": "Breaking.Bad.S01E01.720p.HDTV",
+                    "hi": False,
+                },
+            ],
+        ]
+
+        results = self.provider.search(
+            {"kind": "episode", "series": "Breaking Bad", "season": 1, "episode": 1},
+            ["eng"],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["provider_payload"]["url"], "/subtitle/2")
         self.assertIn("episode", results[0]["matches"])
 
     @patch("provider._search_subscene")
