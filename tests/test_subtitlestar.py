@@ -260,5 +260,17 @@ class SubtitlestarProviderDownloadTests(unittest.TestCase):
         self.assertTrue(result["empty"])
 
 
+class SelectSubtitleFileTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_rejects_episode_only_match_when_explicit_season_conflicts(self):
+        with self.assertRaises(ValueError):
+            self.mod.select_subtitle_file(
+                ["Show.S01E01.srt", "Show.S01E02.srt"],
+                {"kind": "episode", "season": 2, "episode": 1},
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

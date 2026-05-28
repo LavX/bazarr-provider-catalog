@@ -297,15 +297,16 @@ def select_subtitle_file(names, video):
 
     def score(name):
         base = os.path.basename(name).lower()
-        # Prefer explicit SxxExx markers
-        if season_int is not None:
-            pattern = rf"s{season_int:02d}e{episode_int:02d}"
-            if pattern in base:
-                return 200
-            # Also match unpadded: s1e2
-            pattern_unpadded = rf"s{season_int}e{episode_int}"
-            if pattern_unpadded in base:
-                return 200
+        marker = re.search(r"s(\d{1,2})e(\d{1,2})(?!\d)", base)
+        if marker:
+            marker_season = int(marker.group(1))
+            marker_episode = int(marker.group(2))
+            if marker_episode != episode_int:
+                return 0
+            if season_int is not None and marker_season != season_int:
+                return 0
+            return 200 if season_int is not None else 100
+
         # Fallback: match episode number with E prefix and boundary
         e_pattern = rf"e{episode_int:02d}(?!\d)"
         if re.search(e_pattern, base):
