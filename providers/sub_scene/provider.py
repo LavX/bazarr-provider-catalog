@@ -4,6 +4,7 @@ import base64
 import hashlib
 import io
 import json
+import os
 import re
 import time
 import urllib.error
@@ -594,19 +595,28 @@ def _get_subtitle_detail(url, delay_ms=0, config=None, state=None):
 
 def _select_episode_file(srt_files, video):
     """Select the best matching episode file from a ZIP archive."""
+    selected_files = _select_subtitle_files(srt_files, video)
+    return selected_files[0] if selected_files else None
+
+
+def _select_subtitle_files(srt_files, video):
+    """Select matching subtitle files from a ZIP archive."""
     if not srt_files:
-        return None
+        return []
     
     episode = (video or {}).get("episode")
     season = (video or {}).get("season")
     
     if episode is None:
-        return srt_files[0]
+        multipart = _multipart_subset(srt_files)
+        if multipart:
+            return multipart
+        return [srt_files[0]]
     
     try:
         episode_int = int(episode)
     except (TypeError, ValueError):
-        return srt_files[0]
+        return [srt_files[0]]
     
     try:
         season_int = int(season)
@@ -624,6 +634,10 @@ def _select_episode_file(srt_files, video):
                 return 0
             return 200 if season_int is not None else 100
 
+        season_markers = _explicit_season_markers(base)
+        if season_int is not None and season_markers and season_int not in season_markers:
+            return 0
+
         # Fallback: match episode number with E prefix and boundary
         e_pattern = rf"e{episode_int:02d}(?!\d)"
         if re.search(e_pattern, base):
@@ -638,9 +652,66 @@ def _select_episode_file(srt_files, video):
     best_score, best_name = max(scored, key=lambda x: x[0])
     
     if best_score == 0:
-        return None
+        if len(srt_files) == 1:
+            only_file = srt_files[0].lower()
+            if not _explicit_episode_markers(only_file):
+                season_markers = _explicit_season_markers(only_file)
+                if (
+                    season_int is None
+                    or not season_markers
+                    or season_int in season_markers
+                ):
+                    return srt_files
+        return []
     
-    return best_name
+    matching_files = [name for score_value, name in scored if score_value == best_score]
+    multipart = _multipart_subset(matching_files)
+    if multipart:
+        return multipart
+    return [best_name]
+
+
+def _is_archive_sidecar(name):
+    path = (name or "").replace("\\", "/")
+    parts = [part for part in path.split("/") if part]
+    return "__MACOSX" in parts or os.path.basename(path).startswith("._")
+
+
+def _part_index(name):
+    normalized = re.sub(
+        r"[\W_]+",
+        " ",
+        os.path.splitext(os.path.basename(name))[0].lower(),
+    ).strip()
+    match = re.search(r"\b(?:cd|part|disc|disk)\s*0*(\d+)\b", normalized)
+    return int(match.group(1)) if match else 0
+
+
+def _multipart_subset(names):
+    groups = {}
+    for name in names:
+        part_index = _part_index(name)
+        if part_index <= 0:
+            continue
+        groups.setdefault((_multipart_key(name), _subtitle_extension(name)), []).append(name)
+    valid_groups = []
+    for group in groups.values():
+        part_numbers = [_part_index(name) for name in group]
+        if len(group) > 1 and len(set(part_numbers)) == len(part_numbers):
+            valid_groups.append(group)
+    if not valid_groups:
+        return []
+    best_group = max(
+        valid_groups,
+        key=lambda group: (len(group), -min(_part_index(name) for name in group)),
+    )
+    return sorted(best_group, key=lambda name: (_part_index(name), name.lower()))
+
+
+def _multipart_key(name):
+    stem = os.path.splitext(os.path.basename(name))[0]
+    normalized = re.sub(r"[\W_]+", " ", stem.lower()).strip()
+    return re.sub(r"\b(?:cd|part|disc|disk)\s*0*\d+\b", "", normalized).strip()
 
 
 def _subtitle_extension(name):
@@ -662,15 +733,22 @@ def _download_subtitle(download_url, delay_ms=0, video=None, config=None, state=
     try:
         zip_data = _http_get(full_url, config=config, state=state)
         with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
-            subtitle_files = [name for name in zf.namelist() if _subtitle_extension(name)]
+            subtitle_files = [
+                name
+                for name in zf.namelist()
+                if _subtitle_extension(name) and not _is_archive_sidecar(name)
+            ]
             if not subtitle_files:
                 return None
             
             # Select episode-specific file if video metadata available
-            subtitle_file = _select_episode_file(subtitle_files, video)
-            if not subtitle_file:
+            selected_files = _select_subtitle_files(subtitle_files, video)
+            if not selected_files:
                 return None
-            content = zf.read(subtitle_file)
+            content = b"\n\n".join(zf.read(name) for name in selected_files)
+            if not content:
+                return None
+            subtitle_file = selected_files[0]
             
             return {
                 "content": content,
@@ -787,6 +865,18 @@ def _episode_range_includes(text, episode):
     return False
 
 
+def _has_conflicting_episode_marker(text, season, episode):
+    marker = _season_episode_marker(text)
+    if not marker:
+        return False
+    marker_season, marker_episode = marker
+    if episode is not None and marker_episode != episode:
+        return True
+    if season is not None and marker_season != season:
+        return True
+    return False
+
+
 def _derive_matches(video, result_title, subtitle):
     """Return Provider Hub match keys represented by the SubScene candidate."""
     video = video or {}
@@ -827,8 +917,14 @@ def _derive_matches(video, result_title, subtitle):
 
         release_lower = _coerce_text(release).lower()
         candidate_lower = _coerce_text(candidate_text).lower()
+        title_lower = _coerce_text(result_title).lower()
         season_markers = _explicit_season_markers(candidate_lower)
-        if season is not None and season in season_markers:
+        has_wrong_title_episode = _has_conflicting_episode_marker(
+            title_lower,
+            season,
+            episode,
+        )
+        if season is not None and season in season_markers and not has_wrong_title_episode:
             matches.append("season")
         if episode is not None:
             marker = _season_episode_marker(release_lower)

@@ -162,6 +162,16 @@ class TestCalculateScore(unittest.TestCase):
         self.assertNotIn("episode", matches)
         self.assertFalse(subscene_module._has_required_match(video, matches, subtitle))
 
+    def test_required_match_rejects_wrong_episode_page_title(self):
+        video = {"kind": "episode", "series": "Show", "season": 1, "episode": 5}
+        subtitle = {"release": "DVDRip.XviD-GROUP"}
+        matches = subscene_module._derive_matches(video, "Show S01E01", subtitle)
+
+        self.assertIn("series", matches)
+        self.assertNotIn("season", matches)
+        self.assertNotIn("episode", matches)
+        self.assertFalse(subscene_module._has_required_match(video, matches, subtitle))
+
 
 class TestSelectEpisodeFile(unittest.TestCase):
     def test_selects_requested_episode_from_multi_file_zip(self):
@@ -207,6 +217,22 @@ class TestSelectEpisodeFile(unittest.TestCase):
 
         self.assertEqual(selected, "Show.1x05.srt")
 
+    def test_rejects_conflicting_season_folder_before_episode_fallback(self):
+        selected = _select_episode_file(
+            ["Season 02/Show.E05.srt", "Season 01/Show.E05.srt"],
+            {"kind": "episode", "season": 1, "episode": 5},
+        )
+
+        self.assertEqual(selected, "Season 01/Show.E05.srt")
+
+    def test_keeps_single_generic_episode_file(self):
+        selected = _select_episode_file(
+            ["subtitle.srt"],
+            {"kind": "episode", "season": 1, "episode": 5},
+        )
+
+        self.assertEqual(selected, "subtitle.srt")
+
 
 class TestDownloadSubtitle(unittest.TestCase):
     def test_extracts_supported_non_srt_file_from_zip(self):
@@ -227,6 +253,57 @@ class TestDownloadSubtitle(unittest.TestCase):
         self.assertEqual(result["content"], content)
         self.assertEqual(result["filename"], "Show.S01E05.ass")
         self.assertEqual(result["format"], "ass")
+
+    def test_ignores_appledouble_sidecar_entries(self):
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("__MACOSX/._Show.S01E05.srt", b"sidecar")
+            zf.writestr("Show.S01E05.srt", b"actual subtitle")
+
+        with patch("provider._http_get", return_value=zip_buffer.getvalue()):
+            result = subscene_module._download_subtitle(
+                "/download/123",
+                video={"kind": "episode", "season": 1, "episode": 5},
+                config={},
+                state={},
+            )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["content"], b"actual subtitle")
+        self.assertEqual(result["filename"], "Show.S01E05.srt")
+
+    def test_merges_multipart_movie_subtitles(self):
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("Movie.CD1.srt", b"part one")
+            zf.writestr("Movie.CD2.srt", b"part two")
+
+        with patch("provider._http_get", return_value=zip_buffer.getvalue()):
+            result = subscene_module._download_subtitle(
+                "/download/123",
+                video={"kind": "movie", "title": "Movie", "year": 2024},
+                config={},
+                state={},
+            )
+
+        self.assertIsNotNone(result)
+        self.assertIn(b"part one", result["content"])
+        self.assertIn(b"part two", result["content"])
+
+    def test_rejects_empty_subtitle_member(self):
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("Show.S01E05.srt", b"")
+
+        with patch("provider._http_get", return_value=zip_buffer.getvalue()):
+            result = subscene_module._download_subtitle(
+                "/download/123",
+                video={"kind": "episode", "season": 1, "episode": 5},
+                config={},
+                state={},
+            )
+
+        self.assertIsNone(result)
 
 
 class TestSubsceneSearchParser(unittest.TestCase):
