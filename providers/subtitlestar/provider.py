@@ -147,10 +147,6 @@ def _is_download_href(href, attrs):
     ):
         return False
 
-    classes = set((attrs.get("class") or "").lower().split())
-    if attrs.get("id", "").lower() == "link-download" or "dlbtn" in classes:
-        return True
-
     host = parsed.netloc.lower()
     if host in {"dl.subtitlestar.com", "dl2.subtitlestar.com"}:
         return "/dlsub/" in path and path.endswith(_DOWNLOAD_EXTENSIONS)
@@ -359,8 +355,16 @@ def _has_required_match(video, matches, candidate_title=None):
     return True
 
 
+def _is_archive_sidecar(name):
+    path = (name or "").replace("\\", "/")
+    parts = [part for part in path.split("/") if part]
+    return "__MACOSX" in parts or os.path.basename(path).startswith("._")
+
+
 def select_subtitle_file(names, video):
-    candidates = [name for name in names if _subtitle_extension(name)]
+    candidates = [
+        name for name in names if _subtitle_extension(name) and not _is_archive_sidecar(name)
+    ]
     if not candidates:
         raise ValueError("subtitlestar archive contains no supported subtitle files")
     if len(candidates) == 1:
