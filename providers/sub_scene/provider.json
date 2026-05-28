@@ -1,0 +1,154 @@
+{
+  "api_version": "bazarr.provider-hub.v1",
+  "bundle_sha256": "f5a308dc333a8b28d5a90923b90396deff4ed5bf40161b58be92c58929e248dc",
+  "config_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "flaresolverr_timeout_ms": {
+        "default": 60000,
+        "description": "Maximum time FlareSolverr may spend solving a Cloudflare challenge.",
+        "maximum": 180000,
+        "minimum": 5000,
+        "title": "FlareSolverr timeout (ms)",
+        "type": "integer"
+      },
+      "flaresolverr_url": {
+        "default": "",
+        "description": "Optional FlareSolverr /v1 endpoint used only when cloudscraper still receives a Cloudflare challenge.",
+        "title": "FlareSolverr URL",
+        "type": "string"
+      },
+      "request_delay_ms": {
+        "default": 0,
+        "description": "Optional politeness delay between HTTP calls to sub-scene.com.",
+        "maximum": 5000,
+        "minimum": 0,
+        "title": "Delay between requests (ms)",
+        "type": "integer"
+      }
+    },
+    "type": "object"
+  },
+  "dependencies": {
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:3c52e209ba0a4ad7aebe60436a4ab349c39e1e602e8c134221e546902ad25897"
+        ],
+        "name": "certifi",
+        "version": "2026.5.20"
+      },
+      {
+        "hashes": [
+          "sha256:bd6c2a1c7573c64738d716488d2cdd3c00e340e4835707d8fdb8dc1a66ef164e"
+        ],
+        "name": "charset-normalizer",
+        "version": "3.4.7"
+      },
+      {
+        "hashes": [
+          "sha256:76f50ca529ed2279e220837befdec892626f9511708e200d48d5bb76ded679b0"
+        ],
+        "name": "cloudscraper",
+        "version": "1.2.71"
+      },
+      {
+        "hashes": [
+          "sha256:cc246e3a3f89580c3a951b5ad298ca4638078b2cdd4f115654332b5c26daded5"
+        ],
+        "name": "idna",
+        "version": "3.16"
+      },
+      {
+        "hashes": [
+          "sha256:850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d"
+        ],
+        "name": "pyparsing",
+        "version": "3.3.2"
+      },
+      {
+        "hashes": [
+          "sha256:2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0"
+        ],
+        "name": "requests",
+        "version": "2.34.2"
+      },
+      {
+        "hashes": [
+          "sha256:cccfdd665f0a24fcf4726e690f65639d272bb0637b9b92dfd91a5568ccf6bd06"
+        ],
+        "name": "requests-toolbelt",
+        "version": "1.0.0"
+      },
+      {
+        "hashes": [
+          "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
+        ],
+        "name": "urllib3",
+        "version": "2.7.0"
+      }
+    ]
+  },
+  "description": "Scrapes sub-scene.com (Subscene clone) for movie and episode subtitles in many languages including Vietnamese, Arabic, Bengali, Danish, Dutch, and more. Uses cloudscraper by default with optional FlareSolverr fallback for Cloudflare challenges.",
+  "entry_class": "SubSceneProvider",
+  "entry_module": "provider",
+  "files": {
+    "provider.py": "99ab583da80051501203eca930a2ad21135ea170d1d37062a7295a9c56b122f7"
+  },
+  "languages": [
+    "ara",
+    "ben",
+    "bul",
+    "ces",
+    "dan",
+    "deu",
+    "ell",
+    "eng",
+    "fas",
+    "fin",
+    "fra",
+    "heb",
+    "hin",
+    "hrv",
+    "hun",
+    "ind",
+    "ita",
+    "jpn",
+    "kor",
+    "msa",
+    "nld",
+    "nor",
+    "pol",
+    "por",
+    "ron",
+    "rus",
+    "slk",
+    "slv",
+    "spa",
+    "srp",
+    "swe",
+    "tha",
+    "tur",
+    "ukr",
+    "vie",
+    "zho"
+  ],
+  "name": "SubScene",
+  "provider_id": "sub_scene",
+  "schema_version": 1,
+  "secret_fields": [],
+  "source": {
+    "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+    "commit": "0000000000000000000000000000000000000000",
+    "path": "providers/sub_scene",
+    "ref": "main",
+    "repo": "LavX/bazarr-provider-catalog",
+    "trusted": true,
+    "type": "github"
+  },
+  "supported_media": [
+    "movie",
+    "episode"
+  ],
+  "version": "0.1.9"
+}
