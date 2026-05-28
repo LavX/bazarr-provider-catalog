@@ -409,20 +409,6 @@ def _alpha3_for(language):
     return str(language).lower()
 
 
-def _alpha2_for(language):
-    """Extract alpha2 code from language dict or string."""
-    if isinstance(language, dict):
-        return (language.get("alpha2") or "").lower()
-    return str(language).lower()
-
-
-def _alpha3_for(language):
-    """Extract alpha3 code from language dict or string."""
-    if isinstance(language, dict):
-        return (language.get("alpha3") or "").lower()
-    return str(language).lower()
-
-
 class SubSceneProvider:
     """Sub-scene.com subtitle provider."""
 
@@ -432,13 +418,13 @@ class SubSceneProvider:
             return []
         
         delay_ms = config.get("request_delay_ms", 0)
-        requested_alpha2 = set()
+        requested_alpha3 = set()
         for lang in languages:
-            alpha2 = _alpha2_for(lang)
-            if alpha2:
-                requested_alpha2.add(alpha2)
+            alpha3 = _alpha3_for(lang)
+            if alpha3:
+                requested_alpha3.add(alpha3)
         
-        if not requested_alpha2:
+        if not requested_alpha3:
             return []
         
         results = []
@@ -456,7 +442,7 @@ class SubSceneProvider:
                     lang_name = subtitle.get("language", "")
                     lang_code = _get_language_code(lang_name)
                     
-                    if not lang_code or lang_code not in requested_alpha2:
+                    if not lang_code or lang_code not in requested_alpha3:
                         continue
                     
                     score = _calculate_score(video, subtitle)
