@@ -340,15 +340,16 @@ def _select_episode_file(srt_files, video):
     
     def score(name):
         base = name.lower()
-        # Prefer explicit SxxExx markers
-        if season_int is not None:
-            pattern = rf"s{season_int:02d}e{episode_int:02d}"
-            if pattern in base:
-                return 200
-            # Also match unpadded: s1e2
-            pattern_unpadded = rf"s{season_int}e{episode_int}"
-            if pattern_unpadded in base:
-                return 200
+        marker = re.search(r"s(\d{1,2})e(\d{1,2})(?!\d)", base)
+        if marker:
+            marker_season = int(marker.group(1))
+            marker_episode = int(marker.group(2))
+            if marker_episode != episode_int:
+                return 0
+            if season_int is not None and marker_season != season_int:
+                return 0
+            return 200 if season_int is not None else 100
+
         # Fallback: match episode number with E prefix and boundary
         e_pattern = rf"e{episode_int:02d}(?!\d)"
         if re.search(e_pattern, base):
@@ -362,9 +363,8 @@ def _select_episode_file(srt_files, video):
     scored = [(score(name), name) for name in srt_files]
     best_score, best_name = max(scored, key=lambda x: x[0])
     
-    # If no episode match found, return first file as fallback
     if best_score == 0:
-        return srt_files[0]
+        return None
     
     return best_name
 
@@ -405,6 +405,82 @@ def _coerce_text(value):
     return str(value)
 
 
+def _normalized_tokens(value):
+    return set(re.sub(r"[\W_]+", " ", _coerce_text(value).lower()).split())
+
+
+def _release_matches_source(source, release):
+    source = _coerce_text(source).lower()
+    release = _coerce_text(release).lower()
+    if not source:
+        return False
+    if "bluray" in source and "bluray" in release:
+        return True
+    if "web" in source and (
+        "web" in release or "webrip" in release or "web-dl" in release
+    ):
+        return True
+    if "hdtv" in source and "hdtv" in release:
+        return True
+    return source in release
+
+
+def _derive_matches(video, result_title, subtitle):
+    """Return Provider Hub match keys represented by the SubScene candidate."""
+    video = video or {}
+    release = subtitle.get("release", "")
+    candidate_text = f"{result_title or ''} {release}"
+    candidate_tokens = _normalized_tokens(candidate_text)
+    matches = []
+
+    if video.get("kind") == "movie":
+        title_tokens = _normalized_tokens(video.get("title"))
+        if title_tokens and title_tokens.issubset(candidate_tokens):
+            matches.append("title")
+
+        year = video.get("year")
+        if year and str(year) in candidate_tokens:
+            matches.append("year")
+
+        if _release_matches_source(video.get("source"), release):
+            matches.append("source")
+
+        resolution = _coerce_text(video.get("resolution")).lower()
+        if resolution and resolution in _coerce_text(release).lower():
+            matches.append("resolution")
+
+    elif video.get("kind") == "episode":
+        series_tokens = _normalized_tokens(video.get("series"))
+        if series_tokens and series_tokens.issubset(candidate_tokens):
+            matches.append("series")
+
+        try:
+            season = int(video.get("season"))
+        except (TypeError, ValueError):
+            season = None
+        try:
+            episode = int(video.get("episode"))
+        except (TypeError, ValueError):
+            episode = None
+
+        release_lower = _coerce_text(release).lower()
+        if season is not None and re.search(rf"s0*{season}(?!\d)", release_lower):
+            matches.append("season")
+        if episode is not None:
+            marker = re.search(r"s(\d{1,2})e(\d{1,2})(?!\d)", release_lower)
+            if marker:
+                marker_season = int(marker.group(1))
+                marker_episode = int(marker.group(2))
+                if marker_episode == episode and (
+                    season is None or marker_season == season
+                ):
+                    matches.append("episode")
+            elif re.search(rf"e0*{episode}(?!\d)", release_lower):
+                matches.append("episode")
+
+    return matches
+
+
 def _calculate_score(video, subtitle):
     """Calculate match score based on video metadata."""
     score = 60
@@ -415,14 +491,8 @@ def _calculate_score(video, subtitle):
         if year and str(year) in release:
             score += 20
         
-        source = _coerce_text(video.get("source")).lower()
-        if source:
-            if "bluray" in source and "bluray" in release:
-                score += 10
-            elif "web" in source and ("web" in release or "webrip" in release or "web-dl" in release):
-                score += 10
-            elif "hdtv" in source and "hdtv" in release:
-                score += 10
+        if _release_matches_source(video.get("source"), release):
+            score += 10
         
         resolution = _coerce_text(video.get("resolution")).lower()
         if resolution and resolution in release:
@@ -508,6 +578,7 @@ class SubSceneProvider:
                     seen_ids.add(subtitle_id)
                     
                     score = _calculate_score(video, subtitle)
+                    matches = _derive_matches(video, result.get("title", ""), subtitle)
                     
                     results.append({
                         "provider": PROVIDER_ID,
@@ -520,7 +591,7 @@ class SubSceneProvider:
                         },
                         "release_info": subtitle.get("release", ""),
                         "filename": f"{PROVIDER_ID}.{subtitle_id}.srt",
-                        "matches": [],
+                        "matches": matches,
                         "score": score,
                         "score_without_hash": score,
                         "score_out_of": 100,

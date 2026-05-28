@@ -19,6 +19,7 @@ from provider import (
     _build_search_queries,
     _calculate_score,
     _get_language_code,
+    _select_episode_file,
 )
 
 
@@ -80,6 +81,29 @@ class TestCalculateScore(unittest.TestCase):
         subtitle = {"release": "Breaking.Bad.S01.720p"}
         score = _calculate_score(video, subtitle)
         self.assertGreaterEqual(score, 75)
+
+
+class TestSelectEpisodeFile(unittest.TestCase):
+    def test_selects_requested_episode_from_multi_file_zip(self):
+        selected = _select_episode_file(
+            ["Show.S01E01.srt", "Show.S01E05.srt"],
+            {"kind": "episode", "season": 1, "episode": 5},
+        )
+        self.assertEqual(selected, "Show.S01E05.srt")
+
+    def test_unpadded_season_episode_match_requires_episode_boundary(self):
+        selected = _select_episode_file(
+            ["Show.S1E20.srt", "Show.S1E02.srt"],
+            {"kind": "episode", "season": 1, "episode": 2},
+        )
+        self.assertEqual(selected, "Show.S1E02.srt")
+
+    def test_returns_none_when_episode_archive_has_no_match(self):
+        selected = _select_episode_file(
+            ["Show.S01E01.srt", "Show.S01E02.srt"],
+            {"kind": "episode", "season": 1, "episode": 5},
+        )
+        self.assertIsNone(selected)
 
 
 class TestSubsceneSearchParser(unittest.TestCase):
@@ -212,6 +236,95 @@ class TestSubSceneProvider(unittest.TestCase):
         self.assertGreater(len(results), 0)
         self.assertTrue(any(r["language"]["alpha3"] == "eng" for r in results))
         self.assertTrue(any(r["language"]["alpha3"] == "vie" for r in results))
+
+    @patch("provider._search_subscene")
+    @patch("provider._get_detail_page")
+    def test_search_populates_movie_match_keys(self, mock_detail, mock_search):
+        mock_search.return_value = [
+            {"url": "/subscene/12345", "title": "Dune (2021)"}
+        ]
+        mock_detail.return_value = [
+            {
+                "url": "/subtitle/123",
+                "language": "English",
+                "release": "Dune.2021.1080p.BluRay",
+                "hi": False,
+            },
+        ]
+
+        results = self.provider.search(
+            {
+                "kind": "movie",
+                "title": "Dune",
+                "year": 2021,
+                "source": "BluRay",
+                "resolution": "1080p",
+            },
+            ["eng"],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertGreater(len(results), 0)
+        self.assertIn("title", results[0]["matches"])
+        self.assertIn("year", results[0]["matches"])
+        self.assertIn("source", results[0]["matches"])
+        self.assertIn("resolution", results[0]["matches"])
+
+    @patch("provider._search_subscene")
+    @patch("provider._get_detail_page")
+    def test_search_populates_episode_match_keys(self, mock_detail, mock_search):
+        mock_search.return_value = [
+            {"url": "/subscene/12345", "title": "Breaking Bad"}
+        ]
+        mock_detail.return_value = [
+            {
+                "url": "/subtitle/123",
+                "language": "English",
+                "release": "Breaking.Bad.S01E05.720p",
+                "hi": False,
+            },
+        ]
+
+        results = self.provider.search(
+            {"kind": "episode", "series": "Breaking Bad", "season": 1, "episode": 5},
+            ["eng"],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertGreater(len(results), 0)
+        self.assertIn("series", results[0]["matches"])
+        self.assertIn("season", results[0]["matches"])
+        self.assertIn("episode", results[0]["matches"])
+
+    @patch("provider._search_subscene")
+    @patch("provider._get_detail_page")
+    def test_search_deduplicates_repeated_subtitle_links(self, mock_detail, mock_search):
+        mock_search.return_value = [
+            {"url": "/subscene/12345", "title": "Dune (2021)"}
+        ]
+        mock_detail.return_value = [
+            {
+                "url": "/subtitle/123",
+                "language": "English",
+                "release": "Dune.2021.1080p.BluRay",
+                "hi": False,
+            },
+            {
+                "url": "/subtitle/123",
+                "language": "English",
+                "release": "Dune.2021.720p.WEB",
+                "hi": False,
+            },
+        ]
+
+        results = self.provider.search(
+            {"kind": "movie", "title": "Dune", "year": 2021},
+            ["eng"],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["provider_payload"]["url"], "/subtitle/123")
 
     @patch("provider._search_subscene")
     def test_search_no_results(self, mock_search):
