@@ -164,19 +164,35 @@ def compute_score(video, candidate_title):
     video = video or {}
     kind = video.get("kind")
     candidate_norm = _normalize(candidate_title)
+    candidate_tokens = set(candidate_norm.split())
     
     if kind == "movie":
         title = _normalize(video.get("title"))
-        if title and title in candidate_norm:
+        title_tokens = set(title.split()) if title else set()
+        if title_tokens and title_tokens.issubset(candidate_tokens):
             year = video.get("year")
-            if year and str(year) in candidate_norm:
+            if year and str(year) in candidate_tokens:
                 return 100
             return 90
         return 60
     
     if kind == "episode":
         series = _normalize(video.get("series"))
-        if series and series in candidate_norm:
+        series_tokens = set(series.split()) if series else set()
+        if series_tokens and series_tokens.issubset(candidate_tokens):
+            season = video.get("season")
+            episode = video.get("episode")
+            # Require episode marker for high score
+            if season is not None and episode is not None:
+                s_str = f"s{int(season):02d}"
+                e_str = f"e{int(episode):02d}"
+                if s_str in candidate_norm and e_str in candidate_norm:
+                    return 95
+                # Also check unpadded
+                s_str_unpadded = f"s{int(season)}"
+                e_str_unpadded = f"e{int(episode)}"
+                if s_str_unpadded in candidate_norm and e_str_unpadded in candidate_norm:
+                    return 95
             return 85
         return 60
     
@@ -187,25 +203,32 @@ def derive_matches(video, candidate_title):
     video = video or {}
     kind = video.get("kind")
     candidate_norm = _normalize(candidate_title)
+    candidate_tokens = set(candidate_norm.split())
     matches = []
     
     if kind == "movie":
         title = _normalize(video.get("title"))
-        if title and title in candidate_norm:
+        title_tokens = set(title.split()) if title else set()
+        if title_tokens and title_tokens.issubset(candidate_tokens):
             matches.append("title")
         year = video.get("year")
-        if year and str(year) in candidate_norm:
+        if year and str(year) in candidate_tokens:
             matches.append("year")
     elif kind == "episode":
         series = _normalize(video.get("series"))
-        if series and series in candidate_norm:
+        series_tokens = set(series.split()) if series else set()
+        if series_tokens and series_tokens.issubset(candidate_tokens):
             matches.append("series")
         season = video.get("season")
-        if season is not None and f"s{int(season):02d}" in candidate_norm:
-            matches.append("season")
+        if season is not None:
+            s_str = f"s{int(season):02d}"
+            if s_str in candidate_norm:
+                matches.append("season")
         episode = video.get("episode")
-        if episode is not None and f"e{int(episode):02d}" in candidate_norm:
-            matches.append("episode")
+        if episode is not None:
+            e_str = f"e{int(episode):02d}"
+            if e_str in candidate_norm:
+                matches.append("episode")
     
     return matches
 
@@ -215,16 +238,36 @@ def select_subtitle_file(names, video):
     if not candidates:
         raise ValueError("subtitlestar archive contains no supported subtitle files")
     episode = (video or {}).get("episode")
+    season = (video or {}).get("season")
     try:
         episode_int = int(episode)
     except (TypeError, ValueError):
         episode_int = None
+    try:
+        season_int = int(season)
+    except (TypeError, ValueError):
+        season_int = None
+    
     if episode_int is None:
         return candidates[0]
 
     def score(name):
-        base = os.path.basename(name)
-        if re.search(rf"(?<!\d)0*{episode_int}(?!\d)", base):
+        base = os.path.basename(name).lower()
+        # Prefer explicit SxxExx markers
+        if season_int is not None:
+            pattern = rf"s{season_int:02d}e{episode_int:02d}"
+            if pattern in base:
+                return 200
+            # Also match unpadded: s1e2
+            pattern_unpadded = rf"s{season_int}e{episode_int}"
+            if pattern_unpadded in base:
+                return 200
+        # Fallback: match episode number with E prefix
+        e_pattern = rf"e{episode_int:02d}"
+        if e_pattern in base:
+            return 100
+        e_pattern_unpadded = rf"e{episode_int}(?!\d)"
+        if re.search(e_pattern_unpadded, base):
             return 100
         return 0
 
