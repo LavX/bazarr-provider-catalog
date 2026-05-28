@@ -165,7 +165,11 @@ def _normalize_download_url(url):
     if url.startswith("/"):
         return urllib.parse.urljoin(BASE_URL, url)
     if url.lower().startswith("dlsub/"):
-        return urllib.parse.urljoin(f"{DOWNLOAD_BASE_URL}/", url[6:])
+        remainder = url.split("/", 1)[1].lstrip("/")
+        return urllib.parse.urljoin(
+            f"{DOWNLOAD_BASE_URL.rsplit('/dlsub', 1)[0]}/",
+            f"dlsub/{remainder}",
+        )
     return urllib.parse.urljoin(f"{DOWNLOAD_BASE_URL}/", url)
 
 
@@ -255,6 +259,13 @@ def _year_int(value):
         return None
 
 
+def _candidate_years(candidate_title):
+    return {
+        int(year)
+        for year in re.findall(r"\b(?:19|20)\d{2}\b", _coerce_text(candidate_title) or "")
+    }
+
+
 def compute_score(video, candidate_title):
     video = video or {}
     kind = video.get("kind")
@@ -271,11 +282,10 @@ def compute_score(video, candidate_title):
             # Check if candidate has a conflicting year (e.g., Dune 1984 vs Dune 2021)
             if year:
                 # Look for 4-digit years in candidate that don't match requested year
-                year_pattern = r'\b(?:19|20)\d{2}\b'
-                candidate_years = re.findall(year_pattern, candidate_title)
-                if candidate_years:
+                years = _candidate_years(candidate_title)
+                if years:
                     # If candidate has explicit years and none match requested year, demote
-                    if not any(int(y) == year for y in candidate_years):
+                    if year not in years:
                         return 60
             return 90
         return 60
@@ -343,8 +353,13 @@ def _has_required_match(video, matches, candidate_title=None):
     if video.get("kind") == "movie":
         if "title" not in matches:
             return False
-        if video.get("year") and "year" not in matches:
-            return False
+        requested_year = _year_int(video.get("year"))
+        if requested_year and "year" not in matches:
+            candidate_years = _candidate_years(candidate_title)
+            if candidate_years:
+                return False
+            if not candidate_title:
+                return False
     elif video.get("kind") == "episode":
         if video.get("series") and "series" not in matches:
             return False
@@ -362,13 +377,19 @@ def _is_archive_sidecar(name):
 
 
 def select_subtitle_file(names, video):
+    return select_subtitle_files(names, video)[0]
+
+
+def select_subtitle_files(names, video):
     candidates = [
-        name for name in names if _subtitle_extension(name) and not _is_archive_sidecar(name)
+        name
+        for name in names
+        if _subtitle_extension(name) and not _is_archive_sidecar(name)
     ]
     if not candidates:
         raise ValueError("subtitlestar archive contains no supported subtitle files")
     if len(candidates) == 1:
-        return candidates[0]
+        return candidates
     episode = (video or {}).get("episode")
     season = (video or {}).get("season")
     try:
@@ -381,7 +402,10 @@ def select_subtitle_file(names, video):
         season_int = None
     
     if episode_int is None:
-        return candidates[0]
+        multipart = _multipart_subset(candidates)
+        if multipart:
+            return multipart
+        return [candidates[0]]
 
     def score(name):
         base = os.path.basename(name).lower()
@@ -413,7 +437,37 @@ def select_subtitle_file(names, video):
             f"subtitlestar archive contains no subtitle matching episode {episode_int}"
         )
     
-    return best_name
+    return [best_name]
+
+
+def _part_index(name):
+    normalized = _normalize(os.path.splitext(os.path.basename(name))[0])
+    match = re.search(r"\b(?:cd|part|disc|disk)\s*0*(\d+)\b", normalized)
+    return int(match.group(1)) if match else 0
+
+
+def _multipart_subset(names):
+    groups = {}
+    for name in names:
+        part_index = _part_index(name)
+        if part_index <= 0:
+            continue
+        groups.setdefault((_multipart_key(name), _subtitle_extension(name)), []).append(name)
+    valid_groups = []
+    for group in groups.values():
+        part_numbers = [_part_index(name) for name in group]
+        if len(group) > 1 and len(set(part_numbers)) == len(part_numbers):
+            valid_groups.append(group)
+    if not valid_groups:
+        return []
+    best_group = max(valid_groups, key=lambda group: (len(group), -min(_part_index(name) for name in group)))
+    return sorted(best_group, key=lambda name: (_part_index(name), name.lower()))
+
+
+def _multipart_key(name):
+    stem = os.path.splitext(os.path.basename(name))[0]
+    normalized = _normalize(stem)
+    return re.sub(r"\b(?:cd|part|disc|disk)\s*0*\d+\b", "", normalized).strip()
 
 
 def _subtitle_extension(name):
@@ -433,10 +487,11 @@ def extract_download(body, filename="", video=None):
     if zipfile.is_zipfile(stream):
         with zipfile.ZipFile(stream) as archive:
             names = archive.namelist()
-            selected = select_subtitle_file(names, video or {})
+            selected_files = select_subtitle_files(names, video or {})
+            subtitle_format = _subtitle_extension(selected_files[0]) or _format_from_filename(selected_files[0])
             return _content_payload(
-                archive.read(selected),
-                _subtitle_extension(selected) or _format_from_filename(selected),
+                b"\n\n".join(archive.read(name) for name in selected_files),
+                subtitle_format,
             )
 
     return _content_payload(body, _format_from_filename(filename))
