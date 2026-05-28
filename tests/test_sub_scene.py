@@ -194,6 +194,16 @@ class TestCalculateScore(unittest.TestCase):
         self.assertNotIn("episode", matches)
         self.assertFalse(subscene_module._has_required_match(video, matches, subtitle))
 
+    def test_episode_match_accepts_page_title_range(self):
+        video = {"kind": "episode", "series": "Show", "season": 1, "episode": 5}
+        subtitle = {"release": "DVDRip.XviD-GROUP"}
+        matches = subscene_module._derive_matches(video, "Show S01E01-E08", subtitle)
+
+        self.assertIn("series", matches)
+        self.assertIn("season", matches)
+        self.assertIn("episode", matches)
+        self.assertTrue(subscene_module._has_required_match(video, matches, subtitle))
+
 
 class TestSelectEpisodeFile(unittest.TestCase):
     def test_selects_requested_episode_from_multi_file_zip(self):
@@ -263,6 +273,14 @@ class TestSelectEpisodeFile(unittest.TestCase):
 
         self.assertEqual(selected, "Show.S01E100.srt")
 
+    def test_selects_episode_range_file(self):
+        selected = _select_episode_file(
+            ["Show.S01E01-E08.srt"],
+            {"kind": "episode", "season": 1, "episode": 5},
+        )
+
+        self.assertEqual(selected, "Show.S01E01-E08.srt")
+
 
 class TestDownloadSubtitle(unittest.TestCase):
     def test_extracts_supported_non_srt_file_from_zip(self):
@@ -329,6 +347,22 @@ class TestDownloadSubtitle(unittest.TestCase):
             result = subscene_module._download_subtitle(
                 "/download/123",
                 video={"kind": "episode", "season": 1, "episode": 5},
+                config={},
+                state={},
+            )
+
+        self.assertIsNone(result)
+
+    def test_rejects_paired_vobsub_sub_member(self):
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("movie.sub", b"\x00\x01binary vobsub")
+            zf.writestr("movie.idx", b"VobSub index")
+
+        with patch("provider._http_get", return_value=zip_buffer.getvalue()):
+            result = subscene_module._download_subtitle(
+                "/download/123",
+                video={"kind": "movie", "title": "Movie", "year": 2024},
                 config={},
                 state={},
             )

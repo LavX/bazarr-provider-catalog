@@ -626,6 +626,12 @@ def _select_subtitle_files(srt_files, video):
     
     def score(name):
         base = name.lower()
+        season_markers = _explicit_season_markers(base)
+        if _episode_range_includes(base, episode_int):
+            if season_int is None or not season_markers or season_int in season_markers:
+                return 200 if season_int is not None else 100
+            return 0
+
         marker = _season_episode_marker(base)
         if marker:
             marker_season, marker_episode = marker
@@ -635,7 +641,6 @@ def _select_subtitle_files(srt_files, video):
                 return 0
             return 200 if season_int is not None else 100
 
-        season_markers = _explicit_season_markers(base)
         if season_int is not None and season_markers and season_int not in season_markers:
             return 0
 
@@ -676,6 +681,18 @@ def _is_archive_sidecar(name):
     path = (name or "").replace("\\", "/")
     parts = [part for part in path.split("/") if part]
     return "__MACOSX" in parts or os.path.basename(path).startswith("._")
+
+
+def _is_paired_vobsub_sub(name, names):
+    path = (name or "").replace("\\", "/").lower()
+    if not path.endswith(".sub"):
+        return False
+    idx_path = f"{os.path.splitext(path)[0]}.idx"
+    normalized_names = {
+        (candidate or "").replace("\\", "/").lower()
+        for candidate in names
+    }
+    return idx_path in normalized_names
 
 
 def _part_index(name):
@@ -734,10 +751,15 @@ def _download_subtitle(download_url, delay_ms=0, video=None, config=None, state=
     try:
         zip_data = _http_get(full_url, config=config, state=state)
         with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
+            archive_names = zf.namelist()
             subtitle_files = [
                 name
-                for name in zf.namelist()
-                if _subtitle_extension(name) and not _is_archive_sidecar(name)
+                for name in archive_names
+                if (
+                    _subtitle_extension(name)
+                    and not _is_archive_sidecar(name)
+                    and not _is_paired_vobsub_sub(name, archive_names)
+                )
             ]
             if not subtitle_files:
                 return None
@@ -854,8 +876,10 @@ def _episode_range_includes(text, episode):
         return False
     text = _coerce_text(text).lower()
     for pattern in (
-        r"\be0*(\d{1,2})\s*(?:-|to|through|thru)\s*e?0*(\d{1,2})(?!\d)",
-        r"\bepisodes?\s*0*(\d{1,2})\s*(?:-|to|through|thru)\s*0*(\d{1,2})(?!\d)",
+        r"\bs0*\d{1,2}e0*(\d{1,3})\s*(?:-|to|through|thru)\s*e?0*(\d{1,3})(?!\d)",
+        r"\bs0*\d{1,2}[\s._-]+e0*(\d{1,3})\s*(?:-|to|through|thru)\s*e?0*(\d{1,3})(?!\d)",
+        r"\be0*(\d{1,3})\s*(?:-|to|through|thru)\s*e?0*(\d{1,3})(?!\d)",
+        r"\bepisodes?\s*0*(\d{1,3})\s*(?:-|to|through|thru)\s*0*(\d{1,3})(?!\d)",
     ):
         for marker in re.finditer(pattern, text):
             start = int(marker.group(1))
@@ -867,6 +891,10 @@ def _episode_range_includes(text, episode):
 
 
 def _has_conflicting_episode_marker(text, season, episode):
+    if episode is not None and _episode_range_includes(text, episode):
+        season_markers = _explicit_season_markers(text)
+        if season is None or not season_markers or season in season_markers:
+            return False
     marker = _season_episode_marker(text)
     if not marker:
         return False
@@ -936,6 +964,9 @@ def _derive_matches(video, result_title, subtitle):
                 ):
                     matches.append("episode")
             elif _episode_range_includes(release_lower, episode):
+                if season is None or not season_markers or season in season_markers:
+                    matches.append("episode")
+            elif _episode_range_includes(candidate_lower, episode):
                 if season is None or not season_markers or season in season_markers:
                     matches.append("episode")
             elif re.search(rf"e0*{episode}(?!\d)", release_lower):
