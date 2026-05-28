@@ -113,11 +113,23 @@ _IMDB_RE = re.compile(r'imdb\.com/title/(tt\d+)', re.IGNORECASE)
 _YEAR_RE = re.compile(r'icon-years[^>]*>.*?<a[^>]*>(\d{4})</a>', re.IGNORECASE | re.DOTALL)
 _QUALITY_RE = re.compile(r'<b>کیفیت\s*:</b>([^<]+)</span>', re.IGNORECASE | re.DOTALL)
 _DOWNLOAD_RE = re.compile(
-    r'<a[^>]+id="link-download"[^>]+href="([^"]+)"[^>]*class="dlbtn"',
+    r'<a[^>]+(?:id="link-download"[^>]+href="([^"]+)"|href="([^"]+)"[^>]+id="link-download")[^>]*class="dlbtn"',
     re.IGNORECASE | re.DOTALL,
 )
 _DOWNLOAD_ALT_RE = re.compile(
     r'<a[^>]+class="dlbtn"[^>]+href="([^"]+)"',
+    re.IGNORECASE | re.DOTALL,
+)
+_DOWNLOAD_ALT2_RE = re.compile(
+    r'<a[^>]+href="([^"]+)"[^>]+class="dlbtn"',
+    re.IGNORECASE | re.DOTALL,
+)
+_DOWNLOAD_ALT_RE = re.compile(
+    r'<a[^>]+class="dlbtn"[^>]+href="([^"]+)"',
+    re.IGNORECASE | re.DOTALL,
+)
+_DOWNLOAD_ALT2_RE = re.compile(
+    r'<a[^>]+href="([^"]+)"[^>]+class="dlbtn"',
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -141,18 +153,34 @@ def parse_detail_page(html_bytes):
     
     downloads = []
     for match in _DOWNLOAD_RE.finditer(text):
-        downloads.append(match.group(1))
+        url = match.group(1) or match.group(2)
+        if url and url not in downloads:
+            downloads.append(url)
     for match in _DOWNLOAD_ALT_RE.finditer(text):
         url = match.group(1)
         if url not in downloads:
             downloads.append(url)
+    for match in _DOWNLOAD_ALT2_RE.finditer(text):
+        url = match.group(1)
+        if url not in downloads:
+            downloads.append(url)
+    
+    # Normalize relative URLs against BASE_URL
+    normalized = []
+    for url in downloads:
+        if url.startswith("http://") or url.startswith("https://"):
+            normalized.append(url)
+        elif url.startswith("/"):
+            normalized.append(f"{BASE_URL}{url}")
+        else:
+            normalized.append(f"{DOWNLOAD_BASE_URL}/{url}")
     
     return {
         "title": page_title,
         "imdb_id": imdb_id,
         "year": year,
         "quality": quality,
-        "downloads": downloads,
+        "downloads": normalized,
     }
 
 
@@ -278,16 +306,26 @@ def select_subtitle_file(names, video):
             pattern_unpadded = rf"s{season_int}e{episode_int}"
             if pattern_unpadded in base:
                 return 200
-        # Fallback: match episode number with E prefix
-        e_pattern = rf"e{episode_int:02d}"
-        if e_pattern in base:
+        # Fallback: match episode number with E prefix and boundary
+        e_pattern = rf"e{episode_int:02d}(?!\d)"
+        if re.search(e_pattern, base):
             return 100
         e_pattern_unpadded = rf"e{episode_int}(?!\d)"
         if re.search(e_pattern_unpadded, base):
             return 100
         return 0
 
-    return max(candidates, key=score)
+    # Score all candidates and find the best match
+    scored = [(score(name), name) for name in candidates]
+    best_score, best_name = max(scored, key=lambda x: x[0])
+    
+    # Reject if no episode match found
+    if best_score == 0:
+        raise ValueError(
+            f"subtitlestar archive contains no subtitle matching episode {episode_int}"
+        )
+    
+    return best_name
 
 
 def _subtitle_extension(name):
@@ -432,8 +470,13 @@ class SubtitlestarProvider:
                 if not details or not details["downloads"]:
                     continue
                 
-                score = compute_score(video, candidate["title"])
-                matches = derive_matches(video, candidate["title"])
+                # Use detail-page year for scoring when available
+                scoring_title = candidate["title"]
+                if details.get("year"):
+                    scoring_title = f"{candidate['title']} {details['year']}"
+                
+                score = compute_score(video, scoring_title)
+                matches = derive_matches(video, scoring_title)
                 
                 for download_url in details["downloads"][:1]:
                     results.append({
