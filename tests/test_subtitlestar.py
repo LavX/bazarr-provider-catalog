@@ -155,6 +155,24 @@ class ParseDetailPageTests(unittest.TestCase):
             ["https://dl.subtitlestar.com/dlsub/movie.zip"],
         )
 
+    def test_skips_dlbtn_links_without_download_paths(self):
+        html = """
+        <html>
+        <body>
+        <a class="dlbtn" href="#">Broken button</a>
+        <a id="link-download" href="/not-a-download">Broken id</a>
+        <a class="dlbtn" href="https://dl.subtitlestar.com/dlsub/movie.zip">ZIP</a>
+        </body>
+        </html>
+        """.encode("utf-8")
+
+        details = self.mod.parse_detail_page(html)
+
+        self.assertEqual(
+            details["downloads"],
+            ["https://dl.subtitlestar.com/dlsub/movie.zip"],
+        )
+
     def test_normalizes_dlsub_relative_links_once(self):
         html = """
         <html>
@@ -449,6 +467,14 @@ class SelectSubtitleFileTests(unittest.TestCase):
         )
 
         self.assertEqual(selected, "Show.1x02.srt")
+
+    def test_skips_appledouble_sidecar_files(self):
+        selected = self.mod.select_subtitle_file(
+            ["__MACOSX/._Show.S01E02.srt", "Show.S01E02.srt"],
+            {"kind": "episode", "season": 1, "episode": 2},
+        )
+
+        self.assertEqual(selected, "Show.S01E02.srt")
 
     def test_keeps_single_generic_episode_file(self):
         selected = self.mod.select_subtitle_file(

@@ -615,17 +615,9 @@ def _select_episode_file(srt_files, video):
     
     def score(name):
         base = name.lower()
-        marker = None
-        for pattern in (
-            r"s(\d{1,2})e(\d{1,2})(?!\d)",
-            r"s(\d{1,2})[\s._-]+e(\d{1,2})(?!\d)",
-        ):
-            marker = re.search(pattern, base)
-            if marker:
-                break
+        marker = _season_episode_marker(base)
         if marker:
-            marker_season = int(marker.group(1))
-            marker_episode = int(marker.group(2))
+            marker_season, marker_episode = marker
             if marker_episode != episode_int:
                 return 0
             if season_int is not None and marker_season != season_int:

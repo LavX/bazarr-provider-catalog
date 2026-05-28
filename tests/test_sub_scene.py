@@ -199,6 +199,14 @@ class TestSelectEpisodeFile(unittest.TestCase):
         )
         self.assertEqual(selected, "Show.S01.E05.srt")
 
+    def test_selects_1x_episode_file(self):
+        selected = _select_episode_file(
+            ["Show.1x04.srt", "Show.1x05.srt"],
+            {"kind": "episode", "season": 1, "episode": 5},
+        )
+
+        self.assertEqual(selected, "Show.1x05.srt")
+
 
 class TestDownloadSubtitle(unittest.TestCase):
     def test_extracts_supported_non_srt_file_from_zip(self):
