@@ -143,6 +143,20 @@ class TestSelectEpisodeFile(unittest.TestCase):
         )
         self.assertIsNone(selected)
 
+    def test_rejects_separated_season_episode_conflict(self):
+        selected = _select_episode_file(
+            ["Show.S01.E05.srt", "Show.S01.E06.srt"],
+            {"kind": "episode", "season": 2, "episode": 5},
+        )
+        self.assertIsNone(selected)
+
+    def test_selects_separated_season_episode_match(self):
+        selected = _select_episode_file(
+            ["Show.S01.E04.srt", "Show.S01.E05.srt"],
+            {"kind": "episode", "season": 1, "episode": 5},
+        )
+        self.assertEqual(selected, "Show.S01.E05.srt")
+
 
 class TestSubsceneSearchParser(unittest.TestCase):
     def test_parse_search_results(self):

@@ -113,7 +113,8 @@ _TITLE_RE = re.compile(r"<title>([^<]+)</title>", re.IGNORECASE | re.DOTALL)
 _IMDB_RE = re.compile(r'imdb\.com/title/(tt\d+)', re.IGNORECASE)
 _YEAR_RE = re.compile(r'icon-years[^>]*>.*?<a[^>]*>(\d{4})</a>', re.IGNORECASE | re.DOTALL)
 _QUALITY_RE = re.compile(r'<b>کیفیت\s*:</b>([^<]+)</span>', re.IGNORECASE | re.DOTALL)
-_DOWNLOAD_EXTENSIONS = (".zip", ".rar", ".7z", ".srt", ".ass", ".ssa", ".sub", ".vtt")
+_DOWNLOAD_EXTENSIONS = (".zip", ".srt", ".ass", ".ssa", ".sub", ".vtt")
+_UNSUPPORTED_ARCHIVE_EXTENSIONS = (".rar", ".7z")
 
 
 class _DownloadLinkParser(HTMLParser):
@@ -137,16 +138,20 @@ def _is_download_href(href, attrs):
     if not href:
         return False
     lowered = href.lower()
-    if "trailer" in lowered or urllib.parse.urlparse(lowered).path.endswith((".mp4", ".mkv")):
+    parsed = urllib.parse.urlparse(lowered)
+    path = parsed.path.lower()
+    if (
+        "trailer" in lowered
+        or path.endswith((".mp4", ".mkv"))
+        or path.endswith(_UNSUPPORTED_ARCHIVE_EXTENSIONS)
+    ):
         return False
 
     classes = set((attrs.get("class") or "").lower().split())
     if attrs.get("id", "").lower() == "link-download" or "dlbtn" in classes:
         return True
 
-    parsed = urllib.parse.urlparse(href)
     host = parsed.netloc.lower()
-    path = parsed.path.lower()
     if host in {"dl.subtitlestar.com", "dl2.subtitlestar.com"}:
         return "/dlsub/" in path and path.endswith(_DOWNLOAD_EXTENSIONS)
     if not host:
@@ -163,6 +168,8 @@ def _normalize_download_url(url):
         return urllib.parse.urljoin(f"{DOWNLOAD_BASE_URL}/", url)
     if url.startswith("/"):
         return urllib.parse.urljoin(BASE_URL, url)
+    if url.lower().startswith("dlsub/"):
+        return urllib.parse.urljoin(f"{DOWNLOAD_BASE_URL}/", url[6:])
     return urllib.parse.urljoin(f"{DOWNLOAD_BASE_URL}/", url)
 
 
@@ -204,6 +211,7 @@ def _season_episode_marker(text):
     for pattern in (
         r"\bs0*(\d{1,2})e0*(\d{1,2})(?!\d)",
         r"\bs0*(\d{1,2})[\s._-]+e0*(\d{1,2})(?!\d)",
+        r"\b0*(\d{1,2})x0*(\d{1,2})(?!\d)",
     ):
         marker = re.search(pattern, text)
         if marker:
@@ -217,6 +225,7 @@ def _explicit_season_numbers(text):
     for pattern in (
         r"\bs0*(\d{1,2})(?=e\d{1,2}(?!\d))",
         r"\bs0*(\d{1,2})(?=[\s._-]+e\d{1,2}(?!\d))",
+        r"\b0*(\d{1,2})(?=x\d{1,2}(?!\d))",
         r"\bs0*(\d{1,2})(?!\d)",
     ):
         for marker in re.finditer(pattern, text):
@@ -229,6 +238,13 @@ def _episode_marker_matches(text, episode):
     return bool(re.search(rf"\be0*{int(episode)}(?!\d)", text))
 
 
+def _year_int(value):
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
 def compute_score(video, candidate_title):
     video = video or {}
     kind = video.get("kind")
@@ -239,17 +255,17 @@ def compute_score(video, candidate_title):
         title = _normalize(video.get("title"))
         title_tokens = set(title.split()) if title else set()
         if title_tokens and title_tokens.issubset(candidate_tokens):
-            year = video.get("year")
+            year = _year_int(video.get("year"))
             if year and str(year) in candidate_tokens:
                 return 100
             # Check if candidate has a conflicting year (e.g., Dune 1984 vs Dune 2021)
             if year:
                 # Look for 4-digit years in candidate that don't match requested year
-                year_pattern = r'\b(19|20)\d{2}\b'
+                year_pattern = r'\b(?:19|20)\d{2}\b'
                 candidate_years = re.findall(year_pattern, candidate_title)
                 if candidate_years:
                     # If candidate has explicit years and none match requested year, demote
-                    if not any(int(y) == int(year) for y in candidate_years):
+                    if not any(int(y) == year for y in candidate_years):
                         return 60
             return 90
         return 60
@@ -298,7 +314,9 @@ def derive_matches(video, candidate_title):
         episode = video.get("episode")
         if episode is not None:
             marker = _season_episode_marker(candidate_norm)
-            if marker and marker[1] == int(episode):
+            if marker and marker[1] == int(episode) and (
+                season is None or marker[0] == int(season)
+            ):
                 matches.append("episode")
             elif _episode_marker_matches(candidate_norm, episode):
                 matches.append("episode")
@@ -358,7 +376,8 @@ def select_subtitle_file(names, video):
 
 
 def _subtitle_extension(name):
-    lowered = (name or "").lower()
+    path = urllib.parse.urlparse(name or "").path or (name or "")
+    lowered = path.lower()
     for extension in SUBTITLE_EXTENSIONS:
         if lowered.endswith(extension):
             return extension[1:]
@@ -547,7 +566,7 @@ class SubtitlestarProvider:
             raise ValueError("subtitlestar download requires download_url")
         
         body = self._http_get(download_url)
-        filename = os.path.basename(download_url)
+        filename = os.path.basename(urllib.parse.urlparse(download_url).path)
         return extract_download(
             body,
             filename=filename,
