@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "39df2085d39a03acb0d8dc043c51cac99bb0f317f3069a20d168ad233f1364a7",
+  "bundle_sha256": "0b4e972e5be3bb18caab64c50c600dbb265b7d35cb145de3fc58cc400d1835bd",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -93,7 +93,7 @@
   "entry_class": "SubSceneProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "bdd3141b0d63959d6358359b356355d14a2bb356803bf17d6bc8fe898e0b65f4"
+    "provider.py": "23a0c02b5fee029f6c636bec8833d65825c3540defdc2bb016d91702e6f24066"
   },
   "languages": [
     "ara",

@@ -206,17 +206,64 @@ def _normalize(text):
     return re.sub(r"[\W_]+", " ", (_coerce_text(text) or "").lower()).strip()
 
 
+def _season_episode_markers(text):
+    text = (_coerce_text(text) or "").lower()
+    markers = []
+    for marker in re.finditer(
+        r"\bs0*(\d{1,2})((?:[\s._-]*e0*\d{1,3})+)",
+        text,
+    ):
+        season = int(marker.group(1))
+        for episode in re.findall(r"e0*(\d{1,3})", marker.group(2)):
+            markers.append((season, int(episode)))
+    for marker in re.finditer(r"\b0*(\d{1,2})x0*(\d{1,3})(?!\d)", text):
+        season_episode = (int(marker.group(1)), int(marker.group(2)))
+        if season_episode not in markers:
+            markers.append(season_episode)
+    return markers
+
+
 def _season_episode_marker(text):
+    markers = _season_episode_markers(text)
+    return markers[0] if markers else None
+
+
+def _episode_range_includes(text, episode, season=None):
+    try:
+        episode_int = int(episode)
+    except (TypeError, ValueError):
+        return False
+    try:
+        season_int = int(season)
+    except (TypeError, ValueError):
+        season_int = None
     text = (_coerce_text(text) or "").lower()
     for pattern in (
-        r"\bs0*(\d{1,2})e0*(\d{1,3})(?!\d)",
-        r"\bs0*(\d{1,2})[\s._-]+e0*(\d{1,3})(?!\d)",
-        r"\b0*(\d{1,2})x0*(\d{1,3})(?!\d)",
+        r"\bs0*(\d{1,2})e0*(\d{1,3})\s*(?:-|to|through|thru)\s*e?0*(\d{1,3})(?!\d)",
+        r"\bs0*(\d{1,2})[\s._-]+e0*(\d{1,3})\s*(?:-|to|through|thru)\s*e?0*(\d{1,3})(?!\d)",
     ):
-        marker = re.search(pattern, text)
-        if marker:
-            return int(marker.group(1)), int(marker.group(2))
-    return None
+        for marker in re.finditer(pattern, text):
+            marker_season = int(marker.group(1))
+            if season_int is not None and marker_season != season_int:
+                continue
+            start = int(marker.group(2))
+            end = int(marker.group(3))
+            lower, upper = sorted((start, end))
+            if lower <= episode_int <= upper:
+                return True
+    for marker in re.finditer(
+        r"\be0*(\d{1,3})\s*(?:-|to|through|thru)\s*e?0*(\d{1,3})(?!\d)",
+        text,
+    ):
+        explicit_seasons = _explicit_season_numbers(text)
+        if season_int is not None and explicit_seasons and season_int not in explicit_seasons:
+            continue
+        start = int(marker.group(1))
+        end = int(marker.group(2))
+        lower, upper = sorted((start, end))
+        if lower <= episode_int <= upper:
+            return True
+    return False
 
 
 def _explicit_season_numbers(text):
@@ -242,10 +289,9 @@ def _episode_marker_matches(text, episode):
 def _explicit_episode_numbers(text):
     text = (_coerce_text(text) or "").lower()
     episodes = set()
+    for _, episode in _season_episode_markers(text):
+        episodes.add(episode)
     for pattern in (
-        r"\bs0*\d{1,2}e0*(\d{1,3})(?!\d)",
-        r"\bs0*\d{1,2}[\s._-]+e0*(\d{1,3})(?!\d)",
-        r"\b0*\d{1,2}x0*(\d{1,3})(?!\d)",
         r"\be0*(\d{1,3})(?!\d)",
     ):
         for marker in re.finditer(pattern, text):
@@ -275,7 +321,8 @@ def _candidate_years(candidate_title, title=None):
 def compute_score(video, candidate_title):
     video = video or {}
     kind = video.get("kind")
-    candidate_norm = _normalize(candidate_title)
+    candidate_text = _coerce_text(candidate_title) or ""
+    candidate_norm = _normalize(candidate_text)
     candidate_tokens = set(candidate_norm.split())
     
     if kind == "movie":
@@ -304,8 +351,10 @@ def compute_score(video, candidate_title):
             episode = video.get("episode")
             # Require episode marker for high score
             if season is not None and episode is not None:
-                marker = _season_episode_marker(candidate_norm)
-                if marker and marker == (int(season), int(episode)):
+                markers = _season_episode_markers(candidate_text)
+                if any(marker == (int(season), int(episode)) for marker in markers):
+                    return 95
+                if _episode_range_includes(candidate_text, episode, season):
                     return 95
             return 85
         return 60
@@ -316,7 +365,8 @@ def compute_score(video, candidate_title):
 def derive_matches(video, candidate_title):
     video = video or {}
     kind = video.get("kind")
-    candidate_norm = _normalize(candidate_title)
+    candidate_text = _coerce_text(candidate_title) or ""
+    candidate_norm = _normalize(candidate_text)
     candidate_tokens = set(candidate_norm.split())
     matches = []
     
@@ -339,14 +389,20 @@ def derive_matches(video, candidate_title):
                 matches.append("season")
         episode = video.get("episode")
         if episode is not None:
-            marker = _season_episode_marker(candidate_norm)
-            if marker:
-                if marker[1] == int(episode) and (
-                    season is None or marker[0] == int(season)
+            markers = _season_episode_markers(candidate_text)
+            if markers:
+                if any(
+                    marker_episode == int(episode)
+                    and (season is None or marker_season == int(season))
+                    for marker_season, marker_episode in markers
                 ):
                     matches.append("episode")
-            elif _episode_marker_matches(candidate_norm, episode):
-                explicit_seasons = _explicit_season_numbers(candidate_norm)
+                elif _episode_range_includes(candidate_text, episode, season):
+                    matches.append("episode")
+            elif _episode_range_includes(candidate_text, episode, season):
+                matches.append("episode")
+            elif _episode_marker_matches(candidate_text, episode):
+                explicit_seasons = _explicit_season_numbers(candidate_text)
                 if season is None or not explicit_seasons or int(season) in explicit_seasons:
                     matches.append("episode")
     
@@ -415,18 +471,24 @@ def select_subtitle_files(names, video):
 
     def score(name):
         normalized_name = name.lower()
-        marker = _season_episode_marker(normalized_name)
-        if marker:
-            marker_season, marker_episode = marker
-            if marker_episode != episode_int:
-                return 0
-            if season_int is not None and marker_season != season_int:
-                return 0
-            return 200 if season_int is not None else 100
+        markers = _season_episode_markers(normalized_name)
+        if markers:
+            for marker_season, marker_episode in markers:
+                if marker_episode != episode_int:
+                    continue
+                if season_int is not None and marker_season != season_int:
+                    continue
+                return 200 if season_int is not None else 100
+            if _episode_range_includes(normalized_name, episode_int, season_int):
+                return 200 if season_int is not None else 100
+            return 0
 
         season_markers = _explicit_season_numbers(normalized_name)
         if season_int is not None and season_markers and season_int not in season_markers:
             return 0
+
+        if _episode_range_includes(normalized_name, episode_int, season_int):
+            return 100
 
         # Fallback: match episode number with E prefix and boundary
         if _episode_marker_matches(normalized_name, episode_int):
@@ -521,6 +583,8 @@ def extract_download(body, filename="", video=None):
     subtitle_format = _subtitle_extension(filename)
     if filename_path.endswith(".zip") or not subtitle_format or _looks_like_html(body):
         raise ValueError("subtitlestar download did not return a subtitle payload")
+    if (video or {}).get("kind") == "episode":
+        select_subtitle_files([filename_path or filename], video or {})
     return _content_payload(body, subtitle_format)
 
 
@@ -599,6 +663,10 @@ def _filename_from_headers(headers):
     return urllib.parse.unquote(match.group(1)).strip()
 
 
+def _download_basename(url):
+    return os.path.basename(urllib.parse.urlparse(url or "").path)
+
+
 def _candidate_scoring_title(video, candidate_title, details):
     scoring_title = _coerce_text(candidate_title) or ""
     detail_title = _coerce_text((details or {}).get("title")) or ""
@@ -674,7 +742,7 @@ class SubtitlestarProvider:
                         "id": f"subtitlestar-{hashlib.md5(download_url.encode()).hexdigest()[:12]}",
                         "language": language,
                         "release_info": f"{candidate['title']} [{details['quality'] or 'Unknown'}]",
-                        "filename": f"subtitlestar.{os.path.basename(download_url)}",
+                        "filename": f"subtitlestar.{_download_basename(download_url)}",
                         "matches": matches,
                         "score": score,
                         "score_without_hash": score,

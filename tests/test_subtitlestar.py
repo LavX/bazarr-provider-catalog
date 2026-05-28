@@ -323,6 +323,26 @@ class DeriveMatchesTests(unittest.TestCase):
         self.assertNotIn("episode", matches)
         self.assertFalse(self.mod._has_required_match(video, matches, candidate_title))
 
+    def test_episode_marker_accepts_chained_multi_episode_release(self):
+        video = {"kind": "episode", "series": "Show", "season": 1, "episode": 2}
+        candidate_title = "Show S01E01E02 720p"
+        matches = self.mod.derive_matches(video, candidate_title)
+
+        self.assertIn("series", matches)
+        self.assertIn("season", matches)
+        self.assertIn("episode", matches)
+        self.assertTrue(self.mod._has_required_match(video, matches, candidate_title))
+
+    def test_episode_marker_accepts_range_covering_request(self):
+        video = {"kind": "episode", "series": "Show", "season": 1, "episode": 5}
+        candidate_title = "Show S01E01-E08 720p"
+        matches = self.mod.derive_matches(video, candidate_title)
+
+        self.assertIn("series", matches)
+        self.assertIn("season", matches)
+        self.assertIn("episode", matches)
+        self.assertTrue(self.mod._has_required_match(video, matches, candidate_title))
+
 
 class SubtitlestarProviderSearchTests(unittest.TestCase):
     def setUp(self):
@@ -535,6 +555,44 @@ class SubtitlestarProviderSearchTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertIn("title", results[0]["matches"])
 
+    def test_search_strips_query_string_from_advertised_filename(self):
+        search_url = "https://subtitlestar.com/?s=Dune%202021&post_type=post"
+        fallback_search_url = "https://subtitlestar.com/?s=Dune&post_type=post"
+        detail_url = "https://subtitlestar.com/persian-subtitles-dune-2021/"
+        search_html = b"""
+        <html>
+        <body>
+        <a href="https://subtitlestar.com/persian-subtitles-dune-2021/">
+        <img alt="Dune 2021" src="x.jpg">
+        </a>
+        </body>
+        </html>
+        """
+        detail_html = """
+        <html>
+        <head><title>Dune 2021 - SubtitleStar</title></head>
+        <body>
+        <span><i class="icon-years"></i><a>2021</a></span>
+        <a href="https://dl.subtitlestar.com/dlsub/dune.vtt?download=1">Download</a>
+        </body>
+        </html>
+        """.encode("utf-8")
+        provider, _ = self._provider_with_stub(
+            {
+                search_url: search_html,
+                fallback_search_url: b"<html><body></body></html>",
+                detail_url: detail_html,
+            }
+        )
+
+        results = provider.search(
+            video={"kind": "movie", "title": "Dune", "year": 2021},
+            languages=[{"alpha3": "fas", "alpha2": "fa"}],
+            config={},
+        )
+
+        self.assertEqual(results[0]["filename"], "subtitlestar.dune.vtt")
+
 
 class SubtitlestarProviderDownloadTests(unittest.TestCase):
     def setUp(self):
@@ -642,6 +700,19 @@ class SubtitlestarProviderDownloadTests(unittest.TestCase):
 
         self.assertTrue(result["empty"])
 
+    def test_download_rejects_direct_wrong_episode_filename(self):
+        provider = self._provider_with_body(b"1\n00:00:01,000 --> 00:00:02,000\nWrong\n")
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                provider_payload={
+                    "download_url": "https://dl.subtitlestar.com/dlsub/Show.S01E03.srt",
+                    "video": {"kind": "episode", "season": 1, "episode": 2},
+                },
+                language={"alpha3": "fas", "alpha2": "fa"},
+                config={},
+            )
+
 
 class SelectSubtitleFileTests(unittest.TestCase):
     def setUp(self):
@@ -725,6 +796,22 @@ class SelectSubtitleFileTests(unittest.TestCase):
         )
 
         self.assertEqual(selected, ["Show.S01E05.CD1.srt", "Show.S01E05.CD2.srt"])
+
+    def test_selects_chained_multi_episode_file(self):
+        selected = self.mod.select_subtitle_file(
+            ["Show.S01E01E02.srt"],
+            {"kind": "episode", "season": 1, "episode": 2},
+        )
+
+        self.assertEqual(selected, "Show.S01E01E02.srt")
+
+    def test_selects_episode_range_file(self):
+        selected = self.mod.select_subtitle_file(
+            ["Show.S01E01-E08.srt"],
+            {"kind": "episode", "season": 1, "episode": 5},
+        )
+
+        self.assertEqual(selected, "Show.S01E01-E08.srt")
 
 
 if __name__ == "__main__":

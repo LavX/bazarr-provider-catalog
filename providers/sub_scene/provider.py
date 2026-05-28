@@ -41,6 +41,7 @@ LANGUAGE_MAP = {
     "Bengali": "ben",
     "Bulgarian": "bul",
     "Chinese BG code": "zho",
+    "Big 5 code": "zho",
     "Croatian": "hrv",
     "Czech": "ces",
     "Danish": "dan",
@@ -822,9 +823,9 @@ def _explicit_season_markers(text):
 def _season_episode_marker(text):
     text = _coerce_text(text).lower()
     for pattern in (
-        r"\bs0*(\d{1,2})e0*(\d{1,2})(?!\d)",
-        r"\bs0*(\d{1,2})[\s._-]+e0*(\d{1,2})(?!\d)",
-        r"\b0*(\d{1,2})x0*(\d{1,2})(?!\d)",
+        r"\bs0*(\d{1,2})e0*(\d{1,3})(?!\d)",
+        r"\bs0*(\d{1,2})[\s._-]+e0*(\d{1,3})(?!\d)",
+        r"\b0*(\d{1,2})x0*(\d{1,3})(?!\d)",
     ):
         marker = re.search(pattern, text)
         if marker:
@@ -836,10 +837,10 @@ def _explicit_episode_markers(text):
     markers = set()
     text = _coerce_text(text).lower()
     for pattern in (
-        r"\bs\d{1,2}e0*(\d{1,2})(?!\d)",
-        r"\bs\d{1,2}[\s._-]+e0*(\d{1,2})(?!\d)",
-        r"\b\d{1,2}x0*(\d{1,2})(?!\d)",
-        r"\be0*(\d{1,2})(?!\d)",
+        r"\bs\d{1,2}e0*(\d{1,3})(?!\d)",
+        r"\bs\d{1,2}[\s._-]+e0*(\d{1,3})(?!\d)",
+        r"\b\d{1,2}x0*(\d{1,3})(?!\d)",
+        r"\be0*(\d{1,3})(?!\d)",
     ):
         for marker in re.finditer(pattern, text):
             markers.add(int(marker.group(1)))

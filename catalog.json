@@ -647,7 +647,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "39df2085d39a03acb0d8dc043c51cac99bb0f317f3069a20d168ad233f1364a7",
+        "bundle_sha256": "0b4e972e5be3bb18caab64c50c600dbb265b7d35cb145de3fc58cc400d1835bd",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -740,7 +740,7 @@
         "entry_class": "SubSceneProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "bdd3141b0d63959d6358359b356355d14a2bb356803bf17d6bc8fe898e0b65f4"
+          "provider.py": "23a0c02b5fee029f6c636bec8833d65825c3540defdc2bb016d91702e6f24066"
         },
         "languages": [
           "ara",
@@ -1131,7 +1131,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "d9a13b1df99df08ec304992f02dfc531202f1b19a4e4a161a525f658fbc5b729",
+        "bundle_sha256": "d76edec98654eade1fed91551323d22b3a1c3615154b38aba2d7ae8e8f769505",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1153,7 +1153,7 @@
         "entry_class": "SubtitlestarProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "e7cbf3f1cee4b5d0bcd7864eed4e7112e3c086eacd2177335e985a734f90b2d1"
+          "provider.py": "d53afb19875baa7d542462c59b75038007b18767d3a10b14b5aac8e6223e85a4"
         },
         "languages": [
           "fas"

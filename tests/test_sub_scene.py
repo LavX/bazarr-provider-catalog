@@ -45,6 +45,7 @@ class TestLanguageMap(unittest.TestCase):
         self.assertEqual(LANGUAGE_MAP["Vietnamese"], "vie")
         self.assertEqual(LANGUAGE_MAP["Arabic"], "ara")
         self.assertEqual(LANGUAGE_MAP["Chinese BG code"], "zho")
+        self.assertEqual(LANGUAGE_MAP["Big 5 code"], "zho")
 
     def test_get_language_code(self):
         self.assertEqual(_get_language_code("English"), "eng")
@@ -172,6 +173,27 @@ class TestCalculateScore(unittest.TestCase):
         self.assertNotIn("episode", matches)
         self.assertFalse(subscene_module._has_required_match(video, matches, subtitle))
 
+    def test_episode_match_accepts_three_digit_episode_marker(self):
+        matches = subscene_module._derive_matches(
+            {"kind": "episode", "series": "Show", "season": 1, "episode": 100},
+            "Show",
+            {"release": "Show.S01E100.HDTV"},
+        )
+
+        self.assertIn("series", matches)
+        self.assertIn("season", matches)
+        self.assertIn("episode", matches)
+
+    def test_required_match_rejects_wrong_three_digit_episode(self):
+        video = {"kind": "episode", "series": "Show", "season": 1, "episode": 100}
+        subtitle = {"release": "Show.S01E101.HDTV"}
+        matches = subscene_module._derive_matches(video, "Show", subtitle)
+
+        self.assertIn("series", matches)
+        self.assertIn("season", matches)
+        self.assertNotIn("episode", matches)
+        self.assertFalse(subscene_module._has_required_match(video, matches, subtitle))
+
 
 class TestSelectEpisodeFile(unittest.TestCase):
     def test_selects_requested_episode_from_multi_file_zip(self):
@@ -232,6 +254,14 @@ class TestSelectEpisodeFile(unittest.TestCase):
         )
 
         self.assertEqual(selected, "subtitle.srt")
+
+    def test_selects_three_digit_episode_file(self):
+        selected = _select_episode_file(
+            ["Show.S01E101.srt", "Show.S01E100.srt"],
+            {"kind": "episode", "season": 1, "episode": 100},
+        )
+
+        self.assertEqual(selected, "Show.S01E100.srt")
 
 
 class TestDownloadSubtitle(unittest.TestCase):
