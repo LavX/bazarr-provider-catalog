@@ -1,0 +1,83 @@
+{
+  "api_version": "bazarr.provider-hub.v1",
+  "bundle_sha256": "4901c83cbb00fafdb9080a808a208d907b0eed120be3cff1bea842e81e27ccc9",
+  "config_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "request_delay_ms": {
+        "default": 0,
+        "description": "Optional politeness delay between HTTP calls to sub-scene.com.",
+        "maximum": 5000,
+        "minimum": 0,
+        "title": "Delay between requests (ms)",
+        "type": "integer"
+      }
+    },
+    "type": "object"
+  },
+  "dependencies": {
+    "requirements": []
+  },
+  "description": "Scrapes sub-scene.com (Subscene clone) for movie and episode subtitles in many languages including Vietnamese, Arabic, Bengali, Danish, Dutch, and more. No login or API key required.",
+  "entry_class": "SubSceneProvider",
+  "entry_module": "provider",
+  "files": {
+    "provider.py": "e27faaff09c6174e68758f9789034eae6e7c28e78e2dd4dc7b96148d8abf863e"
+  },
+  "languages": [
+    "ara",
+    "ben",
+    "bul",
+    "ces",
+    "dan",
+    "deu",
+    "ell",
+    "eng",
+    "fas",
+    "fin",
+    "fra",
+    "heb",
+    "hin",
+    "hrv",
+    "hun",
+    "ind",
+    "ita",
+    "jpn",
+    "kor",
+    "msa",
+    "nld",
+    "nor",
+    "pol",
+    "por",
+    "ron",
+    "rus",
+    "slk",
+    "slv",
+    "spa",
+    "srp",
+    "swe",
+    "tha",
+    "tur",
+    "ukr",
+    "vie",
+    "zho"
+  ],
+  "name": "SubScene",
+  "provider_id": "sub_scene",
+  "schema_version": 1,
+  "secret_fields": [],
+  "source": {
+    "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+    "commit": "0000000000000000000000000000000000000000",
+    "path": "providers/sub_scene",
+    "ref": "main",
+    "repo": "LavX/bazarr-provider-catalog",
+    "trusted": true,
+    "type": "github"
+  },
+  "supported_media": [
+    "movie",
+    "episode"
+  ],
+  "version": "0.1.0"
+}
