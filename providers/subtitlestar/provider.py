@@ -238,6 +238,20 @@ def _episode_marker_matches(text, episode):
     return bool(re.search(rf"\be0*{int(episode)}(?!\d)", text))
 
 
+def _explicit_episode_numbers(text):
+    text = (_coerce_text(text) or "").lower()
+    episodes = set()
+    for pattern in (
+        r"\bs0*\d{1,2}e0*(\d{1,2})(?!\d)",
+        r"\bs0*\d{1,2}[\s._-]+e0*(\d{1,2})(?!\d)",
+        r"\b0*\d{1,2}x0*(\d{1,2})(?!\d)",
+        r"\be0*(\d{1,2})(?!\d)",
+    ):
+        for marker in re.finditer(pattern, text):
+            episodes.add(int(marker.group(1)))
+    return episodes
+
+
 def _year_int(value):
     try:
         return int(str(value).strip())
@@ -314,17 +328,20 @@ def derive_matches(video, candidate_title):
         episode = video.get("episode")
         if episode is not None:
             marker = _season_episode_marker(candidate_norm)
-            if marker and marker[1] == int(episode) and (
-                season is None or marker[0] == int(season)
-            ):
-                matches.append("episode")
+            if marker:
+                if marker[1] == int(episode) and (
+                    season is None or marker[0] == int(season)
+                ):
+                    matches.append("episode")
             elif _episode_marker_matches(candidate_norm, episode):
-                matches.append("episode")
+                explicit_seasons = _explicit_season_numbers(candidate_norm)
+                if season is None or not explicit_seasons or int(season) in explicit_seasons:
+                    matches.append("episode")
     
     return matches
 
 
-def _has_required_match(video, matches):
+def _has_required_match(video, matches, candidate_title=None):
     video = video or {}
     matches = set(matches or [])
     if video.get("kind") == "movie":
@@ -336,6 +353,8 @@ def _has_required_match(video, matches):
         if video.get("series") and "series" not in matches:
             return False
         if video.get("episode") is not None and "episode" not in matches:
+            if candidate_title and _explicit_episode_numbers(candidate_title):
+                return False
             return "season" in matches
     return True
 
@@ -540,7 +559,7 @@ class SubtitlestarProvider:
                 
                 score = compute_score(video, scoring_title)
                 matches = derive_matches(video, scoring_title)
-                if not _has_required_match(video, matches):
+                if not _has_required_match(video, matches, scoring_title):
                     continue
                 
                 for download_url in details["downloads"][:1]:

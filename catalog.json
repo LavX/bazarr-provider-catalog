@@ -647,7 +647,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "af7c295066491719ea97be5b5caeaa4bb1e48fa5aaadba85597083622fdd2555",
+        "bundle_sha256": "916be78e7c7e0651bcbdcbf6ef3dc7ed77f03c2e8c8c1eb8e1323248b6756036",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -740,7 +740,7 @@
         "entry_class": "SubSceneProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "36c78718515c6d661aed64815abbdc10cb7e38e3a1232dd083e95a5dbae7c78c"
+          "provider.py": "b6ba38cece3e707fb97273765e6ba0a2a1f397a969f008f3d14aa32e31308e0c"
         },
         "languages": [
           "ara",
@@ -797,7 +797,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.7"
+        "version": "0.1.8"
       }
     },
     {
@@ -1131,7 +1131,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "a7d2ca9b7a2cbd7c48bef0d5d46ed6d7b7d84cff47973a784b10d92013f1cbba",
+        "bundle_sha256": "ff382cec958e71a1ce18c9790fff8c6bd6fddf4e09815a34c63867cfdc9700c6",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1153,7 +1153,7 @@
         "entry_class": "SubtitlestarProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "dfa3e800d0e237c0b6c882c5600fa9a06f2632ed3c90e255ae5ee7cf01f8682b"
+          "provider.py": "4026f44d95ef58780672daec13367d5865fcf6c35fe10c641b009627fb53e002"
         },
         "languages": [
           "fas"
@@ -1175,7 +1175,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.4"
+        "version": "0.1.5"
       }
     }
   ],

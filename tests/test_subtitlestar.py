@@ -253,6 +253,26 @@ class DeriveMatchesTests(unittest.TestCase):
         self.assertNotIn("season", matches)
         self.assertNotIn("episode", matches)
 
+    def test_episode_marker_requires_matching_season_with_separator(self):
+        matches = self.mod.derive_matches(
+            {"kind": "episode", "series": "Show", "season": 1, "episode": 2},
+            "Show S02 E02 720p",
+        )
+
+        self.assertIn("series", matches)
+        self.assertNotIn("season", matches)
+        self.assertNotIn("episode", matches)
+
+    def test_required_match_rejects_different_explicit_episode(self):
+        video = {"kind": "episode", "series": "Show", "season": 1, "episode": 2}
+        candidate_title = "Show S01E03 720p"
+        matches = self.mod.derive_matches(video, candidate_title)
+
+        self.assertIn("series", matches)
+        self.assertIn("season", matches)
+        self.assertNotIn("episode", matches)
+        self.assertFalse(self.mod._has_required_match(video, matches, candidate_title))
+
 
 class SubtitlestarProviderSearchTests(unittest.TestCase):
     def setUp(self):

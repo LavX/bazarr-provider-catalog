@@ -739,6 +739,8 @@ def _explicit_season_markers(text):
     text = _coerce_text(text).lower()
     for marker in re.finditer(r"\bs0*(\d{1,2})(?!\d)", text):
         markers.add(int(marker.group(1)))
+    for marker in re.finditer(r"\b0*(\d{1,2})(?=x\d{1,2}(?!\d))", text):
+        markers.add(int(marker.group(1)))
     for marker in re.finditer(r"\bseason\s*0*(\d{1,2})(?!\d)", text):
         markers.add(int(marker.group(1)))
     for word, season in ORDINAL_SEASONS.items():
@@ -747,12 +749,26 @@ def _explicit_season_markers(text):
     return markers
 
 
+def _season_episode_marker(text):
+    text = _coerce_text(text).lower()
+    for pattern in (
+        r"\bs0*(\d{1,2})e0*(\d{1,2})(?!\d)",
+        r"\bs0*(\d{1,2})[\s._-]+e0*(\d{1,2})(?!\d)",
+        r"\b0*(\d{1,2})x0*(\d{1,2})(?!\d)",
+    ):
+        marker = re.search(pattern, text)
+        if marker:
+            return int(marker.group(1)), int(marker.group(2))
+    return None
+
+
 def _explicit_episode_markers(text):
     markers = set()
     text = _coerce_text(text).lower()
     for pattern in (
         r"\bs\d{1,2}e0*(\d{1,2})(?!\d)",
         r"\bs\d{1,2}[\s._-]+e0*(\d{1,2})(?!\d)",
+        r"\b\d{1,2}x0*(\d{1,2})(?!\d)",
         r"\be0*(\d{1,2})(?!\d)",
     ):
         for marker in re.finditer(pattern, text):
@@ -823,10 +839,9 @@ def _derive_matches(video, result_title, subtitle):
         if season is not None and season in season_markers:
             matches.append("season")
         if episode is not None:
-            marker = re.search(r"s(\d{1,2})e(\d{1,2})(?!\d)", release_lower)
+            marker = _season_episode_marker(release_lower)
             if marker:
-                marker_season = int(marker.group(1))
-                marker_episode = int(marker.group(2))
+                marker_season, marker_episode = marker
                 if marker_episode == episode and (
                     season is None or marker_season == season
                 ):

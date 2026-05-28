@@ -141,6 +141,27 @@ class TestCalculateScore(unittest.TestCase):
         self.assertIn("season", matches)
         self.assertIn("episode", matches)
 
+    def test_episode_match_accepts_1x_marker(self):
+        matches = subscene_module._derive_matches(
+            {"kind": "episode", "series": "Show", "season": 1, "episode": 5},
+            "Show",
+            {"release": "Show.1x05.HDTV"},
+        )
+
+        self.assertIn("series", matches)
+        self.assertIn("season", matches)
+        self.assertIn("episode", matches)
+
+    def test_required_match_rejects_wrong_1x_episode(self):
+        video = {"kind": "episode", "series": "Show", "season": 1, "episode": 5}
+        subtitle = {"release": "Show.1x06.HDTV"}
+        matches = subscene_module._derive_matches(video, "Show", subtitle)
+
+        self.assertIn("series", matches)
+        self.assertIn("season", matches)
+        self.assertNotIn("episode", matches)
+        self.assertFalse(subscene_module._has_required_match(video, matches, subtitle))
+
 
 class TestSelectEpisodeFile(unittest.TestCase):
     def test_selects_requested_episode_from_multi_file_zip(self):
