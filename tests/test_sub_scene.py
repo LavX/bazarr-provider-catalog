@@ -204,6 +204,16 @@ class TestCalculateScore(unittest.TestCase):
         self.assertIn("episode", matches)
         self.assertTrue(subscene_module._has_required_match(video, matches, subtitle))
 
+    def test_episode_match_accepts_ordinal_season_beyond_tenth(self):
+        matches = subscene_module._derive_matches(
+            {"kind": "episode", "series": "Show", "season": 11, "episode": 5},
+            "Show - Eleventh Season",
+            {"release": "DVDRip.XviD-GROUPS"},
+        )
+
+        self.assertIn("series", matches)
+        self.assertIn("season", matches)
+
     def test_episode_match_accepts_chained_marker(self):
         video = {"kind": "episode", "series": "Show", "season": 1, "episode": 6}
         subtitle = {"release": "Show.S01E05E06.HDTV"}
@@ -489,6 +499,32 @@ class TestSubsceneDetailParser(unittest.TestCase):
         parser = SubsceneDetailParser()
         parser.feed(html)
         self.assertEqual(len(parser.subtitles), 0)
+
+    def test_parse_unmarked_release_span(self):
+        html = """
+        <html>
+        <body>
+            <table>
+                <tbody>
+                    <tr>
+                        <td class="a1">
+                            <a href="/subtitle/789">
+                                <span class="l r">English</span>
+                                <span>Dune.2021.1080p.BluRay</span>
+                            </a>
+                        </td>
+                        <td class="a40"></td>
+                    </tr>
+                </tbody>
+            </table>
+        </body>
+        </html>
+        """
+        parser = SubsceneDetailParser()
+        parser.feed(html)
+
+        self.assertEqual(len(parser.subtitles), 1)
+        self.assertEqual(parser.subtitles[0]["release"], "Dune.2021.1080p.BluRay")
 
 
 class TestCloudflareHttp(unittest.TestCase):

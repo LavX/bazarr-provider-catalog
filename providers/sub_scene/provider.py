@@ -224,7 +224,7 @@ class SubsceneDetailParser(HTMLParser):
             if "l" in classes and "r" in classes:
                 self.in_language_span = True
                 self.current_text = ""
-            elif class_name == "new":
+            elif class_name == "new" or (self.in_link and self.current_row.get("language")):
                 self.in_release_span = True
                 self.current_text = ""
         elif tag == "a" and self.in_language_cell:
@@ -825,6 +825,16 @@ ORDINAL_SEASONS = {
     "eighth": 8,
     "ninth": 9,
     "tenth": 10,
+    "eleventh": 11,
+    "twelfth": 12,
+    "thirteenth": 13,
+    "fourteenth": 14,
+    "fifteenth": 15,
+    "sixteenth": 16,
+    "seventeenth": 17,
+    "eighteenth": 18,
+    "nineteenth": 19,
+    "twentieth": 20,
 }
 
 
