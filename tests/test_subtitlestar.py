@@ -93,6 +93,22 @@ class ParseSearchResultsTests(unittest.TestCase):
         results = self.mod.parse_search_results(SEARCH_HTML)
         self.assertGreaterEqual(len(results), 1)
 
+    def test_returns_single_quoted_candidates(self):
+        html = b"""
+        <html>
+        <body>
+        <a href='https://subtitlestar.com/persian-subtitles-dune-2021/'>
+        <img alt='Dune 2021' src='x.jpg'>
+        </a>
+        </body>
+        </html>
+        """
+
+        results = self.mod.parse_search_results(html)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["title"], "Dune 2021")
+
     def test_each_candidate_has_url_and_title(self):
         results = self.mod.parse_search_results(SEARCH_HTML)
         for result in results:
@@ -442,6 +458,44 @@ class SubtitlestarProviderSearchTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["matches"], ["title"])
 
+    def test_search_keeps_year_like_number_from_title(self):
+        search_url = "https://subtitlestar.com/?s=Blade%20Runner%202049%202017&post_type=post"
+        fallback_search_url = "https://subtitlestar.com/?s=Blade%20Runner%202049&post_type=post"
+        detail_url = "https://subtitlestar.com/persian-subtitles-blade-runner-2049/"
+        search_html = b"""
+        <html>
+        <body>
+        <a href="https://subtitlestar.com/persian-subtitles-blade-runner-2049/">
+        <img alt="Blade Runner 2049" src="x.jpg">
+        </a>
+        </body>
+        </html>
+        """
+        detail_html = """
+        <html>
+        <head><title>Blade Runner 2049 - SubtitleStar</title></head>
+        <body>
+        <a href="https://dl.subtitlestar.com/dlsub/blade-runner-2049.zip">Download</a>
+        </body>
+        </html>
+        """.encode("utf-8")
+        provider, _ = self._provider_with_stub(
+            {
+                search_url: search_html,
+                fallback_search_url: b"<html><body></body></html>",
+                detail_url: detail_html,
+            }
+        )
+
+        results = provider.search(
+            video={"kind": "movie", "title": "Blade Runner 2049", "year": 2017},
+            languages=[{"alpha3": "fas", "alpha2": "fa"}],
+            config={},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["matches"], ["title"])
+
 
 class SubtitlestarProviderDownloadTests(unittest.TestCase):
     def setUp(self):
@@ -560,6 +614,13 @@ class SelectSubtitleFileTests(unittest.TestCase):
         )
 
         self.assertEqual(selected, "subtitle.srt")
+
+    def test_rejects_single_wrong_episode_file(self):
+        with self.assertRaises(ValueError):
+            self.mod.select_subtitle_file(
+                ["Show.S01E03.srt"],
+                {"kind": "episode", "season": 1, "episode": 2},
+            )
 
 
 if __name__ == "__main__":

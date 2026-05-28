@@ -65,13 +65,13 @@ def _strip_tags(fragment):
 
 
 _SEARCH_RESULT_RE = re.compile(
-    r'<a[^>]+href="(https://subtitlestar\.com/persian-subtitles-[^"]+)"[^>]*>'
-    r'[^<]*<img[^>]+alt="([^"]*)"',
+    r"""<a[^>]+href=["'](https://subtitlestar\.com/persian-subtitles-[^"']+)["'][^>]*>"""
+    r"""[^<]*<img[^>]+alt=["']([^"']*)["']""",
     re.IGNORECASE | re.DOTALL,
 )
 
 _SEARCH_RESULT_ALT_RE = re.compile(
-    r'<a[^>]+href="(https://subtitlestar\.com/persian-subtitles-[^"]+)"[^>]*>'
+    r"""<a[^>]+href=["'](https://subtitlestar\.com/persian-subtitles-[^"']+)["'][^>]*>"""
     r'\s*<h2[^>]*>([^<]+)</h2>',
     re.IGNORECASE | re.DOTALL,
 )
@@ -259,11 +259,16 @@ def _year_int(value):
         return None
 
 
-def _candidate_years(candidate_title):
-    return {
+def _candidate_years(candidate_title, title=None):
+    years = {
         int(year)
         for year in re.findall(r"\b(?:19|20)\d{2}\b", _coerce_text(candidate_title) or "")
     }
+    title_years = {
+        int(year)
+        for year in re.findall(r"\b(?:19|20)\d{2}\b", _coerce_text(title) or "")
+    }
+    return years - title_years
 
 
 def compute_score(video, candidate_title):
@@ -282,7 +287,7 @@ def compute_score(video, candidate_title):
             # Check if candidate has a conflicting year (e.g., Dune 1984 vs Dune 2021)
             if year:
                 # Look for 4-digit years in candidate that don't match requested year
-                years = _candidate_years(candidate_title)
+                years = _candidate_years(candidate_title, video.get("title"))
                 if years:
                     # If candidate has explicit years and none match requested year, demote
                     if year not in years:
@@ -355,7 +360,7 @@ def _has_required_match(video, matches, candidate_title=None):
             return False
         requested_year = _year_int(video.get("year"))
         if requested_year and "year" not in matches:
-            candidate_years = _candidate_years(candidate_title)
+            candidate_years = _candidate_years(candidate_title, video.get("title"))
             if candidate_years:
                 return False
             if not candidate_title:
@@ -388,8 +393,6 @@ def select_subtitle_files(names, video):
     ]
     if not candidates:
         raise ValueError("subtitlestar archive contains no supported subtitle files")
-    if len(candidates) == 1:
-        return candidates
     episode = (video or {}).get("episode")
     season = (video or {}).get("season")
     try:
@@ -402,6 +405,8 @@ def select_subtitle_files(names, video):
         season_int = None
     
     if episode_int is None:
+        if len(candidates) == 1:
+            return candidates
         multipart = _multipart_subset(candidates)
         if multipart:
             return multipart
@@ -433,6 +438,16 @@ def select_subtitle_files(names, video):
     
     # Reject if no episode match found
     if best_score == 0:
+        if len(candidates) == 1:
+            base = os.path.basename(candidates[0]).lower()
+            if not _explicit_episode_numbers(base):
+                season_markers = _explicit_season_numbers(base)
+                if (
+                    season_int is None
+                    or not season_markers
+                    or season_int in season_markers
+                ):
+                    return candidates
         raise ValueError(
             f"subtitlestar archive contains no subtitle matching episode {episode_int}"
         )
