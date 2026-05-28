@@ -343,6 +343,26 @@ class DeriveMatchesTests(unittest.TestCase):
         self.assertIn("episode", matches)
         self.assertTrue(self.mod._has_required_match(video, matches, candidate_title))
 
+    def test_episode_marker_accepts_repeated_season_range(self):
+        video = {"kind": "episode", "series": "Show", "season": 1, "episode": 5}
+        candidate_title = "Show S01E01-S01E08 720p"
+        matches = self.mod.derive_matches(video, candidate_title)
+
+        self.assertIn("series", matches)
+        self.assertIn("season", matches)
+        self.assertIn("episode", matches)
+        self.assertTrue(self.mod._has_required_match(video, matches, candidate_title))
+
+    def test_required_match_rejects_wrong_verbose_episode(self):
+        video = {"kind": "episode", "series": "Show", "season": 1, "episode": 2}
+        candidate_title = "Show S01 Ep03 720p"
+        matches = self.mod.derive_matches(video, candidate_title)
+
+        self.assertIn("series", matches)
+        self.assertIn("season", matches)
+        self.assertNotIn("episode", matches)
+        self.assertFalse(self.mod._has_required_match(video, matches, candidate_title))
+
 
 class SubtitlestarProviderSearchTests(unittest.TestCase):
     def setUp(self):
@@ -831,6 +851,40 @@ class SelectSubtitleFileTests(unittest.TestCase):
         )
 
         self.assertEqual(selected, "Show.S01E01-E08.srt")
+
+    def test_selects_repeated_season_episode_range_file(self):
+        selected = self.mod.select_subtitle_file(
+            ["Show.S01E01-S01E08.srt"],
+            {"kind": "episode", "season": 1, "episode": 5},
+        )
+
+        self.assertEqual(selected, "Show.S01E01-S01E08.srt")
+
+    def test_rejects_range_file_from_different_attached_season(self):
+        selected = self.mod.select_subtitle_file(
+            [
+                "Season 01-02/Show.S02.E01-E08.srt",
+                "Show.S01E05.srt",
+            ],
+            {"kind": "episode", "season": 1, "episode": 5},
+        )
+
+        self.assertEqual(selected, "Show.S01E05.srt")
+
+    def test_selects_verbose_episode_marker(self):
+        selected = self.mod.select_subtitle_file(
+            ["Show.S01.Ep03.srt"],
+            {"kind": "episode", "season": 1, "episode": 3},
+        )
+
+        self.assertEqual(selected, "Show.S01.Ep03.srt")
+
+    def test_rejects_single_wrong_verbose_episode_file(self):
+        with self.assertRaises(ValueError):
+            self.mod.select_subtitle_file(
+                ["Show.Season.1.Episode.3.srt"],
+                {"kind": "episode", "season": 1, "episode": 2},
+            )
 
 
 if __name__ == "__main__":

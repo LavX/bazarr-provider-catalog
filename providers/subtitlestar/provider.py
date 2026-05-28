@@ -220,6 +220,14 @@ def _season_episode_markers(text):
         season_episode = (int(marker.group(1)), int(marker.group(2)))
         if season_episode not in markers:
             markers.append(season_episode)
+    for pattern in (
+        r"\bs0*(\d{1,2})[\s._-]+ep(?:isode)?[\s._-]*0*(\d{1,3})(?!\d)",
+        r"\bseason[\s._-]*0*(\d{1,2})[\s._-]+(?:ep|episode)[\s._-]*0*(\d{1,3})(?!\d)",
+    ):
+        for marker in re.finditer(pattern, text):
+            season_episode = (int(marker.group(1)), int(marker.group(2)))
+            if season_episode not in markers:
+                markers.append(season_episode)
     return markers
 
 
@@ -238,19 +246,26 @@ def _episode_range_includes(text, episode, season=None):
     except (TypeError, ValueError):
         season_int = None
     text = (_coerce_text(text) or "").lower()
+    saw_season_range = False
     for pattern in (
-        r"\bs0*(\d{1,2})e0*(\d{1,3})\s*(?:-|to|through|thru)\s*e?0*(\d{1,3})(?!\d)",
-        r"\bs0*(\d{1,2})[\s._-]+e0*(\d{1,3})\s*(?:-|to|through|thru)\s*e?0*(\d{1,3})(?!\d)",
+        r"\bs0*(?P<season>\d{1,2})e0*(?P<start>\d{1,3})\s*(?:-|to|through|thru)\s*(?:s0*(?P<end_season>\d{1,2})[\s._-]*)?e?0*(?P<end>\d{1,3})(?!\d)",
+        r"\bs0*(?P<season>\d{1,2})[\s._-]+e0*(?P<start>\d{1,3})\s*(?:-|to|through|thru)\s*(?:s0*(?P<end_season>\d{1,2})[\s._-]*)?e?0*(?P<end>\d{1,3})(?!\d)",
     ):
         for marker in re.finditer(pattern, text):
-            marker_season = int(marker.group(1))
+            saw_season_range = True
+            marker_season = int(marker.group("season"))
+            end_season = marker.group("end_season")
+            if end_season and int(end_season) != marker_season:
+                continue
             if season_int is not None and marker_season != season_int:
                 continue
-            start = int(marker.group(2))
-            end = int(marker.group(3))
+            start = int(marker.group("start"))
+            end = int(marker.group("end"))
             lower, upper = sorted((start, end))
             if lower <= episode_int <= upper:
                 return True
+    if saw_season_range:
+        return False
     for marker in re.finditer(
         r"\be0*(\d{1,3})\s*(?:-|to|through|thru)\s*e?0*(\d{1,3})(?!\d)",
         text,
