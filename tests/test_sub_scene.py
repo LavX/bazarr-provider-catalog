@@ -204,6 +204,16 @@ class TestCalculateScore(unittest.TestCase):
         self.assertIn("episode", matches)
         self.assertTrue(subscene_module._has_required_match(video, matches, subtitle))
 
+    def test_episode_match_accepts_chained_marker(self):
+        video = {"kind": "episode", "series": "Show", "season": 1, "episode": 6}
+        subtitle = {"release": "Show.S01E05E06.HDTV"}
+        matches = subscene_module._derive_matches(video, "Show", subtitle)
+
+        self.assertIn("series", matches)
+        self.assertIn("season", matches)
+        self.assertIn("episode", matches)
+        self.assertTrue(subscene_module._has_required_match(video, matches, subtitle))
+
 
 class TestSelectEpisodeFile(unittest.TestCase):
     def test_selects_requested_episode_from_multi_file_zip(self):
@@ -280,6 +290,25 @@ class TestSelectEpisodeFile(unittest.TestCase):
         )
 
         self.assertEqual(selected, "Show.S01E01-E08.srt")
+
+    def test_selects_chained_episode_file(self):
+        selected = _select_episode_file(
+            ["Show.S01E05E06.srt"],
+            {"kind": "episode", "season": 1, "episode": 6},
+        )
+
+        self.assertEqual(selected, "Show.S01E05E06.srt")
+
+    def test_rejects_range_file_from_different_attached_season(self):
+        selected = _select_episode_file(
+            [
+                "Season 01-02/Show.S02E01-E08.srt",
+                "Show.S01E05.srt",
+            ],
+            {"kind": "episode", "season": 1, "episode": 5},
+        )
+
+        self.assertEqual(selected, "Show.S01E05.srt")
 
 
 class TestDownloadSubtitle(unittest.TestCase):

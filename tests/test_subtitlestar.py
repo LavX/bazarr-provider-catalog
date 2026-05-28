@@ -700,6 +700,25 @@ class SubtitlestarProviderDownloadTests(unittest.TestCase):
 
         self.assertTrue(result["empty"])
 
+    def test_download_rejects_paired_vobsub_sub_member(self):
+        import io
+        import zipfile
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("movie.sub", b"\x00\x01binary vobsub")
+            zf.writestr("movie.idx", b"VobSub index")
+        provider = self._provider_with_body(zip_buffer.getvalue())
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                provider_payload={
+                    "download_url": "https://dl.subtitlestar.com/dlsub/movie.zip",
+                    "video": {"kind": "movie", "title": "Movie", "year": 2024},
+                },
+                language={"alpha3": "fas", "alpha2": "fa"},
+                config={},
+            )
+
     def test_download_rejects_direct_wrong_episode_filename(self):
         provider = self._provider_with_body(b"1\n00:00:01,000 --> 00:00:02,000\nWrong\n")
 

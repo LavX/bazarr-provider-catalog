@@ -438,6 +438,18 @@ def _is_archive_sidecar(name):
     return "__MACOSX" in parts or os.path.basename(path).startswith("._")
 
 
+def _is_paired_vobsub_sub(name, names):
+    path = (name or "").replace("\\", "/").lower()
+    if not path.endswith(".sub"):
+        return False
+    idx_path = f"{os.path.splitext(path)[0]}.idx"
+    normalized_names = {
+        (candidate or "").replace("\\", "/").lower()
+        for candidate in names
+    }
+    return idx_path in normalized_names
+
+
 def select_subtitle_file(names, video):
     return select_subtitle_files(names, video)[0]
 
@@ -447,6 +459,7 @@ def select_subtitle_files(names, video):
         name
         for name in names
         if _subtitle_extension(name) and not _is_archive_sidecar(name)
+        and not _is_paired_vobsub_sub(name, names)
     ]
     if not candidates:
         raise ValueError("subtitlestar archive contains no supported subtitle files")

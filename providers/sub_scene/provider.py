@@ -627,19 +627,20 @@ def _select_subtitle_files(srt_files, video):
     def score(name):
         base = name.lower()
         season_markers = _explicit_season_markers(base)
-        if _episode_range_includes(base, episode_int):
+        if _episode_range_includes(base, episode_int, season_int):
             if season_int is None or not season_markers or season_int in season_markers:
                 return 200 if season_int is not None else 100
             return 0
 
-        marker = _season_episode_marker(base)
-        if marker:
-            marker_season, marker_episode = marker
-            if marker_episode != episode_int:
-                return 0
-            if season_int is not None and marker_season != season_int:
-                return 0
-            return 200 if season_int is not None else 100
+        markers = _season_episode_markers(base)
+        if markers:
+            for marker_season, marker_episode in markers:
+                if marker_episode != episode_int:
+                    continue
+                if season_int is not None and marker_season != season_int:
+                    continue
+                return 200 if season_int is not None else 100
+            return 0
 
         if season_int is not None and season_markers and season_int not in season_markers:
             return 0
@@ -842,26 +843,34 @@ def _explicit_season_markers(text):
     return markers
 
 
-def _season_episode_marker(text):
+def _season_episode_markers(text):
     text = _coerce_text(text).lower()
-    for pattern in (
-        r"\bs0*(\d{1,2})e0*(\d{1,3})(?!\d)",
-        r"\bs0*(\d{1,2})[\s._-]+e0*(\d{1,3})(?!\d)",
-        r"\b0*(\d{1,2})x0*(\d{1,3})(?!\d)",
+    markers = []
+    for marker in re.finditer(
+        r"\bs0*(\d{1,2})((?:[\s._-]*e0*\d{1,3})+)",
+        text,
     ):
-        marker = re.search(pattern, text)
-        if marker:
-            return int(marker.group(1)), int(marker.group(2))
-    return None
+        season = int(marker.group(1))
+        for episode in re.findall(r"e0*(\d{1,3})", marker.group(2)):
+            markers.append((season, int(episode)))
+    for marker in re.finditer(r"\b0*(\d{1,2})x0*(\d{1,3})(?!\d)", text):
+        season_episode = (int(marker.group(1)), int(marker.group(2)))
+        if season_episode not in markers:
+            markers.append(season_episode)
+    return markers
+
+
+def _season_episode_marker(text):
+    markers = _season_episode_markers(text)
+    return markers[0] if markers else None
 
 
 def _explicit_episode_markers(text):
     markers = set()
     text = _coerce_text(text).lower()
+    for _, episode in _season_episode_markers(text):
+        markers.add(episode)
     for pattern in (
-        r"\bs\d{1,2}e0*(\d{1,3})(?!\d)",
-        r"\bs\d{1,2}[\s._-]+e0*(\d{1,3})(?!\d)",
-        r"\b\d{1,2}x0*(\d{1,3})(?!\d)",
         r"\be0*(\d{1,3})(?!\d)",
     ):
         for marker in re.finditer(pattern, text):
@@ -869,19 +878,37 @@ def _explicit_episode_markers(text):
     return markers
 
 
-def _episode_range_includes(text, episode):
+def _episode_range_includes(text, episode, season=None):
     try:
         episode_int = int(episode)
     except (TypeError, ValueError):
         return False
+    try:
+        season_int = int(season)
+    except (TypeError, ValueError):
+        season_int = None
     text = _coerce_text(text).lower()
     for pattern in (
-        r"\bs0*\d{1,2}e0*(\d{1,3})\s*(?:-|to|through|thru)\s*e?0*(\d{1,3})(?!\d)",
-        r"\bs0*\d{1,2}[\s._-]+e0*(\d{1,3})\s*(?:-|to|through|thru)\s*e?0*(\d{1,3})(?!\d)",
+        r"\bs0*(\d{1,2})e0*(\d{1,3})\s*(?:-|to|through|thru)\s*e?0*(\d{1,3})(?!\d)",
+        r"\bs0*(\d{1,2})[\s._-]+e0*(\d{1,3})\s*(?:-|to|through|thru)\s*e?0*(\d{1,3})(?!\d)",
+    ):
+        for marker in re.finditer(pattern, text):
+            marker_season = int(marker.group(1))
+            if season_int is not None and marker_season != season_int:
+                continue
+            start = int(marker.group(2))
+            end = int(marker.group(3))
+            lower, upper = sorted((start, end))
+            if lower <= episode_int <= upper:
+                return True
+    for pattern in (
         r"\be0*(\d{1,3})\s*(?:-|to|through|thru)\s*e?0*(\d{1,3})(?!\d)",
         r"\bepisodes?\s*0*(\d{1,3})\s*(?:-|to|through|thru)\s*0*(\d{1,3})(?!\d)",
     ):
         for marker in re.finditer(pattern, text):
+            season_markers = _explicit_season_markers(text)
+            if season_int is not None and season_markers and season_int not in season_markers:
+                continue
             start = int(marker.group(1))
             end = int(marker.group(2))
             lower, upper = sorted((start, end))
@@ -891,7 +918,7 @@ def _episode_range_includes(text, episode):
 
 
 def _has_conflicting_episode_marker(text, season, episode):
-    if episode is not None and _episode_range_includes(text, episode):
+    if episode is not None and _episode_range_includes(text, episode, season):
         season_markers = _explicit_season_markers(text)
         if season is None or not season_markers or season in season_markers:
             return False
@@ -956,17 +983,18 @@ def _derive_matches(video, result_title, subtitle):
         if season is not None and season in season_markers and not has_wrong_title_episode:
             matches.append("season")
         if episode is not None:
-            marker = _season_episode_marker(release_lower)
-            if marker:
-                marker_season, marker_episode = marker
-                if marker_episode == episode and (
-                    season is None or marker_season == season
+            markers = _season_episode_markers(release_lower)
+            if markers:
+                if any(
+                    marker_episode == episode
+                    and (season is None or marker_season == season)
+                    for marker_season, marker_episode in markers
                 ):
                     matches.append("episode")
-            elif _episode_range_includes(release_lower, episode):
+            elif _episode_range_includes(release_lower, episode, season):
                 if season is None or not season_markers or season in season_markers:
                     matches.append("episode")
-            elif _episode_range_includes(candidate_lower, episode):
+            elif _episode_range_includes(candidate_lower, episode, season):
                 if season is None or not season_markers or season in season_markers:
                     matches.append("episode")
             elif re.search(rf"e0*{episode}(?!\d)", release_lower):
