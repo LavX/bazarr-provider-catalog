@@ -208,10 +208,10 @@ class TestSubSceneProvider(unittest.TestCase):
         config = {"request_delay_ms": 0}
 
         results = self.provider.search(video, languages, config)
-
+        
         self.assertGreater(len(results), 0)
-        self.assertTrue(any(r["language"] == "eng" for r in results))
-        self.assertTrue(any(r["language"] == "vie" for r in results))
+        self.assertTrue(any(r["language"]["alpha3"] == "eng" for r in results))
+        self.assertTrue(any(r["language"]["alpha3"] == "vie" for r in results))
 
     @patch("provider._search_subscene")
     def test_search_no_results(self, mock_search):
@@ -251,7 +251,7 @@ class TestSubSceneProvider(unittest.TestCase):
         result = self.provider.download(subtitle, None, config)
         self.assertIsNotNone(result)
         self.assertEqual(result["format"], "srt")
-        self.assertEqual(result["filename"], "test.srt")
+        self.assertEqual(result["content_type"], "application/x-subrip")
         self.assertEqual(base64.b64decode(result["content_b64"]), srt_content)
         self.assertFalse(result["empty"])
 

@@ -132,7 +132,8 @@ class SubsceneDetailParser(HTMLParser):
                 self.in_hi_cell = True
         elif tag == "span" and self.in_language_cell:
             class_name = attrs_dict.get("class", "")
-            if "l" in class_name and "r" in class_name:
+            classes = class_name.split()
+            if "l" in classes and "r" in classes:
                 self.in_language_span = True
                 self.current_text = ""
             elif class_name == "new":
@@ -149,6 +150,9 @@ class SubsceneDetailParser(HTMLParser):
             self.current_text += data
         elif self.in_release_span:
             self.current_text += data
+        elif self.in_hi_cell:
+            if data.strip().lower() == "yes":
+                self.current_row["hi"] = True
 
     def handle_endtag(self, tag):
         if tag == "span" and self.in_language_span:
@@ -162,7 +166,8 @@ class SubsceneDetailParser(HTMLParser):
             self.current_row["url"] = self.current_href
         elif tag == "td" and self.in_hi_cell:
             self.in_hi_cell = False
-            self.current_row["hi"] = False
+            if "hi" not in self.current_row:
+                self.current_row["hi"] = False
         elif tag == "tr" and self.in_row:
             self.in_row = False
             if self.current_row.get("url") and self.current_row.get("language"):
@@ -347,15 +352,6 @@ def _coerce_text(value):
     return str(value)
 
 
-def _coerce_text(value):
-    """Coerce value to string, handling lists/tuples."""
-    if value is None:
-        return ""
-    if isinstance(value, (list, tuple)):
-        return " ".join(str(item) for item in value if item)
-    return str(value)
-
-
 def _calculate_score(video, subtitle):
     """Calculate match score based on video metadata."""
     score = 60
@@ -399,6 +395,34 @@ def _get_language_code(language_name):
     return LANGUAGE_MAP.get(language_name)
 
 
+def _alpha2_for(language):
+    """Extract alpha2 code from language dict or string."""
+    if isinstance(language, dict):
+        return (language.get("alpha2") or "").lower()
+    return str(language).lower()
+
+
+def _alpha3_for(language):
+    """Extract alpha3 code from language dict or string."""
+    if isinstance(language, dict):
+        return (language.get("alpha3") or "").lower()
+    return str(language).lower()
+
+
+def _alpha2_for(language):
+    """Extract alpha2 code from language dict or string."""
+    if isinstance(language, dict):
+        return (language.get("alpha2") or "").lower()
+    return str(language).lower()
+
+
+def _alpha3_for(language):
+    """Extract alpha3 code from language dict or string."""
+    if isinstance(language, dict):
+        return (language.get("alpha3") or "").lower()
+    return str(language).lower()
+
+
 class SubSceneProvider:
     """Sub-scene.com subtitle provider."""
 
@@ -408,9 +432,16 @@ class SubSceneProvider:
             return []
         
         delay_ms = config.get("request_delay_ms", 0)
-        requested_languages = set(languages)
-        results = []
+        requested_alpha2 = set()
+        for lang in languages:
+            alpha2 = _alpha2_for(lang)
+            if alpha2:
+                requested_alpha2.add(alpha2)
         
+        if not requested_alpha2:
+            return []
+        
+        results = []
         queries = _build_search_queries(video)
         if not queries:
             return []
@@ -425,19 +456,43 @@ class SubSceneProvider:
                     lang_name = subtitle.get("language", "")
                     lang_code = _get_language_code(lang_name)
                     
-                    if not lang_code or lang_code not in requested_languages:
+                    if not lang_code or lang_code not in requested_alpha2:
                         continue
                     
                     score = _calculate_score(video, subtitle)
+                    subtitle_url = subtitle.get("url", "")
+                    subtitle_id = subtitle_url.split("/")[-1] if subtitle_url else "unknown"
                     
                     results.append({
-                        "id": f"{PROVIDER_ID}_{subtitle.get('url', '').split('/')[-1]}",
                         "provider": PROVIDER_ID,
-                        "language": lang_code,
-                        "release": subtitle.get("release", ""),
-                        "url": subtitle.get("url"),
+                        "id": f"{PROVIDER_ID}_{subtitle_id}",
+                        "language": {
+                            "alpha3": lang_code,
+                            "alpha2": lang_code,
+                            "hi": False,
+                            "forced": False,
+                        },
+                        "release_info": subtitle.get("release", ""),
+                        "filename": f"{PROVIDER_ID}.{subtitle_id}.srt",
+                        "matches": [],
                         "score": score,
+                        "score_without_hash": score,
+                        "score_out_of": 100,
+                        "hash_verifiable": False,
+                        "hearing_impaired_verifiable": False,
                         "hearing_impaired": subtitle.get("hi", False),
+                        "page_link": f"{BASE_URL}{subtitle_url}" if subtitle_url.startswith("/") else subtitle_url,
+                        "display": {
+                            "source": "sub-scene.com",
+                            "title": result.get("title", ""),
+                            "release": subtitle.get("release", ""),
+                        },
+                        "provider_payload": {
+                            "provider": PROVIDER_ID,
+                            "schema": 1,
+                            "url": subtitle_url,
+                            "video": video,
+                        },
                     })
             
             if results:
@@ -450,27 +505,33 @@ class SubSceneProvider:
         """Download subtitle file."""
         subtitle = provider_payload or {}
         if not subtitle or not subtitle.get("url"):
-            return None
+            raise ValueError("sub_scene download requires url in provider_payload")
         
         delay_ms = config.get("request_delay_ms", 0)
         
         detail = _get_subtitle_detail(subtitle["url"], delay_ms)
         if not detail or not detail.get("download_url"):
-            return None
+            raise ValueError("sub_scene could not find download URL on detail page")
         
         downloaded = _download_subtitle(detail["download_url"], delay_ms)
         if not downloaded:
-            return None
+            raise ValueError("sub_scene failed to download or extract subtitle file")
         
         content = downloaded["content"]
         content_b64 = base64.b64encode(content).decode("ascii")
         content_sha256 = hashlib.sha256(content).hexdigest()
         
+        encoding = "utf-8"
+        try:
+            content.decode("utf-8")
+        except UnicodeDecodeError:
+            encoding = "latin-1"
+        
         return {
             "content_b64": content_b64,
             "content_sha256": content_sha256,
+            "content_type": "application/x-subrip",
             "format": downloaded["format"],
-            "filename": downloaded["filename"],
-            "hearing_impaired": detail.get("hearing_impaired", False),
+            "encoding": encoding,
             "empty": False,
         }
