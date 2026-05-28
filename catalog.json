@@ -254,6 +254,105 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "53aaf442aa177de606307f8af7960ad9f6c7e8be0446a58d83f31d55dc87ff9e",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "locked_retry_delay_ms": {
+              "default": 30000,
+              "description": "Delay before retrying when Gestdown returns HTTP 423.",
+              "maximum": 30000,
+              "minimum": 0,
+              "title": "Locked retry delay (ms)",
+              "type": "integer"
+            },
+            "request_timeout_seconds": {
+              "default": 30,
+              "description": "HTTP request timeout for Gestdown API calls.",
+              "maximum": 120,
+              "minimum": 1,
+              "title": "Request timeout (seconds)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Uses the public Gestdown API for episode subtitles by TVDB show id, season, episode, and language. No login or API key required.",
+        "entry_class": "GestdownProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "7ec4261d078e4c2bbba78f7c054baaa5b29282782bb53c6f47c0ef92797b6242"
+        },
+        "languages": [
+          "ara",
+          "aze",
+          "ben",
+          "bos",
+          "bul",
+          "cat",
+          "ces",
+          "dan",
+          "deu",
+          "ell",
+          "eng",
+          "eus",
+          "fas",
+          "fin",
+          "fra",
+          "glg",
+          "heb",
+          "hrv",
+          "hun",
+          "hye",
+          "ind",
+          "ita",
+          "jpn",
+          "kor",
+          "mkd",
+          "msa",
+          "nld",
+          "nor",
+          "pol",
+          "por",
+          "ron",
+          "rus",
+          "slk",
+          "slv",
+          "spa",
+          "sqi",
+          "srp",
+          "swe",
+          "tha",
+          "tur",
+          "ukr",
+          "vie",
+          "zho"
+        ],
+        "name": "Gestdown",
+        "provider_id": "gestdown",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/gestdown",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "episode"
+        ],
+        "version": "0.1.0"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "1baafbfe6f2db8ce4304e9613fb951259732f32bc9e53033cef952a3dab4a6f5",
         "config_schema": {
           "additionalProperties": false,
