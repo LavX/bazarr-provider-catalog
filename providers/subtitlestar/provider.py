@@ -324,10 +324,28 @@ def derive_matches(video, candidate_title):
     return matches
 
 
+def _has_required_match(video, matches):
+    video = video or {}
+    matches = set(matches or [])
+    if video.get("kind") == "movie":
+        if "title" not in matches:
+            return False
+        if video.get("year") and "year" not in matches:
+            return False
+    elif video.get("kind") == "episode":
+        if video.get("series") and "series" not in matches:
+            return False
+        if video.get("episode") is not None and "episode" not in matches:
+            return "season" in matches
+    return True
+
+
 def select_subtitle_file(names, video):
     candidates = [name for name in names if _subtitle_extension(name)]
     if not candidates:
         raise ValueError("subtitlestar archive contains no supported subtitle files")
+    if len(candidates) == 1:
+        return candidates[0]
     episode = (video or {}).get("episode")
     season = (video or {}).get("season")
     try:
@@ -522,6 +540,8 @@ class SubtitlestarProvider:
                 
                 score = compute_score(video, scoring_title)
                 matches = derive_matches(video, scoring_title)
+                if not _has_required_match(video, matches):
+                    continue
                 
                 for download_url in details["downloads"][:1]:
                     results.append({

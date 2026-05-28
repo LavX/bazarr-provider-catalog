@@ -33,6 +33,7 @@ CLOUDFLARE_BODY_MARKERS = (
     "cf-chl",
     "turnstile",
 )
+SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt")
 
 LANGUAGE_MAP = {
     "Arabic": "ara",
@@ -650,6 +651,15 @@ def _select_episode_file(srt_files, video):
     return best_name
 
 
+def _subtitle_extension(name):
+    path = urllib.parse.urlparse(name or "").path or (name or "")
+    lowered = path.lower()
+    for extension in SUBTITLE_EXTENSIONS:
+        if lowered.endswith(extension):
+            return extension[1:]
+    return None
+
+
 def _download_subtitle(download_url, delay_ms=0, video=None, config=None, state=None):
     """Download and extract subtitle ZIP file."""
     if delay_ms > 0:
@@ -660,18 +670,20 @@ def _download_subtitle(download_url, delay_ms=0, video=None, config=None, state=
     try:
         zip_data = _http_get(full_url, config=config, state=state)
         with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
-            srt_files = [name for name in zf.namelist() if name.lower().endswith(".srt")]
-            if not srt_files:
+            subtitle_files = [name for name in zf.namelist() if _subtitle_extension(name)]
+            if not subtitle_files:
                 return None
             
             # Select episode-specific file if video metadata available
-            srt_file = _select_episode_file(srt_files, video)
-            content = zf.read(srt_file)
+            subtitle_file = _select_episode_file(subtitle_files, video)
+            if not subtitle_file:
+                return None
+            content = zf.read(subtitle_file)
             
             return {
                 "content": content,
-                "filename": srt_file,
-                "format": "srt",
+                "filename": subtitle_file,
+                "format": _subtitle_extension(subtitle_file) or "srt",
             }
     except CloudflareBlockedError:
         raise
@@ -748,6 +760,25 @@ def _explicit_episode_markers(text):
     return markers
 
 
+def _episode_range_includes(text, episode):
+    try:
+        episode_int = int(episode)
+    except (TypeError, ValueError):
+        return False
+    text = _coerce_text(text).lower()
+    for pattern in (
+        r"\be0*(\d{1,2})\s*(?:-|to|through|thru)\s*e?0*(\d{1,2})(?!\d)",
+        r"\bepisodes?\s*0*(\d{1,2})\s*(?:-|to|through|thru)\s*0*(\d{1,2})(?!\d)",
+    ):
+        for marker in re.finditer(pattern, text):
+            start = int(marker.group(1))
+            end = int(marker.group(2))
+            lower, upper = sorted((start, end))
+            if lower <= episode_int <= upper:
+                return True
+    return False
+
+
 def _derive_matches(video, result_title, subtitle):
     """Return Provider Hub match keys represented by the SubScene candidate."""
     video = video or {}
@@ -787,7 +818,8 @@ def _derive_matches(video, result_title, subtitle):
             episode = None
 
         release_lower = _coerce_text(release).lower()
-        season_markers = _explicit_season_markers(release_lower)
+        candidate_lower = _coerce_text(candidate_text).lower()
+        season_markers = _explicit_season_markers(candidate_lower)
         if season is not None and season in season_markers:
             matches.append("season")
         if episode is not None:
@@ -798,6 +830,9 @@ def _derive_matches(video, result_title, subtitle):
                 if marker_episode == episode and (
                     season is None or marker_season == season
                 ):
+                    matches.append("episode")
+            elif _episode_range_includes(release_lower, episode):
+                if season is None or not season_markers or season in season_markers:
                     matches.append("episode")
             elif re.search(rf"e0*{episode}(?!\d)", release_lower):
                 if season is None or not season_markers or season in season_markers:
@@ -868,6 +903,16 @@ def _get_language_code(language_name):
 
 def _alpha2_from_alpha3(alpha3):
     return ALPHA3_TO_ALPHA2.get(str(alpha3 or "").lower(), str(alpha3 or "").lower())
+
+
+def _content_type(subtitle_format):
+    return {
+        "srt": "application/x-subrip",
+        "ass": "text/x-ssa",
+        "ssa": "text/x-ssa",
+        "vtt": "text/vtt",
+        "sub": "text/plain",
+    }.get(subtitle_format, "text/plain")
 
 
 def _alpha2_for(language):
@@ -1014,7 +1059,7 @@ class SubSceneProvider:
         return {
             "content_b64": content_b64,
             "content_sha256": content_sha256,
-            "content_type": "application/x-subrip",
+            "content_type": _content_type(downloaded["format"]),
             "format": downloaded["format"],
             "encoding": encoding,
             "empty": False,

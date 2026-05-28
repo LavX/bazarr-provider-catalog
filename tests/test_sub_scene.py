@@ -120,6 +120,27 @@ class TestCalculateScore(unittest.TestCase):
         self.assertIn("season", matches)
         self.assertIn("episode", matches)
 
+    def test_episode_match_uses_page_title_for_season_pack(self):
+        matches = subscene_module._derive_matches(
+            {"kind": "episode", "series": "Burn Notice", "season": 3, "episode": 5},
+            "Burn Notice - Third Season",
+            {"release": "DVDRip.XviD-GROUPS"},
+        )
+
+        self.assertIn("series", matches)
+        self.assertIn("season", matches)
+
+    def test_episode_match_accepts_range_covering_requested_episode(self):
+        matches = subscene_module._derive_matches(
+            {"kind": "episode", "series": "Breaking Bad", "season": 1, "episode": 5},
+            "Breaking Bad",
+            {"release": "Breaking Bad Season 1 720p E01-E08"},
+        )
+
+        self.assertIn("series", matches)
+        self.assertIn("season", matches)
+        self.assertIn("episode", matches)
+
 
 class TestSelectEpisodeFile(unittest.TestCase):
     def test_selects_requested_episode_from_multi_file_zip(self):
@@ -156,6 +177,27 @@ class TestSelectEpisodeFile(unittest.TestCase):
             {"kind": "episode", "season": 1, "episode": 5},
         )
         self.assertEqual(selected, "Show.S01.E05.srt")
+
+
+class TestDownloadSubtitle(unittest.TestCase):
+    def test_extracts_supported_non_srt_file_from_zip(self):
+        content = b"[Script Info]\nTitle: Test\n"
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("Show.S01E05.ass", content)
+
+        with patch("provider._http_get", return_value=zip_buffer.getvalue()):
+            result = subscene_module._download_subtitle(
+                "/download/123",
+                video={"kind": "episode", "season": 1, "episode": 5},
+                config={},
+                state={},
+            )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["content"], content)
+        self.assertEqual(result["filename"], "Show.S01E05.ass")
+        self.assertEqual(result["format"], "ass")
 
 
 class TestSubsceneSearchParser(unittest.TestCase):

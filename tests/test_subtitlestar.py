@@ -312,6 +312,44 @@ class SubtitlestarProviderSearchTests(unittest.TestCase):
                 config={},
             )
 
+    def test_search_filters_movies_without_required_year_match(self):
+        search_url = "https://subtitlestar.com/?s=Dune%202021&post_type=post"
+        fallback_search_url = "https://subtitlestar.com/?s=Dune&post_type=post"
+        detail_url = "https://subtitlestar.com/persian-subtitles-dune-1984/"
+        search_html = b"""
+        <html>
+        <body>
+        <a href="https://subtitlestar.com/persian-subtitles-dune-1984/">
+        <img alt="Dune 1984" src="x.jpg">
+        </a>
+        </body>
+        </html>
+        """
+        detail_html = """
+        <html>
+        <head><title>Dune 1984 - SubtitleStar</title></head>
+        <body>
+        <span><i class="icon-years"></i><a>1984</a></span>
+        <a href="https://dl.subtitlestar.com/dlsub/dune-1984.zip">Download</a>
+        </body>
+        </html>
+        """.encode("utf-8")
+        provider, _ = self._provider_with_stub(
+            {
+                search_url: search_html,
+                fallback_search_url: b"<html><body></body></html>",
+                detail_url: detail_html,
+            }
+        )
+
+        results = provider.search(
+            video={"kind": "movie", "title": "Dune", "year": 2021},
+            languages=[{"alpha3": "fas", "alpha2": "fa"}],
+            config={},
+        )
+
+        self.assertEqual(results, [])
+
 
 class SubtitlestarProviderDownloadTests(unittest.TestCase):
     def setUp(self):
@@ -391,6 +429,14 @@ class SelectSubtitleFileTests(unittest.TestCase):
         )
 
         self.assertEqual(selected, "Show.1x02.srt")
+
+    def test_keeps_single_generic_episode_file(self):
+        selected = self.mod.select_subtitle_file(
+            ["subtitle.srt"],
+            {"kind": "episode", "season": 1, "episode": 2},
+        )
+
+        self.assertEqual(selected, "subtitle.srt")
 
 
 if __name__ == "__main__":
