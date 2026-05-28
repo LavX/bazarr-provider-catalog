@@ -98,6 +98,28 @@ class TestCalculateScore(unittest.TestCase):
         score = _calculate_score(video, subtitle)
         self.assertGreaterEqual(score, 75)
 
+    def test_episode_match_rejects_conflicting_season_word(self):
+        matches = subscene_module._derive_matches(
+            {"kind": "episode", "series": "Breaking Bad", "season": 1, "episode": 1},
+            "Breaking Bad",
+            {"release": "Breaking Bad Season 5 2012 720p E01-E08"},
+        )
+
+        self.assertIn("series", matches)
+        self.assertNotIn("season", matches)
+        self.assertNotIn("episode", matches)
+
+    def test_episode_match_accepts_matching_season_word(self):
+        matches = subscene_module._derive_matches(
+            {"kind": "episode", "series": "Breaking Bad", "season": 1, "episode": 1},
+            "Breaking Bad",
+            {"release": "Breaking Bad Season 1 720p E01-E08"},
+        )
+
+        self.assertIn("series", matches)
+        self.assertIn("season", matches)
+        self.assertIn("episode", matches)
+
 
 class TestSelectEpisodeFile(unittest.TestCase):
     def test_selects_requested_episode_from_multi_file_zip(self):

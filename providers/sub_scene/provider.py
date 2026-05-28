@@ -706,6 +706,33 @@ def _release_matches_source(source, release):
     return source in release
 
 
+ORDINAL_SEASONS = {
+    "first": 1,
+    "second": 2,
+    "third": 3,
+    "fourth": 4,
+    "fifth": 5,
+    "sixth": 6,
+    "seventh": 7,
+    "eighth": 8,
+    "ninth": 9,
+    "tenth": 10,
+}
+
+
+def _explicit_season_markers(text):
+    markers = set()
+    text = _coerce_text(text).lower()
+    for marker in re.finditer(r"\bs0*(\d{1,2})(?!\d)", text):
+        markers.add(int(marker.group(1)))
+    for marker in re.finditer(r"\bseason\s*0*(\d{1,2})(?!\d)", text):
+        markers.add(int(marker.group(1)))
+    for word, season in ORDINAL_SEASONS.items():
+        if re.search(rf"\b{word}\s+season\b", text):
+            markers.add(season)
+    return markers
+
+
 def _derive_matches(video, result_title, subtitle):
     """Return Provider Hub match keys represented by the SubScene candidate."""
     video = video or {}
@@ -745,7 +772,8 @@ def _derive_matches(video, result_title, subtitle):
             episode = None
 
         release_lower = _coerce_text(release).lower()
-        if season is not None and re.search(rf"s0*{season}(?!\d)", release_lower):
+        season_markers = _explicit_season_markers(release_lower)
+        if season is not None and season in season_markers:
             matches.append("season")
         if episode is not None:
             marker = re.search(r"s(\d{1,2})e(\d{1,2})(?!\d)", release_lower)
@@ -757,7 +785,8 @@ def _derive_matches(video, result_title, subtitle):
                 ):
                     matches.append("episode")
             elif re.search(rf"e0*{episode}(?!\d)", release_lower):
-                matches.append("episode")
+                if season is None or not season_markers or season in season_markers:
+                    matches.append("episode")
 
     return matches
 
