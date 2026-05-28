@@ -173,6 +173,15 @@ def compute_score(video, candidate_title):
             year = video.get("year")
             if year and str(year) in candidate_tokens:
                 return 100
+            # Check if candidate has a conflicting year (e.g., Dune 1984 vs Dune 2021)
+            if year:
+                # Look for 4-digit years in candidate that don't match requested year
+                year_pattern = r'\b(19|20)\d{2}\b'
+                candidate_years = re.findall(year_pattern, candidate_title)
+                if candidate_years:
+                    # If candidate has explicit years and none match requested year, demote
+                    if not any(int(y) == int(year) for y in candidate_years):
+                        return 60
             return 90
         return 60
     
@@ -226,9 +235,16 @@ def derive_matches(video, candidate_title):
                 matches.append("season")
         episode = video.get("episode")
         if episode is not None:
-            e_str = f"e{int(episode):02d}"
-            if e_str in candidate_norm:
+            e_int = int(episode)
+            # Check padded format with word boundary
+            e_padded = f"e{e_int:02d}"
+            if e_padded in candidate_norm:
                 matches.append("episode")
+            else:
+                # Check unpadded with word boundary (e2 but not e20)
+                e_unpadded = f"e{e_int}"
+                if re.search(rf"{e_unpadded}(?!\d)", candidate_norm):
+                    matches.append("episode")
     
     return matches
 
