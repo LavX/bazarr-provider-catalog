@@ -34,7 +34,7 @@ CLOUDFLARE_BODY_MARKERS = (
     "cf-chl",
     "turnstile",
 )
-SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt")
+SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt", ".smi")
 
 LANGUAGE_MAP = {
     "Arabic": "ara",

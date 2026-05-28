@@ -341,6 +341,25 @@ class TestDownloadSubtitle(unittest.TestCase):
         self.assertEqual(result["filename"], "Show.S01E05.ass")
         self.assertEqual(result["format"], "ass")
 
+    def test_extracts_sami_file_from_zip(self):
+        content = b"\xef\xbb\xbf<SAMI>\r\n<BODY>\r\n<SYNC Start=1000><P>Hello</P>"
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("Dune.2021.1080p.WEBRip.x264-RARBG.smi", content)
+
+        with patch("provider._http_get", return_value=zip_buffer.getvalue()):
+            result = subscene_module._download_subtitle(
+                "/download/2604448",
+                video={"kind": "movie", "title": "Dune: Part One", "year": 2021},
+                config={},
+                state={},
+            )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["content"], content)
+        self.assertEqual(result["filename"], "Dune.2021.1080p.WEBRip.x264-RARBG.smi")
+        self.assertEqual(result["format"], "smi")
+
     def test_ignores_appledouble_sidecar_entries(self):
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zf:
