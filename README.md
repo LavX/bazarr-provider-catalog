@@ -25,6 +25,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`my_subs`](providers/my_subs/) | 0.1.1 | Scrapes [My-Subs.co](https://my-subs.co) for movie and episode subtitles in many languages. No login or API key. |
 | [`subcentral`](providers/subcentral/) | 0.1.0 | Scrapes [SubCentral.de](https://www.subcentral.de) forum subtitle threads for German and English episode releases. No login or API key. |
 | [`subhd`](providers/subhd/) | 0.1.3 | Scrapes [SubHD.tv](https://subhd.tv) for Chinese-first movie and episode subtitles with multilingual releases. No login or API key. |
+| [`subtitlestar`](providers/subtitlestar/) | 0.1.0 | Scrapes [subtitlestar.com](https://subtitlestar.com) for Persian/Farsi movie and episode subtitles. No login or API key. |
 | [`subtitlecat`](providers/subtitlecat/) | 0.1.5 | Scrapes [subtitlecat.com](https://www.subtitlecat.com) (no login, no API key). Worked example for the [scraper authoring guide](docs/writing-a-scraper-provider.md). |
 | [`smoke`](providers/smoke/) | 0.2.0 | Deterministic no-network fixture for install / worker sanity checks. Not a real subtitle source. |
 
@@ -54,6 +55,7 @@ Every provider here ships independently of Bazarr+ releases. [Contribute](#contr
 - `providers/smoke/`: deterministic no-network smoke provider for install and worker checks.
 - `providers/subcentral/`: scrapes SubCentral.de forum threads for German and English episode subtitles.
 - `providers/subhd/`: scrapes SubHD.tv Chinese-first movie and episode subtitle pages.
+- `providers/subtitlestar/`: scrapes subtitlestar.com for Persian/Farsi movie and episode subtitles.
 - `providers/subtitlecat/`: first production community provider, scrapes subtitlecat.com using stdlib only. Worked example referenced by [docs/writing-a-scraper-provider.md](docs/writing-a-scraper-provider.md).
 - `sdk/`: standalone authoring tools and templates, see the [SDK reference](sdk/README.md).
 - `tests/`: catalog validation tests that do not import Bazarr internals.
