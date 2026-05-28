@@ -137,6 +137,40 @@ class ParseDetailPageTests(unittest.TestCase):
             ["https://dl.subtitlestar.com/dlsub/dune-2021.zip"],
         )
 
+    def test_skips_unsupported_archive_download_links(self):
+        html = """
+        <html>
+        <body>
+        <a href="https://dl.subtitlestar.com/dlsub/movie.rar" class="dlbtn">RAR</a>
+        <a href="https://dl.subtitlestar.com/dlsub/movie.7z" class="dlbtn">7z</a>
+        <a href="https://dl.subtitlestar.com/dlsub/movie.zip">ZIP</a>
+        </body>
+        </html>
+        """.encode("utf-8")
+
+        details = self.mod.parse_detail_page(html)
+
+        self.assertEqual(
+            details["downloads"],
+            ["https://dl.subtitlestar.com/dlsub/movie.zip"],
+        )
+
+    def test_normalizes_dlsub_relative_links_once(self):
+        html = """
+        <html>
+        <body>
+        <a href="dlsub/movie.zip">Download subtitle</a>
+        </body>
+        </html>
+        """.encode("utf-8")
+
+        details = self.mod.parse_detail_page(html)
+
+        self.assertEqual(
+            details["downloads"],
+            ["https://dl2.subtitlestar.com/dlsub/movie.zip"],
+        )
+
     def test_handles_empty_html(self):
         self.assertIsNone(self.mod.parse_detail_page(b""))
 
@@ -148,6 +182,13 @@ class ComputeScoreTests(unittest.TestCase):
     def test_movie_title_plus_year_scores_100(self):
         score = self.mod.compute_score(
             {"kind": "movie", "title": "Dune", "year": 2021},
+            "Dune 2021 1080p BluRay",
+        )
+        self.assertEqual(score, 100)
+
+    def test_movie_year_string_is_compared_as_full_year(self):
+        score = self.mod.compute_score(
+            {"kind": "movie", "title": "Dune", "year": "2021 "},
             "Dune 2021 1080p BluRay",
         )
         self.assertEqual(score, 100)
@@ -201,6 +242,16 @@ class DeriveMatchesTests(unittest.TestCase):
 
         self.assertIn("season", matches)
         self.assertIn("episode", matches)
+
+    def test_episode_marker_requires_matching_season(self):
+        matches = self.mod.derive_matches(
+            {"kind": "episode", "series": "Show", "season": 1, "episode": 5},
+            "Show S02E05 720p",
+        )
+
+        self.assertIn("series", matches)
+        self.assertNotIn("season", matches)
+        self.assertNotIn("episode", matches)
 
 
 class SubtitlestarProviderSearchTests(unittest.TestCase):
@@ -300,6 +351,20 @@ class SubtitlestarProviderDownloadTests(unittest.TestCase):
         )
         self.assertTrue(result["empty"])
 
+    def test_download_keeps_direct_subtitle_format_with_query_string(self):
+        provider = self._provider_with_body(b"WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHi\n")
+        result = provider.download(
+            provider_payload={
+                "provider": "subtitlestar",
+                "download_url": "https://dl.subtitlestar.com/dlsub/episode.vtt?download=1",
+            },
+            language={"alpha3": "fas"},
+            config={},
+        )
+
+        self.assertEqual(result["format"], "vtt")
+        self.assertEqual(result["content_type"], "text/vtt")
+
 
 class SelectSubtitleFileTests(unittest.TestCase):
     def setUp(self):
@@ -318,6 +383,14 @@ class SelectSubtitleFileTests(unittest.TestCase):
                 ["Show.S01.E01.srt", "Show.S01.E02.srt"],
                 {"kind": "episode", "season": 2, "episode": 1},
             )
+
+    def test_selects_episode_from_1x02_filename(self):
+        selected = self.mod.select_subtitle_file(
+            ["Show.1x01.srt", "Show.1x02.srt"],
+            {"kind": "episode", "season": 1, "episode": 2},
+        )
+
+        self.assertEqual(selected, "Show.1x02.srt")
 
 
 if __name__ == "__main__":
