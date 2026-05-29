@@ -1,0 +1,39 @@
+{
+  "api_version": "bazarr.provider-hub.v1",
+  "bundle_sha256": "8f16d76f0f78aeecf7b688f69db47ed4d744c60774b1f782aa9ddd8c8f4d3433",
+  "config_schema": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+  },
+  "dependencies": {
+    "requirements": []
+  },
+  "description": "Uses wizdom.xyz for Hebrew movie and episode subtitles, with TMDB lookup when an IMDb id is not supplied.",
+  "entry_class": "WizdomProvider",
+  "entry_module": "provider",
+  "files": {
+    "provider.py": "03681fb02bc06f88d710da97314ec97dc64b13e052ef9c7020dd7cc11cbc8901"
+  },
+  "languages": [
+    "heb"
+  ],
+  "name": "Wizdom",
+  "provider_id": "wizdom",
+  "schema_version": 1,
+  "secret_fields": [],
+  "source": {
+    "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+    "commit": "0000000000000000000000000000000000000000",
+    "path": "providers/wizdom",
+    "ref": "main",
+    "repo": "LavX/bazarr-provider-catalog",
+    "trusted": true,
+    "type": "github"
+  },
+  "supported_media": [
+    "movie",
+    "episode"
+  ],
+  "version": "0.1.0"
+}
