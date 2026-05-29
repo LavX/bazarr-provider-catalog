@@ -62,6 +62,7 @@
   - `hdbits`: branch `catalog-hdbits`, worktree `/tmp/bazarr_catalog_provider_worktrees/hdbits`, current head `42d7f02 Add HDBits provider`
   - `jimaku`: branch `catalog-jimaku`, worktree `/tmp/bazarr_catalog_provider_worktrees/jimaku`, current head `112d345 Add Jimaku provider`
   - `subdl`: branch `catalog-subdl`, worktree `/tmp/bazarr_catalog_provider_worktrees/subdl`, current head `7ff94cd Add SubDL provider`
+  - `subsource`: branch `catalog-subsource`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsource`, current head `d50b08f Add SubSource provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -889,6 +890,33 @@
   - Run SDK live smoke search and download with a real SubDL API key.
   - Add `subdl` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured SubDL API key.
+
+### `subsource`
+
+- Branch: `catalog-subsource`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/subsource`
+- Current checkpoint: `d50b08f Add SubSource provider`
+- Baseline evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-29:
+  - Current API docs confirmed base URL `https://api.subsource.net/api/v1`, `X-API-Key` auth, `GET /movies/search`, `GET /subtitles`, `GET /subtitles/{id}`, and `GET /subtitles/{id}/download`.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_subsource.py'`: failed because `providers/subsource/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p 'test_subsource.py'`: `10` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subsource/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `338` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - JSON parse check for `provider.json` and `catalog.json`: passed.
+  - Attribution, em-dash, and non-ASCII scans over touched SubSource implementation, notes, and tests found no matches.
+- Live evidence on 2026-05-29:
+  - `curl -sS -i --max-time 20 https://api.subsource.net/api/v1/movies/search`: returned HTTP `401` with `API key required` and noted `X-API-Key` header or `api_key` query parameter.
+  - `curl -sS -i --max-time 20 -H 'X-API-Key: invalid-test-key' 'https://api.subsource.net/api/v1/movies/search?searchType=text&q=inception'`: returned HTTP `401` with `Invalid API key`.
+  - Fetching `https://subsource.net/api-docs` directly from this environment returned a Cloudflare challenge page, while the API endpoint itself returned JSON auth errors.
+- Remaining gates:
+  - Run SDK live smoke search and download with a real SubSource API key.
+  - Add `subsource` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured SubSource API key.
 
 ## Why OpenSubtitles.org Is Tricky
 
