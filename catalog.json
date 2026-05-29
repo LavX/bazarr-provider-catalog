@@ -1024,6 +1024,151 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "0a0d126fc5e5b48468fe9d127b45bdbd0d57804d73b990adafa5730e0daab4a9",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "api_key": {
+              "description": "SubSource API key from your SubSource account profile.",
+              "title": "API key",
+              "type": "string"
+            },
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between SubSource API calls.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "api_key"
+          ],
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Uses the official SubSource API for movie and episode subtitles. API key required.",
+        "entry_class": "SubSourceProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "66cebc1bdbf2de8096e737c874cd1e7bfa36f4860a963689f31479ad8572ea8e"
+        },
+        "languages": [
+          "abk",
+          "afr",
+          "amh",
+          "ara",
+          "arg",
+          "asm",
+          "aze",
+          "bel",
+          "ben",
+          "bos",
+          "bre",
+          "bul",
+          "cat",
+          "ces",
+          "cym",
+          "dan",
+          "deu",
+          "ell",
+          "eng",
+          "epo",
+          "est",
+          "eus",
+          "fas",
+          "fin",
+          "fra",
+          "gla",
+          "gle",
+          "heb",
+          "hin",
+          "hrv",
+          "hun",
+          "hye",
+          "ibo",
+          "ina",
+          "ind",
+          "isl",
+          "ita",
+          "jpn",
+          "kan",
+          "kat",
+          "kaz",
+          "khm",
+          "kor",
+          "kur",
+          "lav",
+          "lit",
+          "ltz",
+          "mal",
+          "mar",
+          "mkd",
+          "mon",
+          "msa",
+          "mya",
+          "nav",
+          "nep",
+          "nld",
+          "nor",
+          "oci",
+          "pol",
+          "por",
+          "pus",
+          "ron",
+          "rus",
+          "sin",
+          "slk",
+          "slv",
+          "sme",
+          "snd",
+          "som",
+          "spa",
+          "sqi",
+          "srp",
+          "swa",
+          "swe",
+          "tam",
+          "tat",
+          "tel",
+          "tgl",
+          "tha",
+          "tuk",
+          "tur",
+          "ukr",
+          "urd",
+          "uzb",
+          "vie",
+          "zho"
+        ],
+        "name": "SubSource",
+        "provider_id": "subsource",
+        "schema_version": 1,
+        "secret_fields": [
+          "api_key"
+        ],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/subsource",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.0"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "94e3744f5daac8effa567393bb19d7c7b97eb3a094e1ac85bac0ba82566b6376",
         "config_schema": {
           "additionalProperties": false,
