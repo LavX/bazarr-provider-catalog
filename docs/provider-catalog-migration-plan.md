@@ -65,6 +65,7 @@
   - `subsource`: branch `catalog-subsource`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsource`, current head `d50b08f Add SubSource provider`
   - `subsro`: branch `catalog-subsro`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsro`, current head `4e63940 Add Subs.ro provider`
   - `subx`: branch `catalog-subx`, worktree `/tmp/bazarr_catalog_provider_worktrees/subx`, current head `4199530 Add SubX provider`
+  - `opensubtitlescom`: branch `catalog-opensubtitlescom`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitlescom`, current head `885985f Add OpenSubtitles.com provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -976,6 +977,35 @@
   - Run SDK live smoke search and download with a real SubX API key.
   - Add `subx` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured SubX API key.
+
+### `opensubtitlescom`
+
+- Branch: `catalog-opensubtitlescom`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/opensubtitlescom`
+- Current checkpoint: `885985f Add OpenSubtitles.com provider`
+- Baseline evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-29:
+  - Official API docs confirmed base URL `https://api.opensubtitles.com/api/v1`, `Api-Key` authentication, bearer-token login, `/infos/languages`, `/login`, and `/download`.
+  - Legacy inspection confirmed required username, password, and API key, 12-hour token cache, returned `base_url` handling, VIP bearer search, hash search with no-hash retry, title feature fallback, forced and hearing-impaired filtering, AI and machine translation filters, and bearer-token download flow.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_opensubtitlescom.py'`: failed because `providers/opensubtitlescom/provider.py` did not exist.
+  - Mapper red gate after live language-table inspection failed for official API codes such as `abk -> ab`, `aze -> az-az`, `tet -> tm-td`, and `srp-ME -> me`, then passed after the mapping fix.
+  - `python3 -B -m unittest discover -s tests -p 'test_opensubtitlescom.py'`: `12` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/opensubtitlescom/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `340` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Manifest language count matches the legacy Bazarr provider language registry: `422` entries.
+  - Attribution and em-dash scan over touched OpenSubtitles.com files found no matches.
+- Live evidence on 2026-05-29:
+  - `curl -sS -i --max-time 20 -H 'User-Agent: BazarrProviderHub/1.0' https://api.opensubtitles.com/api/v1/infos/languages`: returned HTTP `200` with the current API language table.
+  - `curl -sS -i --max-time 20 -H 'Api-Key: invalid-test-key' -H 'User-Agent: BazarrProviderHub/1.0' https://api.opensubtitles.com/api/v1/subtitles`: returned HTTP `403` with `You cannot consume this service`.
+  - Real search and download require a valid OpenSubtitles.com username, password, and API key.
+- Remaining gates:
+  - Run SDK live smoke search and download with real OpenSubtitles.com credentials.
+  - Add `opensubtitlescom` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured OpenSubtitles.com credentials.
 
 ## Why OpenSubtitles.org Is Tricky
 
