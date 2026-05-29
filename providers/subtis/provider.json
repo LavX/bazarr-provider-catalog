@@ -1,0 +1,38 @@
+{
+  "api_version": "bazarr.provider-hub.v1",
+  "bundle_sha256": "b8706e002dea0d897b4d52d906aa3244b20107d9e52fe21baaba1d2bdf8eed41",
+  "config_schema": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+  },
+  "dependencies": {
+    "requirements": []
+  },
+  "description": "Queries api.subt.is for Spanish movie subtitles using hash, file size, filename, and alternative filename lookups. No login or API key required.",
+  "entry_class": "SubtisProvider",
+  "entry_module": "provider",
+  "files": {
+    "provider.py": "858e90180d6c5ddfbbdc23cc06561cc01c540e270a017d821350395a135d84fb"
+  },
+  "languages": [
+    "spa"
+  ],
+  "name": "Subtis",
+  "provider_id": "subtis",
+  "schema_version": 1,
+  "secret_fields": [],
+  "source": {
+    "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+    "commit": "0000000000000000000000000000000000000000",
+    "path": "providers/subtis",
+    "ref": "main",
+    "repo": "LavX/bazarr-provider-catalog",
+    "trusted": true,
+    "type": "github"
+  },
+  "supported_media": [
+    "movie"
+  ],
+  "version": "0.1.0"
+}
