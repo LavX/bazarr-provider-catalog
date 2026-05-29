@@ -271,9 +271,14 @@
 - Live smoke evidence on 2026-05-29:
   - `curl -I --max-time 15 http://hosszupuskasub.com/`: `curl: (52) Empty reply from server`.
   - `curl -I --max-time 15 https://hosszupuskasub.com/`: `curl: (7) Failed to connect to hosszupuskasub.com port 443`.
+  - `curl -L --http1.1 --max-time 20 -A "Mozilla/5.0" http://hosszupuskasub.com/`: HTTP `200` from `openresty`, but body is a ParkLogic redirect/parking script, not the HosszuPuska subtitle site.
+  - `curl -L --http1.1 --max-time 20 -A "Mozilla/5.0" "http://hosszupuskasub.com/sorozatok.php?cim=American+Horror+Story&evad=10&resz=01&nyelvtipus=%25&x=24&y=8"`: returned the same ParkLogic redirect/parking script for the legacy search path.
+  - `curl -L --http1.1 --max-time 20 -A "Mozilla/5.0" "http://hosszupuskasub.com/download.php?file=0124336.zip"`: returned the same ParkLogic redirect/parking script for a known legacy download path.
+  - `curl -I -L --http1.1 --max-time 20 -A "Mozilla/5.0" http://85.255.9.174/`: timed out, so the older indexed origin IP is not reachable from this network.
   - `python3 -B -m sdk smoke-test --provider hosszupuska --language hun --video-fixture tests/fixtures/hosszupuska_video_game_of_thrones_s01e01.json --expect-min-results 1 --skip-download`: failed with `hosszupuska search failed: Remote end closed connection without response`.
 - Remaining gates:
-  - Re-run live Hosszupuska smoke when `hosszupuskasub.com` serves HTTP or HTTPS responses again.
+  - Treat Hosszupuska as blocked unless the original site returns or a verified replacement origin is found.
+  - Re-run live Hosszupuska smoke only after the domain stops serving ParkLogic parking responses.
   - Add `hosszupuska` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
