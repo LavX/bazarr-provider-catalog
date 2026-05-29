@@ -1024,6 +1024,55 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "208e7e17b7086429725c4b4de08169d8bd954df84c103de72f9b913ef57850df",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between HTTP calls to subsynchro.com.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Scrapes SubSynchro movie release pages for French subtitle ZIP files. Movie-only provider.",
+        "entry_class": "SubsynchroProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "82440e584aa7ed2055e04ab09f7aaa37cbb11abf5faa203a617dc5b051cb3e9a"
+        },
+        "languages": [
+          "fra"
+        ],
+        "name": "SubSynchro",
+        "provider_id": "subsynchro",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/subsynchro",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie"
+        ],
+        "version": "0.1.0"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "94e3744f5daac8effa567393bb19d7c7b97eb3a094e1ac85bac0ba82566b6376",
         "config_schema": {
           "additionalProperties": false,
