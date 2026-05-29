@@ -44,6 +44,7 @@
   - `subclub`: branch `catalog-subclub`, worktree `/tmp/bazarr_catalog_provider_worktrees/subclub`, current head `0849eae Add Subclub provider`
   - `subssabbz`: branch `catalog-subssabbz`, worktree `/tmp/bazarr_catalog_provider_worktrees/subssabbz`, current head `3aa8f02 Add SubsSabBz provider`
   - `subsunacs`: branch `catalog-subsunacs`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsunacs`, current head `6394dff Add SubsUnacs provider`
+  - `subsynchro`: branch `catalog-subsynchro`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsynchro`, current head `9f9084e Add SubSynchro provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -428,6 +429,28 @@
   - `python3 -B -m sdk smoke-test --provider subsunacs --language bul --video-fixture tests/fixtures/subsunacs_video_game_of_thrones_s01e01.json --expect-min-results 1`: `subsunacs ok`.
 - Remaining gates:
   - Add `subsunacs` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+
+### `subsynchro`
+
+- Branch: `catalog-subsynchro`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/subsynchro`
+- Current checkpoint: `9f9084e Add SubSynchro provider`
+- Local evidence on 2026-05-29:
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_subsynchro.py'`: failed because `providers/subsynchro/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p 'test_subsynchro.py'`: `9` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests`: `337` tests passed, `6` skipped.
+  - `python3 -B -m py_compile providers/subsynchro/provider.py`: passed.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Attribution and em-dash scan over touched files found no matches.
+- Live smoke evidence on 2026-05-29:
+  - `python3 -B -m sdk smoke-test --provider subsynchro --language fra --video-fixture tests/fixtures/subsynchro_video_the_plastic_detox.json --expect-min-results 1`: failed with `subsynchro search failed: The read operation timed out`.
+  - `POST /tous-les-films.html` for `The Plastic Detox` returned HTTP `302` to `/2025/33547-the-plastic-detox.html`, then timed out after `25` seconds with zero bytes received.
+  - Direct homepage, film page, and download URL probes timed out with zero bytes received.
+- Remaining gates:
+  - Re-run live SubSynchro smoke when `www.subsynchro.com` serves film pages and downloads again.
+  - Add `subsynchro` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ## Why OpenSubtitles.org Is Tricky
