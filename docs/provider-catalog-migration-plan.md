@@ -63,6 +63,7 @@
   - `jimaku`: branch `catalog-jimaku`, worktree `/tmp/bazarr_catalog_provider_worktrees/jimaku`, current head `112d345 Add Jimaku provider`
   - `subdl`: branch `catalog-subdl`, worktree `/tmp/bazarr_catalog_provider_worktrees/subdl`, current head `7ff94cd Add SubDL provider`
   - `subsource`: branch `catalog-subsource`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsource`, current head `d50b08f Add SubSource provider`
+  - `subsro`: branch `catalog-subsro`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsro`, current head `4e63940 Add Subs.ro provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -917,6 +918,34 @@
   - Run SDK live smoke search and download with a real SubSource API key.
   - Add `subsource` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured SubSource API key.
+
+### `subsro`
+
+- Branch: `catalog-subsro`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/subsro`
+- Current checkpoint: `4e63940 Add Subs.ro provider`
+- Baseline evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-29:
+  - Current API docs confirmed base URL `https://api.subs.ro/v1.0`, `X-Subs-Api-Key` auth, `GET /search/imdbid/{value}`, `GET /subtitle/{id}`, `GET /subtitle/{id}/download`, Romanian and English filters, quota checks, and binary archive downloads.
+  - Legacy inspection confirmed required API key, comma-separated key rotation on HTTP 429, movie and episode IMDb search, Romanian and English language support, season parsing, and direct, ZIP, and RAR download handling.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_subsro.py'`: failed because `providers/subsro/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p 'test_subsro.py'`: `15` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subsro/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `343` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - JSON parse check for `providers/subsro/provider.json`: passed.
+  - Attribution and em-dash scan over touched Subs.ro files found no matches.
+- Live evidence on 2026-05-29:
+  - `curl -sS -i --max-time 20 https://api.subs.ro/v1.0/search/imdbid/tt22202452`: returned HTTP `401` with `Missing API key` and `x-subs-api-version: 1.0`.
+  - `curl -sS -i --max-time 20 -H 'X-Subs-Api-Key: invalid-test-key' https://api.subs.ro/v1.0/search/imdbid/tt22202452`: returned HTTP `403` with `Invalid API key` and `x-subs-api-version: 1.0`.
+  - Real live search and download require a Subs.ro `api_key`.
+- Remaining gates:
+  - Run SDK live smoke search and download with a real Subs.ro API key.
+  - Add `subsro` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Subs.ro API key.
 
 ## Why OpenSubtitles.org Is Tricky
 
