@@ -23,6 +23,7 @@
 - Planning branch: `provider-migration-inventory`
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
+- Core migration prerequisite branch: `provider-hub-builtin-migration` in `/tmp/bazarr_provider_hub_builtin_migration`
 - Existing provider worktrees:
   - `gestdown`: branch `catalog-gestdown`, worktree `/tmp/bazarr_catalog_provider_worktrees/gestdown`, current head `c0d0abd Add Gestdown provider`
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, currently clean at `origin/main`
@@ -57,27 +58,32 @@
 - Inspect: `/home/lavx/bazarr/bazarr/provider_hub/manifest.py`
 - Inspect: `/home/lavx/bazarr/bazarr/provider_hub/registry.py`
 - Inspect: `/home/lavx/bazarr/bazarr/provider_hub/service.py`
+- Verified implementation: `/tmp/bazarr_provider_hub_builtin_migration`
+- Verified branch: `provider-hub-builtin-migration`
 
-- [ ] **Step 1: Create a Bazarr core worktree**
+- [x] **Step 1: Create or reuse the Bazarr core worktree**
 
 ```bash
-git worktree add /tmp/bazarr_provider_hub_builtin_migration -b feat/provider-hub-builtin-migration origin/main
+git worktree add /tmp/bazarr_provider_hub_builtin_migration -b provider-hub-builtin-migration origin/master
 ```
 
-- [ ] **Step 2: Add an explicit trusted migration mode**
+- [x] **Step 2: Add an explicit trusted migration mode**
 
-Current Bazarr core rejects Provider Hub manifests whose `provider_id` shadows a built-in provider and skips any active installation with that id during registry registration. This blocks every provider in this migration queue from being proven through the real Provider Hub path.
+Current Bazarr core rejects Provider Hub manifests whose `provider_id` shadows a built-in provider and skips any active installation with that id during registry registration. This blocks every provider in this migration queue from being proven through the real Provider Hub path until the provider id is explicitly migrated.
 
-Add a narrow migration mode that allows a trusted catalog entry to replace a built-in provider only when one of these is true:
+The verified branch implements a narrow migration mode that allows a trusted catalog entry to replace a built-in provider only when the provider id is present in `bazarr/provider_hub/migration.py`:
 
-- The provider id is listed in a core `provider_hub_migrated_provider_ids` allow-list.
-- The built-in provider has already been removed from `custom_libs/subliminal_patch/providers/`.
+```python
+MIGRATED_BUILT_IN_PROVIDER_IDS = frozenset({
+    "gestdown",
+})
+```
 
-- [ ] **Step 3: Preserve default safety**
+- [x] **Step 3: Preserve default safety**
 
 Untrusted catalogs must still be blocked from shadowing built-ins. The default behavior for non-migrated built-ins must stay unchanged.
 
-- [ ] **Step 4: Add regression tests**
+- [x] **Step 4: Add regression tests**
 
 The tests must prove:
 
@@ -86,7 +92,20 @@ The tests must prove:
 - Registry registers the trusted Provider Hub `gestdown` class instead of silently skipping it.
 - Existing non-shadow plugin providers still register normally.
 
-- [ ] **Step 5: Deploy to the Bazarr test server before provider compat proof**
+- [x] **Step 5: Verify the core branch**
+
+```bash
+cd /tmp/bazarr_provider_hub_builtin_migration
+python3 -m pytest tests/bazarr/test_provider_hub.py -k 'migrated or shadow or trusted'
+python3 -m pytest tests/bazarr/test_provider_hub.py
+```
+
+Observed on 2026-05-29:
+
+- `6 passed, 86 deselected` for the targeted trusted/shadow/migrated slice.
+- `92 passed` for the full Provider Hub test file.
+
+- [ ] **Step 6: Deploy to the Bazarr test server before provider compat proof**
 
 Provider branches whose ids match built-ins cannot complete the live compat gate until this core branch is deployed to `bazarr-ui-test`.
 
