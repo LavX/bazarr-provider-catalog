@@ -1,0 +1,219 @@
+import base64
+import hashlib
+import importlib.util
+import io
+import unittest
+import zipfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+PROVIDER_DIR = ROOT / "providers" / "regielive"
+FIXTURE_DIR = ROOT / "tests" / "fixtures"
+
+
+def _load_provider_module():
+    spec = importlib.util.spec_from_file_location(
+        "regielive_provider", PROVIDER_DIR / "provider.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+MOVIE_JSON = (FIXTURE_DIR / "regielive_search_movie.json").read_bytes()
+EPISODE_JSON = (FIXTURE_DIR / "regielive_search_episode.json").read_bytes()
+EMPTY_JSON = (FIXTURE_DIR / "regielive_empty.json").read_bytes()
+
+
+def _zip_body(files):
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, body in files.items():
+            archive.writestr(name, body)
+    return stream.getvalue()
+
+
+class RegieLiveParserTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_movie_query_params_include_name_and_year(self):
+        params = self.mod.build_query_params({"kind": "movie", "title": "Dune", "year": 2021})
+        self.assertEqual(params, {"nume": "Dune", "an": "2021"})
+
+    def test_episode_query_params_include_series_season_episode_and_year(self):
+        params = self.mod.build_query_params(
+            {
+                "kind": "episode",
+                "series": "Breaking Bad",
+                "season": 1,
+                "episode": 1,
+                "year": 2008,
+            }
+        )
+        self.assertEqual(
+            params,
+            {"nume": "Breaking Bad", "sezon": "1", "episod": "1", "an": "2008"},
+        )
+
+    def test_parse_search_results_flattens_nested_subtitles(self):
+        rows = self.mod.parse_search_results(MOVIE_JSON)
+        self.assertEqual([row["subtitle_id"] for row in rows], ["2573535", "2573536"])
+        self.assertEqual(rows[0]["title"], "Dune.2021.1080p.BluRay.x264")
+        self.assertEqual(rows[0]["download_url"], "https://subtitrari.regielive.ro/download/2573535")
+        self.assertEqual(rows[0]["rating"], 8.7)
+
+    def test_parse_search_results_accepts_empty_or_missing_results(self):
+        self.assertEqual(self.mod.parse_search_results(EMPTY_JSON), [])
+        self.assertEqual(self.mod.parse_search_results(b"[]"), [])
+        self.assertEqual(self.mod.parse_search_results(b"{}"), [])
+
+    def test_parse_search_results_rejects_invalid_json(self):
+        with self.assertRaises(ValueError):
+            self.mod.parse_search_results(b"<html>not json</html>")
+
+
+class RegieLiveProviderTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_search_fetches_api_and_returns_movie_result(self):
+        provider = self.mod.RegieLiveProvider()
+        calls = []
+
+        def stub(url, headers=None, timeout=15, referer=None):
+            del timeout, referer
+            calls.append((url, headers))
+            return MOVIE_JSON
+
+        provider._http_get = stub
+        results = provider.search(
+            {"kind": "movie", "title": "Dune", "year": 2021, "release_group": "x264"},
+            [{"alpha3": "ron", "alpha2": "ro"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(
+            calls[0][0],
+            "https://api.regielive.ro/bazarr/search.php?nume=Dune&an=2021",
+        )
+        self.assertEqual(calls[0][1]["RL-API"], "API-BAZARR-YTZ-SL")
+        first = results[0]
+        self.assertEqual(first["provider"], "regielive")
+        self.assertEqual(first["language"], {"alpha3": "ron", "alpha2": "ro", "hi": False, "forced": False})
+        self.assertIn("title", first["matches"])
+        self.assertIn("year", first["matches"])
+        self.assertIn("release_group", first["matches"])
+        self.assertEqual(first["provider_payload"]["download_url"], "https://subtitrari.regielive.ro/download/2573535")
+
+    def test_search_returns_only_romanian(self):
+        provider = self.mod.RegieLiveProvider()
+
+        def stub(url, headers=None, timeout=15, referer=None):
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        self.assertEqual(
+            provider.search(
+                {"kind": "movie", "title": "Dune", "year": 2021},
+                [{"alpha3": "eng", "alpha2": "en"}],
+                {},
+            ),
+            [],
+        )
+
+    def test_episode_search_returns_episode_matches(self):
+        provider = self.mod.RegieLiveProvider()
+
+        def stub(url, headers=None, timeout=15, referer=None):
+            del headers, timeout, referer
+            self.assertEqual(
+                url,
+                "https://api.regielive.ro/bazarr/search.php?nume=Breaking+Bad&sezon=1&episod=1&an=2008",
+            )
+            return EPISODE_JSON
+
+        provider._http_get = stub
+        results = provider.search(
+            {"kind": "episode", "series": "Breaking Bad", "season": 1, "episode": 1, "year": 2008},
+            [{"alpha3": "ron", "alpha2": "ro"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(results[0]["release_info"], "Breaking.Bad.S01E01.HDTV.XviD-FQM")
+        self.assertIn("series", results[0]["matches"])
+        self.assertIn("season", results[0]["matches"])
+        self.assertIn("episode", results[0]["matches"])
+
+    def test_download_visits_landing_page_then_downloads_zip_and_extracts_subtitle(self):
+        provider = self.mod.RegieLiveProvider()
+        body = b"1\r\n00:00:01,000 --> 00:00:02,000\r\nSalut\r\n"
+        archive = _zip_body({"readme.txt": b"not a subtitle", "Dune.2021.srt": body})
+        calls = []
+
+        def stub(url, headers=None, timeout=15, referer=None):
+            del headers, timeout
+            calls.append((url, referer))
+            if url == "https://subtitrari.regielive.ro":
+                return b"ok"
+            if url == "https://subtitrari.regielive.ro/download/2573535":
+                return archive
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        result = provider.download(
+            {"download_url": "https://subtitrari.regielive.ro/download/2573535"},
+            {"alpha3": "ron", "alpha2": "ro"},
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(
+            calls,
+            [
+                ("https://subtitrari.regielive.ro", None),
+                ("https://subtitrari.regielive.ro/download/2573535", "https://subtitrari.regielive.ro"),
+            ],
+        )
+        self.assertEqual(base64.b64decode(result["content_b64"]), body.replace(b"\r\n", b"\n"))
+        self.assertEqual(result["content_sha256"], hashlib.sha256(body.replace(b"\r\n", b"\n")).hexdigest())
+        self.assertEqual(result["content_type"], "application/x-subrip")
+        self.assertEqual(result["format"], "srt")
+
+    def test_download_skips_hidden_and_txt_files(self):
+        provider = self.mod.RegieLiveProvider()
+        archive = _zip_body(
+            {
+                ".hidden.srt": b"hidden",
+                "notes.txt": b"notes",
+                "Season/file.ass": b"[Script Info]\r\nTitle: Test\r\n",
+            }
+        )
+
+        def stub(url, headers=None, timeout=15, referer=None):
+            del headers, timeout, referer
+            return b"ok" if url == "https://subtitrari.regielive.ro" else archive
+
+        provider._http_get = stub
+        result = provider.download(
+            {"download_url": "https://subtitrari.regielive.ro/download/ass"},
+            {"alpha3": "ron", "alpha2": "ro"},
+            {},
+        )
+
+        self.assertEqual(result["format"], "ass")
+        self.assertEqual(base64.b64decode(result["content_b64"]), b"[Script Info]\nTitle: Test\n")
+
+    def test_download_raises_for_server_500_body(self):
+        provider = self.mod.RegieLiveProvider()
+
+        def stub(url, headers=None, timeout=15, referer=None):
+            del headers, timeout, referer
+            return b"ok" if url == "https://subtitrari.regielive.ro" else b"500"
+
+        provider._http_get = stub
+        with self.assertRaises(ValueError):
+            provider.download(
+                {"download_url": "https://subtitrari.regielive.ro/download/2573535"},
+                {"alpha3": "ron", "alpha2": "ro"},
+                {},
+            )

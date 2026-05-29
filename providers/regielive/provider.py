@@ -1,0 +1,338 @@
+"""RegieLive provider for the Bazarr+ Provider Hub catalog."""
+
+import base64 as _base64
+import hashlib as _hashlib
+import html
+import io
+import json
+import os
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import zipfile
+from http.cookiejar import CookieJar
+
+PROVIDER_ID = "regielive"
+API_URL = "https://api.regielive.ro/bazarr/search.php"
+DOWNLOAD_ORIGIN = "https://subtitrari.regielive.ro"
+API_HEADER_VALUE = "API-BAZARR-YTZ-SL"
+HTTP_TIMEOUT_SECONDS = 15
+MAX_RESULTS = 20
+SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt", ".smi", ".sami")
+USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
+)
+
+ROMANIAN = {"alpha3": "ron", "alpha2": "ro", "hi": False, "forced": False}
+
+
+def build_query_params(video):
+    video = video or {}
+    kind = video.get("kind")
+    params = {}
+    if kind == "movie":
+        title = _clean_text(video.get("title"))
+        if not title:
+            return {}
+        params["nume"] = title
+    elif kind == "episode":
+        series = _clean_text(video.get("series"))
+        season = _clean_number(video.get("season"))
+        episode = _clean_number(video.get("episode"))
+        if not series or season is None or episode is None:
+            return {}
+        params["nume"] = series
+        params["sezon"] = season
+        params["episod"] = episode
+    else:
+        return {}
+
+    year = _clean_number(video.get("year"))
+    if year is not None:
+        params["an"] = year
+    return params
+
+
+def parse_search_results(body):
+    if not body:
+        return []
+    try:
+        payload = json.loads(_decode(body))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("regielive returned invalid JSON") from exc
+    if not isinstance(payload, dict):
+        return []
+    groups = payload.get("rezultate")
+    if not isinstance(groups, dict):
+        return []
+
+    rows = []
+    seen = set()
+    for group in groups.values():
+        if not isinstance(group, dict):
+            continue
+        subtitles = group.get("subtitrari")
+        if not isinstance(subtitles, dict):
+            continue
+        for subtitle_id, item in subtitles.items():
+            if not isinstance(item, dict):
+                continue
+            key = str(subtitle_id)
+            if key in seen:
+                continue
+            title = _clean_text(item.get("titlu"))
+            download_url = _clean_text(item.get("url"))
+            if not title or not download_url:
+                continue
+            seen.add(key)
+            rating = item.get("rating")
+            rating_value = rating.get("nota") if isinstance(rating, dict) else None
+            rows.append(
+                {
+                    "subtitle_id": key,
+                    "title": title,
+                    "download_url": download_url,
+                    "rating": _safe_float(rating_value),
+                }
+            )
+    return rows
+
+
+class RegieLiveProvider:
+    def __init__(self):
+        cookie_jar = CookieJar()
+        self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookie_jar))
+
+    def _http_get(self, url, headers=None, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
+        merged_headers = {
+            "User-Agent": USER_AGENT,
+            "Accept": "application/json,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9,ro;q=0.8",
+        }
+        if headers:
+            merged_headers.update(headers)
+        if referer:
+            merged_headers["Referer"] = referer
+        request = urllib.request.Request(url, headers=merged_headers)
+        try:
+            with self._opener.open(request, timeout=timeout) as response:
+                return response.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                raise RuntimeError("regielive rate limit reached") from exc
+            if exc.code == 403:
+                raise RuntimeError("regielive rejected the request") from exc
+            raise RuntimeError(f"regielive HTTP {exc.code}") from exc
+        except OSError as exc:
+            raise RuntimeError("regielive request failed") from exc
+
+    def search(self, video, languages, config):
+        if not _requests_romanian(languages):
+            return []
+        params = build_query_params(video)
+        if not params:
+            return []
+
+        _sleep(config)
+        url = f"{API_URL}?{urllib.parse.urlencode(params)}"
+        body = self._http_get(url, headers={"RL-API": API_HEADER_VALUE})
+        rows = parse_search_results(body)
+        results = [self._result(video or {}, row) for row in rows]
+        results.sort(key=lambda item: (-item["score"], item["release_info"].lower()))
+        return results[:MAX_RESULTS]
+
+    def download(self, provider_payload, language, config):
+        del language
+        payload = provider_payload or {}
+        download_url = _clean_text(payload.get("download_url") or payload.get("url"))
+        if not download_url:
+            raise ValueError("regielive download requires download_url in provider_payload")
+
+        _sleep(config)
+        self._http_get(DOWNLOAD_ORIGIN)
+        _sleep(config)
+        archive_body = self._http_get(download_url, referer=DOWNLOAD_ORIGIN)
+        if archive_body.strip() == b"500":
+            raise ValueError("regielive returned server error 500")
+
+        content, filename = extract_subtitle_from_zip(archive_body)
+        fmt = _subtitle_format(filename)
+        return _content_payload(_normalize_line_endings(content), fmt)
+
+    def _result(self, video, row):
+        matches = derive_matches(video, row["title"])
+        score = min(100, 80 + int(round(row["rating"] * 2)))
+        if "episode" in matches:
+            score = max(score, 96)
+        elif "year" in matches:
+            score = max(score, 92)
+        return {
+            "provider": PROVIDER_ID,
+            "id": f"regielive-{row['subtitle_id']}",
+            "language": dict(ROMANIAN),
+            "release_info": row["title"],
+            "filename": f"regielive.{row['subtitle_id']}.srt",
+            "matches": matches,
+            "score": score,
+            "score_without_hash": score,
+            "score_out_of": 100,
+            "hash_verifiable": False,
+            "hearing_impaired_verifiable": False,
+            "hearing_impaired": False,
+            "download_count": int(round(row["rating"] * 100)) if row["rating"] else 0,
+            "page_link": row["download_url"],
+            "display": {
+                "source": "RegieLive",
+                "title": row["title"],
+                "rating": row["rating"],
+            },
+            "provider_payload": {
+                "provider": PROVIDER_ID,
+                "schema": 1,
+                "subtitle_id": row["subtitle_id"],
+                "download_url": row["download_url"],
+                "filename": row["title"],
+            },
+        }
+
+
+def derive_matches(video, release_info):
+    video = video or {}
+    release_text = _clean_text(release_info).lower()
+    matches = []
+    if video.get("kind") == "episode":
+        if video.get("series"):
+            matches.append("series")
+        if video.get("season") is not None:
+            matches.append("season")
+        if video.get("episode") is not None:
+            matches.append("episode")
+        if video.get("year") is not None:
+            matches.append("year")
+    elif video.get("kind") == "movie":
+        if video.get("title"):
+            matches.append("title")
+        if video.get("year") is not None:
+            matches.append("year")
+
+    release_group = _clean_text(video.get("release_group")).lower()
+    if release_group and release_group in release_text:
+        matches.append("release_group")
+        matches.append("hash")
+    return matches
+
+
+def extract_subtitle_from_zip(body):
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(body or b""))
+    except zipfile.BadZipFile as exc:
+        raise ValueError("regielive download is not a ZIP archive") from exc
+
+    candidates = []
+    for name in archive.namelist():
+        basename = os.path.basename(name)
+        lowered = basename.lower()
+        if not basename or basename.startswith("."):
+            continue
+        if not lowered.endswith(SUBTITLE_EXTENSIONS):
+            continue
+        candidates.append(name)
+    if not candidates:
+        raise ValueError("regielive archive contained no subtitle files")
+    candidates.sort(key=lambda name: (not name.lower().endswith(".srt"), len(name), name.lower()))
+    filename = candidates[0]
+    content = archive.read(filename)
+    if not content:
+        raise ValueError("regielive downloaded empty subtitle")
+    return content, filename
+
+
+def _requests_romanian(languages):
+    for language in languages or []:
+        if not isinstance(language, dict):
+            continue
+        alpha3 = (language.get("alpha3") or "").lower()
+        alpha2 = (language.get("alpha2") or "").lower()
+        if alpha3 == "ron" or alpha2 == "ro":
+            return True
+    return False
+
+
+def _clean_text(value):
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    return " ".join(html.unescape(str(value)).split())
+
+
+def _clean_number(value):
+    if value is None or value == "":
+        return None
+    try:
+        return str(int(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _decode(body):
+    if isinstance(body, str):
+        return body
+    return (body or b"").decode("utf-8", errors="replace")
+
+
+def _normalize_line_endings(content):
+    return (content or b"").replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
+def _subtitle_format(filename):
+    lowered = (filename or "").lower()
+    for extension in SUBTITLE_EXTENSIONS:
+        if lowered.endswith(extension):
+            return extension[1:]
+    return "srt"
+
+
+def _content_payload(body, fmt):
+    if not body:
+        raise ValueError("regielive downloaded empty subtitle")
+    try:
+        body.decode("utf-8")
+        encoding = "utf-8"
+    except UnicodeDecodeError:
+        encoding = "latin-1"
+    return {
+        "content_b64": _base64.b64encode(body).decode("ascii"),
+        "content_sha256": _hashlib.sha256(body).hexdigest(),
+        "content_type": _content_type(fmt),
+        "format": fmt,
+        "encoding": encoding,
+        "empty": False,
+    }
+
+
+def _content_type(fmt):
+    if fmt in {"ass", "ssa"}:
+        return "text/x-ssa"
+    if fmt == "vtt":
+        return "text/vtt"
+    return "application/x-subrip"
+
+
+def _sleep(config):
+    delay_ms = (config or {}).get("request_delay_ms", 0) or 0
+    try:
+        delay_ms = int(delay_ms)
+    except (TypeError, ValueError):
+        delay_ms = 0
+    if delay_ms > 0:
+        time.sleep(min(delay_ms, 5000) / 1000.0)
