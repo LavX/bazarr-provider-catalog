@@ -46,6 +46,7 @@
   - `subsunacs`: branch `catalog-subsunacs`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsunacs`, current head `6394dff Add SubsUnacs provider`
   - `subsynchro`: branch `catalog-subsynchro`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsynchro`, current head `9f9084e Add SubSynchro provider`
   - `subtitrarinoi`: branch `catalog-subtitrarinoi`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitrarinoi`, current head `8fc7785 Add Subtitrari Noi provider`
+  - `subtitriid`: branch `catalog-subtitriid`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitriid`, current head `5e783ba Add Subtitri.id provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -480,6 +481,32 @@
   - `python3 -B -m sdk smoke-test --provider subtitrarinoi --language ron --video-fixture tests/fixtures/subtitrarinoi_video_breaking_bad_s01e01.json --expect-min-results 1`: `subtitrarinoi ok`.
 - Remaining gates:
   - Add `subtitrarinoi` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+
+### `subtitriid`
+
+- Branch: `catalog-subtitriid`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/subtitriid`
+- Current checkpoint: `5e783ba Add Subtitri.id provider`
+- Local evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_subtitriid.py'`: failed because `providers/subtitriid/provider.py` did not exist.
+  - Parser edge red gate for download URL entry id: failed with `AssertionError: '20' != '406'`, then passed after `_entry_id_from_url` learned the uCoz `/load/0-0-0-406-20` shape.
+  - `python3 -B -m unittest discover -s tests -p 'test_subtitriid.py'`: `11` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests`: `339` tests passed, `6` skipped.
+  - `python3 -B -m py_compile providers/subtitriid/provider.py`: passed.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Attribution and em-dash scan over touched files found no matches.
+- Live smoke evidence on 2026-05-29:
+  - `curl -I -L --http1.1 --max-time 20 -A "Mozilla/5.0" https://subtitri.do.am/`: HTTP `200`.
+  - `curl -L --http1.1 --max-time 20 -A "Mozilla/5.0" "https://subtitri.do.am/search/?q=Inception"` returned a live `eBlock` result for `Inception`.
+  - The live `Inception` detail page exposes `main-header`, `film-page-year`, IMDb `tt1375666`, and download URL `/load/0-0-0-406-20`.
+  - `curl -L --http1.1 --max-time 20 -A "Mozilla/5.0" -e "https://subtitri.do.am/load/subtitri_2010_gada/inception_2010/4-1-0-406" -o /tmp/subtitriid_inception_download.bin "https://subtitri.do.am/load/0-0-0-406-20"` returned a ZIP archive with one SRT file.
+  - `python3 -B -m sdk smoke-test --provider subtitriid --language lav --video-fixture tests/fixtures/subtitriid_video_inception.json --expect-min-results 1`: `subtitriid ok`.
+- Remaining gates:
+  - Add `subtitriid` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ## Why OpenSubtitles.org Is Tricky
