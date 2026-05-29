@@ -9,7 +9,8 @@
 ## Required Behavior
 
 - Media: episodes only.
-- Languages: broad Addic7ed-style language set, including Portuguese and Serbian variants.
+- Languages: broad Addic7ed-style language set, including Brazilian Portuguese plus Serbian Latin and Cyrillic variants.
+- Language endpoint names: use the current Gestdown names for API URLs, including `Català`, `Euskera`, `Galego`, `Portuguese`, `Serbian`, and `Chinese (Simplified)`.
 - Auth and settings: no login, token, cookie, or API key.
 - Search inputs: TVDB series id, season number, episode number, requested subtitle language.
 - Download flow: search returns a relative `downloadUri`; provider downloads it from the API host and returns subtitle bytes.

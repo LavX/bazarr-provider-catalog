@@ -101,6 +101,13 @@ class GestdownLanguageTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
 
+    def test_manifest_declares_built_in_region_and_script_variants(self):
+        manifest = json.loads((PROVIDER_DIR / "provider.json").read_text(encoding="utf-8"))
+
+        self.assertIn("pt-BR", manifest["languages"])
+        self.assertIn("sr-Latn", manifest["languages"])
+        self.assertIn("sr-Cyrl", manifest["languages"])
+
     def test_maps_common_worker_language_payloads(self):
         self.assertEqual(
             self.mod.gestdown_language_name({"alpha3": "eng", "alpha2": "en"}),
@@ -110,13 +117,43 @@ class GestdownLanguageTests(unittest.TestCase):
             self.mod.gestdown_language_name({"alpha3": "fra", "alpha2": "fr"}),
             "French",
         )
+        self.assertEqual(
+            self.mod.gestdown_language_name({"alpha3": "cat", "alpha2": "ca"}),
+            "Català",
+        )
+        self.assertEqual(
+            self.mod.gestdown_language_name({"alpha3": "eus", "alpha2": "eu"}),
+            "Euskera",
+        )
+        self.assertEqual(
+            self.mod.gestdown_language_name({"alpha3": "glg", "alpha2": "gl"}),
+            "Galego",
+        )
+        self.assertEqual(
+            self.mod.gestdown_language_name({"alpha3": "zho", "alpha2": "zh"}),
+            "Chinese (Simplified)",
+        )
 
-    def test_maps_brazilian_portuguese_when_country_is_present(self):
+    def test_maps_brazilian_portuguese_to_current_api_language_name(self):
         self.assertEqual(
             self.mod.gestdown_language_name(
                 {"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR"}
             ),
-            "Portuguese (Brazil)",
+            "Portuguese",
+        )
+
+    def test_maps_serbian_script_variants_to_current_api_language_name(self):
+        self.assertEqual(
+            self.mod.gestdown_language_name(
+                {"alpha3": "srp", "alpha2": "sr", "script": "Latn"}
+            ),
+            "Serbian",
+        )
+        self.assertEqual(
+            self.mod.gestdown_language_name(
+                {"alpha3": "srp", "alpha2": "sr", "script": "Cyrl"}
+            ),
+            "Serbian",
         )
 
     def test_unsupported_language_returns_none(self):

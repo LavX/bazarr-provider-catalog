@@ -110,17 +110,17 @@ _GESTDOWN_LANGUAGE_NAMES = {
     "ben": "Bengali",
     "bos": "Bosnian",
     "bul": "Bulgarian",
-    "cat": "Catalan",
+    "cat": "Català",
     "ces": "Czech",
     "dan": "Danish",
     "deu": "German",
     "ell": "Greek",
     "eng": "English",
-    "eus": "Basque",
+    "eus": "Euskera",
     "fas": "Persian",
     "fin": "Finnish",
     "fra": "French",
-    "glg": "Galician",
+    "glg": "Galego",
     "heb": "Hebrew",
     "hrv": "Croatian",
     "hun": "Hungarian",
@@ -147,7 +147,7 @@ _GESTDOWN_LANGUAGE_NAMES = {
     "tur": "Turkish",
     "ukr": "Ukrainian",
     "vie": "Vietnamese",
-    "zho": "Chinese",
+    "zho": "Chinese (Simplified)",
 }
 
 
@@ -256,11 +256,6 @@ def parse_subtitle_results(body):
 def gestdown_language_name(language):
     payload = _language_payload(language)
     alpha3 = payload.get("alpha3")
-    if alpha3 == "por":
-        country = str(payload.get("country_alpha2") or payload.get("country") or "").upper()
-        alpha2 = str(payload.get("alpha2") or "").lower()
-        if country == "BR" or alpha2 == "br":
-            return "Portuguese (Brazil)"
     return _GESTDOWN_LANGUAGE_NAMES.get(alpha3)
 
 
