@@ -36,6 +36,7 @@
   - `greeksubs`: branch `catalog-greeksubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubs`, current head `1ec84fa Add GreekSubs provider`
   - `animekalesi`: branch `catalog-animekalesi`, worktree `/tmp/bazarr_catalog_provider_worktrees/animekalesi`, current head `b5db085 Add AnimeKalesi provider`
   - `animesubinfo`: branch `catalog-animesubinfo`, worktree `/tmp/bazarr_catalog_provider_worktrees/animesubinfo`, current head `b2be823 Add AnimeSub.info provider`
+  - `greeksubtitles`: branch `catalog-greeksubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles`, current head `da99eee Add GreekSubtitles provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -220,6 +221,27 @@
   - `python3 -B -m sdk smoke-test --provider animesubinfo --language pol --video-fixture tests/fixtures/animesubinfo_video_akira.json --expect-min-results 1`: `animesubinfo ok`.
 - Remaining gates:
   - Add `animesubinfo` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+
+### `greeksubtitles`
+
+- Branch: `catalog-greeksubtitles`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles`
+- Current checkpoint: `da99eee Add GreekSubtitles provider`
+- Baseline evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-29:
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_greeksubtitles.py'`: failed because the provider did not yet follow the live `href = "..."` pagination shape.
+  - `python3 -B -m unittest discover -s tests -p 'test_greeksubtitles.py'`: `9` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests`: `337` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+- Live smoke evidence on 2026-05-29:
+  - `python3 -B -m sdk smoke-test --provider greeksubtitles --language ell --video-fixture tests/fixtures/greeksubtitles_video_game_of_thrones_s01e01.json --expect-min-results 1`: `greeksubtitles ok`.
+  - `python3 -B -m sdk smoke-test --provider greeksubtitles --language ell --video-fixture tests/fixtures/greeksubtitles_video_dune.json --expect-min-results 1`: `greeksubtitles ok`.
+- Remaining gates:
+  - Add `greeksubtitles` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ## Why OpenSubtitles.org Is Tricky
