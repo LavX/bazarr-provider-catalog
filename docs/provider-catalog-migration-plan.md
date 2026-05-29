@@ -25,11 +25,38 @@
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Core migration prerequisite branch: `provider-hub-builtin-migration` in `/tmp/bazarr_provider_hub_builtin_migration`
 - Existing provider worktrees:
-  - `gestdown`: branch `catalog-gestdown`, worktree `/tmp/bazarr_catalog_provider_worktrees/gestdown`, current head `c0d0abd Add Gestdown provider`
+  - `gestdown`: branch `catalog-gestdown`, worktree `/tmp/bazarr_catalog_provider_worktrees/gestdown`, current head `c74a706 Fix Gestdown language parity`
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, currently clean at `origin/main`
-  - `regielive`: branch `catalog-regielive`, worktree `/tmp/bazarr_catalog_provider_worktrees/regielive`, currently clean at `origin/main`
+  - `regielive`: branch `catalog-regielive`, worktree `/tmp/bazarr_catalog_provider_worktrees/regielive`, current head `fb5a2ae Add RegieLive provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
+
+## Provider Progress Ledger
+
+### `gestdown`
+
+- Branch: `catalog-gestdown`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/gestdown`
+- Current checkpoint: `c74a706 Fix Gestdown language parity`
+- Local evidence: provider tests, catalog validation, full tests, live smoke, and core manifest parse check passed on 2026-05-29.
+- Remaining gate: live Provider Hub compat proof after the trusted built-in migration core branch is deployable on the Bazarr test server.
+
+### `regielive`
+
+- Branch: `catalog-regielive`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/regielive`
+- Current checkpoint: `fb5a2ae Add RegieLive provider`
+- Local evidence on 2026-05-29:
+  - `python3 -B -m unittest discover -s tests -p 'test_regielive.py'`: `11` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests`: `339` tests passed, `6` skipped.
+  - `git diff --check`: clean before commit.
+- Live smoke evidence on 2026-05-29:
+  - `python3 -B -m sdk smoke-test --provider regielive --language ron --video-fixture tests/fixtures/regielive_video_dune.json --expect-min-results 1 --skip-download` failed with `regielive search failed: regielive rejected the request`.
+  - Direct API probes from local network and `bazarr-ui-test` returned HTTP `403`.
+- Remaining gates:
+  - Determine whether RegieLive currently requires a different public request shape, allows only specific egress IPs, or has retired the Bazarr API key.
+  - Add `regielive` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
 
 ## Why OpenSubtitles.org Is Tricky
 
