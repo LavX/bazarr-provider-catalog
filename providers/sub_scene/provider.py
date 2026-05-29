@@ -2,6 +2,7 @@
 
 import base64
 import hashlib
+import html
 import io
 import json
 import os
@@ -34,7 +35,7 @@ CLOUDFLARE_BODY_MARKERS = (
     "cf-chl",
     "turnstile",
 )
-SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt")
+SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt", ".smi", ".sami")
 
 LANGUAGE_MAP = {
     "Arabic": "ara",
@@ -742,6 +743,75 @@ def _subtitle_extension(name):
     return None
 
 
+_SMI_SYNC_RE = re.compile(
+    r"<sync\b[^>]*\bstart\s*=\s*['\"]?(\d+)['\"]?[^>]*>",
+    re.IGNORECASE,
+)
+_SMI_BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+_SMI_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _decode_subtitle_text(content):
+    for encoding in ("utf-8-sig", "utf-16", "cp949", "cp1252", "latin-1"):
+        try:
+            return content.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return content.decode("utf-8", errors="replace")
+
+
+def _srt_timestamp(milliseconds):
+    milliseconds = max(0, int(milliseconds))
+    seconds, millis = divmod(milliseconds, 1000)
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+
+
+def _smi_fragment_to_text(fragment):
+    fragment = _SMI_BR_RE.sub("\n", fragment or "")
+    text = html.unescape(_SMI_TAG_RE.sub("", fragment))
+    lines = []
+    for line in text.replace("\r", "\n").split("\n"):
+        cleaned = re.sub(r"[ \t\f\v]+", " ", line.replace("\xa0", " ")).strip()
+        if cleaned:
+            lines.append(cleaned)
+    return "\n".join(lines)
+
+
+def _smi_to_srt(content):
+    text = _decode_subtitle_text(content)
+    syncs = list(_SMI_SYNC_RE.finditer(text))
+    cues = []
+    for index, sync in enumerate(syncs):
+        start = int(sync.group(1))
+        next_sync = syncs[index + 1] if index + 1 < len(syncs) else None
+        end = int(next_sync.group(1)) if next_sync else start + 3000
+        if end <= start:
+            end = start + 3000
+        cue_end = next_sync.start() if next_sync else len(text)
+        cue_text = _smi_fragment_to_text(text[sync.end():cue_end])
+        if not cue_text:
+            continue
+        cues.append(
+            f"{len(cues) + 1}\n{_srt_timestamp(start)} --> {_srt_timestamp(end)}\n{cue_text}"
+        )
+    if not cues:
+        return b""
+    return ("\n\n".join(cues) + "\n").encode("utf-8")
+
+
+def _read_subtitle_member(zip_file, name):
+    content = zip_file.read(name)
+    subtitle_format = _subtitle_extension(name) or "srt"
+    filename = name
+    if subtitle_format in {"smi", "sami"}:
+        content = _smi_to_srt(content)
+        subtitle_format = "srt"
+        filename = f"{os.path.splitext(name)[0]}.srt"
+    return content, filename, subtitle_format
+
+
 def _download_subtitle(download_url, delay_ms=0, video=None, config=None, state=None):
     """Download and extract subtitle ZIP file."""
     if delay_ms > 0:
@@ -769,15 +839,24 @@ def _download_subtitle(download_url, delay_ms=0, video=None, config=None, state=
             selected_files = _select_subtitle_files(subtitle_files, video)
             if not selected_files:
                 return None
-            content = b"\n\n".join(zf.read(name) for name in selected_files)
+            parts = []
+            output_names = []
+            output_formats = []
+            for name in selected_files:
+                member_content, member_name, member_format = _read_subtitle_member(zf, name)
+                if member_content:
+                    parts.append(member_content)
+                    output_names.append(member_name)
+                    output_formats.append(member_format)
+            content = b"\n\n".join(parts)
             if not content:
                 return None
-            subtitle_file = selected_files[0]
+            subtitle_file = output_names[0]
             
             return {
                 "content": content,
                 "filename": subtitle_file,
-                "format": _subtitle_extension(subtitle_file) or "srt",
+                "format": output_formats[0] if output_formats else "srt",
             }
     except CloudflareBlockedError:
         raise

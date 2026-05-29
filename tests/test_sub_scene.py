@@ -322,6 +322,36 @@ class TestSelectEpisodeFile(unittest.TestCase):
 
 
 class TestDownloadSubtitle(unittest.TestCase):
+    def test_converts_smi_member_from_zip_to_srt(self):
+        smi_content = b"""<SAMI>
+<BODY>
+<SYNC Start=1000><P Class=ENUSCC>Hello<br>world
+<SYNC Start=3500><P Class=ENUSCC>&nbsp;
+<SYNC Start=5000><P Class=ENUSCC>Second line
+<SYNC Start=6500><P Class=ENUSCC>&nbsp;
+</BODY>
+</SAMI>
+"""
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("Movie.smi", smi_content)
+
+        with patch("provider._http_get", return_value=zip_buffer.getvalue()):
+            result = subscene_module._download_subtitle(
+                "/download/123",
+                video={"kind": "movie", "title": "Movie", "year": 2024},
+                config={},
+                state={},
+            )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["format"], "srt")
+        self.assertEqual(result["filename"], "Movie.srt")
+        self.assertIn(b"00:00:01,000 --> 00:00:03,500", result["content"])
+        self.assertIn(b"Hello\nworld", result["content"])
+        self.assertIn(b"00:00:05,000 --> 00:00:06,500", result["content"])
+        self.assertIn(b"Second line", result["content"])
+
     def test_extracts_supported_non_srt_file_from_zip(self):
         content = b"[Script Info]\nTitle: Test\n"
         zip_buffer = io.BytesIO()
