@@ -1,0 +1,20 @@
+[
+  {
+    "Desc": "Dune 2021",
+    "Files": [
+      {
+        "Ext": "srt",
+        "Link": "https://www.shooter.cn/download/11111111111111111111111111111111.srt"
+      },
+      {
+        "Ext": "ass",
+        "Link": "https://www.shooter.cn/download/22222222222222222222222222222222.ass"
+      }
+    ]
+  },
+  {
+    "Desc": "Empty group",
+    "Files": []
+  }
+]
+
