@@ -45,6 +45,7 @@
   - `subssabbz`: branch `catalog-subssabbz`, worktree `/tmp/bazarr_catalog_provider_worktrees/subssabbz`, current head `3aa8f02 Add SubsSabBz provider`
   - `subsunacs`: branch `catalog-subsunacs`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsunacs`, current head `6394dff Add SubsUnacs provider`
   - `subsynchro`: branch `catalog-subsynchro`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsynchro`, current head `9f9084e Add SubSynchro provider`
+  - `subtitrarinoi`: branch `catalog-subtitrarinoi`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitrarinoi`, current head `8fc7785 Add Subtitrari Noi provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -451,6 +452,29 @@
 - Remaining gates:
   - Re-run live SubSynchro smoke when `www.subsynchro.com` serves film pages and downloads again.
   - Add `subsynchro` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+
+### `subtitrarinoi`
+
+- Branch: `catalog-subtitrarinoi`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/subtitrarinoi`
+- Current checkpoint: `8fc7785 Add Subtitrari Noi provider`
+- Local evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_subtitrarinoi.py'`: failed because `providers/subtitrarinoi/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p 'test_subtitrarinoi.py'`: `11` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests`: `339` tests passed, `6` skipped.
+  - `python3 -B -m py_compile providers/subtitrarinoi/provider.py`: passed.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Attribution and em-dash scan over touched files found no matches.
+- Live smoke evidence on 2026-05-29:
+  - Public probes confirmed `POST /paginare_filme.php` returns current `div id="round"` rows for IMDb and title searches.
+  - The live Breaking Bad row exposes a working ZIP archive at the legacy relative download URL shape.
+  - `python3 -B -m sdk smoke-test --provider subtitrarinoi --language ron --video-fixture tests/fixtures/subtitrarinoi_video_breaking_bad_s01e01.json --expect-min-results 1`: `subtitrarinoi ok`.
+- Remaining gates:
+  - Add `subtitrarinoi` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ## Why OpenSubtitles.org Is Tricky
