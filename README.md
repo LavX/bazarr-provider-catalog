@@ -27,6 +27,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`subhd`](providers/subhd/) | 0.1.3 | Scrapes [SubHD.tv](https://subhd.tv) for Chinese-first movie and episode subtitles with multilingual releases. No login or API key. |
 | [`subtitlestar`](providers/subtitlestar/) | 0.1.8 | Scrapes [subtitlestar.com](https://subtitlestar.com) for Persian/Farsi movie and episode subtitles. No login or API key. |
 | [`sub_scene`](providers/sub_scene/) | 0.1.9 | Scrapes [sub-scene.com](https://sub-scene.com) (Subscene clone) for movie and episode subtitles in 35+ languages including Vietnamese, Arabic, Bengali, Danish, Dutch. Uses cloudscraper with optional FlareSolverr fallback. |
+| [`subsro`](providers/subsro/) | 0.1.0 | Uses the [Subs.ro](https://subs.ro/api) API for Romanian and English movie and episode subtitles. Requires an API key. ZIP and RAR downloads are supported. |
 | [`subtitlecat`](providers/subtitlecat/) | 0.1.5 | Scrapes [subtitlecat.com](https://www.subtitlecat.com) (no login, no API key). Worked example for the [scraper authoring guide](docs/writing-a-scraper-provider.md). |
 | [`smoke`](providers/smoke/) | 0.2.0 | Deterministic no-network fixture for install / worker sanity checks. Not a real subtitle source. |
 
@@ -58,6 +59,7 @@ Every provider here ships independently of Bazarr+ releases. [Contribute](#contr
 - `providers/subhd/`: scrapes SubHD.tv Chinese-first movie and episode subtitle pages.
 - `providers/subtitlestar/`: scrapes subtitlestar.com for Persian/Farsi movie and episode subtitles.
 - `providers/sub_scene/`: scrapes sub-scene.com (Subscene clone) for movie and episode subtitles in 35+ languages including Vietnamese, Arabic, Bengali, Danish, Dutch.
+- `providers/subsro/`: uses the Subs.ro API for Romanian and English movie and episode subtitles with API-key authentication.
 - `providers/subtitlecat/`: first production community provider, scrapes subtitlecat.com using stdlib only. Worked example referenced by [docs/writing-a-scraper-provider.md](docs/writing-a-scraper-provider.md).
 - `sdk/`: standalone authoring tools and templates, see the [SDK reference](sdk/README.md).
 - `tests/`: catalog validation tests that do not import Bazarr internals.
