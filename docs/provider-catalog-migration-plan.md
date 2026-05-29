@@ -50,6 +50,7 @@
   - `supersubtitles`: branch `catalog-supersubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/supersubtitles`, current head `5a64e49 Add SuperSubtitles provider`
   - `titrari`: branch `catalog-titrari`, worktree `/tmp/bazarr_catalog_provider_worktrees/titrari`, current head `be43079 Add Titrari provider`
   - `yavkanet`: branch `catalog-yavkanet`, worktree `/tmp/bazarr_catalog_provider_worktrees/yavkanet`, current head `ac537d6 Add YavkaNet provider`
+  - `yifysubtitles`: branch `catalog-yifysubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/yifysubtitles`, current head `9e112fb Add YIFYSubtitles provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -585,6 +586,31 @@
 - Remaining gates:
   - Re-run live smoke with a reachable FlareSolverr `/v1` endpoint in config.
   - Add `yavkanet` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+
+### `yifysubtitles`
+
+- Branch: `catalog-yifysubtitles`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/yifysubtitles`
+- Current checkpoint: `9e112fb Add YIFYSubtitles provider`
+- Local evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_yifysubtitles.py'`: failed because `providers/yifysubtitles/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p 'test_yifysubtitles.py'`: `7` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/yifysubtitles/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Attribution and em-dash scan over touched files found no matches.
+- Live evidence on 2026-05-29:
+  - `curl -L --http1.1 --max-time 25 -A "Mozilla/5.0" -e "https://yifysubtitles.ch" https://yifysubtitles.ch/movie-imdb/tt1160419`: HTTP `200`, HTML table with `other-subs` rows.
+  - `curl -L --http1.1 --max-time 25 -A "Mozilla/5.0" -e "https://yifysubtitles.ch/movie-imdb/tt1160419" https://yifysubtitles.ch/subtitles/dune-part-one-2021-english-yify-364913`: HTTP `200`, detail page exposed `/subtitle/dune-2021-english-yify-364913.zip`.
+  - `curl -L --http1.1 --max-time 25 -A "Mozilla/5.0" -e "https://yifysubtitles.ch/subtitles/dune-part-one-2021-english-yify-364913" https://yifysubtitles.ch/subtitle/dune-2021-english-yify-364913.zip`: HTTP `200`, `application/zip`, one SRT member.
+  - `python3 -B -m sdk smoke-test --provider yifysubtitles --language eng --video-fixture tests/fixtures/yifysubtitles_video_dune_2021.json --expect-min-results 1 --skip-download`: could not be run with network because escalation approval review timed out; without escalation it failed DNS.
+- Remaining gates:
+  - Re-run Provider Hub SDK live smoke search and download when network approval is available.
+  - Add `yifysubtitles` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ## Why OpenSubtitles.org Is Tricky
