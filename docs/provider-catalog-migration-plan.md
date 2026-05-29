@@ -39,6 +39,7 @@
   - `greeksubtitles`: branch `catalog-greeksubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles`, current head `da99eee Add GreekSubtitles provider`
   - `hosszupuska`: branch `catalog-hosszupuska`, worktree `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`, current head `f0ad3b4 Add Hosszupuska provider`
   - `nekur`: branch `catalog-nekur`, worktree `/tmp/bazarr_catalog_provider_worktrees/nekur`, current head `41e428e Add Nekur provider`
+  - `prijevodionline`: branch `catalog-prijevodionline`, worktree `/tmp/bazarr_catalog_provider_worktrees/prijevodionline`, current head `9c1d795 Add PrijevodiOnline provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -292,6 +293,30 @@
   - `/usr/bin/env PATH=/tmp/no-system-tools python3 -B -m sdk smoke-test --provider nekur --language lav --video-fixture tests/fixtures/nekur_video_dune.json --expect-min-results 1`: `nekur ok`.
 - Remaining gates:
   - Add `nekur` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+
+### `prijevodionline`
+
+- Branch: `catalog-prijevodionline`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/prijevodionline`
+- Current checkpoint: `9c1d795 Add PrijevodiOnline provider`
+- Baseline evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-29:
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_prijevodionline.py'`: failed because `providers/prijevodionline/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p 'test_prijevodionline.py'`: `7` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
+  - `python3 -B -m py_compile providers/prijevodionline/provider.py`: passed.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Attribution and em-dash scan over touched files found no matches.
+- Live smoke evidence on 2026-05-29:
+  - Public index, series page, and AJAX subtitle-list probes returned live `Game of Thrones` S01E01 data, including episode id `33945` and key `ca7a167e13db896fe2324b2cbf10311f`.
+  - `python3 -B -m sdk smoke-test --provider prijevodionline --language hrv --video-fixture tests/fixtures/prijevodionline_video_game_of_thrones_s01e01.json --expect-min-results 1`: `prijevodionline ok`.
+  - `/usr/bin/env PYTHONPATH=/tmp/prijevodionline-deps PATH=/tmp/no-system-tools python3 -B -m sdk smoke-test --provider prijevodionline --language hrv --video-fixture tests/fixtures/prijevodionline_video_game_of_thrones_s01e01.json --expect-min-results 1`: `prijevodionline ok`.
+- Remaining gates:
+  - Add `prijevodionline` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ## Why OpenSubtitles.org Is Tricky
