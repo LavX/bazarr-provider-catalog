@@ -41,6 +41,7 @@
   - `podnapisi`: branch `catalog-podnapisi`, worktree `/tmp/bazarr_catalog_provider_worktrees/podnapisi`, current head `ef8e1cb Add Podnapisi provider`
   - `subf2m`: branch `catalog-subf2m`, worktree `/tmp/bazarr_catalog_provider_worktrees/subf2m`, current head `35bb9c4 Add SubF2M provider`
   - `subsarr`: branch `catalog-subsarr`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsarr`, current head `e154cee Add Subsarr provider`
+  - `assrt`: branch `catalog-assrt`, worktree `/tmp/bazarr_catalog_provider_worktrees/assrt`, current head `c4e2440 Add Assrt provider`
   - `greeksubtitles`: branch `catalog-greeksubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles`, current head `da99eee Add GreekSubtitles provider`
   - `hosszupuska`: branch `catalog-hosszupuska`, worktree `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`, current head `f0ad3b4 Add Hosszupuska provider`
   - `nekur`: branch `catalog-nekur`, worktree `/tmp/bazarr_catalog_provider_worktrees/nekur`, current head `41e428e Add Nekur provider`
@@ -372,6 +373,32 @@
   - Run SDK smoke search and download against a reachable self-hosted Subsarr service when a test `base_url` is available.
   - Add `subsarr` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with a real `base_url`.
+
+### `assrt`
+
+- Branch: `catalog-assrt`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/assrt`
+- Current checkpoint: `c4e2440 Add Assrt provider`
+- Baseline evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-29:
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_assrt.py'`: failed because `providers/assrt/provider.py` did not exist.
+  - Legacy inspection confirmed the tokened API contract: quota lookup, `/sub/search`, `/sub/detail`, language keys `chs`, `cht`, `eng`, native-name fallback, and season-pack file selection.
+  - `python3 -B -m unittest discover -s tests -p 'test_assrt.py'`: `7` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/assrt/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Attribution, em-dash, and non-ASCII scan over touched files found no matches.
+- Live smoke evidence on 2026-05-29:
+  - No-token `https://api.assrt.net/v1/user/quota` probe returned `{"status":20001,"errmsg":"invalid token"}`.
+  - No-token `https://api.assrt.net/v1/sub/search?...` probe returned `{"status":20001,"errmsg":"invalid token"}`.
+  - Real search and download smoke require a valid Assrt API token.
+- Remaining gates:
+  - Run SDK smoke search and download when a test Assrt token is available.
+  - Add `assrt` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with a real token.
 
 ### `greeksubtitles`
 
