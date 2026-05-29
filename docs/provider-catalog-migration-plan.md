@@ -48,6 +48,7 @@
   - `subtitrarinoi`: branch `catalog-subtitrarinoi`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitrarinoi`, current head `8fc7785 Add Subtitrari Noi provider`
   - `subtitriid`: branch `catalog-subtitriid`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitriid`, current head `5e783ba Add Subtitri.id provider`
   - `supersubtitles`: branch `catalog-supersubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/supersubtitles`, current head `5a64e49 Add SuperSubtitles provider`
+  - `titrari`: branch `catalog-titrari`, worktree `/tmp/bazarr_catalog_provider_worktrees/titrari`, current head `be43079 Add Titrari provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -535,6 +536,30 @@
   - `python3 -B -m sdk smoke-test --provider supersubtitles --language eng --video-fixture tests/fixtures/supersubtitles_video_la_brea_s02e13.json --expect-min-results 1`: `supersubtitles ok`.
 - Remaining gates:
   - Add `supersubtitles` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+
+### `titrari`
+
+- Branch: `catalog-titrari`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/titrari`
+- Current checkpoint: `be43079 Add Titrari provider`
+- Local evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_titrari.py'`: failed because `providers/titrari/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p 'test_titrari.py'`: `10` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/titrari/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `338` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Attribution and em-dash scan over touched files found no matches.
+- Live smoke evidence on 2026-05-29:
+  - `python3 -B -m sdk smoke-test --provider titrari --language ron --video-fixture tests/fixtures/titrari_video_dune_2021.json --expect-min-results 1 --skip-download`: `titrari ok`.
+  - `python3 -B -m sdk smoke-test --provider titrari --language ron --video-fixture tests/fixtures/titrari_video_chernobyl_s01e01.json --expect-min-results 1 --skip-download`: `titrari ok`.
+  - `python3 -B -m sdk smoke-test --provider titrari --language ron --video-fixture tests/fixtures/titrari_video_dune_2021.json --expect-min-results 1`: `titrari ok`.
+  - `python3 -B -m sdk smoke-test --provider titrari --language ron --video-fixture tests/fixtures/titrari_video_chernobyl_s01e01.json --expect-min-results 1`: `titrari ok`.
+- Remaining gates:
+  - Add `titrari` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ## Why OpenSubtitles.org Is Tricky
