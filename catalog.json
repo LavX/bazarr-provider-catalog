@@ -441,6 +441,56 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "cc5f9ae5ce3265334128919992d1f34ed9015a4a86fea5a8fdcbbc54d52c2514",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between HTTP calls to greeksubs.net.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Scrapes greeksubs.net for Greek movie and episode subtitles by IMDb id. No login or API key required.",
+        "entry_class": "GreekSubsProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "e4f324d55329304227f939c006a5644ff37a5ce4d6edfa5fd4fa977f06d93122"
+        },
+        "languages": [
+          "ell"
+        ],
+        "name": "GreekSubs",
+        "provider_id": "greeksubs",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/greeksubs",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.0"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "1baafbfe6f2db8ce4304e9613fb951259732f32bc9e53033cef952a3dab4a6f5",
         "config_schema": {
           "additionalProperties": false,
