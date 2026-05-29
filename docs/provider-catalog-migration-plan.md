@@ -28,6 +28,7 @@
   - `gestdown`: branch `catalog-gestdown`, worktree `/tmp/bazarr_catalog_provider_worktrees/gestdown`, current head `c74a706 Fix Gestdown language parity`
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, currently clean at `origin/main`
   - `regielive`: branch `catalog-regielive`, worktree `/tmp/bazarr_catalog_provider_worktrees/regielive`, current head `fb5a2ae Add RegieLive provider`
+  - `shooter`: branch `catalog-shooter`, worktree `/tmp/bazarr_catalog_provider_worktrees/shooter`, current head `776fdb2 Add Shooter provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -57,6 +58,24 @@
 - Remaining gates:
   - Determine whether RegieLive currently requires a different public request shape, allows only specific egress IPs, or has retired the Bazarr API key.
   - Add `regielive` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+
+### `shooter`
+
+- Branch: `catalog-shooter`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/shooter`
+- Current checkpoint: `776fdb2 Add Shooter provider`
+- Local evidence on 2026-05-29:
+  - `python3 -B -m unittest discover -s tests -p 'test_shooter.py'`: `7` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
+  - `git diff --check`: clean.
+- Live Shooter API evidence on 2026-05-29:
+  - `python3 -B -m sdk smoke-test --provider shooter --language eng --video-fixture /tmp/shooter_live_video_man_of_steel.json --expect-min-results 1`: `shooter ok`.
+  - Direct worker-shaped live byte check returned `3` results and downloaded `110646` subtitle bytes.
+- Remaining gates:
+  - Add `shooter` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Deploy a current test-server-compatible core branch to `bazarr-ui-test`; the earlier core branch deployment attempt was based on an old Bazarr revision and hit a database migration mismatch.
+  - Prove Provider Hub compat using a library-backed video that lets Bazarr compute `video.hashes.shooter`, because Shooter does not support title-only searches.
 
 ## Why OpenSubtitles.org Is Tricky
 
