@@ -38,6 +38,7 @@
   - `animesubinfo`: branch `catalog-animesubinfo`, worktree `/tmp/bazarr_catalog_provider_worktrees/animesubinfo`, current head `b2be823 Add AnimeSub.info provider`
   - `animetosho`: branch `catalog-animetosho`, worktree `/tmp/bazarr_catalog_provider_worktrees/animetosho`, current head `4a282a3 Add AnimeTosho provider`
   - `napiprojekt`: branch `catalog-napiprojekt`, worktree `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`, current head `5d9fb63 Add NapiProjekt provider`
+  - `podnapisi`: branch `catalog-podnapisi`, worktree `/tmp/bazarr_catalog_provider_worktrees/podnapisi`, current head `ef8e1cb Add Podnapisi provider`
   - `greeksubtitles`: branch `catalog-greeksubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles`, current head `da99eee Add GreekSubtitles provider`
   - `hosszupuska`: branch `catalog-hosszupuska`, worktree `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`, current head `f0ad3b4 Add Hosszupuska provider`
   - `nekur`: branch `catalog-nekur`, worktree `/tmp/bazarr_catalog_provider_worktrees/nekur`, current head `41e428e Add Nekur provider`
@@ -291,6 +292,30 @@
 - Remaining gates:
   - Re-run catalog scrape live smoke with a reachable FlareSolverr `/v1` endpoint if author-filtered catalog results must be proven before compat.
   - Add `napiprojekt` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+
+### `podnapisi`
+
+- Branch: `catalog-podnapisi`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/podnapisi`
+- Current checkpoint: `ef8e1cb Add Podnapisi provider`
+- Baseline evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-29:
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_podnapisi.py'`: failed because `providers/podnapisi/provider.py` did not exist.
+  - Live Podnapisi JSON endpoint probes from this environment failed DNS for `www.podnapisi.net`; direct host-IP TLS attempts timed out.
+  - `python3 -B -m unittest discover -s tests -p 'test_podnapisi.py'`: `12` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/podnapisi/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `340` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Attribution, em-dash, and non-ASCII scan over touched files found no matches.
+- Live smoke evidence on 2026-05-29:
+  - `python3 -B -m sdk smoke-test --provider podnapisi --language eng --video-fixture tests/fixtures/podnapisi_video_dune_2021.json --config-json '{"verify_ssl":true}' --expect-min-results 1 --skip-download`: failed with `podnapisi search failed: <urlopen error [Errno -2] Name or service not known>`.
+- Remaining gates:
+  - Re-run SDK live smoke search and download when `www.podnapisi.net` resolves from the test network.
+  - Add `podnapisi` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `greeksubtitles`
