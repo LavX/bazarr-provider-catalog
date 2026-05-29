@@ -29,6 +29,7 @@
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, currently clean at `origin/main`
   - `regielive`: branch `catalog-regielive`, worktree `/tmp/bazarr_catalog_provider_worktrees/regielive`, current head `fb5a2ae Add RegieLive provider`
   - `shooter`: branch `catalog-shooter`, worktree `/tmp/bazarr_catalog_provider_worktrees/shooter`, current head `776fdb2 Add Shooter provider`
+  - `subtis`: branch `catalog-subtis`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtis`, current head `5f2b268 Add Subtis provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -76,6 +77,26 @@
   - Add `shooter` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Deploy a current test-server-compatible core branch to `bazarr-ui-test`; the earlier core branch deployment attempt was based on an old Bazarr revision and hit a database migration mismatch.
   - Prove Provider Hub compat using a library-backed video that lets Bazarr compute `video.hashes.shooter`, because Shooter does not support title-only searches.
+
+### `subtis`
+
+- Branch: `catalog-subtis`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/subtis`
+- Current checkpoint: `5f2b268 Add Subtis provider`
+- Baseline evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-29:
+  - `python3 -B -m unittest discover -s tests -p 'test_subtis.py'`: `7` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
+  - `git diff --check`: clean.
+- Live Subtis API evidence on 2026-05-29:
+  - `python3 -B -m sdk smoke-test --provider subtis --language spa --video-fixture tests/fixtures/subtis_video_man_of_steel.json --expect-min-results 1`: `subtis ok`.
+  - Direct worker-shaped live byte check returned `1` result via `alternative` fallback and downloaded `100666` subtitle bytes.
+- Remaining gates:
+  - Add `subtis` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Deploy a current test-server-compatible core branch to `bazarr-ui-test`.
+  - Prove Provider Hub compat search, download, and stream for the exact Subtis candidate.
 
 ## Why OpenSubtitles.org Is Tricky
 
