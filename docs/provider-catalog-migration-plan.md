@@ -30,6 +30,7 @@
   - `regielive`: branch `catalog-regielive`, worktree `/tmp/bazarr_catalog_provider_worktrees/regielive`, current head `fb5a2ae Add RegieLive provider`
   - `shooter`: branch `catalog-shooter`, worktree `/tmp/bazarr_catalog_provider_worktrees/shooter`, current head `776fdb2 Add Shooter provider`
   - `subtis`: branch `catalog-subtis`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtis`, current head `5f2b268 Add Subtis provider`
+  - `wizdom`: branch `catalog-wizdom`, worktree `/tmp/bazarr_catalog_provider_worktrees/wizdom`, current head `e25f7af Add Wizdom provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -97,6 +98,25 @@
   - Add `subtis` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Deploy a current test-server-compatible core branch to `bazarr-ui-test`.
   - Prove Provider Hub compat search, download, and stream for the exact Subtis candidate.
+
+### `wizdom`
+
+- Branch: `catalog-wizdom`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/wizdom`
+- Current checkpoint: `e25f7af Add Wizdom provider`
+- Local evidence on 2026-05-29:
+  - `python3 -B -m unittest discover -s tests -p 'test_wizdom.py'`: `11` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests`: `339` tests passed, `6` skipped.
+  - `git diff --check`: clean.
+- Live smoke evidence on 2026-05-29:
+  - `python3 -B -m sdk smoke-test --provider wizdom --language heb --video-fixture tests/fixtures/wizdom_video_inception.json --expect-min-results 1` failed with `wizdom search failed: The read operation timed out`.
+  - Direct `curl` probes to `https://wizdom.xyz/`, `https://wizdom.xyz/api/releases/tt1375666`, and `http://wizdom.xyz/api/releases/tt1375666` returned Cloudflare HTTP `522` after about `19` seconds from both the local workstation and `bazarr-ui-test`.
+  - TMDB lookup for the same Inception fixture returned HTTP `200`, so the current live blocker is Wizdom origin availability, not TMDB.
+- Remaining gates:
+  - Re-run live Wizdom smoke when `wizdom.xyz` stops returning Cloudflare `522`.
+  - Add `wizdom` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ## Why OpenSubtitles.org Is Tricky
 
