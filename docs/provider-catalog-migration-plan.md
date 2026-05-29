@@ -41,6 +41,7 @@
   - `nekur`: branch `catalog-nekur`, worktree `/tmp/bazarr_catalog_provider_worktrees/nekur`, current head `41e428e Add Nekur provider`
   - `prijevodionline`: branch `catalog-prijevodionline`, worktree `/tmp/bazarr_catalog_provider_worktrees/prijevodionline`, current head `9c1d795 Add PrijevodiOnline provider`
   - `soustitreseu`: branch `catalog-soustitreseu`, worktree `/tmp/bazarr_catalog_provider_worktrees/soustitreseu`, current head `ed93af8 Add Soustitres.eu provider`
+  - `subclub`: branch `catalog-subclub`, worktree `/tmp/bazarr_catalog_provider_worktrees/subclub`, current head `0849eae Add Subclub provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -344,6 +345,31 @@
   - `/usr/bin/env PYTHONPATH=/tmp/prijevodionline-deps PATH=/tmp/no-system-tools python3 -B -m sdk smoke-test --provider soustitreseu --language eng --video-fixture tests/fixtures/soustitreseu_video_game_of_thrones_s01e01.json --expect-min-results 1`: `soustitreseu ok`.
 - Remaining gates:
   - Add `soustitreseu` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+
+### `subclub`
+
+- Branch: `catalog-subclub`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/subclub`
+- Current checkpoint: `0849eae Add Subclub provider`
+- Baseline evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-29:
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_subclub.py'`: failed because `providers/subclub/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p 'test_subclub.py'`: `8` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests`: `336` tests passed, `6` skipped.
+  - `python3 -B -m py_compile providers/subclub/provider.py`: passed.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Attribution and em-dash scan over touched files found no matches.
+- Live smoke evidence on 2026-05-29:
+  - Public search probes returned `Inception` archive id `10100` and `Game of Thrones` S01E01 archive id `11232`.
+  - Public archive-list probes returned direct `.srt` download links for both archive ids.
+  - `python3 -B -m sdk smoke-test --provider subclub --language est --video-fixture tests/fixtures/subclub_video_inception.json --expect-min-results 1`: `subclub ok`.
+  - `python3 -B -m sdk smoke-test --provider subclub --language est --video-fixture tests/fixtures/subclub_video_game_of_thrones_s01e01.json --expect-min-results 1`: `subclub ok`.
+- Remaining gates:
+  - Add `subclub` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ## Why OpenSubtitles.org Is Tricky
