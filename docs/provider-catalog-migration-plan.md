@@ -40,6 +40,7 @@
   - `napiprojekt`: branch `catalog-napiprojekt`, worktree `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`, current head `5d9fb63 Add NapiProjekt provider`
   - `podnapisi`: branch `catalog-podnapisi`, worktree `/tmp/bazarr_catalog_provider_worktrees/podnapisi`, current head `ef8e1cb Add Podnapisi provider`
   - `subf2m`: branch `catalog-subf2m`, worktree `/tmp/bazarr_catalog_provider_worktrees/subf2m`, current head `35bb9c4 Add SubF2M provider`
+  - `subsarr`: branch `catalog-subsarr`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsarr`, current head `e154cee Add Subsarr provider`
   - `greeksubtitles`: branch `catalog-greeksubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles`, current head `da99eee Add GreekSubtitles provider`
   - `hosszupuska`: branch `catalog-hosszupuska`, worktree `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`, current head `f0ad3b4 Add Hosszupuska provider`
   - `nekur`: branch `catalog-nekur`, worktree `/tmp/bazarr_catalog_provider_worktrees/nekur`, current head `41e428e Add Nekur provider`
@@ -347,6 +348,30 @@
 - Remaining gates:
   - Add `subf2m` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+
+### `subsarr`
+
+- Branch: `catalog-subsarr`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/subsarr`
+- Current checkpoint: `e154cee Add Subsarr provider`
+- Baseline evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-29:
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_subsarr.py'`: failed because `providers/subsarr/provider.py` did not exist.
+  - Legacy inspection confirmed the API contract: required `base_url`, `/api/v1/subtitles/search`, IMDb-first search, title fallback, HI filtering, and raw `download_url` subtitle bytes.
+  - `python3 -B -m unittest discover -s tests -p 'test_subsarr.py'`: `7` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subsarr/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Attribution, em-dash, and non-ASCII scan over touched files found no matches.
+- Live smoke evidence on 2026-05-29:
+  - Public live smoke is not applicable without a configured self-hosted Subsarr `base_url`.
+- Remaining gates:
+  - Run SDK smoke search and download against a reachable self-hosted Subsarr service when a test `base_url` is available.
+  - Add `subsarr` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with a real `base_url`.
 
 ### `greeksubtitles`
 
