@@ -60,6 +60,7 @@
   - `yavkanet`: branch `catalog-yavkanet`, worktree `/tmp/bazarr_catalog_provider_worktrees/yavkanet`, current head `ac537d6 Add YavkaNet provider`
   - `yifysubtitles`: branch `catalog-yifysubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/yifysubtitles`, current head `9e112fb Add YIFYSubtitles provider`
   - `hdbits`: branch `catalog-hdbits`, worktree `/tmp/bazarr_catalog_provider_worktrees/hdbits`, current head `42d7f02 Add HDBits provider`
+  - `jimaku`: branch `catalog-jimaku`, worktree `/tmp/bazarr_catalog_provider_worktrees/jimaku`, current head `112d345 Add Jimaku provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -834,6 +835,32 @@
   - Run SDK live smoke search and download with real HDBits credentials.
   - Add `hdbits` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured HDBits credentials.
+
+### `jimaku`
+
+- Branch: `catalog-jimaku`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/jimaku`
+- Current checkpoint: `112d345 Add Jimaku provider`
+- Baseline evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-29:
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_jimaku.py'`: failed because `providers/jimaku/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p 'test_jimaku.py'`: `15` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/jimaku/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `343` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - JSON parse check for `provider.json`, `catalog.json`, and Jimaku fixtures: passed.
+  - Attribution, em-dash, and non-ASCII scan over touched Jimaku files found no matches.
+- Live evidence on 2026-05-29:
+  - `curl -L --max-time 20 https://jimaku.cc/api/openapi.json`: returned OpenAPI `3.0.3` with API-key auth, `/api/entries/search`, `/api/entries/{id}/files`, AniList/TMDB entry backing, and rate-limit headers.
+  - `curl -L --max-time 20 'https://jimaku.cc/api/entries/search?query=one%20piece'`: returned Jimaku JSON `{"error":"unauthorized","code":7}` without an API key.
+  - Real live search and download require a Jimaku `api_key`.
+- Remaining gates:
+  - Run SDK live smoke search and download with a real Jimaku API key.
+  - Add `jimaku` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Jimaku API key.
 
 ## Why OpenSubtitles.org Is Tricky
 
