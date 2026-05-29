@@ -37,6 +37,7 @@
   - `animekalesi`: branch `catalog-animekalesi`, worktree `/tmp/bazarr_catalog_provider_worktrees/animekalesi`, current head `b5db085 Add AnimeKalesi provider`
   - `animesubinfo`: branch `catalog-animesubinfo`, worktree `/tmp/bazarr_catalog_provider_worktrees/animesubinfo`, current head `b2be823 Add AnimeSub.info provider`
   - `greeksubtitles`: branch `catalog-greeksubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles`, current head `da99eee Add GreekSubtitles provider`
+  - `hosszupuska`: branch `catalog-hosszupuska`, worktree `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`, current head `f0ad3b4 Add Hosszupuska provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -242,6 +243,30 @@
   - `python3 -B -m sdk smoke-test --provider greeksubtitles --language ell --video-fixture tests/fixtures/greeksubtitles_video_dune.json --expect-min-results 1`: `greeksubtitles ok`.
 - Remaining gates:
   - Add `greeksubtitles` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+
+### `hosszupuska`
+
+- Branch: `catalog-hosszupuska`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`
+- Current checkpoint: `f0ad3b4 Add Hosszupuska provider`
+- Baseline evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-29:
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_hosszupuska.py'`: failed because `providers/hosszupuska/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p 'test_hosszupuska.py'`: `7` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
+  - `python3 -B -m py_compile providers/hosszupuska/provider.py`: passed.
+  - `git diff --check` and `git diff --cached --check`: clean.
+- Live smoke evidence on 2026-05-29:
+  - `curl -I --max-time 15 http://hosszupuskasub.com/`: `curl: (52) Empty reply from server`.
+  - `curl -I --max-time 15 https://hosszupuskasub.com/`: `curl: (7) Failed to connect to hosszupuskasub.com port 443`.
+  - `python3 -B -m sdk smoke-test --provider hosszupuska --language hun --video-fixture tests/fixtures/hosszupuska_video_game_of_thrones_s01e01.json --expect-min-results 1 --skip-download`: failed with `hosszupuska search failed: Remote end closed connection without response`.
+- Remaining gates:
+  - Re-run live Hosszupuska smoke when `hosszupuskasub.com` serves HTTP or HTTPS responses again.
+  - Add `hosszupuska` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ## Why OpenSubtitles.org Is Tricky
