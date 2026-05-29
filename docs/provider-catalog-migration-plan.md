@@ -31,6 +31,7 @@
   - `shooter`: branch `catalog-shooter`, worktree `/tmp/bazarr_catalog_provider_worktrees/shooter`, current head `776fdb2 Add Shooter provider`
   - `subtis`: branch `catalog-subtis`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtis`, current head `5f2b268 Add Subtis provider`
   - `wizdom`: branch `catalog-wizdom`, worktree `/tmp/bazarr_catalog_provider_worktrees/wizdom`, current head `e25f7af Add Wizdom provider`
+  - `tvsubtitles`: branch `catalog-tvsubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/tvsubtitles`, current head `f63bcb7 Add TVsubtitles provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -116,6 +117,26 @@
 - Remaining gates:
   - Re-run live Wizdom smoke when `wizdom.xyz` stops returning Cloudflare `522`.
   - Add `wizdom` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+
+### `tvsubtitles`
+
+- Branch: `catalog-tvsubtitles`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/tvsubtitles`
+- Current checkpoint: `f63bcb7 Add TVsubtitles provider`
+- Baseline evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+- Local evidence on 2026-05-29:
+  - `python3 -B -m unittest discover -s tests -p 'test_tvsubtitles.py'`: `10` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests`: `338` tests passed, `6` skipped.
+  - `git diff --check`: clean.
+- Live smoke evidence on 2026-05-29:
+  - `python3 -B -m sdk smoke-test --provider tvsubtitles --language eng --video-fixture tests/fixtures/tvsubtitles_video_the_office_s01e02.json --expect-min-results 1`: `tvsubtitles ok`.
+  - First live smoke found a script redirect path containing a space; regression coverage now quotes that path before fetching the ZIP.
+- Remaining gates:
+  - Add `tvsubtitles` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ## Why OpenSubtitles.org Is Tricky
