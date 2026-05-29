@@ -39,6 +39,7 @@
   - `animetosho`: branch `catalog-animetosho`, worktree `/tmp/bazarr_catalog_provider_worktrees/animetosho`, current head `4a282a3 Add AnimeTosho provider`
   - `napiprojekt`: branch `catalog-napiprojekt`, worktree `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`, current head `5d9fb63 Add NapiProjekt provider`
   - `podnapisi`: branch `catalog-podnapisi`, worktree `/tmp/bazarr_catalog_provider_worktrees/podnapisi`, current head `ef8e1cb Add Podnapisi provider`
+  - `subf2m`: branch `catalog-subf2m`, worktree `/tmp/bazarr_catalog_provider_worktrees/subf2m`, current head `35bb9c4 Add SubF2M provider`
   - `greeksubtitles`: branch `catalog-greeksubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles`, current head `da99eee Add GreekSubtitles provider`
   - `hosszupuska`: branch `catalog-hosszupuska`, worktree `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`, current head `f0ad3b4 Add Hosszupuska provider`
   - `nekur`: branch `catalog-nekur`, worktree `/tmp/bazarr_catalog_provider_worktrees/nekur`, current head `41e428e Add Nekur provider`
@@ -316,6 +317,35 @@
 - Remaining gates:
   - Re-run SDK live smoke search and download when `www.podnapisi.net` resolves from the test network.
   - Add `podnapisi` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+
+### `subf2m`
+
+- Branch: `catalog-subf2m`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/subf2m`
+- Current checkpoint: `35bb9c4 Add SubF2M provider`
+- Baseline evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-29:
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_subf2m.py'`: failed because `providers/subf2m/provider.py` did not exist.
+  - Live `https://subf2m.co/` probe returned HTTP `200` behind Cloudflare.
+  - Live `searchbytitle` probes for `dune` and `chernobyl` returned current search-result HTML with `/subtitles/<slug>` links.
+  - Live detail pages for `Dune: Part One` and `Chernobyl - First Season` exposed language pages and `download icon-download` detail links.
+  - Live detail download button for `/subtitles/dune-2021/english/3331049` redirected to `isubcdn.com` and returned `application/zip`.
+  - `python3 -B -m unittest discover -s tests -p 'test_subf2m.py'`: `11` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subf2m/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `339` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Attribution, em-dash, and non-ASCII scan over touched files found no matches.
+- Live smoke evidence on 2026-05-29:
+  - `python3 -B -m sdk smoke-test --provider subf2m --language eng --video-fixture tests/fixtures/subf2m_video_dune_2021.json --config-json '{"request_delay_ms":0}' --expect-min-results 1 --skip-download`: `subf2m ok`.
+  - `python3 -B -m sdk smoke-test --provider subf2m --language eng --video-fixture tests/fixtures/subf2m_video_chernobyl_s01e01.json --config-json '{"request_delay_ms":0}' --expect-min-results 1 --skip-download`: `subf2m ok`.
+  - `python3 -B -m sdk smoke-test --provider subf2m --language eng --video-fixture tests/fixtures/subf2m_video_dune_2021.json --config-json '{"request_delay_ms":0}' --expect-min-results 1`: `subf2m ok`.
+  - `python3 -B -m sdk smoke-test --provider subf2m --language eng --video-fixture tests/fixtures/subf2m_video_chernobyl_s01e01.json --config-json '{"request_delay_ms":0}' --expect-min-results 1`: `subf2m ok`.
+- Remaining gates:
+  - Add `subf2m` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `greeksubtitles`
