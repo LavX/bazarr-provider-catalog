@@ -4,6 +4,79 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "4ab014a660cce66d3a69b1c1a5eb2342f5f14122533ca72e811a3700c04fc096",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between AnimeTosho HTTP calls.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            },
+            "search_threshold": {
+              "default": 5,
+              "description": "Maximum number of complete AnimeTosho torrent entries to inspect per episode.",
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Search threshold",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Uses AnimeTosho's JSON feed to find embedded subtitle attachments for anime episodes by AniDB episode id. No login or API key required.",
+        "entry_class": "AnimeToshoProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "aa1b21b8a5e7fb09e3094a81079d9e52a27bafe9a820f93db8b41710d36f3793"
+        },
+        "languages": [
+          "ara",
+          "eng",
+          "fin",
+          "fra",
+          "deu",
+          "heb",
+          "ind",
+          "ita",
+          "jpn",
+          "por",
+          "pol",
+          "rus",
+          "spa",
+          "swe",
+          "tha",
+          "tur",
+          "vie"
+        ],
+        "name": "AnimeTosho",
+        "provider_id": "animetosho",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/animetosho",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "episode"
+        ],
+        "version": "0.1.0"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "418a51393a876478e8eca61adcb2e81c2e26b99d93179b9b682d6eb75012322f",
         "config_schema": {
           "additionalProperties": false,
