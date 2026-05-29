@@ -43,6 +43,7 @@
   - `soustitreseu`: branch `catalog-soustitreseu`, worktree `/tmp/bazarr_catalog_provider_worktrees/soustitreseu`, current head `ed93af8 Add Soustitres.eu provider`
   - `subclub`: branch `catalog-subclub`, worktree `/tmp/bazarr_catalog_provider_worktrees/subclub`, current head `0849eae Add Subclub provider`
   - `subssabbz`: branch `catalog-subssabbz`, worktree `/tmp/bazarr_catalog_provider_worktrees/subssabbz`, current head `3aa8f02 Add SubsSabBz provider`
+  - `subsunacs`: branch `catalog-subsunacs`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsunacs`, current head `6394dff Add SubsUnacs provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -400,6 +401,33 @@
   - `PYTHONPATH=/tmp/prijevodionline-deps PATH=/tmp/no-system-tools /usr/bin/python3 -B -m sdk smoke-test --provider subssabbz --language eng --video-fixture tests/fixtures/subssabbz_video_inception.json --expect-min-results 1`: `subssabbz ok`.
 - Remaining gates:
   - Add `subssabbz` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+
+### `subsunacs`
+
+- Branch: `catalog-subsunacs`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/subsunacs`
+- Current checkpoint: `6394dff Add SubsUnacs provider`
+- Baseline evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-29:
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_subsunacs.py'`: failed because `providers/subsunacs/provider.py` did not exist.
+  - Red archive permission gate `python3 -B -m unittest discover -s tests -p 'test_subsunacs.py'`: failed because `py7zz` extraction could leave unreadable temp files.
+  - `python3 -B -m unittest discover -s tests -p 'test_subsunacs.py'`: `9` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests`: `337` tests passed, `6` skipped.
+  - `python3 -B -m py_compile providers/subsunacs/provider.py`: passed.
+  - `PYTHONPATH=/tmp/prijevodionline-deps PATH=/tmp/no-system-tools /usr/bin/python3 ...`: bundled `py7zz` 7Z extraction passed without system archive tools.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Attribution and em-dash scan over touched files found no matches.
+- Live smoke evidence on 2026-05-29:
+  - Public probes confirmed `l=0` returns Bulgarian rows and `l=1` returns English rows.
+  - Current public detail pages expose direct `/getentry.php?id=<id>&ei=<index>` subtitle files.
+  - `python3 -B -m sdk smoke-test --provider subsunacs --language eng --video-fixture tests/fixtures/subsunacs_video_dune.json --expect-min-results 1`: `subsunacs ok`.
+  - `python3 -B -m sdk smoke-test --provider subsunacs --language bul --video-fixture tests/fixtures/subsunacs_video_game_of_thrones_s01e01.json --expect-min-results 1`: `subsunacs ok`.
+- Remaining gates:
+  - Add `subsunacs` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ## Why OpenSubtitles.org Is Tricky
