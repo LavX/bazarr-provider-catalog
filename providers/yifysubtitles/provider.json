@@ -1,0 +1,83 @@
+{
+  "api_version": "bazarr.provider-hub.v1",
+  "bundle_sha256": "735b2a8c6239d0b192214e20724c382901084daba5177bae54ee399746da4dbc",
+  "config_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "request_delay_ms": {
+        "default": 0,
+        "description": "Optional politeness delay between HTTP calls to yifysubtitles.ch.",
+        "maximum": 5000,
+        "minimum": 0,
+        "title": "Delay between requests (ms)",
+        "type": "integer"
+      }
+    },
+    "type": "object"
+  },
+  "dependencies": {
+    "requirements": []
+  },
+  "description": "Scrapes yifysubtitles.ch movie subtitle pages across many languages. No login or API key required.",
+  "entry_class": "YifySubtitlesProvider",
+  "entry_module": "provider",
+  "files": {
+    "provider.py": "af1d790e7d93aed5c5f19120bb1f82cc904ba84a464c3941ed94e05c95dba823"
+  },
+  "languages": [
+    "ara",
+    "ben",
+    "bul",
+    "ces",
+    "dan",
+    "deu",
+    "ell",
+    "eng",
+    "fas",
+    "fin",
+    "fra",
+    "heb",
+    "hrv",
+    "hun",
+    "ind",
+    "ita",
+    "jpn",
+    "kor",
+    "lit",
+    "mkd",
+    "msa",
+    "nld",
+    "nor",
+    "pol",
+    "por",
+    "ron",
+    "rus",
+    "slv",
+    "spa",
+    "sqi",
+    "srp",
+    "swe",
+    "tha",
+    "tur",
+    "urd",
+    "vie",
+    "zho"
+  ],
+  "name": "YIFYSubtitles",
+  "provider_id": "yifysubtitles",
+  "schema_version": 1,
+  "secret_fields": [],
+  "source": {
+    "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+    "commit": "0000000000000000000000000000000000000000",
+    "path": "providers/yifysubtitles",
+    "ref": "main",
+    "repo": "LavX/bazarr-provider-catalog",
+    "trusted": true,
+    "type": "github"
+  },
+  "supported_media": [
+    "movie"
+  ],
+  "version": "0.1.0"
+}
