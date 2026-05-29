@@ -49,6 +49,7 @@
   - `subtitriid`: branch `catalog-subtitriid`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitriid`, current head `5e783ba Add Subtitri.id provider`
   - `supersubtitles`: branch `catalog-supersubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/supersubtitles`, current head `5a64e49 Add SuperSubtitles provider`
   - `titrari`: branch `catalog-titrari`, worktree `/tmp/bazarr_catalog_provider_worktrees/titrari`, current head `be43079 Add Titrari provider`
+  - `yavkanet`: branch `catalog-yavkanet`, worktree `/tmp/bazarr_catalog_provider_worktrees/yavkanet`, current head `ac537d6 Add YavkaNet provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -560,6 +561,30 @@
   - `python3 -B -m sdk smoke-test --provider titrari --language ron --video-fixture tests/fixtures/titrari_video_chernobyl_s01e01.json --expect-min-results 1`: `titrari ok`.
 - Remaining gates:
   - Add `titrari` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+
+### `yavkanet`
+
+- Branch: `catalog-yavkanet`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/yavkanet`
+- Current checkpoint: `ac537d6 Add YavkaNet provider`
+- Local evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_yavkanet.py'`: failed because `providers/yavkanet/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p 'test_yavkanet.py'`: `10` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/yavkanet/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `338` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Attribution and em-dash scan over touched files found no matches.
+- Live smoke evidence on 2026-05-29:
+  - `curl -L --http1.1 --max-time 25 -A "Mozilla/5.0" https://yavka.net/`: HTTP `403`, Cloudflare managed challenge page.
+  - `curl -L --http1.1 --max-time 25 -A "Mozilla/5.0" -e "https://yavka.net/" https://yavka.net/imdb/tt1160419`: HTTP `403`, Cloudflare managed challenge page.
+  - `python3 -B -m sdk smoke-test --provider yavkanet --language bul --video-fixture tests/fixtures/yavkanet_video_dune_2021.json --expect-min-results 1 --skip-download`: failed with `yavkanet hit a Cloudflare challenge and no FlareSolverr URL is configured`.
+- Remaining gates:
+  - Re-run live smoke with a reachable FlareSolverr `/v1` endpoint in config.
+  - Add `yavkanet` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ## Why OpenSubtitles.org Is Tricky
