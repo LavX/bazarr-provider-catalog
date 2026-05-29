@@ -1,0 +1,276 @@
+import base64
+import hashlib
+import importlib.util
+import json
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+PROVIDER_DIR = ROOT / "providers" / "napiprojekt"
+FIXTURE_DIR = ROOT / "tests" / "fixtures"
+
+
+def _load_provider_module():
+    spec = importlib.util.spec_from_file_location(
+        "napiprojekt_provider", PROVIDER_DIR / "provider.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+SHREK_VIDEO = json.loads((FIXTURE_DIR / "napiprojekt_video_shrek.json").read_text())
+ATTACK_VIDEO = json.loads((FIXTURE_DIR / "napiprojekt_video_attack_on_titan_s02e01.json").read_text())
+SUBTITLE_BYTES = "00:00:48: Dawno, dawno temu...\r\n".encode("cp1250")
+
+SEARCH_HTML = """
+<div class="greyBoxCatcher">
+  <a href="https://www.imdb.com/title/tt0126029/">IMDb</a>
+  <a class="movieTitleCat" href="napisy-4684-Shrek-(2001)">Shrek (2001)</a>
+</div>
+<div class="greyBoxCatcher">
+  <a class="movieTitleCat" href="napisy-1-Other-(2001)">Other</a>
+</div>
+""".encode("utf-8")
+
+LIST_HTML = """
+<table>
+  <tr title="<b>Autor:</b> Jan Kowalski (real) <b>Video rozdzielczość:</b> 1080p< <b>Video FPS:</b> 23.976<">
+    <td><a class="tableA" href="napiprojekt:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa">download</a></td>
+    <td>
+      <p>ignored</p><p>700 MB</p><p>ignored</p><p>01:30:00</p><p>Jan Kowalski</p><p>2024-01-02</p>
+    </td>
+  </tr>
+  <tr title="<b>Autor:</b> Automat (machine) <b>Video rozdzielczość:</b> 720p< <b>Video FPS:</b> 25<">
+    <td><a class="tableA" href="napiprojekt:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb">download</a></td>
+    <td>
+      <p>ignored</p><p>650 MB</p><p>ignored</p><p>01:29:00</p><p>Automat</p><p>2023-12-31</p>
+    </td>
+  </tr>
+</table>
+""".encode("utf-8")
+
+
+class HashTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_known_hashes_generate_expected_subhash(self):
+        self.assertEqual(self.mod.get_subhash("444563eef63f83d47cabb888f7a45113"), "a6f09")
+        self.assertEqual(self.mod.get_subhash("fe93bb3a7743c39e12c8d7c4a864dff1"), "8410a")
+
+    def test_hash_download_url_contains_required_query(self):
+        url = self.mod.hash_download_url("444563eef63f83d47cabb888f7a45113", "pl")
+
+        self.assertIn("unit_napisy/dl.php", url)
+        self.assertIn("l=PL", url)
+        self.assertIn("f=444563eef63f83d47cabb888f7a45113", url)
+        self.assertIn("t=a6f09", url)
+
+
+class CatalogParseTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_catalog_search_prefers_matching_imdb_id(self):
+        entries = self.mod.parse_catalog_search(SEARCH_HTML)
+        selected = self.mod.select_catalog_title(SHREK_VIDEO, entries)
+
+        self.assertEqual(selected["slug"], "4684-Shrek-(2001)")
+        self.assertEqual(selected["matches"], ["imdb_id", "title", "year"])
+
+    def test_catalog_rows_extract_metadata_and_release_info(self):
+        rows = self.mod.parse_subtitle_rows(LIST_HTML, ["title", "year"])
+
+        first = rows[0]
+        self.assertEqual(first["hash"], "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        self.assertEqual(first["author"], "Jan Kowalski")
+        self.assertEqual(first["resolution"], "1080p")
+        self.assertEqual(first["fps"], "23.976")
+        self.assertIn("Autor: Jan Kowalski", first["release_info"])
+        self.assertEqual(first["matches"], ["title", "year"])
+
+    def test_author_filters_skip_machine_rows_and_require_real_name(self):
+        rows = self.mod.parse_subtitle_rows(
+            LIST_HTML,
+            ["title"],
+            only_authors=True,
+            only_real_names=True,
+        )
+
+        self.assertEqual([item["hash"] for item in rows], ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"])
+
+
+class NapiProjektProviderSearchTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_search_returns_hash_and_catalog_results(self):
+        provider = self.mod.NapiProjektProvider()
+        called = []
+        hash_url = self.mod.hash_download_url("444563eef63f83d47cabb888f7a45113", "pl")
+        catalog_url = "https://www.napiprojekt.pl/napisy1,7,0-dla-4684-Shrek-(2001)"
+
+        def get_stub(url, config=None, timeout=15, referer=None):
+            del config, timeout, referer
+            called.append(("GET", url))
+            if url == hash_url:
+                return SUBTITLE_BYTES
+            if url == catalog_url:
+                return LIST_HTML
+            raise AssertionError(f"unexpected GET: {url}")
+
+        def post_stub(url, data, config=None, timeout=15, referer=None):
+            del config, timeout, referer
+            called.append(("POST", url, data))
+            self.assertEqual(data["queryString"], "Shrek")
+            self.assertEqual(data["queryKind"], "2")
+            return SEARCH_HTML
+
+        provider._http_get = get_stub
+        provider._http_post = post_stub
+        results = provider.search(
+            SHREK_VIDEO,
+            [{"alpha3": "pol", "alpha2": "pl"}],
+            {"only_authors": False, "only_real_names": False},
+        )
+
+        self.assertEqual(called[0], ("GET", hash_url))
+        self.assertEqual(called[1][0], "POST")
+        self.assertEqual(called[2], ("GET", catalog_url))
+        self.assertEqual([item["provider_payload"]["source"] for item in results[:2]], ["hash", "catalog"])
+        self.assertEqual(results[0]["score"], 100)
+        self.assertEqual(results[0]["provider_payload"]["hash"], "444563eef63f83d47cabb888f7a45113")
+        self.assertEqual(results[1]["provider_payload"]["hash"], "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        self.assertEqual(provider._content_cache["444563eef63f83d47cabb888f7a45113"], SUBTITLE_BYTES)
+
+    def test_author_filter_skips_hash_lookup(self):
+        provider = self.mod.NapiProjektProvider()
+        called = []
+
+        def fail_hash_get(url, config=None, timeout=15, referer=None):
+            del config, timeout, referer
+            called.append(("GET", url))
+            if "unit_napisy" in url:
+                raise AssertionError("hash lookup should be skipped when author filters are enabled")
+            return LIST_HTML
+
+        provider._http_get = fail_hash_get
+        provider._http_post = lambda url, data, config=None, timeout=15, referer=None: SEARCH_HTML
+        results = provider.search(
+            SHREK_VIDEO,
+            [{"alpha3": "pol", "alpha2": "pl"}],
+            {"only_authors": True, "only_real_names": True},
+        )
+
+        self.assertEqual([item["provider_payload"]["source"] for item in results], ["catalog"])
+        self.assertEqual(called, [("GET", "https://www.napiprojekt.pl/napisy1,7,0-dla-4684-Shrek-(2001)")])
+
+    def test_episode_catalog_url_adds_season_episode_suffix(self):
+        url = self.mod.catalog_subtitles_url("38715-Shingeki-no-kyojin-(2013)", ATTACK_VIDEO)
+
+        self.assertEqual(url, "https://www.napiprojekt.pl/napisy1,7,0-dla-38715-Shingeki-no-kyojin-(2013)-s02e01")
+
+
+class NapiProjektProviderDownloadTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_download_fetches_hash_and_returns_raw_text_payload(self):
+        provider = self.mod.NapiProjektProvider()
+        provider._http_get = lambda url, config=None, timeout=15, referer=None: SUBTITLE_BYTES
+
+        result = provider.download(
+            {
+                "provider": "napiprojekt",
+                "schema": 1,
+                "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "language": "pol",
+                "format": "txt",
+            },
+            {"alpha3": "pol", "alpha2": "pl"},
+            {},
+        )
+
+        self.assertEqual(base64.b64decode(result["content_b64"]), SUBTITLE_BYTES)
+        self.assertEqual(result["content_sha256"], hashlib.sha256(SUBTITLE_BYTES).hexdigest())
+        self.assertEqual(result["format"], "txt")
+        self.assertEqual(result["content_type"], "text/plain")
+
+    def test_download_reuses_hash_content_cached_during_search(self):
+        provider = self.mod.NapiProjektProvider()
+        provider._content_cache["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"] = SUBTITLE_BYTES
+
+        def fail_get(url, config=None, timeout=15, referer=None):
+            del config, timeout, referer
+            raise AssertionError(f"unexpected GET: {url}")
+
+        provider._http_get = fail_get
+        result = provider.download(
+            {
+                "provider": "napiprojekt",
+                "schema": 1,
+                "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "language": "pol",
+                "format": "txt",
+            },
+            {"alpha3": "pol", "alpha2": "pl"},
+            {},
+        )
+
+        self.assertEqual(base64.b64decode(result["content_b64"]), SUBTITLE_BYTES)
+
+    def test_download_rejects_not_found_marker(self):
+        provider = self.mod.NapiProjektProvider()
+        provider._http_get = lambda url, config=None, timeout=15, referer=None: b"NPc0"
+
+        with self.assertRaisesRegex(ValueError, "no subtitle"):
+            provider.download({"hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "language": "pol"}, {"alpha3": "pol"}, {})
+
+
+class CloudflareTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_challenge_detection_uses_cloudflare_headers(self):
+        self.assertTrue(
+            self.mod.is_cloudflare_challenge(
+                403,
+                {"cf-mitigated": "challenge"},
+                b"<title>Just a moment...</title>",
+            )
+        )
+
+    def test_cloudscraper_challenge_raises_without_flaresolverr(self):
+        provider = self.mod.NapiProjektProvider()
+        fake_scraper = _FakeScraper(_FakeResponse(403, b"<title>Just a moment...</title>", {"cf-mitigated": "challenge"}))
+        original = self.mod.cloudscraper.create_scraper
+        self.mod.cloudscraper.create_scraper = lambda **kwargs: fake_scraper
+        try:
+            with self.assertRaisesRegex(self.mod.CloudflareBlockedError, "no FlareSolverr"):
+                provider._http_post("https://www.napiprojekt.pl/ajax/search_catalog.php", {"queryString": "Shrek"}, {})
+        finally:
+            self.mod.cloudscraper.create_scraper = original
+
+
+class _FakeResponse:
+    def __init__(self, status_code, content, headers=None):
+        self.status_code = status_code
+        self.content = content
+        self.headers = headers or {}
+        self.text = content.decode("utf-8", errors="replace")
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise AssertionError(f"unexpected raise_for_status for {self.status_code}")
+
+
+class _FakeScraper:
+    def __init__(self, response):
+        self.response = response
+
+    def get(self, *args, **kwargs):
+        return self.response
+
+    def post(self, *args, **kwargs):
+        return self.response

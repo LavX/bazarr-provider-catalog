@@ -1,0 +1,123 @@
+{
+  "api_version": "bazarr.provider-hub.v1",
+  "bundle_sha256": "129a2c1191c6d22148f330a960cb0f167ac26c0f7e9ce6de0e588f9d0b7df8e6",
+  "config_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "flaresolverr_timeout_ms": {
+        "default": 60000,
+        "description": "Maximum time FlareSolverr may spend solving a Cloudflare challenge.",
+        "maximum": 180000,
+        "minimum": 5000,
+        "title": "FlareSolverr timeout (ms)",
+        "type": "integer"
+      },
+      "flaresolverr_url": {
+        "default": "",
+        "description": "Optional FlareSolverr /v1 endpoint used when NapiProjekt catalog scraping receives a Cloudflare challenge.",
+        "title": "FlareSolverr URL",
+        "type": "string"
+      },
+      "only_authors": {
+        "default": false,
+        "description": "Skip subtitles whose catalog author is missing or marked as automated.",
+        "title": "Only authored subtitles",
+        "type": "boolean"
+      },
+      "only_real_names": {
+        "default": false,
+        "description": "Keep only catalog subtitles whose author resembles a real name.",
+        "title": "Only real-name authors",
+        "type": "boolean"
+      }
+    },
+    "type": "object"
+  },
+  "dependencies": {
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:3c52e209ba0a4ad7aebe60436a4ab349c39e1e602e8c134221e546902ad25897"
+        ],
+        "name": "certifi",
+        "version": "2026.5.20"
+      },
+      {
+        "hashes": [
+          "sha256:bd6c2a1c7573c64738d716488d2cdd3c00e340e4835707d8fdb8dc1a66ef164e"
+        ],
+        "name": "charset-normalizer",
+        "version": "3.4.7"
+      },
+      {
+        "hashes": [
+          "sha256:76f50ca529ed2279e220837befdec892626f9511708e200d48d5bb76ded679b0"
+        ],
+        "name": "cloudscraper",
+        "version": "1.2.71"
+      },
+      {
+        "hashes": [
+          "sha256:cc246e3a3f89580c3a951b5ad298ca4638078b2cdd4f115654332b5c26daded5"
+        ],
+        "name": "idna",
+        "version": "3.16"
+      },
+      {
+        "hashes": [
+          "sha256:850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d"
+        ],
+        "name": "pyparsing",
+        "version": "3.3.2"
+      },
+      {
+        "hashes": [
+          "sha256:2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0"
+        ],
+        "name": "requests",
+        "version": "2.34.2"
+      },
+      {
+        "hashes": [
+          "sha256:cccfdd665f0a24fcf4726e690f65639d272bb0637b9b92dfd91a5568ccf6bd06"
+        ],
+        "name": "requests-toolbelt",
+        "version": "1.0.0"
+      },
+      {
+        "hashes": [
+          "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
+        ],
+        "name": "urllib3",
+        "version": "2.7.0"
+      }
+    ]
+  },
+  "description": "Searches NapiProjekt for Polish subtitles using hash lookup and catalog scraping with optional author filters. Uses cloudscraper with optional FlareSolverr fallback for catalog Cloudflare challenges.",
+  "entry_class": "NapiProjektProvider",
+  "entry_module": "provider",
+  "files": {
+    "provider.py": "04854e257e277397e035ca59f4521814269fc06cdb9bd8120fc544fdf5019f8d"
+  },
+  "languages": [
+    "pol"
+  ],
+  "name": "NapiProjekt",
+  "provider_id": "napiprojekt",
+  "schema_version": 1,
+  "secret_fields": [],
+  "source": {
+    "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+    "commit": "0000000000000000000000000000000000000000",
+    "path": "providers/napiprojekt",
+    "ref": "main",
+    "repo": "LavX/bazarr-provider-catalog",
+    "trusted": true,
+    "type": "github"
+  },
+  "supported_media": [
+    "movie",
+    "episode"
+  ],
+  "version": "0.1.0"
+}
