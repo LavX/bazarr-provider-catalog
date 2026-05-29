@@ -1470,6 +1470,77 @@
         ],
         "version": "0.1.1"
       }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "bdfb5b4bebe05e42f857d5e9a51a2b5ce182d1302e064e36c0efe0767ff3f725",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between HTTP calls to tvsubtitles.net.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Scrapes tvsubtitles.net for episode subtitles in broad multilingual coverage. No login or API key required.",
+        "entry_class": "TvSubtitlesProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "b94f682d06d9d7e8e6567d1a15c1ebe94a299df84ed17564842159356d075610"
+        },
+        "languages": [
+          "ara",
+          "bul",
+          "ces",
+          "dan",
+          "deu",
+          "ell",
+          "eng",
+          "fin",
+          "fra",
+          "hun",
+          "ita",
+          "jpn",
+          "kor",
+          "nld",
+          "pol",
+          "por",
+          "ron",
+          "rus",
+          "spa",
+          "swe",
+          "tur",
+          "ukr",
+          "zho"
+        ],
+        "name": "TVsubtitles",
+        "provider_id": "tvsubtitles",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/tvsubtitles",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "episode"
+        ],
+        "version": "0.1.0"
+      }
     }
   ],
   "schema_version": 1
