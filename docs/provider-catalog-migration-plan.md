@@ -64,6 +64,7 @@
   - `subdl`: branch `catalog-subdl`, worktree `/tmp/bazarr_catalog_provider_worktrees/subdl`, current head `7ff94cd Add SubDL provider`
   - `subsource`: branch `catalog-subsource`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsource`, current head `d50b08f Add SubSource provider`
   - `subsro`: branch `catalog-subsro`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsro`, current head `4e63940 Add Subs.ro provider`
+  - `subx`: branch `catalog-subx`, worktree `/tmp/bazarr_catalog_provider_worktrees/subx`, current head `4199530 Add SubX provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -946,6 +947,35 @@
   - Run SDK live smoke search and download with a real Subs.ro API key.
   - Add `subsro` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Subs.ro API key.
+
+### `subx`
+
+- Branch: `catalog-subx`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/subx`
+- Current checkpoint: `4199530 Add SubX provider`
+- Baseline evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-29:
+  - Public API docs confirmed base URL `https://subx-api.duckdns.org`, `Authorization: Bearer <api_key>` auth, `GET /api/health`, `GET /api/subtitles/search`, title and IMDb search, `GET /api/subtitles/{id}/download`, and documented `400`, `401`, `404`, `429`, and `500` responses.
+  - Legacy inspection confirmed required API key, Spanish Spain and Latin American variants, IMDb-first search, title fallback, episode exact matching, season-pack fallback, rate-limit retry handling, and archive downloads.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_subx.py'`: failed because `providers/subx/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p 'test_subx.py'`: `12` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subx/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `340` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - JSON parse check for `providers/subx/provider.json`: passed.
+  - Attribution and em-dash scan over touched SubX files found no matches.
+- Live evidence on 2026-05-29:
+  - `curl -sS -i --max-time 20 https://subx-api.duckdns.org/api/health`: returned HTTP `200` with JSON health status, version `7b60d84`, and `built_at` `2026-05-22T12:27:43Z`.
+  - `curl -sS -i --max-time 20 'https://subx-api.duckdns.org/api/subtitles/search?title=Dexter&limit=1'`: returned HTTP `401` with `Missing bearer token`.
+  - `curl -sS -i --max-time 20 -H 'Authorization: Bearer invalid-test-key' 'https://subx-api.duckdns.org/api/subtitles/search?title=Dexter&limit=1'`: returned HTTP `401` with `Invalid or expired token`.
+  - Real live search and download require a SubX `api_key`.
+- Remaining gates:
+  - Run SDK live smoke search and download with a real SubX API key.
+  - Add `subx` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured SubX API key.
 
 ## Why OpenSubtitles.org Is Tricky
 
