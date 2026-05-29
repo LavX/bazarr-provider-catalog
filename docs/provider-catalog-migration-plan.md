@@ -36,6 +36,7 @@
   - `greeksubs`: branch `catalog-greeksubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubs`, current head `1ec84fa Add GreekSubs provider`
   - `animekalesi`: branch `catalog-animekalesi`, worktree `/tmp/bazarr_catalog_provider_worktrees/animekalesi`, current head `b5db085 Add AnimeKalesi provider`
   - `animesubinfo`: branch `catalog-animesubinfo`, worktree `/tmp/bazarr_catalog_provider_worktrees/animesubinfo`, current head `b2be823 Add AnimeSub.info provider`
+  - `animetosho`: branch `catalog-animetosho`, worktree `/tmp/bazarr_catalog_provider_worktrees/animetosho`, current head `4a282a3 Add AnimeTosho provider`
   - `greeksubtitles`: branch `catalog-greeksubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles`, current head `da99eee Add GreekSubtitles provider`
   - `hosszupuska`: branch `catalog-hosszupuska`, worktree `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`, current head `f0ad3b4 Add Hosszupuska provider`
   - `nekur`: branch `catalog-nekur`, worktree `/tmp/bazarr_catalog_provider_worktrees/nekur`, current head `41e428e Add Nekur provider`
@@ -237,6 +238,32 @@
   - Add `animesubinfo` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
+### `animetosho`
+
+- Branch: `catalog-animetosho`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/animetosho`
+- Current checkpoint: `4a282a3 Add AnimeTosho provider`
+- Baseline evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-29:
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_animetosho.py'`: failed because `providers/animetosho/provider.py` did not exist.
+  - Live fixture capture from `https://feed.animetosho.org/json?eid=277518`: HTTP `200`, JSON feed for AnimeTosho AniDB episode `277518`.
+  - Live fixture capture from `https://feed.animetosho.org/json?show=torrent&id=616869`: HTTP `200`, JSON torrent detail with subtitle attachments.
+  - Live attachment probe `https://animetosho.org/storage/attach/001e3505/1979653.xz`: HTTP `200`, `application/x-xz`, decompressed to an ASS subtitle.
+  - `python3 -B -m unittest discover -s tests -p 'test_animetosho.py'`: `11` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/animetosho/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `339` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Attribution and em-dash scan over touched files found no matches.
+- Live smoke evidence on 2026-05-29:
+  - `python3 -B -m sdk smoke-test --provider animetosho --language eng --video-fixture tests/fixtures/animetosho_video_solo_leveling_s01e12.json --config-json '{"search_threshold":1,"request_delay_ms":0}' --expect-min-results 1 --skip-download`: `animetosho ok`.
+  - `python3 -B -m sdk smoke-test --provider animetosho --language eng --video-fixture tests/fixtures/animetosho_video_solo_leveling_s01e12.json --config-json '{"search_threshold":1,"request_delay_ms":0}' --expect-min-results 1`: `animetosho ok`.
+- Remaining gates:
+  - Add `animetosho` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+
 ### `greeksubtitles`
 
 - Branch: `catalog-greeksubtitles`
@@ -281,6 +308,9 @@
   - `curl -L --http1.1 --max-time 20 -A "Mozilla/5.0" "http://hosszupuskasub.com/download.php?file=0124336.zip"`: returned the same ParkLogic redirect/parking script for a known legacy download path.
   - `curl -I -L --http1.1 --max-time 20 -A "Mozilla/5.0" http://85.255.9.174/`: timed out, so the older indexed origin IP is not reachable from this network.
   - `python3 -B -m sdk smoke-test --provider hosszupuska --language hun --video-fixture tests/fixtures/hosszupuska_video_game_of_thrones_s01e01.json --expect-min-results 1 --skip-download`: failed with `hosszupuska search failed: Remote end closed connection without response`.
+  - Recheck on 2026-05-29: `https://www.hosszupuskasub.com/` returned HTTP `200`, but the body is a ParkLogic JavaScript router, not the HosszuPuska subtitle site.
+  - Recheck on 2026-05-29: `http://hosszupuskasub.com/sorozatok.php?sid=17617&evad=1&resz=1&nyelv=1` returned HTTP `200`, but the body is the same ParkLogic router for the legacy endpoint.
+  - RDAP recheck on 2026-05-29: nameservers are `NS1.PARKLOGIC.COM` and `NS2.PARKLOGIC.COM`; `last changed` is `2026-05-25T23:28:30Z`.
 - Remaining gates:
   - Treat Hosszupuska as blocked unless the original site returns or a verified replacement origin is found.
   - Re-run live Hosszupuska smoke only after the domain stops serving ParkLogic parking responses.
