@@ -1,12 +1,12 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "435a8b295f1da7248aece4441015aa39959139387b83585daf827cb5bdef91c9",
+  "bundle_sha256": "060c8bf7cdb524ed942710ed7ef0f75d1190de4e73917f029aa4f1880a3551b2",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
       "flaresolverr_timeout_ms": {
-        "default": 60000,
-        "description": "Maximum time FlareSolverr may spend solving a Cloudflare challenge.",
+        "default": 25000,
+        "description": "Maximum time FlareSolverr may spend solving a Cloudflare challenge. Capped below the Provider Hub worker deadline.",
         "maximum": 180000,
         "minimum": 5000,
         "title": "FlareSolverr timeout (ms)",
@@ -93,7 +93,7 @@
   "entry_class": "SubSceneProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "a1d271f4ac97228ac55e773a505ef1a219b69a79152b9634067b7bbead60af04"
+    "provider.py": "837199457b0db7d0bb2db75005b91d46fff01b36a0edd6732a0df6ae772e54bc"
   },
   "languages": [
     "ara",
@@ -150,5 +150,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.10"
+  "version": "0.1.11"
 }

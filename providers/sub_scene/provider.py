@@ -25,7 +25,10 @@ USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
-DEFAULT_FLARESOLVERR_TIMEOUT_MS = 60000
+MIN_FLARESOLVERR_TIMEOUT_MS = 5000
+MAX_FLARESOLVERR_TIMEOUT_MS = 180000
+DEFAULT_FLARESOLVERR_TIMEOUT_MS = 25000
+FLARESOLVERR_DEADLINE_MARGIN_MS = 5000
 CLOUDFLARE_STATUS_CODES = {403, 429, 503}
 CLOUDFLARE_BODY_MARKERS = (
     "just a moment",
@@ -358,12 +361,26 @@ def _flaresolverr_url(config):
     return str((config or {}).get("flaresolverr_url") or "").strip()
 
 
-def _flaresolverr_timeout_ms(config):
+def _flaresolverr_timeout_ms(config, request_timeout=None):
     try:
         timeout = int((config or {}).get("flaresolverr_timeout_ms") or DEFAULT_FLARESOLVERR_TIMEOUT_MS)
     except (TypeError, ValueError):
-        return DEFAULT_FLARESOLVERR_TIMEOUT_MS
-    return max(5000, min(timeout, 180000))
+        timeout = DEFAULT_FLARESOLVERR_TIMEOUT_MS
+    timeout = max(MIN_FLARESOLVERR_TIMEOUT_MS, min(timeout, MAX_FLARESOLVERR_TIMEOUT_MS))
+
+    if request_timeout is None:
+        return timeout
+
+    try:
+        request_timeout_ms = int(float(request_timeout) * 1000)
+    except (TypeError, ValueError):
+        return timeout
+
+    worker_budget = max(
+        MIN_FLARESOLVERR_TIMEOUT_MS,
+        request_timeout_ms - FLARESOLVERR_DEADLINE_MARGIN_MS,
+    )
+    return min(timeout, worker_budget)
 
 
 def _cookie_header(cookies):
@@ -425,7 +442,7 @@ def _flaresolverr_get(url, timeout=30, config=None, state=None):
             "sub_scene hit a Cloudflare challenge and no FlareSolverr URL is configured"
         )
 
-    timeout_ms = _flaresolverr_timeout_ms(config)
+    timeout_ms = _flaresolverr_timeout_ms(config, timeout)
     payload = {
         "cmd": "request.get",
         "url": url,
@@ -450,7 +467,7 @@ def _flaresolverr_get(url, timeout=30, config=None, state=None):
     try:
         with urllib.request.urlopen(
             request,
-            timeout=max(timeout, timeout_ms / 1000),
+            timeout=min(float(timeout), timeout_ms / 1000 + 2),
         ) as response:
             response_body = response.read()
     except Exception as exc:

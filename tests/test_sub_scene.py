@@ -633,6 +633,7 @@ class TestCloudflareHttp(unittest.TestCase):
                     "flaresolverr_url": "http://flaresolverr:8191/v1",
                     "flaresolverr_timeout_ms": 45000,
                 },
+                timeout=60,
                 state=state,
             )
 
@@ -644,6 +645,40 @@ class TestCloudflareHttp(unittest.TestCase):
         self.assertEqual(payload["maxTimeout"], 45000)
         self.assertEqual(state["flaresolverr_cookies"]["cf_clearance"], "token")
         self.assertEqual(state["flaresolverr_user_agent"], "Mozilla/5.0 solved")
+
+    def test_http_get_caps_flaresolverr_below_worker_deadline(self):
+        challenge_response = MagicMock()
+        challenge_response.status_code = 403
+        challenge_response.headers = {"cf-mitigated": "challenge"}
+        challenge_response.content = b"<html><title>Just a moment...</title></html>"
+        scraper = MagicMock()
+        scraper.get.return_value = challenge_response
+        flaresolverr_payload = {
+            "status": "ok",
+            "solution": {
+                "status": 200,
+                "response": "<html>normal search results</html>",
+            },
+        }
+
+        with patch("provider.cloudscraper.create_scraper", return_value=scraper), patch(
+            "provider.urllib.request.urlopen",
+            return_value=FakeUrlopenResponse(json.dumps(flaresolverr_payload).encode("utf-8")),
+        ) as urlopen:
+            subscene_module._http_get(
+                "https://sub-scene.com/search?query=Dune",
+                config={
+                    "flaresolverr_url": "http://flaresolverr:8191/v1",
+                    "flaresolverr_timeout_ms": 60000,
+                },
+                timeout=30,
+                state={},
+            )
+
+        request = urlopen.call_args.args[0]
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(payload["maxTimeout"], 25000)
+        self.assertLess(urlopen.call_args.kwargs["timeout"], 30)
 
     def test_http_get_raises_visible_error_without_flaresolverr_fallback(self):
         challenge_response = MagicMock()
