@@ -1,0 +1,13 @@
+{
+  "items": [
+    {
+      "id": "ep-1",
+      "language": "english",
+      "hi": false,
+      "download_url": "https://subsarr.test/download/ep-1.srt",
+      "title": "Chernobyl",
+      "releases": ["Chernobyl.S01E01.720p.WEBRip.x264-TBS"],
+      "filename": "Chernobyl.S01E01.720p.WEBRip.x264-TBS.srt"
+    }
+  ]
+}
