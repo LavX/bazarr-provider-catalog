@@ -37,6 +37,7 @@
   - `animekalesi`: branch `catalog-animekalesi`, worktree `/tmp/bazarr_catalog_provider_worktrees/animekalesi`, current head `b5db085 Add AnimeKalesi provider`
   - `animesubinfo`: branch `catalog-animesubinfo`, worktree `/tmp/bazarr_catalog_provider_worktrees/animesubinfo`, current head `b2be823 Add AnimeSub.info provider`
   - `animetosho`: branch `catalog-animetosho`, worktree `/tmp/bazarr_catalog_provider_worktrees/animetosho`, current head `4a282a3 Add AnimeTosho provider`
+  - `napiprojekt`: branch `catalog-napiprojekt`, worktree `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`, current head `5d9fb63 Add NapiProjekt provider`
   - `greeksubtitles`: branch `catalog-greeksubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles`, current head `da99eee Add GreekSubtitles provider`
   - `hosszupuska`: branch `catalog-hosszupuska`, worktree `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`, current head `f0ad3b4 Add Hosszupuska provider`
   - `nekur`: branch `catalog-nekur`, worktree `/tmp/bazarr_catalog_provider_worktrees/nekur`, current head `41e428e Add Nekur provider`
@@ -262,6 +263,34 @@
   - `python3 -B -m sdk smoke-test --provider animetosho --language eng --video-fixture tests/fixtures/animetosho_video_solo_leveling_s01e12.json --config-json '{"search_threshold":1,"request_delay_ms":0}' --expect-min-results 1`: `animetosho ok`.
 - Remaining gates:
   - Add `animetosho` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+
+### `napiprojekt`
+
+- Branch: `catalog-napiprojekt`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`
+- Current checkpoint: `5d9fb63 Add NapiProjekt provider`
+- Baseline evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-29:
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_napiprojekt.py'`: failed because `providers/napiprojekt/provider.py` did not exist.
+  - Live hash probe `https://napiprojekt.pl/unit_napisy/dl.php?...f=444563eef63f83d47cabb888f7a45113&t=a6f09`: HTTP `200`, returned raw Polish subtitle bytes.
+  - Live catalog POST to `https://www.napiprojekt.pl/ajax/search_catalog.php`: HTTP `403`, Cloudflare managed challenge with `cf-mitigated: challenge`.
+  - Local cloudscraper probe against the same catalog POST also returned HTTP `403`, so catalog scraping requires configured FlareSolverr fallback when challenged.
+  - `python3 -B -m unittest discover -s tests -p 'test_napiprojekt.py'`: `13` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/napiprojekt/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `341` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Attribution and em-dash scan over touched files found no matches.
+- Live smoke evidence on 2026-05-29:
+  - `python3 -B -m sdk smoke-test --provider napiprojekt --language pol --video-fixture tests/fixtures/napiprojekt_video_shrek.json --config-json '{"only_authors":false,"only_real_names":false}' --expect-min-results 1 --skip-download`: `napiprojekt ok`.
+  - Initial full live smoke hit HTTP `429` because search and download queried the hash endpoint twice quickly.
+  - After caching hash-response bytes inside the provider worker, `python3 -B -m sdk smoke-test --provider napiprojekt --language pol --video-fixture tests/fixtures/napiprojekt_video_shrek.json --config-json '{"only_authors":false,"only_real_names":false}' --expect-min-results 1`: `napiprojekt ok`.
+- Remaining gates:
+  - Re-run catalog scrape live smoke with a reachable FlareSolverr `/v1` endpoint if author-filtered catalog results must be proven before compat.
+  - Add `napiprojekt` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `greeksubtitles`
