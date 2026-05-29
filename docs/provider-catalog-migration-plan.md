@@ -42,6 +42,7 @@
   - `prijevodionline`: branch `catalog-prijevodionline`, worktree `/tmp/bazarr_catalog_provider_worktrees/prijevodionline`, current head `9c1d795 Add PrijevodiOnline provider`
   - `soustitreseu`: branch `catalog-soustitreseu`, worktree `/tmp/bazarr_catalog_provider_worktrees/soustitreseu`, current head `ed93af8 Add Soustitres.eu provider`
   - `subclub`: branch `catalog-subclub`, worktree `/tmp/bazarr_catalog_provider_worktrees/subclub`, current head `0849eae Add Subclub provider`
+  - `subssabbz`: branch `catalog-subssabbz`, worktree `/tmp/bazarr_catalog_provider_worktrees/subssabbz`, current head `3aa8f02 Add SubsSabBz provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -370,6 +371,35 @@
   - `python3 -B -m sdk smoke-test --provider subclub --language est --video-fixture tests/fixtures/subclub_video_game_of_thrones_s01e01.json --expect-min-results 1`: `subclub ok`.
 - Remaining gates:
   - Add `subclub` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+
+### `subssabbz`
+
+- Branch: `catalog-subssabbz`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/subssabbz`
+- Current checkpoint: `3aa8f02 Add SubsSabBz provider`
+- Baseline evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-29:
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_subssabbz.py'`: failed because `providers/subssabbz/provider.py` did not exist.
+  - Red 403 retry gate `python3 -B -m unittest discover -s tests -p 'test_subssabbz.py'`: failed because `_http_post` propagated the first HTTP `403`.
+  - `python3 -B -m unittest discover -s tests -p 'test_subssabbz.py'`: `9` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests`: `337` tests passed, `6` skipped.
+  - `python3 -B -m py_compile providers/subssabbz/provider.py`: passed.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Attribution and em-dash scan over touched files found no matches.
+- Live smoke evidence on 2026-05-29:
+  - Public probes confirmed `select-language=2` returns Bulgarian rows and `select-language=1` returns English rows.
+  - Live Bulgarian Inception archive `attach_id=51764` was a ZIP with an `.srt` subtitle.
+  - Live English Inception archive `attach_id=51168` was a RAR archive.
+  - `python3 -B -m sdk smoke-test --provider subssabbz --language bul --video-fixture tests/fixtures/subssabbz_video_inception.json --expect-min-results 1`: `subssabbz ok`.
+  - `python3 -B -m sdk smoke-test --provider subssabbz --language eng --video-fixture tests/fixtures/subssabbz_video_inception.json --expect-min-results 1`: `subssabbz ok`.
+  - `python3 -B -m sdk smoke-test --provider subssabbz --language bul --video-fixture tests/fixtures/subssabbz_video_game_of_thrones_s01e01.json --expect-min-results 1`: `subssabbz ok`.
+  - `PYTHONPATH=/tmp/prijevodionline-deps PATH=/tmp/no-system-tools /usr/bin/python3 -B -m sdk smoke-test --provider subssabbz --language eng --video-fixture tests/fixtures/subssabbz_video_inception.json --expect-min-results 1`: `subssabbz ok`.
+- Remaining gates:
+  - Add `subssabbz` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ## Why OpenSubtitles.org Is Tricky
