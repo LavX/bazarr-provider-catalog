@@ -61,6 +61,7 @@
   - `yifysubtitles`: branch `catalog-yifysubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/yifysubtitles`, current head `9e112fb Add YIFYSubtitles provider`
   - `hdbits`: branch `catalog-hdbits`, worktree `/tmp/bazarr_catalog_provider_worktrees/hdbits`, current head `42d7f02 Add HDBits provider`
   - `jimaku`: branch `catalog-jimaku`, worktree `/tmp/bazarr_catalog_provider_worktrees/jimaku`, current head `112d345 Add Jimaku provider`
+  - `subdl`: branch `catalog-subdl`, worktree `/tmp/bazarr_catalog_provider_worktrees/subdl`, current head `7ff94cd Add SubDL provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -861,6 +862,33 @@
   - Run SDK live smoke search and download with a real Jimaku API key.
   - Add `jimaku` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Jimaku API key.
+
+### `subdl`
+
+- Branch: `catalog-subdl`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/subdl`
+- Current checkpoint: `7ff94cd Add SubDL provider`
+- Baseline evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-29:
+  - Official API docs confirmed `https://api.subdl.com/api/v1/subtitles`, required `api_key`, movie and TV search, IMDb/TMDB/SubDL ids, language filters, comments, releases, hearing-impaired metadata, full-season filters, and `unpack=1` for saved files inside packs.
+  - Official language list confirmed the SubDL language code surface used by the provider, including `BR_PT`, `ZH`, and `ZH_BG`.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_subdl.py'`: failed because `providers/subdl/provider.py` did not exist.
+  - Edge-case red gate after initial implementation: direct unpacked format and missing pack member tests failed before the provider patch.
+  - `python3 -B -m unittest discover -s tests -p 'test_subdl.py'`: `13` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subdl/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `341` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - JSON parse check for `provider.json` and `catalog.json`: passed.
+  - Attribution, em-dash, and non-ASCII scans over touched SubDL implementation, notes, and tests found no matches.
+- Live evidence on 2026-05-29:
+  - `curl -sS -i --max-time 20 "https://api.subdl.com/api/v1/subtitles?film_name=Inception&type=movie&languages=EN"` returned HTTP `422` with `undefined is not an object (evaluating 'error2.schema')`, confirming real search proof requires a SubDL `api_key`.
+- Remaining gates:
+  - Run SDK live smoke search and download with a real SubDL API key.
+  - Add `subdl` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured SubDL API key.
 
 ## Why OpenSubtitles.org Is Tricky
 
