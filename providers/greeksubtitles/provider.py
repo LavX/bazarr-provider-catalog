@@ -1,0 +1,542 @@
+"""GreekSubtitles provider for the Bazarr+ Provider Hub catalog."""
+
+import base64 as _base64
+import hashlib as _hashlib
+import html
+import io
+import os
+import re
+import shutil
+import socket
+import subprocess
+import tempfile
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import zipfile
+from http.cookiejar import CookieJar
+
+try:
+    import py7zz
+except ImportError:  # pragma: no cover, dependency is declared in manifest
+    py7zz = None
+
+PROVIDER_ID = "greeksubtitles"
+BASE_URL = "https://gr.greek-subtitles.com"
+DOWNLOAD_URL = "https://www.greeksubtitles.info/getp.php?id={}"
+HTTP_TIMEOUT_SECONDS = 75
+HTTP_RETRIES = 2
+MAX_PAGES = 6
+MAX_RESULTS = 50
+SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt")
+SUPPORTED_LANGUAGES = {
+    "ell": "el",
+    "eng": "en",
+}
+ALPHA2_TO_ALPHA3 = {"el": "ell", "gr": "ell", "en": "eng"}
+USER_AGENT = "Subliminal/2.1 BazarrProviderHub"
+
+_ROW_RE = re.compile(rb"<tr\b[^>]*>(?P<body>.*?)</tr>", re.I | re.S)
+_CELL_RE = re.compile(rb"<td\b(?P<attrs>[^>]*)>(?P<body>.*?)</td>", re.I | re.S)
+_ANCHOR_RE = re.compile(rb"<a\b[^>]*href=['\"](?P<href>[^'\"]+)['\"][^>]*>(?P<body>.*?)</a>", re.I | re.S)
+_IMG_RE = re.compile(rb"<img\b[^>]*src=['\"](?P<src>[^'\"]+)['\"][^>]*>", re.I | re.S)
+_NEXT_RE = re.compile(
+    rb"<a\b[^>]*href\s*=\s*['\"](?P<href>[^'\"]*search\.php[^'\"]+)['\"][^>]*>\s*Next\s*(?:&gt;|>){2}\s*</a>",
+    re.I,
+)
+_DOWNLOAD_ID_RE = re.compile(r"/(\d+)/?$")
+_TAG_RE = re.compile(rb"<[^>]+>")
+_NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
+
+
+def parse_search_page(body, page_url):
+    rows = []
+    for row_match in _ROW_RE.finditer(body or b""):
+        row = _parse_result_row(row_match.group("body"))
+        if row:
+            rows.append(row)
+    next_url = None
+    next_match = _NEXT_RE.search(body or b"")
+    if next_match:
+        next_url = _absolute_url(_decode(next_match.group("href")), page_url)
+    return {"rows": rows, "next_url": next_url}
+
+
+def build_search_queries(video):
+    video = video or {}
+    kind = video.get("kind")
+    if kind == "episode":
+        series = video.get("series")
+        if not series:
+            return []
+        try:
+            season = int(video.get("season"))
+            episode = int(video.get("episode"))
+        except (TypeError, ValueError):
+            return []
+        suffix = f"S{season:02d}E{episode:02d}"
+        titles = [series] + list(video.get("alternative_series") or [])
+        return _dedupe([f"{title} {suffix}" for title in titles if title])
+    if kind == "movie":
+        title = video.get("title")
+        if not title:
+            return []
+        titles = [title] + list(video.get("alternative_titles") or [])
+        queries = []
+        for item in titles:
+            if not item:
+                continue
+            if video.get("year"):
+                queries.append(f"{item} {int(video['year'])}")
+            else:
+                queries.append(item)
+        return _dedupe(queries)
+    return []
+
+
+def search_url_for(query):
+    return f"{BASE_URL}/search.php?{urllib.parse.urlencode({'name': query})}"
+
+
+def derive_matches(video, release):
+    video = video or {}
+    release_normalized = _normalize(release)
+    matches = []
+    kind = video.get("kind")
+    if kind == "movie":
+        if _all_tokens_in(video.get("title"), release_normalized):
+            matches.append("title")
+        if video.get("year") and str(video["year"]) in release_normalized:
+            matches.append("year")
+    elif kind == "episode":
+        if _all_tokens_in(video.get("series"), release_normalized):
+            matches.append("series")
+        try:
+            season = int(video.get("season"))
+            episode = int(video.get("episode"))
+        except (TypeError, ValueError):
+            season = episode = None
+        if season is not None and (
+            re.search(rf"\bs0*{season}\s*e0*{episode}\b", release_normalized)
+            or re.search(rf"\b0*{season}x0*{episode}\b", release_normalized)
+        ):
+            matches.extend(["season", "episode"])
+        elif episode is not None and re.search(rf"\be0*{episode}\b", release_normalized):
+            matches.append("episode")
+        if video.get("year"):
+            matches.append("year")
+    for key in ("source", "resolution", "video_codec", "audio_codec", "release_group"):
+        value = video.get(key)
+        if value and _all_tokens_in(value, release_normalized):
+            matches.append(key)
+    return _dedupe(matches)
+
+
+class GreekSubtitlesProvider:
+    def __init__(self):
+        cookie_jar = CookieJar()
+        self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookie_jar))
+
+    def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "el,en-US;q=0.7,en;q=0.3",
+        }
+        if referer:
+            headers["Referer"] = referer
+        request = urllib.request.Request(url, headers=headers)
+        for attempt in range(HTTP_RETRIES + 1):
+            try:
+                with self._opener.open(request, timeout=timeout) as response:
+                    return response.read()
+            except urllib.error.HTTPError:
+                raise
+            except (TimeoutError, socket.timeout, urllib.error.URLError):
+                if attempt >= HTTP_RETRIES:
+                    raise
+                time.sleep(0.25 * (attempt + 1))
+        raise RuntimeError("unreachable greeksubtitles retry state")
+
+    def search(self, video, languages, config):
+        requested = {_alpha3_for_language(language) for language in languages or []}
+        requested = {language for language in requested if language in SUPPORTED_LANGUAGES}
+        if not requested or (video or {}).get("kind") not in {"movie", "episode"}:
+            return []
+        config = dict(config or {})
+        results = []
+        seen = set()
+        for query in build_search_queries(video):
+            page_url = search_url_for(query)
+            page_count = 0
+            while page_url and page_count < MAX_PAGES:
+                page_count += 1
+                _sleep(config)
+                page = parse_search_page(self._http_get(page_url), page_url)
+                for row in page["rows"]:
+                    if row["language"] not in requested:
+                        continue
+                    key = (row["subtitle_id"], row["language"])
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    results.append(self._result(video, row, query))
+                    if len(results) >= MAX_RESULTS:
+                        return sorted(results, key=lambda item: item["score"], reverse=True)
+                page_url = page["next_url"]
+        return sorted(results, key=lambda item: item["score"], reverse=True)
+
+    def _result(self, video, row, search_query):
+        language = row["language"]
+        alpha2 = row["alpha2"]
+        release = row["release"]
+        matches = derive_matches(video, release)
+        score = _score(matches, row)
+        filename = f"greeksubtitles.{_slug(release)}.{alpha2}.zip"
+        download_url = DOWNLOAD_URL.format(row["subtitle_id"])
+        payload = {
+            "provider": PROVIDER_ID,
+            "schema": 1,
+            "subtitle_id": row["subtitle_id"],
+            "download_url": download_url,
+            "page_url": row["page_url"],
+            "filename": filename,
+            "language": language,
+            "search_query": search_query,
+            "release": release,
+        }
+        return {
+            "provider": PROVIDER_ID,
+            "id": f"greeksubtitles-{row['subtitle_id']}-{language}",
+            "language": {
+                "alpha3": language,
+                "alpha2": alpha2,
+                "hi": False,
+                "forced": False,
+            },
+            "release_info": release,
+            "filename": filename,
+            "matches": matches,
+            "score": score,
+            "score_without_hash": score,
+            "score_out_of": 100,
+            "hash_verifiable": False,
+            "hearing_impaired_verifiable": False,
+            "hearing_impaired": False,
+            "page_link": row["page_url"],
+            "display": {
+                "source": "greeksubtitles",
+                "title": release,
+                "release": release,
+                "downloads": row["downloads"],
+            },
+            "provider_payload": payload,
+        }
+
+    def download(self, provider_payload, language, config):
+        del language, config
+        payload = provider_payload or {}
+        url = payload.get("download_url")
+        if not url:
+            raise ValueError("greeksubtitles download requires download_url")
+        body = self._http_get(url, referer=payload.get("page_url"))
+        body, subtitle_format = extract_download(body, payload)
+        return _content_payload(body, subtitle_format)
+
+
+def extract_download(body, payload=None):
+    payload = payload or {}
+    if _is_rar_archive(body):
+        files = _extract_rar_files(body)
+        selected = select_subtitle_file([name for name, _content in files])
+        return _normalize_line_endings(dict(files)[selected]), _subtitle_extension(selected) or "srt"
+    stream = io.BytesIO(body or b"")
+    if zipfile.is_zipfile(stream):
+        with zipfile.ZipFile(stream) as archive:
+            selected = select_subtitle_file(archive.namelist())
+            return _normalize_line_endings(archive.read(selected)), _subtitle_extension(selected) or "srt"
+    return _normalize_line_endings(body or b""), _format_from_filename(payload.get("filename"))
+
+
+def select_subtitle_file(names):
+    candidates = [
+        name
+        for name in names
+        if _subtitle_extension(name) and not os.path.basename(name).startswith(".")
+    ]
+    if not candidates:
+        raise ValueError("greeksubtitles archive contains no supported subtitle files")
+    return sorted(candidates, key=lambda name: (_extension_rank(name), len(name), name.lower()))[0]
+
+
+def _extract_rar_files(body):
+    errors = []
+    if py7zz is not None:
+        try:
+            return _extract_archive_with_py7zz(body)
+        except Exception as error:
+            errors.append(error)
+    for command in ("unar", "7z", "7zz"):
+        if not shutil.which(command):
+            continue
+        try:
+            return _extract_archive_with_system_tool(body, command)
+        except Exception as error:
+            errors.append(error)
+    if errors:
+        detail = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
+        raise RuntimeError(f"GreekSubtitles RAR extraction failed: {detail}") from errors[-1]
+    raise RuntimeError("GreekSubtitles RAR extraction requires bundled py7zz")
+
+
+def _extract_archive_with_py7zz(body):
+    if py7zz is None:
+        raise RuntimeError("py7zz is unavailable")
+    with tempfile.TemporaryDirectory() as temp_dir:
+        archive_path = os.path.join(temp_dir, "greeksubtitles.rar")
+        output_dir = os.path.join(temp_dir, "out")
+        os.mkdir(output_dir)
+        with open(archive_path, "wb") as handle:
+            handle.write(body)
+        py7zz.extract_archive(archive_path, output_dir)
+        return _collect_extracted_subtitles(output_dir)
+
+
+def _extract_archive_with_system_tool(body, command):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        archive_path = os.path.join(temp_dir, "greeksubtitles.rar")
+        output_dir = os.path.join(temp_dir, "out")
+        os.mkdir(output_dir)
+        with open(archive_path, "wb") as handle:
+            handle.write(body)
+        if command == "unar":
+            args = [command, "-quiet", "-o", output_dir, archive_path]
+        else:
+            args = [command, "x", "-y", f"-o{output_dir}", archive_path]
+        result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        if result.returncode != 0:
+            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
+            raise RuntimeError(f"{command} failed to extract GreekSubtitles RAR: {message}")
+        return _collect_extracted_subtitles(output_dir)
+
+
+def _collect_extracted_subtitles(output_dir):
+    files = []
+    for root, _dirs, filenames in os.walk(output_dir):
+        for filename in filenames:
+            path = os.path.join(root, filename)
+            rel = os.path.relpath(path, output_dir)
+            if not _subtitle_extension(rel) or os.path.basename(rel).startswith("."):
+                continue
+            with open(path, "rb") as handle:
+                files.append((rel, handle.read()))
+    if not files:
+        raise ValueError("greeksubtitles archive contains no supported subtitle files")
+    return files
+
+
+def _parse_result_row(row_body):
+    cells = _cells(row_body)
+    latest = [cell for cell in cells if "latest_name" in cell["class"]]
+    downloads = [cell for cell in cells if "latest_downloads" in cell["class"]]
+    if len(latest) < 2:
+        return None
+    content = latest[1]["body"]
+    img_match = _IMG_RE.search(content)
+    link_match = _ANCHOR_RE.search(content)
+    if not img_match or not link_match:
+        return None
+    alpha2 = _language_alpha2(_decode(img_match.group("src")))
+    language = ALPHA2_TO_ALPHA3.get(alpha2)
+    if not language:
+        return None
+    page_url = html.unescape(_decode(link_match.group("href")))
+    subtitle_id = _subtitle_id_from_url(page_url)
+    if not subtitle_id:
+        return None
+    return {
+        "subtitle_id": subtitle_id,
+        "language": language,
+        "alpha2": SUPPORTED_LANGUAGES[language],
+        "page_url": page_url,
+        "release": _strip_tags(link_match.group("body")),
+        "downloads": _int_from_text(_strip_tags(downloads[0]["body"]) if downloads else ""),
+    }
+
+
+def _cells(row_body):
+    parsed = []
+    for match in _CELL_RE.finditer(row_body):
+        attrs = _decode(match.group("attrs"))
+        parsed.append(
+            {
+                "class": _attr_value(attrs, "class"),
+                "body": match.group("body"),
+            }
+        )
+    return parsed
+
+
+def _language_alpha2(src):
+    basename = urllib.parse.urlsplit(src).path.rsplit("/", 1)[-1].split(".", 1)[0].lower()
+    if basename == "gr":
+        return "el"
+    return basename
+
+
+def _subtitle_id_from_url(value):
+    match = _DOWNLOAD_ID_RE.search(urllib.parse.urlsplit(value).path)
+    return match.group(1) if match else ""
+
+
+def _score(matches, row):
+    score = 55
+    for key, points in {
+        "title": 15,
+        "series": 15,
+        "year": 8,
+        "season": 8,
+        "episode": 10,
+        "source": 5,
+        "video_codec": 4,
+        "audio_codec": 4,
+        "release_group": 6,
+    }.items():
+        if key in matches:
+            score += points
+    if row.get("downloads"):
+        score += min(int(row["downloads"]) // 250, 6)
+    return min(score, 100)
+
+
+def _alpha3_for_language(language):
+    if not isinstance(language, dict):
+        return None
+    alpha3 = (language.get("alpha3") or "").lower()
+    if alpha3:
+        return alpha3
+    return ALPHA2_TO_ALPHA3.get((language.get("alpha2") or "").lower())
+
+
+def _all_tokens_in(value, normalized_haystack):
+    tokens = [token for token in _normalize(value).split() if token]
+    return bool(tokens) and all(token in normalized_haystack for token in tokens)
+
+
+def _sleep(config):
+    delay_ms = (config or {}).get("request_delay_ms", 0) or 0
+    if delay_ms > 0:
+        time.sleep(min(delay_ms, 5000) / 1000.0)
+
+
+def _absolute_url(value, base_url):
+    joined = urllib.parse.urljoin(base_url, html.unescape(value or ""))
+    parts = urllib.parse.urlsplit(joined)
+    path = urllib.parse.quote(parts.path, safe="/%:@+")
+    query = urllib.parse.quote(parts.query, safe="=&%:+")
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, path, query, parts.fragment))
+
+
+def _attr_value(attrs, name):
+    match = re.search(rf"\b{name}\s*=\s*['\"]([^'\"]+)['\"]", attrs, re.I)
+    return html.unescape(match.group(1)) if match else ""
+
+
+def _int_from_text(value):
+    match = re.search(r"\d+", value or "")
+    return int(match.group(0)) if match else 0
+
+
+def _dedupe(values):
+    seen = set()
+    output = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        output.append(value)
+    return output
+
+
+def _is_rar_archive(body):
+    return bool(body) and (
+        body.startswith(b"Rar!\x1a\x07\x00")
+        or body.startswith(b"Rar!\x1a\x07\x01\x00")
+    )
+
+
+def _format_from_filename(filename):
+    return _subtitle_extension(filename or "") or "srt"
+
+
+def _subtitle_extension(name):
+    lowered = (name or "").lower()
+    for extension in SUBTITLE_EXTENSIONS:
+        if lowered.endswith(extension):
+            return extension[1:]
+    return None
+
+
+def _extension_rank(name):
+    suffix = "." + (name or "").rsplit(".", 1)[-1].lower()
+    return {".srt": 0, ".ass": 1, ".ssa": 2, ".sub": 3, ".vtt": 4}.get(suffix, 9)
+
+
+def _content_payload(body, subtitle_format):
+    subtitle_format = subtitle_format or "srt"
+    if not body:
+        return {
+            "content_b64": "",
+            "content_sha256": "",
+            "content_type": _content_type(subtitle_format),
+            "format": subtitle_format,
+            "encoding": "windows-1253",
+            "empty": True,
+        }
+    encoding = "utf-8"
+    try:
+        body.decode("utf-8")
+    except UnicodeDecodeError:
+        encoding = "windows-1253"
+    return {
+        "content_b64": _base64.b64encode(body).decode("ascii"),
+        "content_sha256": _hashlib.sha256(body).hexdigest(),
+        "content_type": _content_type(subtitle_format),
+        "format": subtitle_format,
+        "encoding": encoding,
+        "empty": False,
+    }
+
+
+def _content_type(subtitle_format):
+    if subtitle_format in {"ass", "ssa"}:
+        return "text/x-ssa"
+    if subtitle_format == "vtt":
+        return "text/vtt"
+    if subtitle_format == "sub":
+        return "text/plain"
+    return "application/x-subrip"
+
+
+def _normalize_line_endings(body):
+    return (body or b"").replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
+def _slug(value):
+    return re.sub(r"\s+", "-", _normalize(value)).strip("-") or "subtitle"
+
+
+def _normalize(value):
+    return _NON_ALNUM_RE.sub(" ", str(value or "").lower()).strip()
+
+
+def _strip_tags(value):
+    value = _TAG_RE.sub(b" ", value or b"")
+    return re.sub(r"\s+", " ", html.unescape(_decode(value))).strip()
+
+
+def _decode(value):
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value or "")
