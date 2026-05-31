@@ -68,6 +68,7 @@
   - `opensubtitlescom`: branch `catalog-opensubtitlescom`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitlescom`, current head `885985f Add OpenSubtitles.com provider`
   - `avistaz`: branch `catalog-avistaz`, worktree `/tmp/bazarr_catalog_provider_worktrees/avistaz`, current head `1b339e2 Add AvistaZ provider`
   - `cinemaz`: branch `catalog-cinemaz`, worktree `/tmp/bazarr_catalog_provider_worktrees/cinemaz`, current head `df1b3bd Add CinemaZ provider`
+  - `turkcealtyaziorg`: branch `catalog-turkcealtyaziorg`, worktree `/tmp/bazarr_catalog_provider_worktrees/turkcealtyaziorg`, current head `6dd195c Add TurkceAltyazi.org provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -1070,6 +1071,34 @@
   - Run SDK live smoke search and download with valid CinemaZ cookies and a known CinemaZ release-page fixture or test-server media item.
   - Add `cinemaz` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured CinemaZ cookies.
+
+### `turkcealtyaziorg`
+
+- Branch: `catalog-turkcealtyaziorg`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/turkcealtyaziorg`
+- Current checkpoint: `6dd195c Add TurkceAltyazi.org provider`
+- Baseline evidence on 2026-05-31:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-31:
+  - Legacy inspection confirmed IMDb-only movie search, series IMDb episode search, Turkish and English language support, optional cookies and User-Agent, Cloudflare access check, season-pack handling, hearing-impaired detection, hidden-form `/ind` downloads, and archive extraction.
+  - Bazarr UI/config inspection confirmed settings `cookies` and `user_agent`, with `cookies` classified as a secret and language registry `["eng", "tur"]`.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_turkcealtyaziorg.py'`: failed because `providers/turkcealtyaziorg/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p 'test_turkcealtyaziorg.py'`: `7` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/turkcealtyaziorg/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Manifest language count matches the legacy Bazarr TurkceAltyazi.org provider language registry: `2` entries.
+  - Attribution and em-dash scan over touched TurkceAltyazi.org files found no matches.
+- Live evidence on 2026-05-31:
+  - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' https://turkcealtyazi.org/`: returned HTTP `403` with `cf-mitigated: challenge`.
+  - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' 'https://turkcealtyazi.org/find.php?cat=sub&find=1375666'`: returned HTTP `403` with `cf-mitigated: challenge`.
+  - Real search and download require valid TurkceAltyazi.org Cloudflare cookies paired with a browser User-Agent.
+- Remaining gates:
+  - Run SDK live smoke search and download with valid TurkceAltyazi.org cookies and User-Agent.
+  - Add `turkcealtyaziorg` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured TurkceAltyazi.org cookies.
 
 ## Why OpenSubtitles.org Is Tricky
 
