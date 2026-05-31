@@ -77,6 +77,7 @@
   - `pipocas`: branch `catalog-pipocas`, worktree `/tmp/bazarr_catalog_provider_worktrees/pipocas`, current head `4fe281b Add Pipocas.tv provider`
   - `subscenter`: branch `catalog-subscenter`, worktree `/tmp/bazarr_catalog_provider_worktrees/subscenter`, current head `57de626 Mark SubsCenter upstream dead`, dead origin
   - `titlovi`: branch `catalog-titlovi`, worktree `/tmp/bazarr_catalog_provider_worktrees/titlovi`, current head `1db2476 Add Titlovi provider`
+  - `titulky`: branch `catalog-titulky`, worktree `/tmp/bazarr_catalog_provider_worktrees/titulky`, current head `47d73f3 Add Titulky provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -351,6 +352,36 @@
   - Run SDK live smoke search and download with valid Titlovi credentials.
   - Add `titlovi` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Titlovi credentials.
+
+### `titulky`
+
+- Branch: `catalog-titulky`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/titulky`
+- Current checkpoint: `47d73f3 Add Titulky provider`
+- Baseline evidence on 2026-05-31:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-31:
+  - Legacy inspection confirmed movie and episode support, required VIP `username` and `password`, `approved_only`, `skip_wrong_fps`, session login through the premium site root, serial browse by IMDb id, movie-as-season-zero behavior, episode row parsing, Czech/Slovak flag language parsing, approved/unapproved row classes, detail-page FPS parsing, direct/ZIP/RAR downloads, daily download-limit detection, HTTP `429` rate-limit handling, and Europe/Prague daily reset semantics in Bazarr core.
+  - Bazarr UI/config inspection confirmed settings `username`, `password`, `approved_only`, and `skip_wrong_fps`, with `username` and `password` classified as secrets.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p test_titulky.py`: failed because `providers/titulky/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p test_titulky.py`: `6` tests passed.
+  - `python3 -B -m sdk build-catalog`: `wrote catalog.json`.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/titulky/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `334` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Manifest language count matches the Bazarr Titulky UI language registry: `2` entries.
+  - Attribution and em-dash scan over touched Titulky files found no matches.
+- Live evidence on 2026-05-31:
+  - Sandbox DNS could not resolve `premium.titulky.com`, but escalated network probes reached the site.
+  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 https://premium.titulky.com/`: returned HTTP `200`.
+  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 'https://premium.titulky.com/?action=serial&step=0&id=1160419'`: returned HTTP `200`.
+  - Real search and download require valid Titulky VIP credentials.
+- Remaining gates:
+  - Run SDK live smoke search and download with valid Titulky VIP credentials.
+  - Add `titulky` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Titulky credentials.
 
 ### `regielive`
 
