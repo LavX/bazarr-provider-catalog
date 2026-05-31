@@ -29,7 +29,7 @@
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
-- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, and `prijevodionline`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
+- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, and `soustitreseu`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
 - Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead for Provider Hub migration on 2026-05-31. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof unless a verified upstream origin returns.
 - Existing provider worktrees:
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
@@ -1255,9 +1255,25 @@
   - `python3 -B -m sdk smoke-test --provider soustitreseu --language eng --video-fixture tests/fixtures/soustitreseu_video_game_of_thrones_s01e01.json --expect-min-results 1`: `soustitreseu ok`.
   - `python3 -B -m sdk smoke-test --provider soustitreseu --language fra --video-fixture tests/fixtures/soustitreseu_video_dune.json --expect-min-results 1`: `soustitreseu ok`.
   - `/usr/bin/env PYTHONPATH=/tmp/prijevodionline-deps PATH=/tmp/no-system-tools python3 -B -m sdk smoke-test --provider soustitreseu --language eng --video-fixture tests/fixtures/soustitreseu_video_game_of_thrones_s01e01.json --expect-min-results 1`: `soustitreseu ok`.
-- Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `soustitreseu` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+- Fresh local evidence on 2026-06-01:
+  - Branch `catalog-soustitreseu` was pushed at `ed93af8`.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_soustitreseu.py'`: `7` tests passed.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/soustitreseu`, `tests/test_soustitreseu.py`, `README.md`, and `catalog.json` found no matches.
+  - `python3 -B -m sdk smoke-test --provider soustitreseu --language eng --video-fixture tests/fixtures/soustitreseu_video_game_of_thrones_s01e01.json --config-json '{"request_delay_ms":0}' --expect-min-results 1`: `soustitreseu ok`.
+  - `python3 -B -m sdk smoke-test --provider soustitreseu --language fra --video-fixture tests/fixtures/soustitreseu_video_dune.json --config-json '{"request_delay_ms":0}' --expect-min-results 1`: `soustitreseu ok`.
+- Provider Hub test-server evidence on 2026-06-01:
+  - Official catalog source dev ref was set to `catalog-soustitreseu`; refresh returned `13` entries and resolved Soustitres.eu `0.1.0` at commit `ed93af8f43be7c87a1d0f8b55946504a3038c051`.
+  - `bazarr-ui-test` restarted healthy on image `ui-test-20260531-provider-hub-replacements-f245ae096`, revision `f245ae096`.
+  - Provider state after restart: active version `0.1.0`, `pending_restart=false`, `trusted=true`, `enabled=true`, `last_error=None`, manifest commit `ed93af8f43be7c87a1d0f8b55946504a3038c051`.
+  - Runtime replacement policy contains `55` trusted migrated built-in ids, includes `soustitreseu`, and excludes `hosszupuska` and `podnapisi`.
+  - Compat search `GET /api/v1/subtitles?imdb_id=tt0944947&query=Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.mkv&type=episode&season_number=1&episode_number=1&languages=en&per_page=100` returned HTTP `200`, `124` total results, and `3` Soustitres.eu results in the first page.
+  - First Soustitres.eu result: `file_id=80`, release `Game.Of.Thrones.1x01.ENFR.FBK.zip La Fabrique 1x01`, subtitle id `soustitreseu:soustitreseu-3907850abfd356f1`.
+  - Compat download `POST /api/v1/download` for `file_id=80` returned HTTP `200`, a stream link, `remaining=999`, and `remaining_downloads=999`.
+  - Compat stream returned HTTP `200` and `37074` bytes. The payload starts with SRT cue `1` and timestamp `00:01:56,237 --> 00:01:57,432`.
+- Status:
+  - Soustitres.eu is locally validated and proved through Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `subclub`
 
