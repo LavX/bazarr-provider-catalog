@@ -71,6 +71,7 @@
   - `cinemaz`: branch `catalog-cinemaz`, worktree `/tmp/bazarr_catalog_provider_worktrees/cinemaz`, current head `df1b3bd Add CinemaZ provider`
   - `turkcealtyaziorg`: branch `catalog-turkcealtyaziorg`, worktree `/tmp/bazarr_catalog_provider_worktrees/turkcealtyaziorg`, current head `6dd195c Add TurkceAltyazi.org provider`
   - `ktuvit`: branch `catalog-ktuvit`, worktree `/tmp/bazarr_catalog_provider_worktrees/ktuvit`, current head `9d3162e Add Ktuvit provider`
+  - `legendasdivx`: branch `catalog-legendasdivx`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasdivx`, current head `02bbb60 Add LegendasDivx provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -171,6 +172,35 @@
   - Run SDK live smoke search and download with valid Ktuvit credentials.
   - Add `ktuvit` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Ktuvit credentials.
+
+### `legendasdivx`
+
+- Branch: `catalog-legendasdivx`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/legendasdivx`
+- Current checkpoint: `02bbb60 Add LegendasDivx provider`
+- Baseline evidence on 2026-05-31:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-31:
+  - Legacy inspection confirmed movie and episode support, Portugal Portuguese and Brazilian Portuguese languages, required `username` and `password`, legacy `skip_wrong_fps`, login through `/forum/ucp.php?mode=login`, `modules.php` search flow, series IMDb episode search, daily search limit counter, uploader/hits/frame-rate parsing, and direct ZIP/RAR download extraction.
+  - Bazarr UI/config inspection confirmed settings `username`, `password`, and `skip_wrong_fps`, with `username` and `password` classified as secrets.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p test_legendasdivx.py`: failed because `providers/legendasdivx/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p test_legendasdivx.py`: `6` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/legendasdivx/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `334` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Manifest language count matches the Bazarr LegendasDivx UI language registry: `2` entries.
+  - Attribution and em-dash scan over touched LegendasDivx files found no matches.
+- Live evidence on 2026-05-31:
+  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 https://www.legendasdivx.pt/`: returned HTTP `200` from Cloudflare with LegendasDivx session cookies.
+  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 'https://www.legendasdivx.pt/forum/ucp.php?mode=login'`: returned HTTP `200`.
+  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 'https://www.legendasdivx.pt/modules.php?name=Downloads&file=jz&d_op=search&op=_jz00&query=tt1160419&temporada=&episodio=&imdb='`: returned HTTP `302` to `/modules.php?name=Your_Account` without credentials.
+  - Real search and download require valid LegendasDivx credentials.
+- Remaining gates:
+  - Run SDK live smoke search and download with valid LegendasDivx credentials.
+  - Add `legendasdivx` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured LegendasDivx credentials.
 
 ### `regielive`
 
