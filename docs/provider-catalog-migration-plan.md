@@ -30,7 +30,7 @@
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
 - Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, and `soustitreseu`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
-- Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead for Provider Hub migration on 2026-05-31. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof unless a verified upstream origin returns.
+- Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead for Provider Hub migration on 2026-05-31 and re-confirmed on 2026-06-01. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof unless a verified upstream origin returns.
 - Existing provider worktrees:
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
   - `animekalesi`: branch `catalog-animekalesi`, worktree `/tmp/bazarr_catalog_provider_worktrees/animekalesi`, current head `b5db085`
@@ -931,6 +931,8 @@
   - Fresh recheck on 2026-05-31 after the dead-origin report: `https://www.podnapisi.net/subtitles` and `https://podnapisi.net/subtitles` still fail DNS with `curl: (6) Could not resolve host`.
   - Bazarr test host recheck on 2026-05-31: `ssh lavx@192.168.100.6 curl -I --max-time 15 https://www.podnapisi.net/` and `https://podnapisi.net/` both fail DNS with `curl: (6) Could not resolve host`.
   - Fresh recheck on 2026-05-31 after final dead-origin decision: `curl -I --max-time 15 https://www.podnapisi.net/` and `https://podnapisi.net/` both fail DNS with `curl: (6) Could not resolve host`.
+  - Fresh recheck on 2026-06-01 from this migration network: `curl -I --max-time 15 https://www.podnapisi.net/subtitles` fails DNS with `curl: (6) Could not resolve host`.
+  - Bazarr test host recheck on 2026-06-01: `ssh lavx@192.168.100.6 curl -I --max-time 15 https://www.podnapisi.net/subtitles` fails DNS with `curl: (6) Could not resolve host`.
 - Dead-origin decision:
   - Treat Podnapisi as dead for Provider Hub migration unless `www.podnapisi.net` resolves and serves the original subtitle API again, or a verified replacement origin is found.
   - Do not add `podnapisi` to the core replacement policy while the origin is dead.
@@ -1148,6 +1150,8 @@
   - Fresh recheck on 2026-05-31 after the dead-origin report: `curl -I --max-time 15 http://hosszupuskasub.com/` returns `curl: (52) Empty reply from server`.
   - Bazarr test host recheck on 2026-05-31: `ssh lavx@192.168.100.6 curl -I --max-time 15 http://hosszupuskasub.com/` returns `curl: (52) Empty reply from server`.
   - Fresh recheck on 2026-05-31 after final dead-origin decision: `curl -I --max-time 15 http://hosszupuskasub.com/` returns `curl: (52) Empty reply from server`.
+  - Fresh recheck on 2026-06-01 from this migration network: `curl -I --max-time 15 http://hosszupuskasub.com/` fails with `curl: (7) Failed to connect to hosszupuskasub.com port 80`.
+  - Bazarr test host recheck on 2026-06-01: `ssh lavx@192.168.100.6 curl -I --max-time 15 http://hosszupuskasub.com/` returns HTTP `308` to `https://hosszupuskasub.com/`, but `curl -I --max-time 15 https://hosszupuskasub.com/` fails with `curl: (35) TLS connect error`, and the legacy `sorozatok.php?sid=17617` path fails the same way after redirect.
 - Dead-origin decision:
   - Treat Hosszupuska as dead for Provider Hub migration unless the original site returns or a verified replacement origin is found.
   - Re-run live Hosszupuska smoke only after the domain stops serving ParkLogic parking responses.
@@ -2066,7 +2070,7 @@ Each row is one branch, one worktree, one provider PR, and one independent valid
 | 9 | `animekalesi` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/animekalesi.py` | `catalog-animekalesi` | `/tmp/bazarr_catalog_provider_worktrees/animekalesi` | episode | none | archive |
 | 10 | `animesubinfo` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/animesubinfo.py` | `catalog-animesubinfo` | `/tmp/bazarr_catalog_provider_worktrees/animesubinfo` | movie, episode | none | archive |
 | 11 | `greeksubtitles` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/greeksubtitles.py` | `catalog-greeksubtitles` | `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles` | movie, episode | none | archive |
-| 12 | `hosszupuska` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/hosszupuska.py` | `catalog-hosszupuska` | `/tmp/bazarr_catalog_provider_worktrees/hosszupuska` | episode | none | dead origin, archive |
+| 12 | `hosszupuska` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/hosszupuska.py` | `catalog-hosszupuska` | `/tmp/bazarr_catalog_provider_worktrees/hosszupuska` | episode | none | dead origin, historical only |
 | 13 | `nekur` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/nekur.py` | `catalog-nekur` | `/tmp/bazarr_catalog_provider_worktrees/nekur` | movie | none | archive |
 | 14 | `prijevodionline` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/prijevodionline.py` | `catalog-prijevodionline` | `/tmp/bazarr_catalog_provider_worktrees/prijevodionline` | episode | none | archive |
 | 15 | `soustitreseu` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/soustitreseu.py` | `catalog-soustitreseu` | `/tmp/bazarr_catalog_provider_worktrees/soustitreseu` | movie, episode | none | archive |
@@ -2082,7 +2086,7 @@ Each row is one branch, one worktree, one provider PR, and one independent valid
 | 25 | `yifysubtitles` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/yifysubtitles.py` | `catalog-yifysubtitles` | `/tmp/bazarr_catalog_provider_worktrees/yifysubtitles` | movie | none | archive |
 | 26 | `animetosho` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/animetosho.py` | `catalog-animetosho` | `/tmp/bazarr_catalog_provider_worktrees/animetosho` | episode | `search_threshold` | API, archive |
 | 27 | `napiprojekt` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/napiprojekt.py` | `catalog-napiprojekt` | `/tmp/bazarr_catalog_provider_worktrees/napiprojekt` | movie, episode | `only_authors`, `only_real_names` | upstream rewrite, author filters |
-| 28 | `podnapisi` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/podnapisi.py` | `catalog-podnapisi` | `/tmp/bazarr_catalog_provider_worktrees/podnapisi` | movie, episode | `only_foreign`, `also_foreign`, `verify_ssl` | dead origin, API, foreign subtitle filters |
+| 28 | `podnapisi` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/podnapisi.py` | `catalog-podnapisi` | `/tmp/bazarr_catalog_provider_worktrees/podnapisi` | movie, episode | `only_foreign`, `also_foreign`, `verify_ssl` | dead origin, historical only |
 | 29 | `subf2m` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/subf2m.py` | `catalog-subf2m` | `/tmp/bazarr_catalog_provider_worktrees/subf2m` | movie, episode | `verify_ssl`, `user_agent` | archive, custom session |
 | 30 | `subsarr` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/subsarr.py` | `catalog-subsarr` | `/tmp/bazarr_catalog_provider_worktrees/subsarr` | movie, episode | `base_url` | self-hosted API |
 | 31 | `assrt` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/assrt.py` | `catalog-assrt` | `/tmp/bazarr_catalog_provider_worktrees/assrt` | movie, episode | `token` | authenticated API |
