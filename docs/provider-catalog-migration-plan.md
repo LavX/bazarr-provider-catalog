@@ -66,6 +66,7 @@
   - `subsro`: branch `catalog-subsro`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsro`, current head `4e63940 Add Subs.ro provider`
   - `subx`: branch `catalog-subx`, worktree `/tmp/bazarr_catalog_provider_worktrees/subx`, current head `4199530 Add SubX provider`
   - `opensubtitlescom`: branch `catalog-opensubtitlescom`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitlescom`, current head `885985f Add OpenSubtitles.com provider`
+  - `avistaz`: branch `catalog-avistaz`, worktree `/tmp/bazarr_catalog_provider_worktrees/avistaz`, current head `1b339e2 Add AvistaZ provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -1006,6 +1007,34 @@
   - Run SDK live smoke search and download with real OpenSubtitles.com credentials.
   - Add `opensubtitlescom` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured OpenSubtitles.com credentials.
+
+### `avistaz`
+
+- Branch: `catalog-avistaz`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/avistaz`
+- Current checkpoint: `1b339e2 Add AvistaZ provider`
+- Baseline evidence on 2026-05-29:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-31:
+  - Legacy inspection confirmed AvistaZ is a release-page provider using `video.info_url`, validates session cookies against `/rules`, parses the nested `Subtitles` table, treats release-page subtitles as hash-quality matches, and downloads direct, ZIP, and RAR subtitle payloads.
+  - Bazarr UI/config inspection confirmed settings `cookies` and `user_agent`, with `cookies` classified as a secret.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_avistaz.py'`: failed because `providers/avistaz/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p 'test_avistaz.py'`: `7` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/avistaz/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Manifest language count matches the legacy Bazarr AvistaZ provider language registry: `173` entries.
+  - Attribution and em-dash scan over touched AvistaZ files found no matches.
+- Live evidence on 2026-05-29:
+  - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' https://avistaz.to/`: returned HTTP `200` with the public AvistaZ landing page.
+  - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' https://avistaz.to/rules`: returned HTTP `302` to `https://avistaz.to/auth/login`.
+  - Real release-page search and download require valid AvistaZ session cookies and a video refined with an AvistaZ `info_url`.
+- Remaining gates:
+  - Run SDK live smoke search and download with valid AvistaZ cookies and a known AvistaZ release-page fixture or test-server media item.
+  - Add `avistaz` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured AvistaZ cookies.
 
 ## Why OpenSubtitles.org Is Tricky
 
