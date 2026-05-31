@@ -29,7 +29,7 @@
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `fe1afaeaf`
-- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-fe1afaeaf`; runtime policy includes `bsplayer`, `gestdown`, and `tvsubtitles`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
+- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-fe1afaeaf`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, and `subtitulamostv`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
 - Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead or unreachable for the migration and Bazarr test networks on 2026-05-31. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof until a verified upstream origin returns.
 - Existing provider worktrees:
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
@@ -708,9 +708,21 @@
 - Live smoke evidence on 2026-05-29:
   - `python3 -B -m sdk smoke-test --provider subtitulamostv --language eng --video-fixture tests/fixtures/subtitulamostv_video_the_last_ship_s05e10.json --expect-min-results 1`: `subtitulamostv ok`.
   - The original The Last of Us fixture remains covered by parser fixtures, but the live site search did not return that show, so the live gate uses The Last Ship S05E10.
-- Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subtitulamostv` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+- Fresh local evidence on 2026-05-31:
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_subtitulamostv.py'`: `16` tests passed.
+  - `python3 -B -m sdk smoke-test --provider subtitulamostv --language eng --video-fixture tests/fixtures/subtitulamostv_video_the_last_ship_s05e10.json --expect-min-results 1 --skip-download`: `subtitulamostv ok`.
+- Test-server evidence on 2026-05-31:
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` is deployed to `bazarr-ui-test`.
+  - `catalog-subtitulamostv` was pushed to GitHub so Provider Hub could stage it from the official source.
+  - Official Provider Hub catalog source was refreshed from `catalog-subtitulamostv`; the SubtitulamosTV manifest resolved to commit `f75eafde2378fe1a9e0e9aa16e4d8f56180ec224`.
+  - Provider Hub state has `subtitulamostv` active at version `0.1.0`, `pending_restart` false, `trusted` true, and `last_error` null.
+  - Provider Hub worker health returned `ok: True`, `status: ready`.
+  - Bazarr `general.enabled_providers` includes `subtitulamostv`.
+  - Compat query-only episode search for `query=The.Last.Ship.S05E10.1080p.WEBRip.x264-TBS.mkv`, `type=episode`, `season_number=5`, `episode_number=10`, and `languages=en` returned HTTP `200`, `48` total results, including `1` SubtitulamosTV result for release `MeGusta`.
+  - Compat login returned HTTP `200`; compat download for SubtitulamosTV `file_id=3` returned HTTP `200` and a stream link.
+  - Fetching the stream link returned HTTP `200` with `25611` bytes of SRT content.
+- Remaining gates: none for the current SubtitulamosTV migration proof.
 
 ### `greeksubs`
 
