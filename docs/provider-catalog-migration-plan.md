@@ -28,6 +28,7 @@
 - Existing provider worktrees:
   - `gestdown`: branch `catalog-gestdown`, worktree `/tmp/bazarr_catalog_provider_worktrees/gestdown`, current head `c74a706 Fix Gestdown language parity`
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a Add Addic7ed provider`
+  - `karagarga`: branch `catalog-karagarga`, worktree `/tmp/bazarr_catalog_provider_worktrees/karagarga`, current head `0167ba8 Add Karagarga provider`
   - `regielive`: branch `catalog-regielive`, worktree `/tmp/bazarr_catalog_provider_worktrees/regielive`, current head `fb5a2ae Add RegieLive provider`
   - `shooter`: branch `catalog-shooter`, worktree `/tmp/bazarr_catalog_provider_worktrees/shooter`, current head `776fdb2 Add Shooter provider`
   - `subtis`: branch `catalog-subtis`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtis`, current head `5f2b268 Add Subtis provider`
@@ -111,6 +112,35 @@
   - Decide whether captcha-solver integration belongs in a separate Plugin Hub helper before treating username/password login as fully equivalent to the legacy in-process captcha path.
   - Add `addic7ed` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Addic7ed credentials or cookies.
+
+### `karagarga`
+
+- Branch: `catalog-karagarga`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/karagarga`
+- Current checkpoint: `0167ba8 Add Karagarga provider`
+- Baseline evidence on 2026-05-31:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-31:
+  - Legacy inspection confirmed movie-only English support, tracker login, separate forum login, `pots.php` completed-search flow, approved forum link filtering, up to three forum scans, most-downloaded attachment selection, and direct attachment downloads.
+  - Bazarr UI/config inspection confirmed settings `username`, `password`, `f_username`, and `f_password`, with `username`, `password`, and `f_password` classified as secrets.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_karagarga.py'`: failed because `providers/karagarga/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p 'test_karagarga.py'`: `4` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/karagarga/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `332` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Manifest language count matches the Bazarr Karagarga UI language registry: `1` entry.
+  - Attribution and em-dash scan over touched Karagarga files found no matches.
+- Live evidence on 2026-05-31:
+  - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' https://karagarga.in/`: returned HTTP `200` with the logged-out tracker page.
+  - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' 'https://karagarga.in/pots.php?search=Dune&status=completed'`: returned HTTP `302` to `/login.php`.
+  - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' https://forum.karagarga.in/`: returned HTTP `200` with the forum sign-in page.
+  - Real search and download require valid Karagarga tracker and forum credentials.
+- Remaining gates:
+  - Run SDK live smoke search and download with valid Karagarga tracker and forum credentials.
+  - Add `karagarga` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Karagarga credentials.
 
 ### `regielive`
 
