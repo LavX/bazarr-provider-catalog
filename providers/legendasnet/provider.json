@@ -1,0 +1,66 @@
+{
+  "api_version": "bazarr.provider-hub.v1",
+  "bundle_sha256": "09c6e1b0719ae62200612a78d6cb8f102556a4535d609d4b16c3ce02882085e3",
+  "config_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "password": {
+        "description": "Legendas.net password.",
+        "secret": true,
+        "title": "Password",
+        "type": "string"
+      },
+      "request_delay_ms": {
+        "default": 0,
+        "description": "Optional politeness delay between Legendas.net API calls.",
+        "maximum": 5000,
+        "minimum": 0,
+        "title": "Delay between requests (ms)",
+        "type": "integer"
+      },
+      "username": {
+        "description": "Legendas.net account email or username.",
+        "secret": true,
+        "title": "Username",
+        "type": "string"
+      }
+    },
+    "required": [
+      "username",
+      "password"
+    ],
+    "type": "object"
+  },
+  "dependencies": {
+    "requirements": []
+  },
+  "entry_class": "LegendasNetProvider",
+  "entry_module": "provider",
+  "files": {
+    "provider.py": "4fce491bb2d9d9220b57f177a93790ed1855918327991e2dc25be87d242bee3f"
+  },
+  "languages": [
+    "por-BR"
+  ],
+  "name": "Legendas.net",
+  "provider_id": "legendasnet",
+  "schema_version": 1,
+  "secret_fields": [
+    "username",
+    "password"
+  ],
+  "source": {
+    "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+    "commit": "0000000000000000000000000000000000000000",
+    "path": "providers/legendasnet",
+    "ref": "main",
+    "repo": "LavX/bazarr-provider-catalog",
+    "trusted": true,
+    "type": "github"
+  },
+  "supported_media": [
+    "movie",
+    "episode"
+  ],
+  "version": "0.1.0"
+}
