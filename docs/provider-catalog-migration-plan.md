@@ -24,7 +24,7 @@
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Core migration prerequisite branch: `provider-hub-builtin-migration` in `/tmp/bazarr_provider_hub_builtin_migration`
-- Dead-origin providers: `hosszupuska`, `podnapisi`. Keep fixture-backed branches for historical parity only. Do not promote them to the core allow-list, open merge-ready provider PRs, or require Provider Hub compat proof until a verified upstream origin returns.
+- Dead-origin providers: `hosszupuska`, `podnapisi`. Confirmed dead on 2026-05-31. Keep fixture-backed branches for historical parity only. Do not promote them to the core allow-list, open merge-ready provider PRs, or require Provider Hub compat proof until a verified upstream origin returns.
 - Existing provider worktrees:
   - `gestdown`: branch `catalog-gestdown`, worktree `/tmp/bazarr_catalog_provider_worktrees/gestdown`, current head `c74a706 Fix Gestdown language parity`
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a Add Addic7ed provider`
@@ -70,6 +70,7 @@
   - `avistaz`: branch `catalog-avistaz`, worktree `/tmp/bazarr_catalog_provider_worktrees/avistaz`, current head `1b339e2 Add AvistaZ provider`
   - `cinemaz`: branch `catalog-cinemaz`, worktree `/tmp/bazarr_catalog_provider_worktrees/cinemaz`, current head `df1b3bd Add CinemaZ provider`
   - `turkcealtyaziorg`: branch `catalog-turkcealtyaziorg`, worktree `/tmp/bazarr_catalog_provider_worktrees/turkcealtyaziorg`, current head `6dd195c Add TurkceAltyazi.org provider`
+  - `ktuvit`: branch `catalog-ktuvit`, worktree `/tmp/bazarr_catalog_provider_worktrees/ktuvit`, current head `9d3162e Add Ktuvit provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -141,6 +142,35 @@
   - Run SDK live smoke search and download with valid Karagarga tracker and forum credentials.
   - Add `karagarga` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Karagarga credentials.
+
+### `ktuvit`
+
+- Branch: `catalog-ktuvit`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/ktuvit`
+- Current checkpoint: `9d3162e Add Ktuvit provider`
+- Baseline evidence on 2026-05-31:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-31:
+  - Legacy inspection confirmed Hebrew-only movie and episode support, required `email` and `hashed_password`, login through `MembershipService.svc/Login`, service responses wrapped in `d`, Ktuvit search service requests, movie page parsing, episode AJAX subtitle list parsing, TMDB fallback when no IMDb id is present, and the download identifier flow.
+  - Bazarr UI/config inspection confirmed settings `email` and `hashed_password`, with both classified as secrets.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_ktuvit.py'`: failed because `providers/ktuvit/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p test_ktuvit.py`: `5` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/ktuvit/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `333` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Manifest language count matches the Bazarr Ktuvit UI language registry: `1` entry.
+  - Attribution and em-dash scan over touched Ktuvit files found no matches.
+- Live evidence on 2026-05-31:
+  - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' https://www.ktuvit.me/`: returned HTTP `200`.
+  - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' https://www.ktuvit.me/Services/MembershipService.svc/Login`: returned HTTP `405` with POST allowed.
+  - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' https://www.ktuvit.me/MovieInfo.aspx?ID=1`: returned HTTP `200` with an invalid-request page.
+  - Real search and download require valid Ktuvit email and hashed password credentials.
+- Remaining gates:
+  - Run SDK live smoke search and download with valid Ktuvit credentials.
+  - Add `ktuvit` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Ktuvit credentials.
 
 ### `regielive`
 
