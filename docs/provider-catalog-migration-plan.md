@@ -24,7 +24,7 @@
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Core migration prerequisite branch: `provider-hub-builtin-migration` in `/tmp/bazarr_provider_hub_builtin_migration`
-- Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`. Confirmed dead on 2026-05-31. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core allow-list, open merge-ready provider PRs, or require Provider Hub compat proof until a verified upstream origin returns.
+- Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead on 2026-05-31. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core allow-list, open merge-ready provider PRs, or require Provider Hub compat proof until a verified upstream origin returns.
 - Existing provider worktrees:
   - `gestdown`: branch `catalog-gestdown`, worktree `/tmp/bazarr_catalog_provider_worktrees/gestdown`, current head `c74a706 Fix Gestdown language parity`
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a Add Addic7ed provider`
@@ -78,6 +78,7 @@
   - `subscenter`: branch `catalog-subscenter`, worktree `/tmp/bazarr_catalog_provider_worktrees/subscenter`, current head `57de626 Mark SubsCenter upstream dead`, dead origin
   - `titlovi`: branch `catalog-titlovi`, worktree `/tmp/bazarr_catalog_provider_worktrees/titlovi`, current head `1db2476 Add Titlovi provider`
   - `titulky`: branch `catalog-titulky`, worktree `/tmp/bazarr_catalog_provider_worktrees/titulky`, current head `47d73f3 Add Titulky provider`
+  - `xsubs`: branch `catalog-xsubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/xsubs`, current head `5a17922 Mark XSubs upstream dead`, dead origin
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -382,6 +383,32 @@
   - Run SDK live smoke search and download with valid Titulky VIP credentials.
   - Add `titulky` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Titulky credentials.
+
+### `xsubs`
+
+- Branch: `catalog-xsubs`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/xsubs`
+- Current checkpoint: `5a17922 Mark XSubs upstream dead`
+- Baseline evidence on 2026-05-31:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-31:
+  - Legacy inspection confirmed episode-only support, optional `username` and `password`, CSRF login, logout, Greek-only language support, XML series index, series id lookup with article and year fallbacks, season id lookup, episode range expansion, unreleased subtitle filtering, direct subtitle downloads, and Windows-1253 subtitle encoding.
+  - Bazarr UI/config inspection confirmed settings `username` and `password`, with both classified as secrets.
+  - No active provider implementation, manifest, test fixtures, README entry, or catalog entry was promoted because the upstream no longer serves the legacy service.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+  - `rg -n "xsubs|XSubs" README.md catalog.json providers tests -S`: no matches.
+- Live evidence on 2026-05-31:
+  - Sandbox DNS could not resolve `xsubs.tv`, but escalated network probes reached the host.
+  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 http://xsubs.tv/`: returned HTTP `200`.
+  - `http://xsubs.tv/series/all.xml` returned HTTP `200`, but the body was an unrelated Korean-language link page instead of the legacy XML series index.
+  - `https://xsubs.tv/series/all.xml`, `http://www.xsubs.tv/series/all.xml`, and `https://www.xsubs.tv/series/all.xml` returned the same unrelated page.
+  - `http://xsubs.tv/xforum/account/signin/` returned the same unrelated page instead of the legacy login form.
+- Remaining gates:
+  - Treat XSubs as blocked/dead unless the original subtitle service returns or a verified replacement origin is found.
+  - Do not add `xsubs` to the trusted built-in migration allow-list while the origin is dead.
+  - Do not open or merge XSubs as an active catalog provider while the host serves unrelated content.
 
 ### `regielive`
 
@@ -1716,7 +1743,7 @@ Each row is one branch, one worktree, one provider PR, and one independent valid
 | 50 | `subscenter` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/subscenter.py` | `catalog-subscenter` | `/tmp/bazarr_catalog_provider_worktrees/subscenter` | movie, episode | `username`, `password` | dead origin, auth, archive |
 | 51 | `titlovi` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/titlovi.py` | `catalog-titlovi` | `/tmp/bazarr_catalog_provider_worktrees/titlovi` | movie, episode | `username`, `password` | auth, archive |
 | 52 | `titulky` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/titulky.py` | `catalog-titulky` | `/tmp/bazarr_catalog_provider_worktrees/titulky` | movie, episode | `username`, `password`, `approved_only`, `skip_wrong_fps` | auth, archive, FPS |
-| 53 | `xsubs` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/xsubs.py` | `catalog-xsubs` | `/tmp/bazarr_catalog_provider_worktrees/xsubs` | episode | `username`, `password` | auth |
+| 53 | `xsubs` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/xsubs.py` | `catalog-xsubs` | `/tmp/bazarr_catalog_provider_worktrees/xsubs` | episode | `username`, `password` | dead origin, auth |
 | 54 | `subs4free` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/subs4free.py` | `catalog-subs4free` | `/tmp/bazarr_catalog_provider_worktrees/subs4free` | movie | none | archive, anti-bot |
 | 55 | `subs4series` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/subs4series.py` | `catalog-subs4series` | `/tmp/bazarr_catalog_provider_worktrees/subs4series` | episode | none | archive, anti-bot |
 | 56 | `zimuku` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/zimuku.py` | `catalog-zimuku` | `/tmp/bazarr_catalog_provider_worktrees/zimuku` | movie, episode | none | archive, anti-bot |
