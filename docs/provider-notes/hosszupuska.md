@@ -26,6 +26,7 @@ Historical dead-origin notes for `hosszupuska`. The upstream is dead. This branc
   - Browser-like HTTP and HTTPS requests previously returned a ParkLogic JavaScript router page, not the HosszuPuska subtitle site.
   - The legacy `sorozatok.php` search path returns the same ParkLogic router page.
   - Fresh recheck after the dead-origin report returned `curl: (52) Empty reply from server` for `http://hosszupuskasub.com/`.
+  - Bazarr test host recheck also returned `curl: (52) Empty reply from server` for `http://hosszupuskasub.com/`.
   - RDAP shows nameservers `NS1.PARKLOGIC.COM` and `NS2.PARKLOGIC.COM`, with `last changed` at `2026-05-25T23:28:30Z`.
   - Do not require live smoke, Provider Hub compat proof, or core allow-list promotion unless the original site returns or a verified replacement origin is found.
 
