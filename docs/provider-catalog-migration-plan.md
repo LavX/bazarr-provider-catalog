@@ -24,7 +24,7 @@
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Core migration prerequisite branch: `provider-hub-builtin-migration` in `/tmp/bazarr_provider_hub_builtin_migration`
-- Dead-origin providers: `hosszupuska`, `podnapisi`. Confirmed dead on 2026-05-31. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core allow-list, open merge-ready provider PRs, or require Provider Hub compat proof until a verified upstream origin returns.
+- Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`. Confirmed dead on 2026-05-31. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core allow-list, open merge-ready provider PRs, or require Provider Hub compat proof until a verified upstream origin returns.
 - Existing provider worktrees:
   - `gestdown`: branch `catalog-gestdown`, worktree `/tmp/bazarr_catalog_provider_worktrees/gestdown`, current head `c74a706 Fix Gestdown language parity`
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a Add Addic7ed provider`
@@ -75,6 +75,7 @@
   - `legendasnet`: branch `catalog-legendasnet`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasnet`, current head `983878f Add Legendas.net provider`
   - `napisy24`: branch `catalog-napisy24`, worktree `/tmp/bazarr_catalog_provider_worktrees/napisy24`, current head `34a9720 Add Napisy24 provider`
   - `pipocas`: branch `catalog-pipocas`, worktree `/tmp/bazarr_catalog_provider_worktrees/pipocas`, current head `4fe281b Add Pipocas.tv provider`
+  - `subscenter`: branch `catalog-subscenter`, worktree `/tmp/bazarr_catalog_provider_worktrees/subscenter`, current head `57de626 Mark SubsCenter upstream dead`, dead origin
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -289,6 +290,36 @@
   - Run SDK live smoke search and download with valid Pipocas.tv credentials.
   - Add `pipocas` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Pipocas credentials.
+
+### `subscenter`
+
+- Branch: `catalog-subscenter`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/subscenter`
+- Current checkpoint: `57de626 Mark SubsCenter upstream dead`
+- Baseline evidence on 2026-05-31:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-31:
+  - Legacy inspection confirmed movie and episode support, Hebrew only, optional `username` and `password`, CSRF cookie login, title suggestion lookup, nested subtitle JSON parsing, duplicate release merge by subtitle id, hearing-impaired flags, ZIP downloads, and daily-limit handling for non-ZIP responses.
+  - Bazarr UI/config inspection confirmed `subscenter` currently exposes no UI inputs, while the legacy provider still accepts optional credentials.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p test_subscenter.py`: failed because `providers/subscenter/provider.py` did not exist.
+  - Temporary clean-room implementation passed `python3 -B -m unittest discover -s tests -p test_subscenter.py`: `6` tests passed, then was removed because the upstream does not resolve.
+  - Final notes-only branch `python3 -B -m sdk build-catalog`: `wrote catalog.json`.
+  - Final notes-only branch `python3 -B -m sdk validate`: `catalog ok`.
+  - Final notes-only branch `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+  - `rg -n "subscenter|SubsCenter" README.md catalog.json providers tests -S`: no matches.
+  - `git diff --check` and `git diff --cached --check`: clean.
+- Live evidence on 2026-05-31:
+  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 http://www.subscenter.info/he/`: failed with `curl: (6) Could not resolve host`.
+  - Escalated curl checks for `http://www.subscenter.info/he/`, `http://subscenter.info/he/`, `https://www.subscenter.info/he/`, and `https://subscenter.info/he/` all failed DNS resolution.
+  - Public DNS checks through `dig +short @1.1.1.1` and `dig +short @8.8.8.8` returned no address records for `www.subscenter.info` and `subscenter.info`.
+  - `python3 -B -m sdk smoke-test --provider subscenter --language heb --video-fixture tests/fixtures/subscenter_video_dune_2021.json --expect-min-results 1 --skip-download` failed with sandbox DNS error.
+  - The same SDK smoke test with escalated network failed with `No address associated with hostname`.
+- Remaining gates:
+  - Treat SubsCenter as blocked/dead unless the original site returns or a verified replacement origin is found.
+  - Do not add `subscenter` to the trusted built-in migration allow-list while the origin is dead.
+  - Do not open or merge SubsCenter as an active catalog provider while the domain does not resolve.
+  - Do not require Provider Hub compat search, download, or stream proof while the origin is dead.
 
 ### `regielive`
 
@@ -1620,7 +1651,7 @@ Each row is one branch, one worktree, one provider PR, and one independent valid
 | 47 | `legendasnet` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/legendasnet.py` | `catalog-legendasnet` | `/tmp/bazarr_catalog_provider_worktrees/legendasnet` | movie, episode | `username`, `password` | auth, archive |
 | 48 | `napisy24` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/napisy24.py` | `catalog-napisy24` | `/tmp/bazarr_catalog_provider_worktrees/napisy24` | movie, episode | `username`, `password` | auth, archive |
 | 49 | `pipocas` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/pipocas.py` | `catalog-pipocas` | `/tmp/bazarr_catalog_provider_worktrees/pipocas` | movie, episode | `username`, `password` | auth, archive |
-| 50 | `subscenter` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/subscenter.py` | `catalog-subscenter` | `/tmp/bazarr_catalog_provider_worktrees/subscenter` | movie, episode | `username`, `password` | auth, archive |
+| 50 | `subscenter` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/subscenter.py` | `catalog-subscenter` | `/tmp/bazarr_catalog_provider_worktrees/subscenter` | movie, episode | `username`, `password` | dead origin, auth, archive |
 | 51 | `titlovi` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/titlovi.py` | `catalog-titlovi` | `/tmp/bazarr_catalog_provider_worktrees/titlovi` | movie, episode | `username`, `password` | auth, archive |
 | 52 | `titulky` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/titulky.py` | `catalog-titulky` | `/tmp/bazarr_catalog_provider_worktrees/titulky` | movie, episode | `username`, `password`, `approved_only`, `skip_wrong_fps` | auth, archive, FPS |
 | 53 | `xsubs` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/xsubs.py` | `catalog-xsubs` | `/tmp/bazarr_catalog_provider_worktrees/xsubs` | episode | `username`, `password` | auth |
