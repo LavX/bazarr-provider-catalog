@@ -27,7 +27,7 @@
 - Dead-origin providers: `hosszupuska`, `podnapisi`. Keep fixture-backed branches for historical parity only. Do not promote them to the core allow-list, open merge-ready provider PRs, or require Provider Hub compat proof until a verified upstream origin returns.
 - Existing provider worktrees:
   - `gestdown`: branch `catalog-gestdown`, worktree `/tmp/bazarr_catalog_provider_worktrees/gestdown`, current head `c74a706 Fix Gestdown language parity`
-  - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, currently clean at `origin/main`
+  - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a Add Addic7ed provider`
   - `regielive`: branch `catalog-regielive`, worktree `/tmp/bazarr_catalog_provider_worktrees/regielive`, current head `fb5a2ae Add RegieLive provider`
   - `shooter`: branch `catalog-shooter`, worktree `/tmp/bazarr_catalog_provider_worktrees/shooter`, current head `776fdb2 Add Shooter provider`
   - `subtis`: branch `catalog-subtis`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtis`, current head `5f2b268 Add Subtis provider`
@@ -81,6 +81,36 @@
 - Current checkpoint: `c74a706 Fix Gestdown language parity`
 - Local evidence: provider tests, catalog validation, full tests, live smoke, and core manifest parse check passed on 2026-05-29.
 - Remaining gate: live Provider Hub compat proof after the trusted built-in migration core branch is deployable on the Bazarr test server.
+
+### `addic7ed`
+
+- Branch: `catalog-addic7ed`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/addic7ed`
+- Current checkpoint: `9464c2a Add Addic7ed provider`
+- Baseline evidence on 2026-05-31:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-31:
+  - Legacy inspection confirmed username/password or cookie auth, optional User-Agent, VIP download cap, show-id lookup, movie-id lookup, episode and movie parsing, incomplete-subtitle filtering, hearing-impaired flags, rate-limit detection, and plain subtitle downloads.
+  - Bazarr UI/config inspection confirmed settings `username`, `password`, `cookies`, `user_agent`, and `vip`, with `username`, `password`, and `cookies` classified as secrets.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_addic7ed.py'`: failed because `providers/addic7ed/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p 'test_addic7ed.py'`: `5` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/addic7ed/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `333` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Manifest language count matches the Bazarr Addic7ed UI language registry: `44` entries, with hearing-impaired represented per result.
+  - Attribution and em-dash scan over touched Addic7ed files found no matches.
+- Live evidence on 2026-05-31:
+  - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' https://www.addic7ed.com/`: returned HTTP `200`.
+  - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' https://www.addic7ed.com/shows.php`: returned HTTP `302` to `/login.php` without cookies.
+  - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' 'https://www.addic7ed.com/search.php?search=Dexter'`: returned HTTP `302` to a show page.
+  - Real search and download require valid Addic7ed credentials or session cookies. If Addic7ed presents captcha during username/password login, the Provider Hub plugin requires cookies.
+- Remaining gates:
+  - Run SDK live smoke search and download with valid Addic7ed cookies or credentials.
+  - Decide whether captcha-solver integration belongs in a separate Plugin Hub helper before treating username/password login as fully equivalent to the legacy in-process captcha path.
+  - Add `addic7ed` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Addic7ed credentials or cookies.
 
 ### `regielive`
 
