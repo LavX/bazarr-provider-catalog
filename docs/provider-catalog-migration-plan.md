@@ -24,7 +24,7 @@
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Core migration prerequisite branch: `provider-hub-builtin-migration` in `/tmp/bazarr_provider_hub_builtin_migration`
-- Dead-origin providers: `hosszupuska`, `podnapisi`. Keep fixture-backed branches for historical parity, but do not promote them to the core allow-list or require Provider Hub compat proof until a verified upstream origin returns.
+- Dead-origin providers: `hosszupuska`, `podnapisi`. Keep fixture-backed branches for historical parity only. Do not promote them to the core allow-list, open merge-ready provider PRs, or require Provider Hub compat proof until a verified upstream origin returns.
 - Existing provider worktrees:
   - `gestdown`: branch `catalog-gestdown`, worktree `/tmp/bazarr_catalog_provider_worktrees/gestdown`, current head `c74a706 Fix Gestdown language parity`
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, currently clean at `origin/main`
@@ -312,7 +312,7 @@
 
 - Branch: `catalog-podnapisi`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/podnapisi`
-- Current checkpoint: `ef8e1cb Add Podnapisi provider`
+- Current checkpoint: `125c175 Mark Podnapisi upstream dead`
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -329,9 +329,12 @@
   - `python3 -B -m sdk smoke-test --provider podnapisi --language eng --video-fixture tests/fixtures/podnapisi_video_dune_2021.json --config-json '{"verify_ssl":true}' --expect-min-results 1 --skip-download`: failed with `podnapisi search failed: <urlopen error [Errno -2] Name or service not known>`.
   - Recheck on 2026-05-29: `https://www.podnapisi.net/subtitles` and `https://podnapisi.net/subtitles` failed DNS with `curl: (6) Could not resolve host`.
   - RDAP recheck on 2026-05-29: `PODNAPISI.NET` still exists, but `podnapisi.net` and `www.podnapisi.net` do not resolve from the test network; `last changed` is `2026-05-20T13:24:04Z`.
+  - Recheck on 2026-05-31 from this migration network: `https://podnapisi.net/subtitles` and `https://www.podnapisi.net/subtitles/search/advanced` still fail DNS with `curl: (6) Could not resolve host`.
+  - Public web indexing can still load the Podnapisi homepage, so this is classified as blocked/dead for the Provider Hub migration network and Bazarr test proof, not as a proven global domain disappearance.
 - Remaining gates:
   - Treat Podnapisi as blocked/dead unless `www.podnapisi.net` resolves and serves the original subtitle API again, or a verified replacement origin is found.
   - Do not add `podnapisi` to the trusted built-in migration allow-list while the origin is dead.
+  - Do not open or merge Podnapisi as an active catalog provider while the migration network cannot prove live search and download.
   - Do not require Provider Hub compat search, download, or stream proof while the origin is dead.
 
 ### `subf2m`
@@ -463,7 +466,7 @@
 
 - Branch: `catalog-hosszupuska`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`
-- Current checkpoint: `f0ad3b4 Add Hosszupuska provider`
+- Current checkpoint: `c82a0eb Mark Hosszupuska upstream dead`
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -485,10 +488,13 @@
   - Recheck on 2026-05-29: `https://www.hosszupuskasub.com/` returned HTTP `200`, but the body is a ParkLogic JavaScript router, not the HosszuPuska subtitle site.
   - Recheck on 2026-05-29: `http://hosszupuskasub.com/sorozatok.php?sid=17617&evad=1&resz=1&nyelv=1` returned HTTP `200`, but the body is the same ParkLogic router for the legacy endpoint.
   - RDAP recheck on 2026-05-29: nameservers are `NS1.PARKLOGIC.COM` and `NS2.PARKLOGIC.COM`; `last changed` is `2026-05-25T23:28:30Z`.
+  - Recheck on 2026-05-31: `http://hosszupuskasub.com/` returns HTTP `200` from `openresty`, but the response is a ParkLogic JavaScript router.
+  - Recheck on 2026-05-31: `http://hosszupuskasub.com/sorozatok.php?sid=17617` returns the same ParkLogic router for the legacy search path.
 - Remaining gates:
   - Treat Hosszupuska as blocked unless the original site returns or a verified replacement origin is found.
   - Re-run live Hosszupuska smoke only after the domain stops serving ParkLogic parking responses.
   - Do not add `hosszupuska` to the trusted built-in migration allow-list while the origin is dead.
+  - Do not open or merge Hosszupuska as an active catalog provider while the domain is parked.
   - Do not require Provider Hub compat search, download, or stream proof while the origin is dead.
 
 ### `nekur`
