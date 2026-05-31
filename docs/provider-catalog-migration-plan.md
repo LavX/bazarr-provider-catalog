@@ -80,6 +80,7 @@
   - `titulky`: branch `catalog-titulky`, worktree `/tmp/bazarr_catalog_provider_worktrees/titulky`, current head `47d73f3 Add Titulky provider`
   - `xsubs`: branch `catalog-xsubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/xsubs`, current head `5a17922 Mark XSubs upstream dead`, dead origin
   - `subs4free`: branch `catalog-subs4free`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4free`, current head `f7ca9ac Add Subs4Free provider`
+  - `subs4series`: branch `catalog-subs4series`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4series`, current head `4dbe046 Add Subs4Series provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -439,6 +440,36 @@
 - Remaining gates:
   - Add `subs4free` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+
+### `subs4series`
+
+- Branch: `catalog-subs4series`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/subs4series`
+- Current checkpoint: `4dbe046 Add Subs4Series provider`
+- Baseline evidence on 2026-05-31:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-31:
+  - Legacy inspection confirmed episode-only support, Greek and English languages, no per-provider UI settings, `search_report.php?search=<title>&searchType=1` suggestions, `/tv-series/<show>/season-<season>/episode-<episode>` episode pages, `seeDark` and `seeMedium` row parsing, language image mapping, uploader and download-count metadata, anti-block GET sequence, reCAPTCHA-gated download pages, direct subtitle bodies, ZIP downloads, RAR downloads, and Windows-1253 subtitle encoding.
+  - Provider Hub worker inspection showed legacy global anti-captcha environment is not inherited by plugin workers, so the clean-room plugin exposes explicit `captcha_response`, `captcha_solver_url`, `captcha_solver_token`, and `captcha_solver_timeout_ms` settings.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p test_subs4series.py`: failed because `providers/subs4series/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p test_subs4series.py`: `8` tests passed.
+  - `python3 -B -m sdk build-catalog`: `wrote catalog.json`.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests`: `336` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Attribution and em-dash scan over touched Subs4Series files found no matches.
+- Live evidence on 2026-05-31:
+  - Sandbox DNS could not resolve `www.subs4series.com`, but escalated network probes reached the site.
+  - `https://www.subs4series.com/search_report.php?search=Game%20of%20Thrones&searchType=1` returned current `Mov_sel` suggestions and subtitle rows.
+  - `https://www.subs4series.com/tv-series/game-of-thrones/s8985ffc551/season-1/episode-1` returned current Game of Thrones S01E01 Greek and English subtitle rows.
+  - Live detail-page probes found the current `a.style55ws` download target shape.
+  - `python3 -B -m sdk smoke-test --provider subs4series --language eng --video-fixture tests/fixtures/subs4series_video_game_of_thrones_s01e01.json --expect-min-results 1 --skip-download`: passed outside the sandbox network restriction.
+  - `python3 -B -m sdk smoke-test --provider subs4series --language eng --video-fixture tests/fixtures/subs4series_video_game_of_thrones_s01e01.json --expect-min-results 1`: passed outside the sandbox network restriction, including download. One earlier full live run timed out on origin read, but an immediate curl decomposition and final full smoke both succeeded.
+- Remaining gates:
+  - Add `subs4series` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+  - If live Subs4Series presents reCAPTCHA during compat proof, configure `captcha_response` or a `captcha_solver_url` helper and rerun download proof.
 
 ### `regielive`
 
@@ -1775,7 +1806,7 @@ Each row is one branch, one worktree, one provider PR, and one independent valid
 | 52 | `titulky` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/titulky.py` | `catalog-titulky` | `/tmp/bazarr_catalog_provider_worktrees/titulky` | movie, episode | `username`, `password`, `approved_only`, `skip_wrong_fps` | auth, archive, FPS |
 | 53 | `xsubs` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/xsubs.py` | `catalog-xsubs` | `/tmp/bazarr_catalog_provider_worktrees/xsubs` | episode | `username`, `password` | dead origin, auth |
 | 54 | `subs4free` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/subs4free.py` | `catalog-subs4free` | `/tmp/bazarr_catalog_provider_worktrees/subs4free` | movie | none | archive, anti-bot |
-| 55 | `subs4series` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/subs4series.py` | `catalog-subs4series` | `/tmp/bazarr_catalog_provider_worktrees/subs4series` | episode | none | archive, anti-bot |
+| 55 | `subs4series` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/subs4series.py` | `catalog-subs4series` | `/tmp/bazarr_catalog_provider_worktrees/subs4series` | episode | `captcha_response`, `captcha_solver_url`, `captcha_solver_token`, `captcha_solver_timeout_ms`, `request_delay_ms` | archive, anti-bot, captcha helper |
 | 56 | `zimuku` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/zimuku.py` | `catalog-zimuku` | `/tmp/bazarr_catalog_provider_worktrees/zimuku` | movie, episode | none | archive, anti-bot |
 | 57 | `opensubtitles` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/opensubtitles.py` | `catalog-opensubtitles` | `/tmp/bazarr_catalog_provider_worktrees/opensubtitles` | movie, episode | `scraper_service_url`, `use_tag_search`, `skip_wrong_fps`, `only_foreign`, `also_foreign` | OpenSubtitles.org helper service |
 | 58 | `embeddedsubtitles` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/embeddedsubtitles.py` | `catalog-embeddedsubtitles` | `/tmp/bazarr_catalog_provider_worktrees/embeddedsubtitles` | movie, episode | `included_codecs`, `hi_fallback`, `timeout`, `unknown_as_fallback`, `fallback_lang` | local video path, ffprobe, ffmpeg |
