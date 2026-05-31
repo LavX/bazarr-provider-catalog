@@ -72,6 +72,7 @@
   - `turkcealtyaziorg`: branch `catalog-turkcealtyaziorg`, worktree `/tmp/bazarr_catalog_provider_worktrees/turkcealtyaziorg`, current head `6dd195c Add TurkceAltyazi.org provider`
   - `ktuvit`: branch `catalog-ktuvit`, worktree `/tmp/bazarr_catalog_provider_worktrees/ktuvit`, current head `9d3162e Add Ktuvit provider`
   - `legendasdivx`: branch `catalog-legendasdivx`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasdivx`, current head `02bbb60 Add LegendasDivx provider`
+  - `legendasnet`: branch `catalog-legendasnet`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasnet`, current head `983878f Add Legendas.net provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -201,6 +202,35 @@
   - Run SDK live smoke search and download with valid LegendasDivx credentials.
   - Add `legendasdivx` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured LegendasDivx credentials.
+
+### `legendasnet`
+
+- Branch: `catalog-legendasnet`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/legendasnet`
+- Current checkpoint: `983878f Add Legendas.net provider`
+- Baseline evidence on 2026-05-31:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-31:
+  - Legacy inspection confirmed movie and episode support, Brazilian Portuguese only, required `username` and `password`, login through `POST /api/v1/login`, bearer token auth, movie and TV JSON search payloads, forced/foreign comment detection, unsuccessful payload handling, direct downloads, ZIP download extraction, and daily download limit detection.
+  - Bazarr UI/config inspection confirmed settings `username` and `password`, with both classified as secrets.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p test_legendasnet.py`: failed because `providers/legendasnet/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p test_legendasnet.py`: `6` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/legendasnet/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `334` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Manifest language count matches the Bazarr Legendas.net UI language registry: `1` entry.
+  - Attribution and em-dash scan over touched Legendas.net files found no matches.
+- Live evidence on 2026-05-31:
+  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 https://legendas.net/`: returned HTTP `200`.
+  - `curl -sS -i --max-time 20 -A BazarrProviderHub/1.0 https://legendas.net/api/v1/login`: returned HTTP `405` with POST allowed.
+  - `curl -sS -i --max-time 20 -A BazarrProviderHub/1.0 https://legendas.net/api/v1/search/movie`: returned HTTP `401` JSON `Missing Authorization Header`.
+  - Real search and download require valid Legendas.net credentials.
+- Remaining gates:
+  - Run SDK live smoke search and download with valid Legendas.net credentials.
+  - Add `legendasnet` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Legendas.net credentials.
 
 ### `regielive`
 
