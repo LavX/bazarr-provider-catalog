@@ -17,6 +17,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 
 | Provider | Version | Notes |
 | --- | --- | --- |
+| [`avistaz`](providers/avistaz/) | 0.1.0 | Uses [AvistaZ](https://avistaz.to) release pages from Sonarr or Radarr history to download attached subtitles. Requires session cookies. |
 | [`bollynook`](providers/bollynook/) | 0.1.1 | Scrapes [BollyNook](https://www.bollynook.com) for movie subtitles across Indian and international languages. No login or API key. |
 | [`fansubs`](providers/fansubs/) | 0.1.3 | Scrapes [fansubs.ru](http://fansubs.ru) for Russian anime and Asian cinema subtitles. No login or API key. |
 | [`isubtitles`](providers/isubtitles/) | 0.1.1 | Scrapes [iSubtitles.org](https://isubtitles.org) for movie and episode subtitles in broad multilingual coverage. No login or API key. |
@@ -47,6 +48,7 @@ Every provider here ships independently of Bazarr+ releases. [Contribute](#contr
 ## Layout
 
 - `catalog.json`: embedded Provider Hub V1 catalog manifest. This is the file Bazarr+ fetches.
+- `providers/avistaz/`: uses AvistaZ release pages from Sonarr or Radarr history to download attached subtitles.
 - `providers/bollynook/`: scrapes BollyNook movie subtitle pages and downloads.
 - `providers/fansubs/`: production community provider, scrapes fansubs.ru for Russian anime and Asian cinema subtitle releases.
 - `providers/isubtitles/`: scrapes iSubtitles movie and episode subtitle pages.
