@@ -29,7 +29,7 @@
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `fe1afaeaf`
-- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-fe1afaeaf`; runtime policy includes `bsplayer`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
+- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-fe1afaeaf`; runtime policy includes `bsplayer` and `gestdown`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
 - Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead on 2026-05-31. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof until a verified upstream origin returns.
 - Existing provider worktrees:
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
@@ -170,9 +170,17 @@
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/gestdown`
 - Current checkpoint: `c74a706 Fix Gestdown language parity`
 - Local evidence: provider tests, catalog validation, full tests, live smoke, and core manifest parse check passed on 2026-05-29.
-- Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `gestdown` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+- Test-server evidence on 2026-05-31:
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` is deployed to `bazarr-ui-test`.
+  - Official Provider Hub catalog source was refreshed from `catalog-gestdown`; the Gestdown manifest resolved to commit `c74a706eeead349507bdb936133ae625dc3c2cc1`.
+  - Provider Hub state has `gestdown` active at version `0.1.0`, `pending_restart` false, `trusted` true, and `last_error` null.
+  - Provider Hub worker health returned `ok: True`, `status: ready`.
+  - Bazarr `general.enabled_providers` includes `gestdown`.
+  - Live target selected from the test-server library: Fallout S01E01, IMDb `tt12637874`, TVDB `416744`; direct Gestdown API probes returned English subtitles for that episode.
+  - Compat search for `imdb_id=12637874`, `type=episode`, `season_number=1`, `episode_number=1`, and `languages=en` returned HTTP `200`, `40` total results, including `3` Gestdown results with correct Fallout S01E01 feature details.
+  - Compat login returned HTTP `200`; compat download for Gestdown `file_id=2` returned HTTP `200` and a stream link.
+  - Fetching the stream link returned HTTP `200` with `45751` bytes of SRT content.
+- Remaining gates: none for the current Gestdown migration proof.
 
 ### `addic7ed`
 
