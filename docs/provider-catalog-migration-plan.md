@@ -29,7 +29,7 @@
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `fe1afaeaf`
-- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-fe1afaeaf`; runtime policy includes `bsplayer` and `gestdown`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
+- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-fe1afaeaf`; runtime policy includes `bsplayer`, `gestdown`, and `tvsubtitles`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
 - Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead on 2026-05-31. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof until a verified upstream origin returns.
 - Existing provider worktrees:
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
@@ -677,9 +677,20 @@
 - Live smoke evidence on 2026-05-29:
   - `python3 -B -m sdk smoke-test --provider tvsubtitles --language eng --video-fixture tests/fixtures/tvsubtitles_video_the_office_s01e02.json --expect-min-results 1`: `tvsubtitles ok`.
   - First live smoke found a script redirect path containing a space; regression coverage now quotes that path before fetching the ZIP.
-- Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `tvsubtitles` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+- Fresh local evidence on 2026-05-31:
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_tvsubtitles.py'`: `12` tests passed.
+- Test-server evidence on 2026-05-31:
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` is deployed to `bazarr-ui-test`.
+  - `catalog-tvsubtitles` was pushed to GitHub so Provider Hub could stage it from the official source.
+  - Official Provider Hub catalog source was refreshed from `catalog-tvsubtitles`; the TVSubtitles manifest resolved to commit `875df4e08e51088b460ef802c86b8a9f8d37fcaf`.
+  - Provider Hub state has `tvsubtitles` active at version `0.1.0`, `pending_restart` false, `trusted` true, and `last_error` null.
+  - Provider Hub worker health returned `ok: True`, `status: ready`.
+  - Bazarr `general.enabled_providers` includes `tvsubtitles`.
+  - Compat query-only episode search for `query=The.Office.S01E02.Diversity.Day.HDTV.XviD.avi`, `type=episode`, `season_number=1`, `episode_number=2`, and `languages=en` returned HTTP `200`, `63` total results, including `2` TVSubtitles results.
+  - Compat login returned HTTP `200`; compat download for TVSubtitles `file_id=1` returned HTTP `200` and a stream link.
+  - Fetching the stream link returned HTTP `200` with `24861` bytes of SRT content.
+- Remaining gates: none for the current TVSubtitles migration proof.
 
 ### `subtitulamostv`
 
