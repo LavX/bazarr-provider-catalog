@@ -24,7 +24,7 @@
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Core migration prerequisite branch: `provider-hub-builtin-migration` in `/tmp/bazarr_provider_hub_builtin_migration`
-- Dead-origin providers: `hosszupuska`, `podnapisi`. Confirmed dead on 2026-05-31. Keep fixture-backed branches for historical parity only. Do not promote them to the core allow-list, open merge-ready provider PRs, or require Provider Hub compat proof until a verified upstream origin returns.
+- Dead-origin providers: `hosszupuska`, `podnapisi`. Confirmed dead on 2026-05-31. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core allow-list, open merge-ready provider PRs, or require Provider Hub compat proof until a verified upstream origin returns.
 - Existing provider worktrees:
   - `gestdown`: branch `catalog-gestdown`, worktree `/tmp/bazarr_catalog_provider_worktrees/gestdown`, current head `c74a706 Fix Gestdown language parity`
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a Add Addic7ed provider`
@@ -40,13 +40,13 @@
   - `animesubinfo`: branch `catalog-animesubinfo`, worktree `/tmp/bazarr_catalog_provider_worktrees/animesubinfo`, current head `b2be823 Add AnimeSub.info provider`
   - `animetosho`: branch `catalog-animetosho`, worktree `/tmp/bazarr_catalog_provider_worktrees/animetosho`, current head `4a282a3 Add AnimeTosho provider`
   - `napiprojekt`: branch `catalog-napiprojekt`, worktree `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`, current head `5d9fb63 Add NapiProjekt provider`
-  - `podnapisi`: branch `catalog-podnapisi`, worktree `/tmp/bazarr_catalog_provider_worktrees/podnapisi`, current head `125c175 Mark Podnapisi upstream dead`, dead origin
+  - `podnapisi`: branch `catalog-podnapisi`, worktree `/tmp/bazarr_catalog_provider_worktrees/podnapisi`, current head `68a8ed9 Remove Podnapisi dead-origin catalog artifacts`, dead origin
   - `subf2m`: branch `catalog-subf2m`, worktree `/tmp/bazarr_catalog_provider_worktrees/subf2m`, current head `35bb9c4 Add SubF2M provider`
   - `subsarr`: branch `catalog-subsarr`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsarr`, current head `e154cee Add Subsarr provider`
   - `assrt`: branch `catalog-assrt`, worktree `/tmp/bazarr_catalog_provider_worktrees/assrt`, current head `c4e2440 Add Assrt provider`
   - `betaseries`: branch `catalog-betaseries`, worktree `/tmp/bazarr_catalog_provider_worktrees/betaseries`, current head `461ab52 Add BetaSeries provider`
   - `greeksubtitles`: branch `catalog-greeksubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles`, current head `da99eee Add GreekSubtitles provider`
-  - `hosszupuska`: branch `catalog-hosszupuska`, worktree `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`, current head `c82a0eb Mark Hosszupuska upstream dead`, dead origin
+  - `hosszupuska`: branch `catalog-hosszupuska`, worktree `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`, current head `4c86d58 Remove Hosszupuska dead-origin catalog artifacts`, dead origin
   - `nekur`: branch `catalog-nekur`, worktree `/tmp/bazarr_catalog_provider_worktrees/nekur`, current head `41e428e Add Nekur provider`
   - `prijevodionline`: branch `catalog-prijevodionline`, worktree `/tmp/bazarr_catalog_provider_worktrees/prijevodionline`, current head `9c1d795 Add PrijevodiOnline provider`
   - `soustitreseu`: branch `catalog-soustitreseu`, worktree `/tmp/bazarr_catalog_provider_worktrees/soustitreseu`, current head `ed93af8 Add Soustitres.eu provider`
@@ -491,7 +491,7 @@
 
 - Branch: `catalog-podnapisi`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/podnapisi`
-- Current checkpoint: `125c175 Mark Podnapisi upstream dead`
+- Current checkpoint: `68a8ed9 Remove Podnapisi dead-origin catalog artifacts`
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -504,6 +504,14 @@
   - `python3 -B -m unittest discover -s tests`: `340` tests passed, `6` skipped.
   - `git diff --check` and `git diff --cached --check`: clean.
   - Attribution, em-dash, and non-ASCII scan over touched files found no matches.
+- Cleanup evidence on 2026-05-31:
+  - Removed active `providers/podnapisi` manifest and implementation, Podnapisi-specific tests and fixtures, README entry, and catalog entry.
+  - Kept `docs/provider-notes/podnapisi.md` as a historical dead-origin record only.
+  - `python3 -B -m sdk build-catalog`: `wrote catalog.json`.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+  - `rg -n "podnapisi|Podnapisi" README.md catalog.json providers tests -S`: no matches.
+  - `git diff --check` and `git diff --cached --check`: clean.
 - Live smoke evidence on 2026-05-29:
   - `python3 -B -m sdk smoke-test --provider podnapisi --language eng --video-fixture tests/fixtures/podnapisi_video_dune_2021.json --config-json '{"verify_ssl":true}' --expect-min-results 1 --skip-download`: failed with `podnapisi search failed: <urlopen error [Errno -2] Name or service not known>`.
   - Recheck on 2026-05-29: `https://www.podnapisi.net/subtitles` and `https://podnapisi.net/subtitles` failed DNS with `curl: (6) Could not resolve host`.
@@ -645,7 +653,7 @@
 
 - Branch: `catalog-hosszupuska`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`
-- Current checkpoint: `c82a0eb Mark Hosszupuska upstream dead`
+- Current checkpoint: `4c86d58 Remove Hosszupuska dead-origin catalog artifacts`
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -655,6 +663,14 @@
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
   - `python3 -B -m py_compile providers/hosszupuska/provider.py`: passed.
+  - `git diff --check` and `git diff --cached --check`: clean.
+- Cleanup evidence on 2026-05-31:
+  - Removed active `providers/hosszupuska` manifest and implementation, Hosszupuska-specific tests and fixtures, README entry, and catalog entry.
+  - Kept `docs/provider-notes/hosszupuska.md` as a historical dead-origin record only.
+  - `python3 -B -m sdk build-catalog`: `wrote catalog.json`.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+  - `rg -n "hosszupuska|Hosszupuska" README.md catalog.json providers tests -S`: no matches.
   - `git diff --check` and `git diff --cached --check`: clean.
 - Live smoke evidence on 2026-05-29:
   - `curl -I --max-time 15 http://hosszupuskasub.com/`: `curl: (52) Empty reply from server`.
