@@ -29,7 +29,7 @@
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `fe1afaeaf`
-- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-fe1afaeaf`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, and `subtitulamostv`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
+- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-fe1afaeaf`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, and `greeksubs`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
 - Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead or unreachable for the migration and Bazarr test networks on 2026-05-31. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof until a verified upstream origin returns.
 - Existing provider worktrees:
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
@@ -739,8 +739,21 @@
   - `git diff --check`: clean.
 - Live smoke evidence on 2026-05-29:
   - `python3 -B -m sdk smoke-test --provider greeksubs --language ell --video-fixture tests/fixtures/greeksubs_video_dune.json --expect-min-results 1`: `greeksubs ok`.
-- Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `greeksubs` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+- Fresh local evidence on 2026-05-31:
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_greeksubs.py'`: `8` tests passed.
+  - `python3 -B -m sdk smoke-test --provider greeksubs --language ell --video-fixture tests/fixtures/greeksubs_video_dune.json --expect-min-results 1`: `greeksubs ok`.
+- Test-server evidence on 2026-05-31:
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` is deployed to `bazarr-ui-test`.
+  - `catalog-greeksubs` was pushed to GitHub so Provider Hub could stage it from the official source.
+  - Official Provider Hub catalog source was refreshed from `catalog-greeksubs`; the GreekSubs manifest resolved to commit `1ec84faebba0de7ad331520a18d99732fa0c22c5`.
+  - Provider Hub state has `greeksubs` active at version `0.1.0`, `pending_restart` false, `trusted` true, and `last_error` null.
+  - Provider Hub worker health returned `ok: True`, `status: ready`.
+  - Bazarr `general.enabled_providers` includes `greeksubs`; a backup was saved as `/config/config/config.yaml.pre-greeksubs-enable-20260531222901`.
+  - Compat movie search for `query=Dune.2021.1080p.WEBRip.mkv`, `type=movie`, `imdb_id=1160419`, and `languages=el` returned HTTP `200`, `17` total results, including `1` GreekSubs result for release `DUNE (2021)`.
+  - Compat login returned HTTP `200`; compat download for GreekSubs `file_id=15` returned HTTP `200` and a stream link.
+  - Fetching the stream link returned HTTP `200` with `107129` bytes of SRT content.
+- Remaining gates: none for the current GreekSubs migration proof.
 
 ### `animekalesi`
 
