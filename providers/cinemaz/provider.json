@@ -1,0 +1,301 @@
+{
+  "api_version": "bazarr.provider-hub.v1",
+  "bundle_sha256": "d663ab9c14909a54b929ad38e8e6b840d0bb5c06b61e19688e3c3abab73e8c1e",
+  "config_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "cookies": {
+        "description": "CinemaZ session cookies, for example cinemazx_session and XSRF-TOKEN.",
+        "minLength": 1,
+        "secret": true,
+        "title": "Cookies",
+        "type": "string"
+      },
+      "user_agent": {
+        "default": "",
+        "description": "Optional browser User-Agent paired with the supplied cookies.",
+        "title": "User-Agent",
+        "type": "string"
+      }
+    },
+    "required": [
+      "cookies"
+    ],
+    "type": "object"
+  },
+  "dependencies": {
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:571ac1dc6991c450b25a9c2d84a3705e2ae7a53467b5d111c24fa8baabbed320"
+        ],
+        "name": "annotated-doc",
+        "version": "0.0.4"
+      },
+      {
+        "hashes": [
+          "sha256:482be17c6991b8c19c5429a1e995d9b0efdbb63172824c41f99965dc0ade8ec2"
+        ],
+        "name": "click",
+        "version": "8.4.1"
+      },
+      {
+        "hashes": [
+          "sha256:9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a"
+        ],
+        "name": "markdown-it-py",
+        "version": "4.2.0"
+      },
+      {
+        "hashes": [
+          "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8"
+        ],
+        "name": "mdurl",
+        "version": "0.1.2"
+      },
+      {
+        "hashes": [
+          "sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e"
+        ],
+        "name": "packaging",
+        "version": "26.2"
+      },
+      {
+        "hashes": [
+          "sha256:cd3d911976c184e61c641baf4e26a80f4ac474c830bf12cc8e541490c229bfd6"
+        ],
+        "name": "py7zz",
+        "version": "1.1.4"
+      },
+      {
+        "hashes": [
+          "sha256:81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176"
+        ],
+        "name": "pygments",
+        "version": "2.20.0"
+      },
+      {
+        "hashes": [
+          "sha256:33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb"
+        ],
+        "name": "rich",
+        "version": "15.0.0"
+      },
+      {
+        "hashes": [
+          "sha256:7ecfff8f2fd72616f7481040475a65b2bf8af90a56c89140852d1120324e8686"
+        ],
+        "name": "shellingham",
+        "version": "1.5.4"
+      },
+      {
+        "hashes": [
+          "sha256:75caa44ed46a03fb2dab8808753ffacdbfea88495e74c85a28c5eefcf5f39c89"
+        ],
+        "name": "typer",
+        "version": "0.25.1"
+      }
+    ]
+  },
+  "description": "Uses CinemaZ release pages refined from Sonarr or Radarr history to download attached subtitles. Requires CinemaZ session cookies.",
+  "entry_class": "CinemaZProvider",
+  "entry_module": "provider",
+  "files": {
+    "provider.py": "aa59f5776d144ebc9e9856a5d51f23a91d9c90b1de1d84e43e87869f8c8d49d2"
+  },
+  "languages": [
+    "aar",
+    "abk",
+    "afr",
+    "aka",
+    "amh",
+    "ara",
+    "arg",
+    "asm",
+    "ava",
+    "ave",
+    "aym",
+    "aze",
+    "bak",
+    "bam",
+    "bel",
+    "ben",
+    "bis",
+    "bod",
+    "bos",
+    "bre",
+    "bul",
+    "cat",
+    "ces",
+    "cha",
+    "che",
+    "chu",
+    "chv",
+    "cor",
+    "cos",
+    "cre",
+    "cym",
+    "dan",
+    "deu",
+    "dzo",
+    "eng",
+    "epo",
+    "est",
+    "eus",
+    "ewe",
+    "fao",
+    "fas",
+    "fij",
+    "fil",
+    "fin",
+    "fra",
+    "fry",
+    "ful",
+    "gle",
+    "glg",
+    "glv",
+    "grn",
+    "guj",
+    "hat",
+    "hau",
+    "heb",
+    "her",
+    "hin",
+    "hmo",
+    "hrv",
+    "hun",
+    "hye",
+    "ibo",
+    "ido",
+    "iii",
+    "iku",
+    "ile",
+    "ind",
+    "ipk",
+    "isl",
+    "ita",
+    "jav",
+    "jpn",
+    "kal",
+    "kan",
+    "kas",
+    "kat",
+    "kau",
+    "kaz",
+    "kik",
+    "kin",
+    "kir",
+    "kom",
+    "kon",
+    "kor",
+    "kua",
+    "kur",
+    "lao",
+    "lat",
+    "lav",
+    "lim",
+    "lin",
+    "lit",
+    "ltz",
+    "lub",
+    "lug",
+    "mah",
+    "mal",
+    "mar",
+    "mkd",
+    "mlg",
+    "mlt",
+    "mon",
+    "mri",
+    "mya",
+    "nau",
+    "nav",
+    "nbl",
+    "nde",
+    "ndo",
+    "nld",
+    "nno",
+    "nor",
+    "nya",
+    "oci",
+    "oji",
+    "orm",
+    "oss",
+    "pan",
+    "pli",
+    "pol",
+    "por",
+    "pus",
+    "que",
+    "roh",
+    "ron",
+    "run",
+    "rus",
+    "sag",
+    "san",
+    "sin",
+    "slk",
+    "slv",
+    "sme",
+    "smo",
+    "sna",
+    "snd",
+    "som",
+    "sot",
+    "spa",
+    "sqi",
+    "srd",
+    "srp",
+    "ssw",
+    "sun",
+    "swe",
+    "tah",
+    "tam",
+    "tat",
+    "tel",
+    "tgk",
+    "tgl",
+    "tha",
+    "tir",
+    "tsn",
+    "tso",
+    "tuk",
+    "tur",
+    "twi",
+    "uig",
+    "ukr",
+    "urd",
+    "uzb",
+    "ven",
+    "vie",
+    "vol",
+    "wln",
+    "wol",
+    "xho",
+    "yid",
+    "yor",
+    "zha",
+    "zho",
+    "zul"
+  ],
+  "name": "CinemaZ",
+  "provider_id": "cinemaz",
+  "schema_version": 1,
+  "secret_fields": [
+    "cookies"
+  ],
+  "source": {
+    "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+    "commit": "0000000000000000000000000000000000000000",
+    "path": "providers/cinemaz",
+    "ref": "main",
+    "repo": "LavX/bazarr-provider-catalog",
+    "trusted": true,
+    "type": "github"
+  },
+  "supported_media": [
+    "movie",
+    "episode"
+  ],
+  "version": "0.1.0"
+}
