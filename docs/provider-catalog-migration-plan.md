@@ -29,7 +29,7 @@
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
-- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, and `subf2m`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
+- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, and `greeksubtitles`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
 - Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead for Provider Hub migration on 2026-05-31. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof unless a verified upstream origin returns.
 - Existing provider worktrees:
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
@@ -1000,9 +1000,16 @@
   - Attribution, em-dash, and non-ASCII scan over touched files found no matches.
 - Live smoke evidence on 2026-05-29:
   - Public live smoke is not applicable without a configured self-hosted Subsarr `base_url`.
+- Fresh local and test-server evidence on 2026-05-31:
+  - Branch `catalog-subsarr` was pushed at `e154cee`.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_subsarr.py'`: `7` tests passed.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/subsarr`, `tests/test_subsarr.py`, `README.md`, and `catalog.json` found no matches.
+  - Bazarr test host has no Subsarr container, no Provider Hub `subsarr` installation, and saved Bazarr config has `subsarr.base_url: ''`.
 - Remaining gates:
   - Run SDK smoke search and download against a reachable self-hosted Subsarr service when a test `base_url` is available.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subsarr` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` is deployed on `bazarr-ui-test`; `subsarr` remains unproved only because the test service URL is missing.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with a real `base_url`.
 
 ### `assrt`
@@ -1026,9 +1033,17 @@
   - No-token `https://api.assrt.net/v1/user/quota` probe returned `{"status":20001,"errmsg":"invalid token"}`.
   - No-token `https://api.assrt.net/v1/sub/search?...` probe returned `{"status":20001,"errmsg":"invalid token"}`.
   - Real search and download smoke require a valid Assrt API token.
+- Fresh local and test-server evidence on 2026-05-31:
+  - Branch `catalog-assrt` was pushed at `c4e2440`.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_assrt.py'`: `7` tests passed.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/assrt`, `tests/test_assrt.py`, `README.md`, and `catalog.json` found no matches.
+  - Provider Hub staged and activated Assrt `0.1.0` from commit `c4e2440fceaca97e1d5d4fe4397713a7825614ee` on `bazarr-ui-test`.
+  - Bazarr settings inspection through the settings object showed `assrt.token` is empty, so Assrt was disabled again after activation to avoid no-token compat fanout noise.
 - Remaining gates:
   - Run SDK smoke search and download when a test Assrt token is available.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `assrt` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` is deployed on `bazarr-ui-test`; Assrt remains unproved only because the test token is missing.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with a real token.
 
 ### `betaseries`
@@ -1073,9 +1088,26 @@
 - Live smoke evidence on 2026-05-29:
   - `python3 -B -m sdk smoke-test --provider greeksubtitles --language ell --video-fixture tests/fixtures/greeksubtitles_video_game_of_thrones_s01e01.json --expect-min-results 1`: `greeksubtitles ok`.
   - `python3 -B -m sdk smoke-test --provider greeksubtitles --language ell --video-fixture tests/fixtures/greeksubtitles_video_dune.json --expect-min-results 1`: `greeksubtitles ok`.
-- Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `greeksubtitles` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+- Fresh local evidence on 2026-05-31:
+  - Branch `catalog-greeksubtitles` was pushed at `da99eee`.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_greeksubtitles.py'`: `9` tests passed.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/greeksubtitles`, `tests/test_greeksubtitles.py`, `README.md`, and `catalog.json` found no matches.
+  - `python3 -B -m sdk smoke-test --provider greeksubtitles --language ell --video-fixture tests/fixtures/greeksubtitles_video_dune.json --config-json '{"request_delay_ms":0}' --expect-min-results 1`: `greeksubtitles ok`.
+- Provider Hub test-server evidence on 2026-05-31:
+  - Official catalog source dev ref was set to `catalog-greeksubtitles`; refresh returned `13` entries and resolved GreekSubtitles `0.1.0` at commit `da99eee59e5f135130284da247822b332165b646`.
+  - `bazarr-ui-test` restarted healthy on image `ui-test-20260531-provider-hub-replacements-f245ae096`, revision `f245ae096`.
+  - Provider state after restart: active version `0.1.0`, `pending_restart=false`, `trusted=true`, `enabled=true`, `last_error=None`, manifest commit `da99eee59e5f135130284da247822b332165b646`.
+  - Runtime replacement policy contains `55` trusted migrated built-in ids, includes `greeksubtitles`, and excludes `hosszupuska` and `podnapisi`.
+  - Compat search with `imdb_id=tt1160419` returned HTTP `200` but no GreekSubtitles rows because the compat refiner title `Dune: Part One` does not match GreekSubtitles' site search shape.
+  - Direct active-provider diagnosis on the test container confirmed `Dune: Part One` returns `0` rows while `Dune` returns `22` rows from the same GreekSubtitles provider.
+  - Query-only compat search `GET /api/v1/subtitles?query=Dune.2021.1080p.BluRay.x264.mkv&type=movie&languages=el&per_page=100` returned HTTP `200`, `45` total results, and `22` GreekSubtitles results.
+  - First GreekSubtitles result: `file_id=29`, release `Dune 2021 1080p HDRip X264 AC3 EVO greek srt`, subtitle id `greeksubtitles:greeksubtitles-2793203-ell`.
+  - Compat download `POST /api/v1/download` for `file_id=29` returned HTTP `200`, a stream link, `remaining=999`, and `remaining_downloads=999`.
+  - Compat stream returned HTTP `200` and `107398` bytes. The payload starts with an SRT BOM, cue `1`, and timestamp `00:00:04,120 --> 00:00:08,690`.
+- Status:
+  - GreekSubtitles is locally validated and proved through Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `hosszupuska`
 
