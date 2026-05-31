@@ -23,6 +23,7 @@ Historical dead-origin notes for `podnapisi`. The upstream is dead. This branch 
 - Live verification on 2026-05-31 is blocked because the upstream is dead:
   - `https://www.podnapisi.net/subtitles` does not resolve.
   - `https://podnapisi.net/subtitles` does not resolve.
+  - Fresh recheck after the dead-origin report still returned `curl: (6) Could not resolve host` for both hosts.
   - RDAP still lists `PODNAPISI.NET`, with `last changed` at `2026-05-20T13:24:04Z`, but the public hosts do not resolve.
   - Do not require live smoke, Provider Hub compat proof, or core allow-list promotion unless the original site returns or a verified replacement origin is found.
 
