@@ -74,6 +74,7 @@
   - `legendasdivx`: branch `catalog-legendasdivx`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasdivx`, current head `02bbb60 Add LegendasDivx provider`
   - `legendasnet`: branch `catalog-legendasnet`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasnet`, current head `983878f Add Legendas.net provider`
   - `napisy24`: branch `catalog-napisy24`, worktree `/tmp/bazarr_catalog_provider_worktrees/napisy24`, current head `34a9720 Add Napisy24 provider`
+  - `pipocas`: branch `catalog-pipocas`, worktree `/tmp/bazarr_catalog_provider_worktrees/pipocas`, current head `4fe281b Add Pipocas.tv provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -259,6 +260,35 @@
   - Run SDK live smoke search and download with a real video fixture that has a valid Napisy24/OpenSubtitles hash.
   - Add `napisy24` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with a library-backed video whose hash can be computed.
+
+### `pipocas`
+
+- Branch: `catalog-pipocas`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/pipocas`
+- Current checkpoint: `4fe281b Add Pipocas.tv provider`
+- Baseline evidence on 2026-05-31:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-31:
+  - Legacy inspection confirmed movie and episode support, required `username` and `password`, CSRF login, language mapping for Portuguese, Brazilian Portuguese, English, and Spanish, release search through `/legendas`, detail-page metadata parsing, direct subtitle downloads, and ZIP/RAR archive downloads.
+  - Bazarr UI/config inspection confirmed settings `username` and `password`, with both classified as secrets.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p test_pipocas.py`: failed because `providers/pipocas/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p test_pipocas.py`: `6` tests passed.
+  - `python3 -B -m sdk build-catalog`: `wrote catalog.json`.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/pipocas/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `334` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Attribution and em-dash scan over touched Pipocas files found no matches.
+- Live evidence on 2026-05-31:
+  - Sandbox DNS could not resolve `pipocas.tv`, but the escalated network probe reached the site.
+  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 https://pipocas.tv/`: returned HTTP `302` to `https://pipocas.tv/login`.
+  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 https://pipocas.tv/login`: returned HTTP `200` from Cloudflare.
+  - Real search and download require valid Pipocas.tv credentials.
+- Remaining gates:
+  - Run SDK live smoke search and download with valid Pipocas.tv credentials.
+  - Add `pipocas` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Pipocas credentials.
 
 ### `regielive`
 
