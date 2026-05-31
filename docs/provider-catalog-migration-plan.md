@@ -113,6 +113,7 @@
   - `python3 -B -m sdk smoke-test --provider bsplayer --language eng --video-fixture tests/fixtures/bsplayer_video_hash_movie.json`: `bsplayer ok`.
 - Remaining gates:
   - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `bsplayer` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Test-server recheck on 2026-05-31: `bazarr-ui-test` is running and healthy, but the running image does not contain `bazarr/provider_hub/policy.py`; Provider Hub state has 12 catalog entries and no `bsplayer` catalog or installation record.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `embeddedsubtitles`
