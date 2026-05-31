@@ -76,6 +76,7 @@
   - `napisy24`: branch `catalog-napisy24`, worktree `/tmp/bazarr_catalog_provider_worktrees/napisy24`, current head `34a9720 Add Napisy24 provider`
   - `pipocas`: branch `catalog-pipocas`, worktree `/tmp/bazarr_catalog_provider_worktrees/pipocas`, current head `4fe281b Add Pipocas.tv provider`
   - `subscenter`: branch `catalog-subscenter`, worktree `/tmp/bazarr_catalog_provider_worktrees/subscenter`, current head `57de626 Mark SubsCenter upstream dead`, dead origin
+  - `titlovi`: branch `catalog-titlovi`, worktree `/tmp/bazarr_catalog_provider_worktrees/titlovi`, current head `1db2476 Add Titlovi provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -320,6 +321,36 @@
   - Do not add `subscenter` to the trusted built-in migration allow-list while the origin is dead.
   - Do not open or merge SubsCenter as an active catalog provider while the domain does not resolve.
   - Do not require Provider Hub compat search, download, or stream proof while the origin is dead.
+
+### `titlovi`
+
+- Branch: `catalog-titlovi`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/titlovi`
+- Current checkpoint: `1db2476 Add Titlovi provider`
+- Baseline evidence on 2026-05-31:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-31:
+  - Legacy inspection confirmed movie and episode support, required `username` and `password`, token login, six UI languages, Titlovi language-label conversion, duplicate Serbian handling, paginated API search up to three pages, season-only episode search with local episode filtering, episode-zero packs, inconsistent title-name fixes, direct/ZIP/RAR downloads, Serbian Latin/Cyrillic bundled archive selection, and HTTP `429` rate-limit handling.
+  - Bazarr UI/config inspection confirmed settings `username` and `password`, with both classified as secrets.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p test_titlovi.py`: failed because `providers/titlovi/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p test_titlovi.py`: `6` tests passed.
+  - `python3 -B -m sdk build-catalog`: `wrote catalog.json`.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/titlovi/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `334` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Manifest language count matches the Bazarr Titlovi UI language registry: `6` entries.
+  - Attribution and em-dash scan over touched Titlovi files found no matches.
+- Live evidence on 2026-05-31:
+  - Sandbox DNS could not resolve `kodi.titlovi.com`, but escalated network probes reached the API.
+  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 https://kodi.titlovi.com/api/subtitles/gettoken`: returned HTTP `405` with `allow: POST`.
+  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 https://kodi.titlovi.com/api/subtitles/search`: returned HTTP `405` with `allow: GET`.
+  - Real search and download require valid Titlovi credentials.
+- Remaining gates:
+  - Run SDK live smoke search and download with valid Titlovi credentials.
+  - Add `titlovi` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Titlovi credentials.
 
 ### `regielive`
 
