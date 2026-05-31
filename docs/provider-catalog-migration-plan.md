@@ -18,8 +18,8 @@
 - Migration branch inventory: all 60 legacy provider-class modules have matching `catalog-*` branches and checked-out provider worktrees as of 2026-05-31.
 - Checkpoint audit on 2026-05-31: every provider section with a `Current checkpoint` hash matches the actual checked-out provider worktree HEAD, and all provider worktrees were clean.
 - Helper coverage: `opensubtitles_scraper.py` is not a provider-class module. Its helper-service behavior is covered inside the `catalog-opensubtitles` / `opensubtitles_org` branch.
-- Core replacement-policy evidence: Bazarr core branch `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `fe1afaeaf`, contains a trusted replacement policy for 55 active migrated built-ins. It excludes dead-origin providers `hosszupuska`, `podnapisi`, `subscenter`, and `xsubs`, and excludes legacy `opensubtitles` because the catalog rewrite ships as `opensubtitles_org`.
-- Test-server core evidence: `bazarr-ui-test` was updated on 2026-05-31 to image version `ui-test-20260531-provider-hub-replacements-fe1afaeaf`, revision `fe1afaeaf`, and returned healthy. The earlier test image based on old head `456071d10` failed because the image did not contain database migration `6c9f1b8d2e3a`; rebasing the core branch onto current `origin/development` fixed that mismatch.
+- Core replacement-policy evidence: Bazarr core branch `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `658433568`, contains a trusted replacement policy for 55 active migrated built-ins and the compat AniDB ID bridge needed by anime providers. It excludes dead-origin providers `hosszupuska`, `podnapisi`, `subscenter`, and `xsubs`, and excludes legacy `opensubtitles` because the catalog rewrite ships as `opensubtitles_org`.
+- Test-server core evidence: `bazarr-ui-test` was updated on 2026-05-31 to image version `ui-test-20260531-provider-hub-replacements-658433568`, revision `658433568`, and returned healthy. The earlier test image based on old head `456071d10` failed because the image did not contain database migration `6c9f1b8d2e3a`; rebasing the core branch onto current `origin/development` fixed that mismatch.
 - License boundary: `/home/lavx/bazarr/LICENSE` is GPL-3.0. This catalog is MIT. Provider implementations in this repo must be clean-room MIT rewrites, not copied or mechanically translated GPL provider files.
 - Provider Hub V1 contract currently calls `search(video: dict, languages: list[dict], config: dict)` and `download(provider_payload: dict, language: dict, config: dict)`.
 
@@ -28,8 +28,8 @@
 - Planning branch: `provider-migration-inventory`
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
-- Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `fe1afaeaf`
-- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-fe1afaeaf`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, and `animesubinfo`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
+- Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `658433568`
+- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-658433568`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, and `animetosho`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
 - Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead for Provider Hub migration on 2026-05-31. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof unless a verified upstream origin returns.
 - Existing provider worktrees:
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
@@ -843,9 +843,21 @@
 - Live smoke evidence on 2026-05-29:
   - `python3 -B -m sdk smoke-test --provider animetosho --language eng --video-fixture tests/fixtures/animetosho_video_solo_leveling_s01e12.json --config-json '{"search_threshold":1,"request_delay_ms":0}' --expect-min-results 1 --skip-download`: `animetosho ok`.
   - `python3 -B -m sdk smoke-test --provider animetosho --language eng --video-fixture tests/fixtures/animetosho_video_solo_leveling_s01e12.json --config-json '{"search_threshold":1,"request_delay_ms":0}' --expect-min-results 1`: `animetosho ok`.
-- Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `animetosho` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+- Fresh local evidence on 2026-05-31:
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_animetosho.py'`: `11` tests passed.
+  - `python3 -B -m sdk smoke-test --provider animetosho --language eng --video-fixture tests/fixtures/animetosho_video_solo_leveling_s01e12.json --config-json '{"search_threshold":1,"request_delay_ms":0}' --expect-min-results 1`: `animetosho ok`.
+- Test-server evidence on 2026-05-31:
+  - Core branch `worktree-provider-hub-builtin-replacements` at `658433568` is deployed to `bazarr-ui-test` as image version `ui-test-20260531-provider-hub-replacements-658433568`.
+  - Core commit `658433568` passes AniDB IDs through compat search and Provider Hub worker payloads.
+  - `catalog-animetosho` was pushed to GitHub so Provider Hub could stage it from the official source.
+  - Official Provider Hub catalog source was refreshed from `catalog-animetosho`; the AnimeTosho manifest resolved to commit `4a282a3c17f0847c9b84d7b68ef06895814d8dad`.
+  - Provider Hub state has `animetosho` active at version `0.1.0`, `pending_restart` false, `trusted` true, `enabled` true, and `last_error` null.
+  - Runtime replacement policy contains `55` trusted migrated built-in ids, includes `animetosho`, and excludes `hosszupuska` and `podnapisi`.
+  - Compat episode search for `query=Solo.Leveling.S01E12.2160p.WEB-ToonsHub.mkv`, `type=episode`, `season_number=1`, `episode_number=12`, `languages=en`, `series_anidb_id=17495`, and `series_anidb_episode_id=277518` returned HTTP `200`, `13` total results, including `5` AnimeTosho results.
+  - Compat login returned HTTP `200`; compat download for AnimeTosho `file_id=9` returned HTTP `200` and a stream link.
+  - Fetching the stream link returned HTTP `200` with `17895` bytes of SRT content.
+- Remaining gates: none for the current AnimeTosho migration proof.
 
 ### `napiprojekt`
 
