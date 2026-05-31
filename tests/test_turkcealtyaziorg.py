@@ -1,0 +1,290 @@
+import base64
+import hashlib
+import importlib.util
+import io
+import unittest
+import zipfile
+from pathlib import Path
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parents[1]
+PROVIDER_DIR = ROOT / "providers" / "turkcealtyaziorg"
+
+
+def _load_provider_module():
+    spec = importlib.util.spec_from_file_location("turkcealtyaziorg_provider", PROVIDER_DIR / "provider.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _movie_search_page():
+    return b"""
+    <html>
+      <head><meta name="description" content="Inception altyazi"></head>
+      <body>
+        <div class="altyazi-list-wrapper">
+          <div>
+            <div class="altsonsez2">
+              <div class="alisim"><div class="fl"><a href="/mov/123/inception.html">Inception</a></div></div>
+              <div class="aldil"><span class="flagtr"></span></div>
+              <div class="alcevirmen">cevirmen</div>
+              <div class="alfps">23.976</div>
+              <div class="alindirme">100</div>
+              <div class="ta-container">
+                <div class="ripdiv"><span class="rps r12"></span> / x264-GROUP <img src="/images/isitme.png"></div>
+                <div class="datediv">2 gun once</div>
+              </div>
+            </div>
+            <div class="altsonsez2">
+              <div class="alisim"><div class="fl"><a href="/mov/124/inception-en.html">Inception EN</a></div></div>
+              <div class="aldil"><span class="flagen"></span></div>
+              <div class="alcevirmen"><span class="rip5"></span></div>
+              <div class="alfps">24</div>
+              <div class="alindirme">50</div>
+              <div class="ta-container">
+                <div class="ripdiv"><span class="rip9"></span> / WEB-DL-TEAM</div>
+                <div class="datediv">1 saat once</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+
+
+def _episode_search_page():
+    return b"""
+    <html>
+      <head><meta name="description" content="Series altyazi"></head>
+      <body>
+        <div class="altyazi-list-wrapper">
+          <div>
+            <div class="altsonsez1 sezon_1">
+              <div class="alisim"><div class="fl"><a href="/serie/200/s01e02.html">Episode subtitle</a></div></div>
+              <div class="aldil"><span class="flagen"></span></div>
+              <div class="alcd"><b>1</b><b>2</b></div>
+              <div class="alcevirmen">episode-uploader</div>
+              <div class="alfps">23.976</div>
+              <div class="alindirme">15</div>
+              <div class="ta-container">
+                <div class="ripdiv"><span class="rps r8"></span> / HDTV-GROUP</div>
+                <div class="datediv">3 hafta once</div>
+              </div>
+            </div>
+            <div class="altsonsez1 sezon_1">
+              <div class="alisim"><div class="fl"><a href="/serie/201/season-pack.html">Season pack</a></div></div>
+              <div class="aldil"><span class="flagtr"></span></div>
+              <div class="alcd"><b>1</b><b>Paket</b></div>
+              <div class="alcevirmen">pack-uploader</div>
+              <div class="alfps">23.976</div>
+              <div class="alindirme">25</div>
+              <div class="ta-container">
+                <div class="ripdiv"><span class="rip4"></span> / BDRip-GROUP</div>
+                <div class="datediv">1 ay once</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+
+
+def _download_page():
+    return b"""
+    <html>
+      <body>
+        <form>
+          <input type="hidden" name="idid" value="11">
+          <input type="hidden" name="altid" value="22">
+          <input type="hidden" name="sidid" value="33">
+        </form>
+      </body>
+    </html>
+    """
+
+
+def _zip_body():
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("subtitle.srt", "1\r\n00:00:01,000 --> 00:00:02,000\r\nMerhaba\r\n")
+    return stream.getvalue()
+
+
+class TurkceAltyaziSearchTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_search_returns_empty_without_imdb_id(self):
+        provider = self.mod.TurkceAltyaziOrgProvider()
+
+        self.assertEqual(provider.search({"kind": "movie", "title": "Inception"}, [{"alpha3": "tur"}], {}), [])
+
+    def test_default_user_agent_is_browser_like(self):
+        provider = self.mod.TurkceAltyaziOrgProvider()
+
+        self.assertIn("Mozilla/5.0", provider._headers({})["User-Agent"])
+
+    def test_search_skips_unsupported_language_without_network(self):
+        provider = self.mod.TurkceAltyaziOrgProvider()
+        provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True: self.fail(f"unexpected URL: {url}")
+
+        results = provider.search({"kind": "movie", "imdb_id": "tt1375666"}, [{"alpha3": "spa"}], {})
+
+        self.assertEqual(results, [])
+
+    def test_movie_search_uses_imdb_id_cookies_user_agent_and_parses_rows(self):
+        provider = self.mod.TurkceAltyaziOrgProvider()
+        calls = []
+
+        def get_response(url, headers, cookies, timeout=30, allow_redirects=True):
+            del timeout, allow_redirects
+            calls.append((url, headers, cookies))
+            if url == "https://turkcealtyazi.org":
+                return self.mod.HttpResponse(200, b"home", {})
+            return self.mod.HttpResponse(200, _movie_search_page(), {})
+
+        provider._http_get = get_response
+        results = provider.search(
+            {"kind": "movie", "title": "Inception", "imdb_id": "tt1375666", "release_group": "GROUP"},
+            [{"alpha3": "tur"}, {"alpha3": "eng"}],
+            {"cookies": "cf_clearance=token; PHPSESSID=session", "user_agent": "UnitTest/1.0"},
+        )
+
+        self.assertEqual(calls[0][0], "https://turkcealtyazi.org")
+        self.assertEqual(calls[0][1]["User-Agent"], "UnitTest/1.0")
+        self.assertEqual(calls[0][1]["Referer"], "https://turkcealtyazi.org")
+        self.assertEqual(calls[0][2]["cf_clearance"], "token")
+        self.assertEqual(calls[1][0], "https://turkcealtyazi.org/find.php?cat=sub&find=1375666")
+        self.assertEqual([item["language"]["alpha3"] for item in results], ["tur", "eng"])
+        self.assertEqual(results[0]["provider"], "turkcealtyaziorg")
+        self.assertTrue(results[0]["hearing_impaired"])
+        self.assertIn("imdb_id", results[0]["matches"])
+        self.assertIn("release_group", results[0]["matches"])
+        self.assertEqual(results[0]["provider_payload"]["page_url"], "https://turkcealtyazi.org/mov/123/inception.html")
+        self.assertEqual(results[0]["display"]["uploader"], "cevirmen")
+        self.assertIn("BluRay", results[0]["release_info"])
+
+    def test_episode_search_filters_season_episode_and_keeps_season_pack(self):
+        provider = self.mod.TurkceAltyaziOrgProvider()
+        provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True: self.mod.HttpResponse(
+            200, b"home" if url == "https://turkcealtyazi.org" else _episode_search_page(), {}
+        )
+
+        results = provider.search(
+            {"kind": "episode", "series": "Example", "series_imdb_id": "tt0903747", "season": 1, "episode": 2},
+            [{"alpha3": "eng"}, {"alpha3": "tur"}],
+            {},
+        )
+
+        self.assertEqual([item["language"]["alpha3"] for item in results], ["eng", "tur"])
+        self.assertEqual(results[0]["provider_payload"]["episode"], 2)
+        self.assertFalse(results[0]["provider_payload"]["is_pack"])
+        self.assertEqual(results[1]["provider_payload"]["episode"], 2)
+        self.assertTrue(results[1]["provider_payload"]["is_pack"])
+        self.assertIn("series_imdb_id", results[0]["matches"])
+        self.assertIn("episode", results[0]["matches"])
+
+    def test_search_returns_empty_for_not_found_meta(self):
+        provider = self.mod.TurkceAltyaziOrgProvider()
+        provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True: self.mod.HttpResponse(
+            200,
+            b'<html><head><meta name="description" content="404 Error"></head></html>',
+            {},
+        )
+
+        self.assertEqual(
+            provider.search({"kind": "movie", "imdb_id": "tt1375666"}, [{"alpha3": "tur"}], {}),
+            [],
+        )
+
+    def test_search_reports_cloudflare_challenge(self):
+        provider = self.mod.TurkceAltyaziOrgProvider()
+        provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True: self.mod.HttpResponse(
+            403,
+            b"<html><title>Just a moment...</title></html>",
+            {"cf-mitigated": "challenge"},
+        )
+
+        with self.assertRaisesRegex(PermissionError, "Cloudflare"):
+            provider.search({"kind": "movie", "imdb_id": "tt1375666"}, [{"alpha3": "tur"}], {})
+
+
+class TurkceAltyaziDownloadTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_download_posts_hidden_form_and_extracts_zip(self):
+        provider = self.mod.TurkceAltyaziOrgProvider()
+        calls = []
+
+        def get_response(url, headers, cookies, timeout=30, allow_redirects=True):
+            del timeout, allow_redirects
+            calls.append(("GET", url, headers, cookies))
+            return self.mod.HttpResponse(200, _download_page(), {})
+
+        def post_response(url, data, headers, cookies, timeout=30):
+            del timeout
+            calls.append(("POST", url, data, headers, cookies))
+            return self.mod.HttpResponse(200, _zip_body(), {"content-type": "application/zip"})
+
+        provider._http_get = get_response
+        provider._http_post = post_response
+        result = provider.download(
+            {
+                "page_url": "https://turkcealtyazi.org/mov/123/inception.html",
+                "release_info": "BluRay,x264-GROUP",
+                "filename": "inception.zip",
+            },
+            {"alpha3": "tur"},
+            {"cookies": "cf_clearance=token", "user_agent": "UnitTest/1.0"},
+        )
+
+        payload = base64.b64decode(result["content_b64"])
+        self.assertEqual(payload, b"1\n00:00:01,000 --> 00:00:02,000\nMerhaba\n")
+        self.assertEqual(result["content_sha256"], hashlib.sha256(payload).hexdigest())
+        self.assertEqual(result["format"], "srt")
+        self.assertEqual(calls[1][0], "POST")
+        self.assertEqual(calls[1][1], "https://turkcealtyazi.org/ind")
+        self.assertEqual(calls[1][2], {"idid": "11", "altid": "22", "sidid": "33"})
+        self.assertEqual(calls[1][3]["Referer"], "https://turkcealtyazi.org/mov/123/inception.html")
+
+    def test_download_extracts_rar_with_extractor(self):
+        provider = self.mod.TurkceAltyaziOrgProvider()
+        provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True: self.mod.HttpResponse(
+            200, _download_page(), {}
+        )
+        provider._http_post = lambda url, data, headers, cookies, timeout=30: self.mod.HttpResponse(
+            200, b"Rar!\x1a\x07\x00body", {"content-type": "application/vnd.rar"}
+        )
+
+        with mock.patch.object(self.mod, "_extract_rar_files", return_value=[("subtitle.srt", b"RAR subtitle")]):
+            result = provider.download(
+                {
+                    "page_url": "https://turkcealtyazi.org/mov/123/inception.html",
+                    "release_info": "BluRay,x264-GROUP",
+                    "filename": "inception.rar",
+                },
+                {"alpha3": "tur"},
+                {},
+            )
+
+        self.assertEqual(base64.b64decode(result["content_b64"]), b"RAR subtitle")
+
+    def test_season_pack_archive_rejects_wrong_episode_member(self):
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("Example.S01E03.srt", "wrong")
+
+        with self.assertRaisesRegex(ValueError, "requested episode"):
+            self.mod.extract_download(
+                stream.getvalue(),
+                "season-pack.zip",
+                {"season": 1, "episode": 2, "is_pack": True},
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()
