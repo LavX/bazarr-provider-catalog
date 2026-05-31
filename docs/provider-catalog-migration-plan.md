@@ -14,7 +14,9 @@
 
 - Source inventory: 60 provider modules with provider classes were found under `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/`.
 - Excluded helper modules: `__init__.py`, `_agent_list.py`, `avistaz_network.py`, `mixins.py`, `opensubtitles_scraper.py`, `utils.py`.
-- Current catalog inventory: 12 bundles exist, but none use the same provider ids as the 60 built-in Bazarr providers in this migration list.
+- Main-branch catalog inventory: 12 bundles currently ship from `main`.
+- Migration branch inventory: all 60 legacy provider-class modules have matching `catalog-*` branches and checked-out provider worktrees as of 2026-05-31.
+- Helper coverage: `opensubtitles_scraper.py` is not a provider-class module. Its helper-service behavior is covered inside the `catalog-opensubtitles` / `opensubtitles_org` branch.
 - License boundary: `/home/lavx/bazarr/LICENSE` is GPL-3.0. This catalog is MIT. Provider implementations in this repo must be clean-room MIT rewrites, not copied or mechanically translated GPL provider files.
 - Provider Hub V1 contract currently calls `search(video: dict, languages: list[dict], config: dict)` and `download(provider_payload: dict, language: dict, config: dict)`.
 
@@ -26,66 +28,132 @@
 - Core migration prerequisite branch: `provider-hub-builtin-migration` in `/tmp/bazarr_provider_hub_builtin_migration`
 - Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead on 2026-05-31. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core allow-list, open merge-ready provider PRs, or require Provider Hub compat proof until a verified upstream origin returns.
 - Existing provider worktrees:
-  - `gestdown`: branch `catalog-gestdown`, worktree `/tmp/bazarr_catalog_provider_worktrees/gestdown`, current head `c74a706 Fix Gestdown language parity`
-  - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a Add Addic7ed provider`
-  - `karagarga`: branch `catalog-karagarga`, worktree `/tmp/bazarr_catalog_provider_worktrees/karagarga`, current head `0167ba8 Add Karagarga provider`
-  - `regielive`: branch `catalog-regielive`, worktree `/tmp/bazarr_catalog_provider_worktrees/regielive`, current head `fb5a2ae Add RegieLive provider`
-  - `shooter`: branch `catalog-shooter`, worktree `/tmp/bazarr_catalog_provider_worktrees/shooter`, current head `776fdb2 Add Shooter provider`
-  - `subtis`: branch `catalog-subtis`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtis`, current head `5f2b268 Add Subtis provider`
-  - `wizdom`: branch `catalog-wizdom`, worktree `/tmp/bazarr_catalog_provider_worktrees/wizdom`, current head `e25f7af Add Wizdom provider`
-  - `tvsubtitles`: branch `catalog-tvsubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/tvsubtitles`, current head `f63bcb7 Add TVsubtitles provider`
-  - `subtitulamostv`: branch `catalog-subtitulamostv`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitulamostv`, current head `f75eafd Add SubtitulamosTV provider`
-  - `greeksubs`: branch `catalog-greeksubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubs`, current head `1ec84fa Add GreekSubs provider`
-  - `animekalesi`: branch `catalog-animekalesi`, worktree `/tmp/bazarr_catalog_provider_worktrees/animekalesi`, current head `b5db085 Add AnimeKalesi provider`
-  - `animesubinfo`: branch `catalog-animesubinfo`, worktree `/tmp/bazarr_catalog_provider_worktrees/animesubinfo`, current head `b2be823 Add AnimeSub.info provider`
-  - `animetosho`: branch `catalog-animetosho`, worktree `/tmp/bazarr_catalog_provider_worktrees/animetosho`, current head `4a282a3 Add AnimeTosho provider`
-  - `napiprojekt`: branch `catalog-napiprojekt`, worktree `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`, current head `5d9fb63 Add NapiProjekt provider`
-  - `podnapisi`: branch `catalog-podnapisi`, worktree `/tmp/bazarr_catalog_provider_worktrees/podnapisi`, current head `68a8ed9 Remove Podnapisi dead-origin catalog artifacts`, dead origin
-  - `subf2m`: branch `catalog-subf2m`, worktree `/tmp/bazarr_catalog_provider_worktrees/subf2m`, current head `35bb9c4 Add SubF2M provider`
-  - `subsarr`: branch `catalog-subsarr`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsarr`, current head `e154cee Add Subsarr provider`
-  - `assrt`: branch `catalog-assrt`, worktree `/tmp/bazarr_catalog_provider_worktrees/assrt`, current head `c4e2440 Add Assrt provider`
-  - `betaseries`: branch `catalog-betaseries`, worktree `/tmp/bazarr_catalog_provider_worktrees/betaseries`, current head `461ab52 Add BetaSeries provider`
-  - `greeksubtitles`: branch `catalog-greeksubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles`, current head `da99eee Add GreekSubtitles provider`
-  - `hosszupuska`: branch `catalog-hosszupuska`, worktree `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`, current head `4c86d58 Remove Hosszupuska dead-origin catalog artifacts`, dead origin
-  - `nekur`: branch `catalog-nekur`, worktree `/tmp/bazarr_catalog_provider_worktrees/nekur`, current head `41e428e Add Nekur provider`
-  - `prijevodionline`: branch `catalog-prijevodionline`, worktree `/tmp/bazarr_catalog_provider_worktrees/prijevodionline`, current head `9c1d795 Add PrijevodiOnline provider`
-  - `soustitreseu`: branch `catalog-soustitreseu`, worktree `/tmp/bazarr_catalog_provider_worktrees/soustitreseu`, current head `ed93af8 Add Soustitres.eu provider`
-  - `subclub`: branch `catalog-subclub`, worktree `/tmp/bazarr_catalog_provider_worktrees/subclub`, current head `0849eae Add Subclub provider`
-  - `subssabbz`: branch `catalog-subssabbz`, worktree `/tmp/bazarr_catalog_provider_worktrees/subssabbz`, current head `3aa8f02 Add SubsSabBz provider`
-  - `subsunacs`: branch `catalog-subsunacs`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsunacs`, current head `6394dff Add SubsUnacs provider`
-  - `subsynchro`: branch `catalog-subsynchro`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsynchro`, current head `9f9084e Add SubSynchro provider`
-  - `subtitrarinoi`: branch `catalog-subtitrarinoi`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitrarinoi`, current head `8fc7785 Add Subtitrari Noi provider`
-  - `subtitriid`: branch `catalog-subtitriid`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitriid`, current head `5e783ba Add Subtitri.id provider`
-  - `supersubtitles`: branch `catalog-supersubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/supersubtitles`, current head `5a64e49 Add SuperSubtitles provider`
-  - `titrari`: branch `catalog-titrari`, worktree `/tmp/bazarr_catalog_provider_worktrees/titrari`, current head `be43079 Add Titrari provider`
-  - `yavkanet`: branch `catalog-yavkanet`, worktree `/tmp/bazarr_catalog_provider_worktrees/yavkanet`, current head `ac537d6 Add YavkaNet provider`
-  - `yifysubtitles`: branch `catalog-yifysubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/yifysubtitles`, current head `9e112fb Add YIFYSubtitles provider`
-  - `hdbits`: branch `catalog-hdbits`, worktree `/tmp/bazarr_catalog_provider_worktrees/hdbits`, current head `42d7f02 Add HDBits provider`
-  - `jimaku`: branch `catalog-jimaku`, worktree `/tmp/bazarr_catalog_provider_worktrees/jimaku`, current head `112d345 Add Jimaku provider`
-  - `subdl`: branch `catalog-subdl`, worktree `/tmp/bazarr_catalog_provider_worktrees/subdl`, current head `7ff94cd Add SubDL provider`
-  - `subsource`: branch `catalog-subsource`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsource`, current head `d50b08f Add SubSource provider`
-  - `subsro`: branch `catalog-subsro`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsro`, current head `4e63940 Add Subs.ro provider`
-  - `subx`: branch `catalog-subx`, worktree `/tmp/bazarr_catalog_provider_worktrees/subx`, current head `4199530 Add SubX provider`
-  - `opensubtitlescom`: branch `catalog-opensubtitlescom`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitlescom`, current head `885985f Add OpenSubtitles.com provider`
-  - `avistaz`: branch `catalog-avistaz`, worktree `/tmp/bazarr_catalog_provider_worktrees/avistaz`, current head `1b339e2 Add AvistaZ provider`
-  - `cinemaz`: branch `catalog-cinemaz`, worktree `/tmp/bazarr_catalog_provider_worktrees/cinemaz`, current head `df1b3bd Add CinemaZ provider`
-  - `turkcealtyaziorg`: branch `catalog-turkcealtyaziorg`, worktree `/tmp/bazarr_catalog_provider_worktrees/turkcealtyaziorg`, current head `6dd195c Add TurkceAltyazi.org provider`
-  - `ktuvit`: branch `catalog-ktuvit`, worktree `/tmp/bazarr_catalog_provider_worktrees/ktuvit`, current head `9d3162e Add Ktuvit provider`
-  - `legendasdivx`: branch `catalog-legendasdivx`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasdivx`, current head `02bbb60 Add LegendasDivx provider`
-  - `legendasnet`: branch `catalog-legendasnet`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasnet`, current head `983878f Add Legendas.net provider`
-  - `napisy24`: branch `catalog-napisy24`, worktree `/tmp/bazarr_catalog_provider_worktrees/napisy24`, current head `34a9720 Add Napisy24 provider`
-  - `pipocas`: branch `catalog-pipocas`, worktree `/tmp/bazarr_catalog_provider_worktrees/pipocas`, current head `4fe281b Add Pipocas.tv provider`
-  - `subscenter`: branch `catalog-subscenter`, worktree `/tmp/bazarr_catalog_provider_worktrees/subscenter`, current head `57de626 Mark SubsCenter upstream dead`, dead origin
-  - `titlovi`: branch `catalog-titlovi`, worktree `/tmp/bazarr_catalog_provider_worktrees/titlovi`, current head `1db2476 Add Titlovi provider`
-  - `titulky`: branch `catalog-titulky`, worktree `/tmp/bazarr_catalog_provider_worktrees/titulky`, current head `47d73f3 Add Titulky provider`
-  - `xsubs`: branch `catalog-xsubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/xsubs`, current head `5a17922 Mark XSubs upstream dead`, dead origin
-  - `subs4free`: branch `catalog-subs4free`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4free`, current head `f7ca9ac Add Subs4Free provider`
-  - `subs4series`: branch `catalog-subs4series`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4series`, current head `4dbe046 Add Subs4Series provider`
-  - `zimuku`: branch `catalog-zimuku`, worktree `/tmp/bazarr_catalog_provider_worktrees/zimuku`, current head `7d5a056 Add Zimuku provider`
+  - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
+  - `animekalesi`: branch `catalog-animekalesi`, worktree `/tmp/bazarr_catalog_provider_worktrees/animekalesi`, current head `b5db085`
+  - `animesubinfo`: branch `catalog-animesubinfo`, worktree `/tmp/bazarr_catalog_provider_worktrees/animesubinfo`, current head `b2be823`
+  - `animetosho`: branch `catalog-animetosho`, worktree `/tmp/bazarr_catalog_provider_worktrees/animetosho`, current head `4a282a3`
+  - `assrt`: branch `catalog-assrt`, worktree `/tmp/bazarr_catalog_provider_worktrees/assrt`, current head `c4e2440`
+  - `avistaz`: branch `catalog-avistaz`, worktree `/tmp/bazarr_catalog_provider_worktrees/avistaz`, current head `1b339e2`
+  - `betaseries`: branch `catalog-betaseries`, worktree `/tmp/bazarr_catalog_provider_worktrees/betaseries`, current head `461ab52`
+  - `bsplayer`: branch `catalog-bsplayer`, worktree `/tmp/bazarr_catalog_provider_worktrees/bsplayer`, current head `c04f374`
+  - `cinemaz`: branch `catalog-cinemaz`, worktree `/tmp/bazarr_catalog_provider_worktrees/cinemaz`, current head `df1b3bd`
+  - `embeddedsubtitles`: branch `catalog-embeddedsubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/embeddedsubtitles`, current head `a8257a4`, local/generated provider
+  - `gestdown`: branch `catalog-gestdown`, worktree `/tmp/bazarr_catalog_provider_worktrees/gestdown`, current head `c74a706`
+  - `greeksubs`: branch `catalog-greeksubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubs`, current head `1ec84fa`
+  - `greeksubtitles`: branch `catalog-greeksubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles`, current head `da99eee`
+  - `hdbits`: branch `catalog-hdbits`, worktree `/tmp/bazarr_catalog_provider_worktrees/hdbits`, current head `42d7f02`
+  - `hosszupuska`: branch `catalog-hosszupuska`, worktree `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`, current head `e3489b4`, dead origin
+  - `jimaku`: branch `catalog-jimaku`, worktree `/tmp/bazarr_catalog_provider_worktrees/jimaku`, current head `112d345`
+  - `karagarga`: branch `catalog-karagarga`, worktree `/tmp/bazarr_catalog_provider_worktrees/karagarga`, current head `0167ba8`
+  - `ktuvit`: branch `catalog-ktuvit`, worktree `/tmp/bazarr_catalog_provider_worktrees/ktuvit`, current head `9d3162e`
+  - `legendasdivx`: branch `catalog-legendasdivx`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasdivx`, current head `02bbb60`
+  - `legendasnet`: branch `catalog-legendasnet`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasnet`, current head `983878f`
+  - `napiprojekt`: branch `catalog-napiprojekt`, worktree `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`, current head `5d9fb63`
+  - `napisy24`: branch `catalog-napisy24`, worktree `/tmp/bazarr_catalog_provider_worktrees/napisy24`, current head `34a9720`
+  - `nekur`: branch `catalog-nekur`, worktree `/tmp/bazarr_catalog_provider_worktrees/nekur`, current head `41e428e`
+  - `opensubtitles`: branch `catalog-opensubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitles`, current head `2ec6c88`
+  - `opensubtitlescom`: branch `catalog-opensubtitlescom`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitlescom`, current head `885985f`
+  - `pipocas`: branch `catalog-pipocas`, worktree `/tmp/bazarr_catalog_provider_worktrees/pipocas`, current head `4fe281b`
+  - `podnapisi`: branch `catalog-podnapisi`, worktree `/tmp/bazarr_catalog_provider_worktrees/podnapisi`, current head `a14f4fb`, dead origin
+  - `prijevodionline`: branch `catalog-prijevodionline`, worktree `/tmp/bazarr_catalog_provider_worktrees/prijevodionline`, current head `9c1d795`
+  - `regielive`: branch `catalog-regielive`, worktree `/tmp/bazarr_catalog_provider_worktrees/regielive`, current head `fb5a2ae`
+  - `shooter`: branch `catalog-shooter`, worktree `/tmp/bazarr_catalog_provider_worktrees/shooter`, current head `3d794c2`
+  - `soustitreseu`: branch `catalog-soustitreseu`, worktree `/tmp/bazarr_catalog_provider_worktrees/soustitreseu`, current head `ed93af8`
+  - `subclub`: branch `catalog-subclub`, worktree `/tmp/bazarr_catalog_provider_worktrees/subclub`, current head `0849eae`
+  - `subdl`: branch `catalog-subdl`, worktree `/tmp/bazarr_catalog_provider_worktrees/subdl`, current head `7ff94cd`
+  - `subf2m`: branch `catalog-subf2m`, worktree `/tmp/bazarr_catalog_provider_worktrees/subf2m`, current head `35bb9c4`
+  - `subs4free`: branch `catalog-subs4free`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4free`, current head `f7ca9ac`
+  - `subs4series`: branch `catalog-subs4series`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4series`, current head `4dbe046`
+  - `subsarr`: branch `catalog-subsarr`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsarr`, current head `e154cee`
+  - `subscenter`: branch `catalog-subscenter`, worktree `/tmp/bazarr_catalog_provider_worktrees/subscenter`, current head `57de626`, dead origin
+  - `subsource`: branch `catalog-subsource`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsource`, current head `d50b08f`
+  - `subsro`: branch `catalog-subsro`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsro`, current head `4e63940`
+  - `subssabbz`: branch `catalog-subssabbz`, worktree `/tmp/bazarr_catalog_provider_worktrees/subssabbz`, current head `3aa8f02`
+  - `subsunacs`: branch `catalog-subsunacs`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsunacs`, current head `6394dff`
+  - `subsynchro`: branch `catalog-subsynchro`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsynchro`, current head `9f9084e`
+  - `subtis`: branch `catalog-subtis`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtis`, current head `10a7aa3`
+  - `subtitrarinoi`: branch `catalog-subtitrarinoi`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitrarinoi`, current head `8fc7785`
+  - `subtitriid`: branch `catalog-subtitriid`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitriid`, current head `ba6e108`
+  - `subtitulamostv`: branch `catalog-subtitulamostv`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitulamostv`, current head `f75eafd`
+  - `subx`: branch `catalog-subx`, worktree `/tmp/bazarr_catalog_provider_worktrees/subx`, current head `1f649cf`
+  - `supersubtitles`: branch `catalog-supersubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/supersubtitles`, current head `3f96078`
+  - `titlovi`: branch `catalog-titlovi`, worktree `/tmp/bazarr_catalog_provider_worktrees/titlovi`, current head `933fb47`
+  - `titrari`: branch `catalog-titrari`, worktree `/tmp/bazarr_catalog_provider_worktrees/titrari`, current head `0781631`
+  - `titulky`: branch `catalog-titulky`, worktree `/tmp/bazarr_catalog_provider_worktrees/titulky`, current head `8394a28`
+  - `turkcealtyaziorg`: branch `catalog-turkcealtyaziorg`, worktree `/tmp/bazarr_catalog_provider_worktrees/turkcealtyaziorg`, current head `6ec4f09`
+  - `tvsubtitles`: branch `catalog-tvsubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/tvsubtitles`, current head `875df4e`
+  - `whisperai`: branch `catalog-whisperai`, worktree `/tmp/bazarr_catalog_provider_worktrees/whisperai`, current head `0eeb964`, local/generated provider
+  - `wizdom`: branch `catalog-wizdom`, worktree `/tmp/bazarr_catalog_provider_worktrees/wizdom`, current head `2d5425c`
+  - `xsubs`: branch `catalog-xsubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/xsubs`, current head `5a17922`, dead origin
+  - `yavkanet`: branch `catalog-yavkanet`, worktree `/tmp/bazarr_catalog_provider_worktrees/yavkanet`, current head `000921d`
+  - `yifysubtitles`: branch `catalog-yifysubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/yifysubtitles`, current head `6d4ecff`
+  - `zimuku`: branch `catalog-zimuku`, worktree `/tmp/bazarr_catalog_provider_worktrees/zimuku`, current head `7d5a056`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
 ## Provider Progress Ledger
+
+### `bsplayer`
+
+- Branch: `catalog-bsplayer`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/bsplayer`
+- Current checkpoint: `c04f374 Add BSPlayer provider`
+- Provider type: active API provider.
+- Local evidence on 2026-05-31:
+  - Legacy inspection confirmed the old Bazarr module had a SOAP implementation, but `list_subtitles()` was intentionally disabled and returned no results.
+  - Live BSPlayer SOAP login probes returned HTTP `200` across checked API subdomains.
+  - New catalog behavior restores the hash and size based SOAP search path with no title scraping fallback.
+  - `python3 -B -m unittest discover -s tests -p test_bsplayer.py`: `9` tests passed.
+  - `python3 -B -m py_compile providers/bsplayer/provider.py`: passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `git diff --check`: clean.
+  - `python3 -B -m unittest discover -s tests`: `337` tests passed, `6` skipped.
+  - `python3 -B -m sdk smoke-test --provider bsplayer --language eng --video-fixture tests/fixtures/bsplayer_video_hash_movie.json`: `bsplayer ok`.
+- Remaining gates:
+  - Add `bsplayer` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+
+### `embeddedsubtitles`
+
+- Branch: `catalog-embeddedsubtitles`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/embeddedsubtitles`
+- Current checkpoint: `a8257a4 Add EmbeddedSubtitles provider`
+- Provider type: local/generated provider.
+- Local evidence on 2026-05-31:
+  - Legacy inspection confirmed this is not a web source. It extracts embedded text subtitle streams from local media files.
+  - Catalog behavior uses configured `ffprobe` for stream discovery and configured `ffmpeg` for stream extraction.
+  - Supported codecs are `ass`, `subrip`, `webvtt`, and `mov_text`.
+  - `python3 -B -m unittest discover -s tests -p test_embeddedsubtitles.py`: `8` tests passed.
+  - `python3 -B -m py_compile providers/embeddedsubtitles/provider.py`: passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `git diff --check`: clean.
+  - `python3 -B -m unittest discover -s tests`: `336` tests passed, `6` skipped.
+  - Generated-media smoke with real local `ffprobe` and `ffmpeg`: `embeddedsubtitles ok`.
+- Remaining gates:
+  - Confirm Bazarr Provider Hub workers receive readable media paths and executable `ffprobe` and `ffmpeg` paths on the test server.
+  - Add `embeddedsubtitles` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with a local media fixture containing an embedded text subtitle stream.
+
+### `whisperai`
+
+- Branch: `catalog-whisperai`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/whisperai`
+- Current checkpoint: `0eeb964 Add WhisperAI provider`
+- Provider type: local/generated provider backed by a user-supplied Whisper web service.
+- Local evidence on 2026-05-31:
+  - Legacy inspection confirmed required endpoint, response timeout, transcription timeout, `ffmpeg_path`, and `pass_video_name` settings.
+  - Catalog behavior extracts local audio with configured `ffmpeg`, detects language through `/detect-language` when no audio tags exist, and calls `/asr` for generated SRT content.
+  - Translation remains limited to English when source audio language differs from the requested subtitle language.
+  - `python3 -B -m unittest discover -s tests -p test_whisperai.py`: `8` tests passed.
+  - `python3 -B -m py_compile providers/whisperai/provider.py`: passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `git diff --check`: clean.
+  - `python3 -B -m unittest discover -s tests`: `336` tests passed, `6` skipped.
+  - Local fake Whisper service smoke with generated media fixture: `whisperai ok`.
+- Remaining gates:
+  - Run against a real Whisper web service endpoint with a real media fixture.
+  - Add `whisperai` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `gestdown`
 
