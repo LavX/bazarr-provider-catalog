@@ -30,7 +30,7 @@
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `fe1afaeaf`
 - Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-fe1afaeaf`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, and `animesubinfo`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
-- Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead or unreachable for the migration and Bazarr test networks on 2026-05-31. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof until a verified upstream origin returns.
+- Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead for Provider Hub migration on 2026-05-31. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof unless a verified upstream origin returns.
 - Existing provider worktrees:
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
   - `animekalesi`: branch `catalog-animekalesi`, worktree `/tmp/bazarr_catalog_provider_worktrees/animekalesi`, current head `b5db085`
@@ -907,11 +907,11 @@
   - Recheck on 2026-05-31 from this migration network: `https://podnapisi.net/subtitles` and `https://www.podnapisi.net/subtitles/search/advanced` still fail DNS with `curl: (6) Could not resolve host`.
   - Fresh recheck on 2026-05-31 after the dead-origin report: `https://www.podnapisi.net/subtitles` and `https://podnapisi.net/subtitles` still fail DNS with `curl: (6) Could not resolve host`.
   - Bazarr test host recheck on 2026-05-31: `ssh lavx@192.168.100.6 curl -I --max-time 15 https://www.podnapisi.net/` and `https://podnapisi.net/` both fail DNS with `curl: (6) Could not resolve host`.
-  - Public web browsing can still load the Podnapisi homepage, so this is classified as blocked/dead for the Provider Hub migration network and Bazarr test proof, not as a proven global domain disappearance.
-- Remaining gates:
-  - Treat Podnapisi as blocked/dead unless `www.podnapisi.net` resolves and serves the original subtitle API again, or a verified replacement origin is found.
+  - Fresh recheck on 2026-05-31 after final dead-origin decision: `curl -I --max-time 15 https://www.podnapisi.net/` and `https://podnapisi.net/` both fail DNS with `curl: (6) Could not resolve host`.
+- Dead-origin decision:
+  - Treat Podnapisi as dead for Provider Hub migration unless `www.podnapisi.net` resolves and serves the original subtitle API again, or a verified replacement origin is found.
   - Do not add `podnapisi` to the core replacement policy while the origin is dead.
-  - Do not open or merge Podnapisi as an active catalog provider while the migration network cannot prove live search and download.
+  - Do not open or merge Podnapisi as an active catalog provider while the origin is dead.
   - Do not require Provider Hub compat search, download, or stream proof while the origin is dead.
 
 ### `subf2m`
@@ -1077,11 +1077,12 @@
   - Recheck on 2026-05-31: `http://hosszupuskasub.com/sorozatok.php?sid=17617` returns the same ParkLogic router for the legacy search path.
   - Fresh recheck on 2026-05-31 after the dead-origin report: `curl -I --max-time 15 http://hosszupuskasub.com/` returns `curl: (52) Empty reply from server`.
   - Bazarr test host recheck on 2026-05-31: `ssh lavx@192.168.100.6 curl -I --max-time 15 http://hosszupuskasub.com/` returns `curl: (52) Empty reply from server`.
-- Remaining gates:
-  - Treat Hosszupuska as blocked unless the original site returns or a verified replacement origin is found.
+  - Fresh recheck on 2026-05-31 after final dead-origin decision: `curl -I --max-time 15 http://hosszupuskasub.com/` returns `curl: (52) Empty reply from server`.
+- Dead-origin decision:
+  - Treat Hosszupuska as dead for Provider Hub migration unless the original site returns or a verified replacement origin is found.
   - Re-run live Hosszupuska smoke only after the domain stops serving ParkLogic parking responses.
   - Do not add `hosszupuska` to the core replacement policy while the origin is dead.
-  - Do not open or merge Hosszupuska as an active catalog provider while the domain is parked.
+  - Do not open or merge Hosszupuska as an active catalog provider while the origin is dead.
   - Do not require Provider Hub compat search, download, or stream proof while the origin is dead.
 
 ### `nekur`
