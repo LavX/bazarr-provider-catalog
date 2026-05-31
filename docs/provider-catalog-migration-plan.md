@@ -29,7 +29,7 @@
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
-- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, and `greeksubtitles`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
+- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, and `nekur`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
 - Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead for Provider Hub migration on 2026-05-31. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof unless a verified upstream origin returns.
 - Existing provider worktrees:
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
@@ -1175,9 +1175,24 @@
   - Direct live download HEAD for `Dune: Part One` returned HTTP `200`, `Content-Disposition: filename=dune_part_one_2021.zip`, and `Content-Length: 33183`.
   - `python3 -B -m sdk smoke-test --provider nekur --language lav --video-fixture tests/fixtures/nekur_video_dune.json --expect-min-results 1`: `nekur ok`.
   - `/usr/bin/env PATH=/tmp/no-system-tools python3 -B -m sdk smoke-test --provider nekur --language lav --video-fixture tests/fixtures/nekur_video_dune.json --expect-min-results 1`: `nekur ok`.
-- Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `nekur` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+- Fresh local evidence on 2026-06-01:
+  - Branch `catalog-nekur` was pushed at `41e428e`.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_nekur.py'`: `6` tests passed.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/nekur`, `tests/test_nekur.py`, `README.md`, and `catalog.json` found no matches.
+  - `python3 -B -m sdk smoke-test --provider nekur --language lav --video-fixture tests/fixtures/nekur_video_dune.json --config-json '{"request_delay_ms":0}' --expect-min-results 1`: `nekur ok`.
+- Provider Hub test-server evidence on 2026-06-01:
+  - Official catalog source dev ref was set to `catalog-nekur`; refresh returned `13` entries and resolved Nekur `0.1.0` at commit `41e428e0e98e19cda3f4eae121f2f96f2ca7ddee`.
+  - `bazarr-ui-test` restarted healthy on image `ui-test-20260531-provider-hub-replacements-f245ae096`, revision `f245ae096`.
+  - Provider state after restart: active version `0.1.0`, `pending_restart=false`, `trusted=true`, `enabled=true`, `last_error=None`, manifest commit `41e428e0e98e19cda3f4eae121f2f96f2ca7ddee`.
+  - Runtime replacement policy contains `55` trusted migrated built-in ids, includes `nekur`, and excludes `hosszupuska` and `podnapisi`.
+  - Query-only compat search `GET /api/v1/subtitles?query=Dune.2021.1080p.BluRay.x264.mkv&type=movie&languages=lv&per_page=100` returned HTTP `200`, `9` total results, and `1` Nekur result.
+  - Nekur result: `file_id=4`, release `DVD, BD`, subtitle id `nekur:nekur-51fcaecad656f7e9894c70d0bab7a3dc`.
+  - Compat download `POST /api/v1/download` for `file_id=4` returned HTTP `200`, a stream link, `remaining=999`, and `remaining_downloads=999`.
+  - Compat stream returned HTTP `200` and `82459` bytes. The payload starts with an SRT BOM, cue `1`, and timestamp `00:00:05,339 --> 00:00:10,177`.
+- Status:
+  - Nekur is locally validated and proved through Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `prijevodionline`
 
