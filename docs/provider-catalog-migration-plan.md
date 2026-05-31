@@ -16,6 +16,7 @@
 - Excluded helper modules: `__init__.py`, `_agent_list.py`, `avistaz_network.py`, `mixins.py`, `opensubtitles_scraper.py`, `utils.py`.
 - Main-branch catalog inventory: 12 bundles currently ship from `main`.
 - Migration branch inventory: all 60 legacy provider-class modules have matching `catalog-*` branches and checked-out provider worktrees as of 2026-05-31.
+- Checkpoint audit on 2026-05-31: every provider section with a `Current checkpoint` hash matches the actual checked-out provider worktree HEAD, and all provider worktrees were clean.
 - Helper coverage: `opensubtitles_scraper.py` is not a provider-class module. Its helper-service behavior is covered inside the `catalog-opensubtitles` / `opensubtitles_org` branch.
 - Core replacement-policy evidence: Bazarr core branch `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `456071d10`, contains a trusted replacement policy for 55 active migrated built-ins. It excludes dead-origin providers `hosszupuska`, `podnapisi`, `subscenter`, and `xsubs`, and excludes legacy `opensubtitles` because the catalog rewrite ships as `opensubtitles_org`.
 - License boundary: `/home/lavx/bazarr/LICENSE` is GPL-3.0. This catalog is MIT. Provider implementations in this repo must be clean-room MIT rewrites, not copied or mechanically translated GPL provider files.
@@ -402,7 +403,7 @@
 
 - Branch: `catalog-titlovi`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/titlovi`
-- Current checkpoint: `1db2476 Add Titlovi provider`
+- Current checkpoint: `933fb47 Add Titlovi provider`
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -432,7 +433,7 @@
 
 - Branch: `catalog-titulky`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/titulky`
-- Current checkpoint: `47d73f3 Add Titulky provider`
+- Current checkpoint: `8394a28 Add Titulky provider`
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -592,7 +593,7 @@
 
 - Branch: `catalog-shooter`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/shooter`
-- Current checkpoint: `776fdb2 Add Shooter provider`
+- Current checkpoint: `3d794c2 Add Shooter provider`
 - Local evidence on 2026-05-29:
   - `python3 -B -m unittest discover -s tests -p 'test_shooter.py'`: `7` tests passed.
   - `python3 -B -m sdk validate`: `catalog ok`.
@@ -610,7 +611,7 @@
 
 - Branch: `catalog-subtis`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subtis`
-- Current checkpoint: `5f2b268 Add Subtis provider`
+- Current checkpoint: `10a7aa3 Add Subtis provider`
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
 - Local evidence on 2026-05-29:
@@ -630,7 +631,7 @@
 
 - Branch: `catalog-wizdom`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/wizdom`
-- Current checkpoint: `e25f7af Add Wizdom provider`
+- Current checkpoint: `2d5425c Add Wizdom provider`
 - Local evidence on 2026-05-29:
   - `python3 -B -m unittest discover -s tests -p 'test_wizdom.py'`: `11` tests passed.
   - `python3 -B -m sdk validate`: `catalog ok`.
@@ -649,7 +650,7 @@
 
 - Branch: `catalog-tvsubtitles`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/tvsubtitles`
-- Current checkpoint: `f63bcb7 Add TVsubtitles provider`
+- Current checkpoint: `875df4e Add TVsubtitles provider`
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -802,7 +803,7 @@
 
 - Branch: `catalog-podnapisi`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/podnapisi`
-- Current checkpoint: `68a8ed9 Remove Podnapisi dead-origin catalog artifacts`
+- Current checkpoint: `a14f4fb Mark Podnapisi upstream dead`
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -964,7 +965,7 @@
 
 - Branch: `catalog-hosszupuska`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`
-- Current checkpoint: `4c86d58 Remove Hosszupuska dead-origin catalog artifacts`
+- Current checkpoint: `e3489b4 Mark Hosszupuska upstream dead`
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1207,7 +1208,7 @@
 
 - Branch: `catalog-subtitriid`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subtitriid`
-- Current checkpoint: `5e783ba Add Subtitri.id provider`
+- Current checkpoint: `ba6e108 Add Subtitri.id provider`
 - Local evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1233,7 +1234,7 @@
 
 - Branch: `catalog-supersubtitles`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/supersubtitles`
-- Current checkpoint: `5a64e49 Add SuperSubtitles provider`
+- Current checkpoint: `3f96078 Add SuperSubtitles provider`
 - Local evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1260,7 +1261,7 @@
 
 - Branch: `catalog-titrari`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/titrari`
-- Current checkpoint: `be43079 Add Titrari provider`
+- Current checkpoint: `0781631 Add Titrari provider`
 - Local evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1284,7 +1285,7 @@
 
 - Branch: `catalog-yavkanet`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/yavkanet`
-- Current checkpoint: `ac537d6 Add YavkaNet provider`
+- Current checkpoint: `000921d Add YavkaNet provider`
 - Local evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1308,7 +1309,7 @@
 
 - Branch: `catalog-yifysubtitles`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/yifysubtitles`
-- Current checkpoint: `9e112fb Add YIFYSubtitles provider`
+- Current checkpoint: `6d4ecff Add YIFYSubtitles provider`
 - Local evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1467,7 +1468,7 @@
 
 - Branch: `catalog-subx`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subx`
-- Current checkpoint: `4199530 Add SubX provider`
+- Current checkpoint: `1f649cf Add SubX provider`
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1581,7 +1582,7 @@
 
 - Branch: `catalog-turkcealtyaziorg`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/turkcealtyaziorg`
-- Current checkpoint: `6dd195c Add TurkceAltyazi.org provider`
+- Current checkpoint: `6ec4f09 Add TurkceAltyazi.org provider`
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
