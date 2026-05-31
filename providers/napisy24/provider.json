@@ -1,0 +1,62 @@
+{
+  "api_version": "bazarr.provider-hub.v1",
+  "bundle_sha256": "14d1a133bc1eb7429086f081ae292207e1338a96176b7491d28f4a4fb457a22e",
+  "config_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "password": {
+        "description": "Napisy24 API password. Leave empty to use the default account.",
+        "secret": true,
+        "title": "Password",
+        "type": "string"
+      },
+      "request_delay_ms": {
+        "default": 0,
+        "description": "Optional politeness delay before the Napisy24 API call.",
+        "maximum": 5000,
+        "minimum": 0,
+        "title": "Delay between requests (ms)",
+        "type": "integer"
+      },
+      "username": {
+        "description": "Napisy24 API username. Leave empty to use the default account.",
+        "secret": true,
+        "title": "Username",
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "dependencies": {
+    "requirements": []
+  },
+  "entry_class": "Napisy24Provider",
+  "entry_module": "provider",
+  "files": {
+    "provider.py": "8c286227debd66c660129abf5660d33da52aed8e37f65bc487f647f5efe82d1e"
+  },
+  "languages": [
+    "pol"
+  ],
+  "name": "Napisy24",
+  "provider_id": "napisy24",
+  "schema_version": 1,
+  "secret_fields": [
+    "username",
+    "password"
+  ],
+  "source": {
+    "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+    "commit": "0000000000000000000000000000000000000000",
+    "path": "providers/napisy24",
+    "ref": "main",
+    "repo": "LavX/bazarr-provider-catalog",
+    "trusted": true,
+    "type": "github"
+  },
+  "supported_media": [
+    "movie",
+    "episode"
+  ],
+  "version": "0.1.0"
+}
