@@ -81,6 +81,7 @@
   - `xsubs`: branch `catalog-xsubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/xsubs`, current head `5a17922 Mark XSubs upstream dead`, dead origin
   - `subs4free`: branch `catalog-subs4free`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4free`, current head `f7ca9ac Add Subs4Free provider`
   - `subs4series`: branch `catalog-subs4series`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4series`, current head `4dbe046 Add Subs4Series provider`
+  - `zimuku`: branch `catalog-zimuku`, worktree `/tmp/bazarr_catalog_provider_worktrees/zimuku`, current head `7d5a056 Add Zimuku provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -470,6 +471,34 @@
   - Add `subs4series` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
   - If live Subs4Series presents reCAPTCHA during compat proof, configure `captcha_response` or a `captcha_solver_url` helper and rerun download proof.
+
+### `zimuku`
+
+- Branch: `catalog-zimuku`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/zimuku`
+- Current checkpoint: `7d5a056 Add Zimuku provider`
+- Baseline evidence on 2026-05-31:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-31:
+  - Legacy inspection confirmed movie and episode support, English and Chinese language variants, search through `https://srtku.com/search?q=<query>`, episode `.Sxx` query suffixes, non-shooter `div.item` result parsing, Chinese season marker filtering, season-year adjustment, `tbody tr` subtitle row parsing, detail-page `a#down1` download flow, final `a[rel=nofollow]` download flow, Yunsuo image verification, direct subtitle downloads, ZIP downloads, RAR downloads, and archive-file preference for Simplified, Traditional, and bilingual Chinese names.
+  - Bazarr UI/config inspection confirmed no provider-specific settings in the legacy UI, but the provider description says anti-captcha is required. Provider Hub worker inspection showed legacy global anti-captcha environment is not inherited by plugin workers, so the clean-room plugin exposes explicit `captcha_response`, `captcha_solver_url`, `captcha_solver_token`, and `captcha_solver_timeout_ms` settings.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p test_zimuku.py`: failed because `providers/zimuku/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p test_zimuku.py`: `6` tests passed.
+  - `python3 -B -m sdk build-catalog`: `wrote catalog.json`.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests`: `334` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Attribution and em-dash scan over touched Zimuku files found no matches.
+- Live evidence on 2026-05-31:
+  - Sandbox DNS could not resolve `srtku.com`, but escalated network probes reached the host.
+  - `curl -sS -I --max-time 20 -A 'Mozilla/5.0 BazarrProviderHub' https://srtku.com/`: returned HTTP `404` with `security_session_verify` cookie, matching the Yunsuo wall behavior.
+  - `https://srtku.com/search?q=Dune%202021` returned the current Yunsuo image verification page with `data:image/bmp;base64,...` and a `security_verify_img` redirect.
+  - `python3 -B -m sdk smoke-test --provider zimuku --language zho --video-fixture tests/fixtures/zimuku_video_game_of_thrones_s01e01.json --expect-min-results 1 --skip-download`: failed outside the sandbox network restriction with `zimuku search failed: zimuku yunsuo captcha response required`.
+- Remaining gates:
+  - Configure a working `captcha_solver_url` or one-use `captcha_response`, then rerun live Zimuku search and download smoke.
+  - Add `zimuku` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with Yunsuo verification solved.
 
 ### `regielive`
 
@@ -1807,7 +1836,7 @@ Each row is one branch, one worktree, one provider PR, and one independent valid
 | 53 | `xsubs` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/xsubs.py` | `catalog-xsubs` | `/tmp/bazarr_catalog_provider_worktrees/xsubs` | episode | `username`, `password` | dead origin, auth |
 | 54 | `subs4free` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/subs4free.py` | `catalog-subs4free` | `/tmp/bazarr_catalog_provider_worktrees/subs4free` | movie | none | archive, anti-bot |
 | 55 | `subs4series` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/subs4series.py` | `catalog-subs4series` | `/tmp/bazarr_catalog_provider_worktrees/subs4series` | episode | `captcha_response`, `captcha_solver_url`, `captcha_solver_token`, `captcha_solver_timeout_ms`, `request_delay_ms` | archive, anti-bot, captcha helper |
-| 56 | `zimuku` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/zimuku.py` | `catalog-zimuku` | `/tmp/bazarr_catalog_provider_worktrees/zimuku` | movie, episode | none | archive, anti-bot |
+| 56 | `zimuku` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/zimuku.py` | `catalog-zimuku` | `/tmp/bazarr_catalog_provider_worktrees/zimuku` | movie, episode | `captcha_response`, `captcha_solver_url`, `captcha_solver_token`, `captcha_solver_timeout_ms`, `request_delay_ms` | archive, Yunsuo captcha helper |
 | 57 | `opensubtitles` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/opensubtitles.py` | `catalog-opensubtitles` | `/tmp/bazarr_catalog_provider_worktrees/opensubtitles` | movie, episode | `scraper_service_url`, `use_tag_search`, `skip_wrong_fps`, `only_foreign`, `also_foreign` | OpenSubtitles.org helper service |
 | 58 | `embeddedsubtitles` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/embeddedsubtitles.py` | `catalog-embeddedsubtitles` | `/tmp/bazarr_catalog_provider_worktrees/embeddedsubtitles` | movie, episode | `included_codecs`, `hi_fallback`, `timeout`, `unknown_as_fallback`, `fallback_lang` | local video path, ffprobe, ffmpeg |
 | 59 | `whisperai` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/whisperai.py` | `catalog-whisperai` | `/tmp/bazarr_catalog_provider_worktrees/whisperai` | movie, episode | `endpoint`, `response`, `timeout`, `loglevel`, `pass_video_name` | local video path, external AI service, ffmpeg |
