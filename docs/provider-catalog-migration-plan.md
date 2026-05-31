@@ -18,7 +18,8 @@
 - Migration branch inventory: all 60 legacy provider-class modules have matching `catalog-*` branches and checked-out provider worktrees as of 2026-05-31.
 - Checkpoint audit on 2026-05-31: every provider section with a `Current checkpoint` hash matches the actual checked-out provider worktree HEAD, and all provider worktrees were clean.
 - Helper coverage: `opensubtitles_scraper.py` is not a provider-class module. Its helper-service behavior is covered inside the `catalog-opensubtitles` / `opensubtitles_org` branch.
-- Core replacement-policy evidence: Bazarr core branch `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `456071d10`, contains a trusted replacement policy for 55 active migrated built-ins. It excludes dead-origin providers `hosszupuska`, `podnapisi`, `subscenter`, and `xsubs`, and excludes legacy `opensubtitles` because the catalog rewrite ships as `opensubtitles_org`.
+- Core replacement-policy evidence: Bazarr core branch `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `fe1afaeaf`, contains a trusted replacement policy for 55 active migrated built-ins. It excludes dead-origin providers `hosszupuska`, `podnapisi`, `subscenter`, and `xsubs`, and excludes legacy `opensubtitles` because the catalog rewrite ships as `opensubtitles_org`.
+- Test-server core evidence: `bazarr-ui-test` was updated on 2026-05-31 to image version `ui-test-20260531-provider-hub-replacements-fe1afaeaf`, revision `fe1afaeaf`, and returned healthy. The earlier test image based on old head `456071d10` failed because the image did not contain database migration `6c9f1b8d2e3a`; rebasing the core branch onto current `origin/development` fixed that mismatch.
 - License boundary: `/home/lavx/bazarr/LICENSE` is GPL-3.0. This catalog is MIT. Provider implementations in this repo must be clean-room MIT rewrites, not copied or mechanically translated GPL provider files.
 - Provider Hub V1 contract currently calls `search(video: dict, languages: list[dict], config: dict)` and `download(provider_payload: dict, language: dict, config: dict)`.
 
@@ -27,7 +28,8 @@
 - Planning branch: `provider-migration-inventory`
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
-- Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `456071d10`
+- Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `fe1afaeaf`
+- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-fe1afaeaf`; runtime policy includes `bsplayer`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
 - Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead on 2026-05-31. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof until a verified upstream origin returns.
 - Existing provider worktrees:
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
@@ -111,10 +113,14 @@
   - `git diff --check`: clean.
   - `python3 -B -m unittest discover -s tests`: `337` tests passed, `6` skipped.
   - `python3 -B -m sdk smoke-test --provider bsplayer --language eng --video-fixture tests/fixtures/bsplayer_video_hash_movie.json`: `bsplayer ok`.
-- Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `bsplayer` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
-  - Test-server recheck on 2026-05-31: `bazarr-ui-test` is running and healthy, but the running image does not contain `bazarr/provider_hub/policy.py`; Provider Hub state has 12 catalog entries and no `bsplayer` catalog or installation record.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+- Test-server evidence on 2026-05-31:
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` is deployed to `bazarr-ui-test`.
+  - Provider Hub state has `bsplayer` active at version `0.1.0`, `pending_restart` false, `trusted` true, and `last_error` null.
+  - `general.enabled_providers` on the test server was updated to include `bsplayer`; a backup was saved as `/config/config/config.yaml.pre-bsplayer-enable-20260531`.
+  - Compat search with `moviehash=0000000000000000`, `moviebytesize=123456789`, `moviehash_match=only`, `imdb_id=1234567`, and language `en` returned HTTP `200`, `100` results, all from `bsplayer`, all with `moviehash_match: true`.
+  - Compat login returned HTTP `200`; compat download for the first BSPlayer `file_id` returned HTTP `200` and a stream link.
+  - Fetching the stream link returned HTTP `200` with `53917` bytes of SRT content.
+- Remaining gates: none for the current BSPlayer migration proof.
 
 ### `embeddedsubtitles`
 
@@ -134,7 +140,7 @@
   - Generated-media smoke with real local `ffprobe` and `ffmpeg`: `embeddedsubtitles ok`.
 - Remaining gates:
   - Confirm Bazarr Provider Hub workers receive readable media paths and executable `ffprobe` and `ffmpeg` paths on the test server.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `embeddedsubtitles` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `embeddedsubtitles` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with a local media fixture containing an embedded text subtitle stream.
 
 ### `whisperai`
@@ -155,7 +161,7 @@
   - Local fake Whisper service smoke with generated media fixture: `whisperai ok`.
 - Remaining gates:
   - Run against a real Whisper web service endpoint with a real media fixture.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `whisperai` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `whisperai` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `gestdown`
@@ -165,7 +171,7 @@
 - Current checkpoint: `c74a706 Fix Gestdown language parity`
 - Local evidence: provider tests, catalog validation, full tests, live smoke, and core manifest parse check passed on 2026-05-29.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `gestdown` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `gestdown` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `addic7ed`
@@ -195,7 +201,7 @@
 - Remaining gates:
   - Run SDK live smoke search and download with valid Addic7ed cookies or credentials.
   - Decide whether captcha-solver integration belongs in a separate Plugin Hub helper before treating username/password login as fully equivalent to the legacy in-process captcha path.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `addic7ed` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `addic7ed` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Addic7ed credentials or cookies.
 
 ### `karagarga`
@@ -224,7 +230,7 @@
   - Real search and download require valid Karagarga tracker and forum credentials.
 - Remaining gates:
   - Run SDK live smoke search and download with valid Karagarga tracker and forum credentials.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `karagarga` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `karagarga` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Karagarga credentials.
 
 ### `ktuvit`
@@ -253,7 +259,7 @@
   - Real search and download require valid Ktuvit email and hashed password credentials.
 - Remaining gates:
   - Run SDK live smoke search and download with valid Ktuvit credentials.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `ktuvit` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `ktuvit` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Ktuvit credentials.
 
 ### `legendasdivx`
@@ -282,7 +288,7 @@
   - Real search and download require valid LegendasDivx credentials.
 - Remaining gates:
   - Run SDK live smoke search and download with valid LegendasDivx credentials.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `legendasdivx` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `legendasdivx` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured LegendasDivx credentials.
 
 ### `legendasnet`
@@ -311,7 +317,7 @@
   - Real search and download require valid Legendas.net credentials.
 - Remaining gates:
   - Run SDK live smoke search and download with valid Legendas.net credentials.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `legendasnet` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `legendasnet` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Legendas.net credentials.
 
 ### `napisy24`
@@ -338,7 +344,7 @@
   - `curl -sS -i --max-time 20 -A BazarrProviderHub/1.0 -d 'postAction=CheckSub&ua=subliminal&ap=lanimilbus&fs=1&fh=0000000000000000&fn=probe.mkv&n24pref=1' http://napisy24.pl/run/CheckSubAgent.php`: returned HTTP `200` with `OK-0||` for a dummy hash.
 - Remaining gates:
   - Run SDK live smoke search and download with a real video fixture that has a valid Napisy24/OpenSubtitles hash.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `napisy24` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `napisy24` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with a library-backed video whose hash can be computed.
 
 ### `pipocas`
@@ -367,7 +373,7 @@
   - Real search and download require valid Pipocas.tv credentials.
 - Remaining gates:
   - Run SDK live smoke search and download with valid Pipocas.tv credentials.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `pipocas` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `pipocas` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Pipocas credentials.
 
 ### `subscenter`
@@ -427,7 +433,7 @@
   - Real search and download require valid Titlovi credentials.
 - Remaining gates:
   - Run SDK live smoke search and download with valid Titlovi credentials.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `titlovi` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `titlovi` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Titlovi credentials.
 
 ### `titulky`
@@ -457,7 +463,7 @@
   - Real search and download require valid Titulky VIP credentials.
 - Remaining gates:
   - Run SDK live smoke search and download with valid Titulky VIP credentials.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `titulky` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `titulky` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Titulky credentials.
 
 ### `xsubs`
@@ -512,7 +518,7 @@
   - `python3 -B -m sdk smoke-test --provider subs4free --language ell --video-fixture tests/fixtures/subs4free_video_inception_2010.json --expect-min-results 1 --skip-download`: passed outside the sandbox network restriction.
   - `python3 -B -m sdk smoke-test --provider subs4free --language ell --video-fixture tests/fixtures/subs4free_video_inception_2010.json --expect-min-results 1`: passed outside the sandbox network restriction, including download.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `subs4free` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subs4free` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `subs4series`
@@ -541,7 +547,7 @@
   - `python3 -B -m sdk smoke-test --provider subs4series --language eng --video-fixture tests/fixtures/subs4series_video_game_of_thrones_s01e01.json --expect-min-results 1 --skip-download`: passed outside the sandbox network restriction.
   - `python3 -B -m sdk smoke-test --provider subs4series --language eng --video-fixture tests/fixtures/subs4series_video_game_of_thrones_s01e01.json --expect-min-results 1`: passed outside the sandbox network restriction, including download. One earlier full live run timed out on origin read, but an immediate curl decomposition and final full smoke both succeeded.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `subs4series` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subs4series` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
   - If live Subs4Series presents reCAPTCHA during compat proof, configure `captcha_response` or a `captcha_solver_url` helper and rerun download proof.
 
@@ -570,7 +576,7 @@
   - `python3 -B -m sdk smoke-test --provider zimuku --language zho --video-fixture tests/fixtures/zimuku_video_game_of_thrones_s01e01.json --expect-min-results 1 --skip-download`: failed outside the sandbox network restriction with `zimuku search failed: zimuku yunsuo captcha response required`.
 - Remaining gates:
   - Configure a working `captcha_solver_url` or one-use `captcha_response`, then rerun live Zimuku search and download smoke.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `zimuku` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `zimuku` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with Yunsuo verification solved.
 
 ### `regielive`
@@ -588,7 +594,7 @@
   - Direct API probes from local network and `bazarr-ui-test` returned HTTP `403`.
 - Remaining gates:
   - Determine whether RegieLive currently requires a different public request shape, allows only specific egress IPs, or has retired the Bazarr API key.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `regielive` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `regielive` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
 
 ### `shooter`
 
@@ -604,7 +610,7 @@
   - `python3 -B -m sdk smoke-test --provider shooter --language eng --video-fixture /tmp/shooter_live_video_man_of_steel.json --expect-min-results 1`: `shooter ok`.
   - Direct worker-shaped live byte check returned `3` results and downloaded `110646` subtitle bytes.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `shooter` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `shooter` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Deploy a current test-server-compatible core branch to `bazarr-ui-test`; the earlier core branch deployment attempt was based on an old Bazarr revision and hit a database migration mismatch.
   - Prove Provider Hub compat using a library-backed video that lets Bazarr compute `video.hashes.shooter`, because Shooter does not support title-only searches.
 
@@ -624,7 +630,7 @@
   - `python3 -B -m sdk smoke-test --provider subtis --language spa --video-fixture tests/fixtures/subtis_video_man_of_steel.json --expect-min-results 1`: `subtis ok`.
   - Direct worker-shaped live byte check returned `1` result via `alternative` fallback and downloaded `100666` subtitle bytes.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `subtis` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subtis` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Deploy a current test-server-compatible core branch to `bazarr-ui-test`.
   - Prove Provider Hub compat search, download, and stream for the exact Subtis candidate.
 
@@ -644,7 +650,7 @@
   - TMDB lookup for the same Inception fixture returned HTTP `200`, so the current live blocker is Wizdom origin availability, not TMDB.
 - Remaining gates:
   - Re-run live Wizdom smoke when `wizdom.xyz` stops returning Cloudflare `522`.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `wizdom` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `wizdom` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `tvsubtitles`
@@ -664,7 +670,7 @@
   - `python3 -B -m sdk smoke-test --provider tvsubtitles --language eng --video-fixture tests/fixtures/tvsubtitles_video_the_office_s01e02.json --expect-min-results 1`: `tvsubtitles ok`.
   - First live smoke found a script redirect path containing a space; regression coverage now quotes that path before fetching the ZIP.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `tvsubtitles` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `tvsubtitles` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `subtitulamostv`
@@ -684,7 +690,7 @@
   - `python3 -B -m sdk smoke-test --provider subtitulamostv --language eng --video-fixture tests/fixtures/subtitulamostv_video_the_last_ship_s05e10.json --expect-min-results 1`: `subtitulamostv ok`.
   - The original The Last of Us fixture remains covered by parser fixtures, but the live site search did not return that show, so the live gate uses The Last Ship S05E10.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `subtitulamostv` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subtitulamostv` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `greeksubs`
@@ -703,7 +709,7 @@
 - Live smoke evidence on 2026-05-29:
   - `python3 -B -m sdk smoke-test --provider greeksubs --language ell --video-fixture tests/fixtures/greeksubs_video_dune.json --expect-min-results 1`: `greeksubs ok`.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `greeksubs` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `greeksubs` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
 
 ### `animekalesi`
 
@@ -722,7 +728,7 @@
 - Live smoke evidence on 2026-05-29:
   - `python3 -B -m sdk smoke-test --provider animekalesi --language tur --video-fixture tests/fixtures/animekalesi_video_jujutsu_kaisen_2_e01.json --expect-min-results 1`: `animekalesi ok`.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `animekalesi` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `animekalesi` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `animesubinfo`
@@ -743,7 +749,7 @@
   - `python3 -B -m sdk smoke-test --provider animesubinfo --language pol --video-fixture tests/fixtures/animesubinfo_video_kimetsu_ep01.json --expect-min-results 1`: `animesubinfo ok`.
   - `python3 -B -m sdk smoke-test --provider animesubinfo --language pol --video-fixture tests/fixtures/animesubinfo_video_akira.json --expect-min-results 1`: `animesubinfo ok`.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `animesubinfo` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `animesubinfo` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `animetosho`
@@ -769,7 +775,7 @@
   - `python3 -B -m sdk smoke-test --provider animetosho --language eng --video-fixture tests/fixtures/animetosho_video_solo_leveling_s01e12.json --config-json '{"search_threshold":1,"request_delay_ms":0}' --expect-min-results 1 --skip-download`: `animetosho ok`.
   - `python3 -B -m sdk smoke-test --provider animetosho --language eng --video-fixture tests/fixtures/animetosho_video_solo_leveling_s01e12.json --config-json '{"search_threshold":1,"request_delay_ms":0}' --expect-min-results 1`: `animetosho ok`.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `animetosho` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `animetosho` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `napiprojekt`
@@ -797,7 +803,7 @@
   - After caching hash-response bytes inside the provider worker, `python3 -B -m sdk smoke-test --provider napiprojekt --language pol --video-fixture tests/fixtures/napiprojekt_video_shrek.json --config-json '{"only_authors":false,"only_real_names":false}' --expect-min-results 1`: `napiprojekt ok`.
 - Remaining gates:
   - Re-run catalog scrape live smoke with a reachable FlareSolverr `/v1` endpoint if author-filtered catalog results must be proven before compat.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `napiprojekt` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `napiprojekt` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `podnapisi`
@@ -864,7 +870,7 @@
   - `python3 -B -m sdk smoke-test --provider subf2m --language eng --video-fixture tests/fixtures/subf2m_video_dune_2021.json --config-json '{"request_delay_ms":0}' --expect-min-results 1`: `subf2m ok`.
   - `python3 -B -m sdk smoke-test --provider subf2m --language eng --video-fixture tests/fixtures/subf2m_video_chernobyl_s01e01.json --config-json '{"request_delay_ms":0}' --expect-min-results 1`: `subf2m ok`.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `subf2m` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subf2m` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `subsarr`
@@ -888,7 +894,7 @@
   - Public live smoke is not applicable without a configured self-hosted Subsarr `base_url`.
 - Remaining gates:
   - Run SDK smoke search and download against a reachable self-hosted Subsarr service when a test `base_url` is available.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `subsarr` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subsarr` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with a real `base_url`.
 
 ### `assrt`
@@ -914,7 +920,7 @@
   - Real search and download smoke require a valid Assrt API token.
 - Remaining gates:
   - Run SDK smoke search and download when a test Assrt token is available.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `assrt` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `assrt` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with a real token.
 
 ### `betaseries`
@@ -939,7 +945,7 @@
   - Real search and download smoke require a valid BetaSeries API key.
 - Remaining gates:
   - Run SDK smoke search and download when a test BetaSeries API key is available.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `betaseries` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `betaseries` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with a real API key.
 
 ### `greeksubtitles`
@@ -960,7 +966,7 @@
   - `python3 -B -m sdk smoke-test --provider greeksubtitles --language ell --video-fixture tests/fixtures/greeksubtitles_video_game_of_thrones_s01e01.json --expect-min-results 1`: `greeksubtitles ok`.
   - `python3 -B -m sdk smoke-test --provider greeksubtitles --language ell --video-fixture tests/fixtures/greeksubtitles_video_dune.json --expect-min-results 1`: `greeksubtitles ok`.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `greeksubtitles` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `greeksubtitles` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `hosszupuska`
@@ -1028,7 +1034,7 @@
   - `python3 -B -m sdk smoke-test --provider nekur --language lav --video-fixture tests/fixtures/nekur_video_dune.json --expect-min-results 1`: `nekur ok`.
   - `/usr/bin/env PATH=/tmp/no-system-tools python3 -B -m sdk smoke-test --provider nekur --language lav --video-fixture tests/fixtures/nekur_video_dune.json --expect-min-results 1`: `nekur ok`.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `nekur` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `nekur` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `prijevodionline`
@@ -1052,7 +1058,7 @@
   - `python3 -B -m sdk smoke-test --provider prijevodionline --language hrv --video-fixture tests/fixtures/prijevodionline_video_game_of_thrones_s01e01.json --expect-min-results 1`: `prijevodionline ok`.
   - `/usr/bin/env PYTHONPATH=/tmp/prijevodionline-deps PATH=/tmp/no-system-tools python3 -B -m sdk smoke-test --provider prijevodionline --language hrv --video-fixture tests/fixtures/prijevodionline_video_game_of_thrones_s01e01.json --expect-min-results 1`: `prijevodionline ok`.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `prijevodionline` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `prijevodionline` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `soustitreseu`
@@ -1078,7 +1084,7 @@
   - `python3 -B -m sdk smoke-test --provider soustitreseu --language fra --video-fixture tests/fixtures/soustitreseu_video_dune.json --expect-min-results 1`: `soustitreseu ok`.
   - `/usr/bin/env PYTHONPATH=/tmp/prijevodionline-deps PATH=/tmp/no-system-tools python3 -B -m sdk smoke-test --provider soustitreseu --language eng --video-fixture tests/fixtures/soustitreseu_video_game_of_thrones_s01e01.json --expect-min-results 1`: `soustitreseu ok`.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `soustitreseu` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `soustitreseu` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `subclub`
@@ -1103,7 +1109,7 @@
   - `python3 -B -m sdk smoke-test --provider subclub --language est --video-fixture tests/fixtures/subclub_video_inception.json --expect-min-results 1`: `subclub ok`.
   - `python3 -B -m sdk smoke-test --provider subclub --language est --video-fixture tests/fixtures/subclub_video_game_of_thrones_s01e01.json --expect-min-results 1`: `subclub ok`.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `subclub` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subclub` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `subssabbz`
@@ -1132,7 +1138,7 @@
   - `python3 -B -m sdk smoke-test --provider subssabbz --language bul --video-fixture tests/fixtures/subssabbz_video_game_of_thrones_s01e01.json --expect-min-results 1`: `subssabbz ok`.
   - `PYTHONPATH=/tmp/prijevodionline-deps PATH=/tmp/no-system-tools /usr/bin/python3 -B -m sdk smoke-test --provider subssabbz --language eng --video-fixture tests/fixtures/subssabbz_video_inception.json --expect-min-results 1`: `subssabbz ok`.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `subssabbz` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subssabbz` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `subsunacs`
@@ -1159,7 +1165,7 @@
   - `python3 -B -m sdk smoke-test --provider subsunacs --language eng --video-fixture tests/fixtures/subsunacs_video_dune.json --expect-min-results 1`: `subsunacs ok`.
   - `python3 -B -m sdk smoke-test --provider subsunacs --language bul --video-fixture tests/fixtures/subsunacs_video_game_of_thrones_s01e01.json --expect-min-results 1`: `subsunacs ok`.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `subsunacs` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subsunacs` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `subsynchro`
@@ -1181,7 +1187,7 @@
   - Direct homepage, film page, and download URL probes timed out with zero bytes received.
 - Remaining gates:
   - Re-run live SubSynchro smoke when `www.subsynchro.com` serves film pages and downloads again.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `subsynchro` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subsynchro` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `subtitrarinoi`
@@ -1204,7 +1210,7 @@
   - The live Breaking Bad row exposes a working ZIP archive at the legacy relative download URL shape.
   - `python3 -B -m sdk smoke-test --provider subtitrarinoi --language ron --video-fixture tests/fixtures/subtitrarinoi_video_breaking_bad_s01e01.json --expect-min-results 1`: `subtitrarinoi ok`.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `subtitrarinoi` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subtitrarinoi` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `subtitriid`
@@ -1230,7 +1236,7 @@
   - `curl -L --http1.1 --max-time 20 -A "Mozilla/5.0" -e "https://subtitri.do.am/load/subtitri_2010_gada/inception_2010/4-1-0-406" -o /tmp/subtitriid_inception_download.bin "https://subtitri.do.am/load/0-0-0-406-20"` returned a ZIP archive with one SRT file.
   - `python3 -B -m sdk smoke-test --provider subtitriid --language lav --video-fixture tests/fixtures/subtitriid_video_inception.json --expect-min-results 1`: `subtitriid ok`.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `subtitriid` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subtitriid` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `supersubtitles`
@@ -1257,7 +1263,7 @@
   - `python3 -B -m sdk smoke-test --provider supersubtitles --language hun --video-fixture tests/fixtures/supersubtitles_video_dune_2021.json --expect-min-results 1`: `supersubtitles ok`.
   - `python3 -B -m sdk smoke-test --provider supersubtitles --language eng --video-fixture tests/fixtures/supersubtitles_video_la_brea_s02e13.json --expect-min-results 1`: `supersubtitles ok`.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `supersubtitles` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `supersubtitles` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `titrari`
@@ -1281,7 +1287,7 @@
   - `python3 -B -m sdk smoke-test --provider titrari --language ron --video-fixture tests/fixtures/titrari_video_dune_2021.json --expect-min-results 1`: `titrari ok`.
   - `python3 -B -m sdk smoke-test --provider titrari --language ron --video-fixture tests/fixtures/titrari_video_chernobyl_s01e01.json --expect-min-results 1`: `titrari ok`.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `titrari` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `titrari` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `yavkanet`
@@ -1305,7 +1311,7 @@
   - `python3 -B -m sdk smoke-test --provider yavkanet --language bul --video-fixture tests/fixtures/yavkanet_video_dune_2021.json --expect-min-results 1 --skip-download`: failed with `yavkanet hit a Cloudflare challenge and no FlareSolverr URL is configured`.
 - Remaining gates:
   - Re-run live smoke with a reachable FlareSolverr `/v1` endpoint in config.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `yavkanet` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `yavkanet` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `yifysubtitles`
@@ -1330,7 +1336,7 @@
   - `python3 -B -m sdk smoke-test --provider yifysubtitles --language eng --video-fixture tests/fixtures/yifysubtitles_video_dune_2021.json --expect-min-results 1 --skip-download`: could not be run with network because escalation approval review timed out; without escalation it failed DNS.
 - Remaining gates:
   - Re-run Provider Hub SDK live smoke search and download when network approval is available.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `yifysubtitles` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `yifysubtitles` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `hdbits`
@@ -1356,7 +1362,7 @@
   - Real live search and download require an HDBits `username` and `passkey`.
 - Remaining gates:
   - Run SDK live smoke search and download with real HDBits credentials.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `hdbits` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `hdbits` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured HDBits credentials.
 
 ### `jimaku`
@@ -1382,7 +1388,7 @@
   - Real live search and download require a Jimaku `api_key`.
 - Remaining gates:
   - Run SDK live smoke search and download with a real Jimaku API key.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `jimaku` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `jimaku` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Jimaku API key.
 
 ### `subdl`
@@ -1409,7 +1415,7 @@
   - `curl -sS -i --max-time 20 "https://api.subdl.com/api/v1/subtitles?film_name=Inception&type=movie&languages=EN"` returned HTTP `422` with `undefined is not an object (evaluating 'error2.schema')`, confirming real search proof requires a SubDL `api_key`.
 - Remaining gates:
   - Run SDK live smoke search and download with a real SubDL API key.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `subdl` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subdl` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured SubDL API key.
 
 ### `subsource`
@@ -1436,7 +1442,7 @@
   - Fetching `https://subsource.net/api-docs` directly from this environment returned a Cloudflare challenge page, while the API endpoint itself returned JSON auth errors.
 - Remaining gates:
   - Run SDK live smoke search and download with a real SubSource API key.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `subsource` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subsource` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured SubSource API key.
 
 ### `subsro`
@@ -1464,7 +1470,7 @@
   - Real live search and download require a Subs.ro `api_key`.
 - Remaining gates:
   - Run SDK live smoke search and download with a real Subs.ro API key.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `subsro` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subsro` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Subs.ro API key.
 
 ### `subx`
@@ -1493,7 +1499,7 @@
   - Real live search and download require a SubX `api_key`.
 - Remaining gates:
   - Run SDK live smoke search and download with a real SubX API key.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `subx` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subx` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured SubX API key.
 
 ### `opensubtitlescom`
@@ -1522,7 +1528,7 @@
   - Real search and download require a valid OpenSubtitles.com username, password, and API key.
 - Remaining gates:
   - Run SDK live smoke search and download with real OpenSubtitles.com credentials.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `opensubtitlescom` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `opensubtitlescom` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured OpenSubtitles.com credentials.
 
 ### `avistaz`
@@ -1550,7 +1556,7 @@
   - Real release-page search and download require valid AvistaZ session cookies and a video refined with an AvistaZ `info_url`.
 - Remaining gates:
   - Run SDK live smoke search and download with valid AvistaZ cookies and a known AvistaZ release-page fixture or test-server media item.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `avistaz` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `avistaz` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured AvistaZ cookies.
 
 ### `cinemaz`
@@ -1578,7 +1584,7 @@
   - Real release-page search and download require valid CinemaZ session cookies and a video refined with a CinemaZ `info_url`.
 - Remaining gates:
   - Run SDK live smoke search and download with valid CinemaZ cookies and a known CinemaZ release-page fixture or test-server media item.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `cinemaz` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `cinemaz` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured CinemaZ cookies.
 
 ### `turkcealtyaziorg`
@@ -1606,7 +1612,7 @@
   - Real search and download require valid TurkceAltyazi.org Cloudflare cookies paired with a browser User-Agent.
 - Remaining gates:
   - Run SDK live smoke search and download with valid TurkceAltyazi.org cookies and User-Agent.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `456071d10` already includes `turkcealtyaziorg` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `turkcealtyaziorg` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured TurkceAltyazi.org cookies.
 
 ## Why OpenSubtitles.org Is Tricky
@@ -1638,7 +1644,7 @@
 - Inspect: `/home/lavx/bazarr/bazarr/provider_hub/service.py`
 - Verified implementation: `/tmp/bazarr_provider_hub_builtin_replacements`
 - Verified branch: `worktree-provider-hub-builtin-replacements`
-- Verified head: `456071d10`
+- Verified head: `fe1afaeaf`
 
 - [x] **Step 1: Create or reuse the Bazarr core worktree**
 
@@ -1679,13 +1685,18 @@ git diff --check
 Observed on 2026-05-31:
 
 - `5 passed, 90 deselected, 1 warning` for the targeted replacement-policy slice.
-- `95 passed, 76 warnings` for the full Provider Hub test file.
+- `95 passed, 75 warnings` for the full Provider Hub test file after rebasing onto current `origin/development`.
+- `18 passed` for the compat `moviebytesize` route, cache, and video-building tests.
 - `py_compile`: passed for touched Provider Hub modules.
 - `git diff --check`: clean.
 
-- [ ] **Step 6: Deploy to the Bazarr test server before provider compat proof**
+- [x] **Step 6: Deploy to the Bazarr test server before provider compat proof**
 
-Provider branches whose ids match built-ins cannot complete the live compat gate until this core branch is deployed to `bazarr-ui-test`.
+Observed on 2026-05-31:
+
+- The test-server image `ui-test-20260531-provider-hub-replacements-fe1afaeaf` is healthy on `bazarr-ui-test`.
+- Runtime policy includes `bsplayer`, excludes `hosszupuska` and `podnapisi`, and contains 55 trusted migrated built-in ids.
+- The old failed test image was based on a stale Bazarr revision and missed migration `6c9f1b8d2e3a`; rebasing the core branch onto current `origin/development` resolved the startup failure.
 
 ### Task P1: Provider Worktree Discipline
 
