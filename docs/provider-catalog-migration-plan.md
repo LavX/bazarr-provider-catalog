@@ -29,7 +29,7 @@
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
-- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, and `napiprojekt`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
+- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, and `subf2m`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
 - Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead for Provider Hub migration on 2026-05-31. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof unless a verified upstream origin returns.
 - Existing provider worktrees:
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
@@ -962,9 +962,24 @@
   - `python3 -B -m sdk smoke-test --provider subf2m --language eng --video-fixture tests/fixtures/subf2m_video_chernobyl_s01e01.json --config-json '{"request_delay_ms":0}' --expect-min-results 1 --skip-download`: `subf2m ok`.
   - `python3 -B -m sdk smoke-test --provider subf2m --language eng --video-fixture tests/fixtures/subf2m_video_dune_2021.json --config-json '{"request_delay_ms":0}' --expect-min-results 1`: `subf2m ok`.
   - `python3 -B -m sdk smoke-test --provider subf2m --language eng --video-fixture tests/fixtures/subf2m_video_chernobyl_s01e01.json --config-json '{"request_delay_ms":0}' --expect-min-results 1`: `subf2m ok`.
-- Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subf2m` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+- Fresh local evidence on 2026-05-31:
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_subf2m.py'`: `11` tests passed.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/subf2m`, `tests/test_subf2m.py`, `README.md`, and `catalog.json` found no matches.
+  - `python3 -B -m sdk smoke-test --provider subf2m --language eng --video-fixture tests/fixtures/subf2m_video_dune_2021.json --config-json '{"request_delay_ms":0}' --expect-min-results 1`: `subf2m ok`.
+- Provider Hub test-server evidence on 2026-05-31:
+  - Branch `catalog-subf2m` was pushed at `35bb9c42ebbc33eeb84db5282eb56f908d7db08d`.
+  - Official catalog source dev ref was set to `catalog-subf2m`; refresh returned `13` entries and resolved SubF2M `0.1.0` at commit `35bb9c42ebbc33eeb84db5282eb56f908d7db08d`.
+  - `bazarr-ui-test` restarted healthy on image `ui-test-20260531-provider-hub-replacements-f245ae096`, revision `f245ae096`.
+  - Provider state after restart: active version `0.1.0`, `pending_restart=false`, `trusted=true`, `enabled=true`, `last_error=None`, manifest commit `35bb9c42ebbc33eeb84db5282eb56f908d7db08d`.
+  - Runtime replacement policy contains `55` trusted migrated built-in ids, includes `subf2m`, and excludes `hosszupuska` and `podnapisi`.
+  - Compat search `GET /api/v1/subtitles?imdb_id=tt1160419&query=Dune.Part.One.2021.1080p.BluRay.x264.mkv&type=movie&languages=en&per_page=100` returned HTTP `200`, `81` total results, and `30` SubF2M results.
+  - First SubF2M result: `file_id=45`, release `Dune.Part.One.2021.2160p.Ai-Enhanced.DV.HDR10Plus.H265.TrueHD.Atmos.7.1.MULTI-RIFE.4.15v2-60fps-DirtyHippie`, subtitle id `subf2m:subf2m-3331049-eng`.
+  - Compat download `POST /api/v1/download` for `file_id=45` returned HTTP `200`, a stream link, `remaining=999`, and `remaining_downloads=999`.
+  - Compat stream returned HTTP `200` and `126519` bytes. The payload starts with an SRT BOM, cue `1`, and timestamp `00:00:04,588 --> 00:00:05,839`.
+- Status:
+  - SubF2M is locally validated and proved through Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `subsarr`
 
