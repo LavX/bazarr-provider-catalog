@@ -44,7 +44,7 @@
   - `greeksubs`: branch `catalog-greeksubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubs`, current head `1ec84fa`
   - `greeksubtitles`: branch `catalog-greeksubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles`, current head `da99eee`
   - `hdbits`: branch `catalog-hdbits`, worktree `/tmp/bazarr_catalog_provider_worktrees/hdbits`, current head `42d7f02`
-  - `hosszupuska`: branch `catalog-hosszupuska`, worktree `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`, current head `e3489b4`, dead origin
+  - `hosszupuska`: branch `catalog-hosszupuska`, worktree `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`, current head `2b36db2`, dead origin
   - `jimaku`: branch `catalog-jimaku`, worktree `/tmp/bazarr_catalog_provider_worktrees/jimaku`, current head `112d345`
   - `karagarga`: branch `catalog-karagarga`, worktree `/tmp/bazarr_catalog_provider_worktrees/karagarga`, current head `0167ba8`
   - `ktuvit`: branch `catalog-ktuvit`, worktree `/tmp/bazarr_catalog_provider_worktrees/ktuvit`, current head `9d3162e`
@@ -56,7 +56,7 @@
   - `opensubtitles`: branch `catalog-opensubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitles`, current head `2ec6c88`
   - `opensubtitlescom`: branch `catalog-opensubtitlescom`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitlescom`, current head `885985f`
   - `pipocas`: branch `catalog-pipocas`, worktree `/tmp/bazarr_catalog_provider_worktrees/pipocas`, current head `4fe281b`
-  - `podnapisi`: branch `catalog-podnapisi`, worktree `/tmp/bazarr_catalog_provider_worktrees/podnapisi`, current head `a14f4fb`, dead origin
+  - `podnapisi`: branch `catalog-podnapisi`, worktree `/tmp/bazarr_catalog_provider_worktrees/podnapisi`, current head `d04b05b`, dead origin
   - `prijevodionline`: branch `catalog-prijevodionline`, worktree `/tmp/bazarr_catalog_provider_worktrees/prijevodionline`, current head `9c1d795`
   - `regielive`: branch `catalog-regielive`, worktree `/tmp/bazarr_catalog_provider_worktrees/regielive`, current head `fb5a2ae`
   - `shooter`: branch `catalog-shooter`, worktree `/tmp/bazarr_catalog_provider_worktrees/shooter`, current head `3d794c2`
@@ -804,7 +804,7 @@
 
 - Branch: `catalog-podnapisi`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/podnapisi`
-- Current checkpoint: `a14f4fb Mark Podnapisi upstream dead`
+- Current checkpoint: `d04b05b Record Podnapisi dead-origin recheck`
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -830,6 +830,7 @@
   - Recheck on 2026-05-29: `https://www.podnapisi.net/subtitles` and `https://podnapisi.net/subtitles` failed DNS with `curl: (6) Could not resolve host`.
   - RDAP recheck on 2026-05-29: `PODNAPISI.NET` still exists, but `podnapisi.net` and `www.podnapisi.net` do not resolve from the test network; `last changed` is `2026-05-20T13:24:04Z`.
   - Recheck on 2026-05-31 from this migration network: `https://podnapisi.net/subtitles` and `https://www.podnapisi.net/subtitles/search/advanced` still fail DNS with `curl: (6) Could not resolve host`.
+  - Fresh recheck on 2026-05-31 after the dead-origin report: `https://www.podnapisi.net/subtitles` and `https://podnapisi.net/subtitles` still fail DNS with `curl: (6) Could not resolve host`.
   - Public web indexing can still load the Podnapisi homepage, so this is classified as blocked/dead for the Provider Hub migration network and Bazarr test proof, not as a proven global domain disappearance.
 - Remaining gates:
   - Treat Podnapisi as blocked/dead unless `www.podnapisi.net` resolves and serves the original subtitle API again, or a verified replacement origin is found.
@@ -966,7 +967,7 @@
 
 - Branch: `catalog-hosszupuska`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`
-- Current checkpoint: `e3489b4 Mark Hosszupuska upstream dead`
+- Current checkpoint: `2b36db2 Record Hosszupuska dead-origin recheck`
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -998,6 +999,7 @@
   - RDAP recheck on 2026-05-29: nameservers are `NS1.PARKLOGIC.COM` and `NS2.PARKLOGIC.COM`; `last changed` is `2026-05-25T23:28:30Z`.
   - Recheck on 2026-05-31: `http://hosszupuskasub.com/` returns HTTP `200` from `openresty`, but the response is a ParkLogic JavaScript router.
   - Recheck on 2026-05-31: `http://hosszupuskasub.com/sorozatok.php?sid=17617` returns the same ParkLogic router for the legacy search path.
+  - Fresh recheck on 2026-05-31 after the dead-origin report: `curl -I --max-time 15 http://hosszupuskasub.com/` returns `curl: (52) Empty reply from server`.
 - Remaining gates:
   - Treat Hosszupuska as blocked unless the original site returns or a verified replacement origin is found.
   - Re-run live Hosszupuska smoke only after the domain stops serving ParkLogic parking responses.
