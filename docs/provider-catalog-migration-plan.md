@@ -79,6 +79,7 @@
   - `titlovi`: branch `catalog-titlovi`, worktree `/tmp/bazarr_catalog_provider_worktrees/titlovi`, current head `1db2476 Add Titlovi provider`
   - `titulky`: branch `catalog-titulky`, worktree `/tmp/bazarr_catalog_provider_worktrees/titulky`, current head `47d73f3 Add Titulky provider`
   - `xsubs`: branch `catalog-xsubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/xsubs`, current head `5a17922 Mark XSubs upstream dead`, dead origin
+  - `subs4free`: branch `catalog-subs4free`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4free`, current head `f7ca9ac Add Subs4Free provider`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -409,6 +410,35 @@
   - Treat XSubs as blocked/dead unless the original subtitle service returns or a verified replacement origin is found.
   - Do not add `xsubs` to the trusted built-in migration allow-list while the origin is dead.
   - Do not open or merge XSubs as an active catalog provider while the host serves unrelated content.
+
+### `subs4free`
+
+- Branch: `catalog-subs4free`
+- Worktree: `/tmp/bazarr_catalog_provider_worktrees/subs4free`
+- Current checkpoint: `f7ca9ac Add Subs4Free provider`
+- Baseline evidence on 2026-05-31:
+  - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
+  - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
+- Local evidence on 2026-05-31:
+  - Legacy inspection confirmed movie-only support, Greek and English languages, no credentials, search through `/search_report.php?search=<query>&searchType=1`, direct result cards, older `Mov_sel` suggestion pages, uploader and download-count metadata, hidden download id form parsing, anti-block GET sequence, `/getSub.php` POST with click coordinates, direct subtitle downloads, ZIP downloads, and RAR downloads.
+  - Bazarr UI/config inspection confirmed no provider settings and UI languages `ell` and `eng`.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p test_subs4free.py`: failed because `providers/subs4free/provider.py` did not exist.
+  - `python3 -B -m unittest discover -s tests -p test_subs4free.py`: `7` tests passed.
+  - `python3 -B -m sdk build-catalog`: `wrote catalog.json`.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subs4free/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Attribution and em-dash scan over touched Subs4Free files found no matches.
+- Live evidence on 2026-05-31:
+  - Sandbox DNS could not resolve `www.subs4free.info`, but escalated network probes reached the site.
+  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 https://www.subs4free.info/`: returned HTTP `200`.
+  - `curl -sS -L --max-time 20 -A 'Mozilla/5.0 BazarrProviderHub' 'https://www.subs4free.info/search_report.php?search=Inception&searchType=1'`: returned current `movie-details` rows for Inception.
+  - `python3 -B -m sdk smoke-test --provider subs4free --language ell --video-fixture tests/fixtures/subs4free_video_inception_2010.json --expect-min-results 1 --skip-download`: passed outside the sandbox network restriction.
+  - `python3 -B -m sdk smoke-test --provider subs4free --language ell --video-fixture tests/fixtures/subs4free_video_inception_2010.json --expect-min-results 1`: passed outside the sandbox network restriction, including download.
+- Remaining gates:
+  - Add `subs4free` to the trusted built-in migration allow-list in the Bazarr core branch before Provider Hub compat proof.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `regielive`
 
