@@ -29,6 +29,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`sub_scene`](providers/sub_scene/) | 0.1.9 | Scrapes [sub-scene.com](https://sub-scene.com) (Subscene clone) for movie and episode subtitles in 35+ languages including Vietnamese, Arabic, Bengali, Danish, Dutch. Uses cloudscraper with optional FlareSolverr fallback. |
 | [`subtitlecat`](providers/subtitlecat/) | 0.1.5 | Scrapes [subtitlecat.com](https://www.subtitlecat.com) (no login, no API key). Worked example for the [scraper authoring guide](docs/writing-a-scraper-provider.md). |
 | [`smoke`](providers/smoke/) | 0.2.0 | Deterministic no-network fixture for install / worker sanity checks. Not a real subtitle source. |
+| [`titulky`](providers/titulky/) | 0.1.0 | Scrapes [Titulky.com](https://premium.titulky.com) for Czech and Slovak movie and episode subtitles. VIP login required. |
 
 Every provider here ships independently of Bazarr+ releases. [Contribute](#contributing) your own.
 
@@ -60,6 +61,7 @@ Every provider here ships independently of Bazarr+ releases. [Contribute](#contr
 - `providers/sub_scene/`: scrapes sub-scene.com (Subscene clone) for movie and episode subtitles in 35+ languages including Vietnamese, Arabic, Bengali, Danish, Dutch.
 - `providers/subtitlecat/`: first production community provider, scrapes subtitlecat.com using stdlib only. Worked example referenced by [docs/writing-a-scraper-provider.md](docs/writing-a-scraper-provider.md).
 - `sdk/`: standalone authoring tools and templates, see the [SDK reference](sdk/README.md).
+- `providers/titulky/`: scrapes Titulky.com Czech and Slovak movie and episode subtitle listings and archive downloads.
 - `tests/`: catalog validation tests that do not import Bazarr internals.
 
 ## Writing your own provider
