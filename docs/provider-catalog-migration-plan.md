@@ -2135,6 +2135,7 @@
 - Branch: `catalog-yifysubtitles`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/yifysubtitles`
 - Current checkpoint: `6d4ecff Add YIFYSubtitles provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/43` opened on 2026-06-01, marked ready for review, head `catalog-yifysubtitles`, base `main`, merge state `CLEAN`.
 - Local evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -2152,13 +2153,16 @@
   - `python3 -B -m sdk smoke-test --provider yifysubtitles --language eng --video-fixture tests/fixtures/yifysubtitles_video_dune_2021.json --expect-min-results 1 --skip-download`: could not be run with network because escalation approval review timed out; without escalation it failed DNS.
 - Fresh local and live evidence on 2026-06-01:
   - Branch `catalog-yifysubtitles` was pushed at `6d4ecff`.
+  - Local upstream tracking was corrected to `origin/catalog-yifysubtitles`.
   - `python3 -B -m unittest discover -s tests -p 'test_yifysubtitles.py'`: `9` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/yifysubtitles/provider.py`: passed.
-  - `git diff --check`: clean.
-  - Attribution and em-dash scan over `providers/yifysubtitles`, `tests/test_yifysubtitles.py`, `README.md`, `catalog.json`, and `docs/provider-notes/yifysubtitles.md` found no matches.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Attribution and em-dash scan over `README.md`, `catalog.json`, `docs/provider-notes/yifysubtitles.md`, `providers/yifysubtitles`, `tests/test_yifysubtitles.py`, and `tests/fixtures/yifysubtitles_video_dune_2021.json` found no matches.
   - `python3 -B -m unittest discover -s tests`: `337` tests passed, `6` skipped.
   - `python3 -B -m sdk smoke-test --provider yifysubtitles --language eng --video-fixture tests/fixtures/yifysubtitles_video_dune_2021.json --expect-min-results 1`: `yifysubtitles ok`.
+  - PR `#43` was verified open, non-draft, merge state `CLEAN`, head `6d4ecffd73a0f47c30940ec7278c47dcc7f374fc`.
 - Provider Hub test-server evidence on 2026-06-01:
   - Official catalog source dev ref was set to `catalog-yifysubtitles`; refresh returned `13` entries and resolved YIFYSubtitles `0.1.0` at commit `6d4ecffd73a0f47c30940ec7278c47dcc7f374fc`.
   - Provider Hub staged YIFYSubtitles `0.1.0`, found no broken requirements, and saved config `request_delay_ms=0`.
@@ -2170,7 +2174,7 @@
   - Compat download `POST /api/v1/download` for `file_id=17` returned HTTP `200`, a stream link, `remaining=999`, and `remaining_downloads=999`.
   - Compat stream returned HTTP `200` and `72273` bytes. The payload starts with an SRT BOM, cue `1`, and timestamp `00:00:04,120 --> 00:00:08,690`.
 - Status:
-  - YIFYSubtitles is locally validated and proved through Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+  - YIFYSubtitles is locally validated, proved through Provider Hub compat search, download, and stream on `bazarr-ui-test`, and open as PR `#43`.
 
 ### `hdbits`
 
