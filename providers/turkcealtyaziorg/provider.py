@@ -42,6 +42,14 @@ SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
 SUPPORTED_LANGUAGE_CODES = {"tur", "eng"}
 _SXXEXX_RE = re.compile(r"\bs(?P<season>\d{1,2})\s*[._ -]?e(?P<episode>\d{1,3})\b", re.I)
 _XX_RE = re.compile(r"\b(?P<season>\d{1,2})x(?P<episode>\d{1,3})\b", re.I)
+_META_REFRESH_RE = re.compile(
+    r"""<meta\s+http-equiv=["']refresh["']\s+content=["'](?P<delay>\d+);\s*url=(?P<url>[^"']+)["']""",
+    re.I,
+)
+_ANUBIS_CHALLENGE_RE = re.compile(
+    r"""<script\s+id=["']anubis_challenge["'][^>]*>\s*(?P<json>.*?)\s*</script>""",
+    re.I | re.S,
+)
 
 CLASS_MAP = {
     "cps c1": "DVDRip",
@@ -81,10 +89,11 @@ LANGUAGE_CLASSES = {
 
 
 class HttpResponse:
-    def __init__(self, status, body, headers):
+    def __init__(self, status, body, headers, url=""):
         self.status = int(status)
         self.body = body or b""
         self.headers = dict(headers or {})
+        self.url = url
 
 
 class _MissingCloudscraper:
@@ -220,6 +229,11 @@ class TurkceAltyaziOrgProvider:
     ):
         self._apply_delay(config)
         response = self._send(method, url, headers, cookies, data, timeout, allow_redirects)
+        if is_anubis_challenge(response.url, response.status):
+            solved = solve_anubis_challenge(self._get_session(), response.url, url, timeout=timeout)
+            if not solved:
+                raise PermissionError("TurkceAltyazi Anubis challenge could not be solved")
+            response = self._send(method, url, headers, cookies, data, timeout, allow_redirects)
         if _is_cloudflare_challenge(response) and _flaresolverr_url(config):
             self._fallback_to_flaresolverr(url, config)
             retry_headers = dict(headers or {})
@@ -321,12 +335,122 @@ def _parse_cookies(config):
     return {key: morsel.value for key, morsel in cookie.items()}
 
 
+def is_anubis_challenge(url, status_code=0):
+    return "/.within.website/" in (url or "") or (
+        status_code in (307, 401, 403) and ".within.website" in (url or "")
+    )
+
+
+def _extract_anubis_challenge(html_text):
+    meta_match = _META_REFRESH_RE.search(html_text or "")
+    if meta_match and "/.within.website/" in meta_match.group("url"):
+        return {
+            "method": "metarefresh",
+            "redirect_url": meta_match.group("url"),
+            "delay": int(meta_match.group("delay")),
+            "difficulty": 0,
+        }
+    match = _ANUBIS_CHALLENGE_RE.search(html_text or "")
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group("json"))
+    except json.JSONDecodeError:
+        return None
+    challenge = data.get("challenge") or {}
+    if "randomData" not in challenge or "id" not in challenge:
+        return None
+    return {
+        "id": challenge["id"],
+        "randomData": challenge["randomData"],
+        "difficulty": int(challenge.get("difficulty", 4)),
+        "method": challenge.get("method", "fast"),
+    }
+
+
+def _solve_pow(random_data, difficulty):
+    prefix = "0" * difficulty
+    nonce = 0
+    while True:
+        digest = hashlib.sha256(f"{random_data}{nonce}".encode("utf-8")).hexdigest()
+        if digest.startswith(prefix):
+            return nonce, digest
+        nonce += 1
+
+
+def _solve_preact(random_data, difficulty):
+    return hashlib.sha256(random_data.encode("utf-8")).hexdigest(), difficulty * 0.125
+
+
+def solve_anubis_challenge(session, challenge_url, original_url, timeout=HTTP_TIMEOUT_SECONDS):
+    del original_url
+    parsed = urllib.parse.urlparse(challenge_url)
+    query = urllib.parse.parse_qs(parsed.query)
+    redir = query.get("redir", [parsed.path])[0]
+    base = f"{parsed.scheme}://{parsed.netloc}"
+    challenge_page_url = challenge_url if challenge_url.startswith("http") else base + challenge_url
+    started = time.monotonic()
+
+    response = session.get(challenge_page_url, timeout=(10, timeout), allow_redirects=True)
+    challenge = _extract_anubis_challenge(getattr(response, "text", ""))
+    if not challenge:
+        return None
+
+    method = challenge["method"]
+    if method == "metarefresh":
+        redirect_url = challenge["redirect_url"]
+        if not redirect_url.startswith("http"):
+            redirect_url = base + redirect_url
+        time.sleep(challenge.get("delay", 1))
+        solved = session.get(redirect_url, timeout=(10, timeout), allow_redirects=True)
+        if solved.cookies:
+            session.cookies.update(solved.cookies)
+    elif method == "preact":
+        result, delay = _solve_preact(challenge["randomData"], challenge["difficulty"])
+        time.sleep(delay)
+        params = {
+            "id": challenge["id"],
+            "result": result,
+            "redir": redir,
+            "elapsedTime": str(int((time.monotonic() - started) * 1000)),
+        }
+        solved = session.get(
+            f"{base}/.within.website/x/cmd/anubis/api/pass-challenge?{urllib.parse.urlencode(params)}",
+            timeout=(10, timeout),
+            allow_redirects=False,
+        )
+        if solved.cookies:
+            session.cookies.update(solved.cookies)
+    else:
+        nonce, digest = _solve_pow(challenge["randomData"], challenge["difficulty"])
+        params = {
+            "id": challenge["id"],
+            "response": digest,
+            "nonce": str(nonce),
+            "redir": redir,
+            "elapsedTime": str(int((time.monotonic() - started) * 1000)),
+        }
+        solved = session.get(
+            f"{base}/.within.website/x/cmd/anubis/api/pass-challenge?{urllib.parse.urlencode(params)}",
+            timeout=(10, timeout),
+            allow_redirects=False,
+        )
+        if solved.cookies:
+            session.cookies.update(solved.cookies)
+
+    cookies = {}
+    for cookie in session.cookies:
+        if "anubis" in cookie.name.lower() or cookie.name == "PHPSESSID":
+            cookies[cookie.name] = cookie.value
+    return cookies or None
+
+
 def _session_response(response):
     body = getattr(response, "content", b"")
     if isinstance(body, str):
         body = body.encode("utf-8")
     headers = dict(getattr(response, "headers", {}) or {})
-    return HttpResponse(getattr(response, "status_code", 200), body, headers)
+    return HttpResponse(getattr(response, "status_code", 200), body, headers, getattr(response, "url", ""))
 
 
 def _flaresolverr_url(config):

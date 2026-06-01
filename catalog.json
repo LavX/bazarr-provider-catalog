@@ -1181,7 +1181,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "25df78433dcee8af912e81ad4ae3359aa5b17bae0ca5ff1d52a34153afa107b7",
+        "bundle_sha256": "38829f32a1d0a856251e866f2215660df4880fb74f0dd5cb36a4de4fc5d8f681",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1505,11 +1505,11 @@
             }
           ]
         },
-        "description": "Scrapes TurkceAltyazi.org by IMDb id for Turkish and English movie and episode subtitles. Uses ai-cloudscraper by default with optional FlareSolverr fallback for Cloudflare challenges.",
+        "description": "Scrapes TurkceAltyazi.org by IMDb id for Turkish and English movie and episode subtitles. Uses ai-cloudscraper by default with inline Anubis solving and optional FlareSolverr fallback for Cloudflare challenges.",
         "entry_class": "TurkceAltyaziOrgProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "09f2c8baeff82bb6a0643b44dedd48b0e4c38900e6ac28797aa01dac9da51f9b"
+          "provider.py": "21710d7f9acda5ea936fce44c1da1120b55c9d1cf1ea0762934bca1daf40f011"
         },
         "languages": [
           "tur",
@@ -1534,7 +1534,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.1"
+        "version": "0.1.2"
       }
     }
   ],
