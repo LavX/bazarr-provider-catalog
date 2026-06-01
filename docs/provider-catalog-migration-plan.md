@@ -403,24 +403,24 @@
 - Branch: `catalog-pipocas`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/pipocas`
 - Current checkpoint: `4fe281b Add Pipocas.tv provider`
+- Pull request: [#62](https://github.com/LavX/bazarr-provider-catalog/pull/62), open draft, head `catalog-pipocas`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
-- Local evidence on 2026-05-31:
+- Local evidence on 2026-06-01:
   - Legacy inspection confirmed movie and episode support, required `username` and `password`, CSRF login, language mapping for Portuguese, Brazilian Portuguese, English, and Spanish, release search through `/legendas`, detail-page metadata parsing, direct subtitle downloads, and ZIP/RAR archive downloads.
   - Bazarr UI/config inspection confirmed settings `username` and `password`, with both classified as secrets.
   - Red TDD gate `python3 -B -m unittest discover -s tests -p test_pipocas.py`: failed because `providers/pipocas/provider.py` did not exist.
   - `python3 -B -m unittest discover -s tests -p test_pipocas.py`: `6` tests passed.
-  - `python3 -B -m sdk build-catalog`: `wrote catalog.json`.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/pipocas/provider.py`: passed.
   - `python3 -B -m unittest discover -s tests`: `334` tests passed, `6` skipped.
-  - `git diff --check` and `git diff --cached --check`: clean.
-  - Attribution and em-dash scan over touched Pipocas files found no matches.
-- Live evidence on 2026-05-31:
-  - Sandbox DNS could not resolve `pipocas.tv`, but the escalated network probe reached the site.
-  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 https://pipocas.tv/`: returned HTTP `302` to `https://pipocas.tv/login`.
-  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 https://pipocas.tv/login`: returned HTTP `200` from Cloudflare.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Attribution and AI-credit scan over touched Pipocas files found no matches.
+- Live evidence on 2026-06-01:
+  - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://pipocas.tv/`: returned HTTP `302` to `https://pipocas.tv/login`.
+  - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://pipocas.tv/login`: returned HTTP `200`.
   - Real search and download require valid Pipocas.tv credentials.
 - Remaining gates:
   - Run SDK live smoke search and download with valid Pipocas.tv credentials.
