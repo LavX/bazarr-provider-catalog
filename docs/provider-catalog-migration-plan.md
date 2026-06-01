@@ -108,6 +108,7 @@
 - Branch: `catalog-bsplayer`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/bsplayer`
 - Current checkpoint: `c04f374 Add BSPlayer provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/17` opened as draft on 2026-06-01, head `catalog-bsplayer`, base `main`, merge state `CLEAN`.
 - Provider type: active API provider.
 - Local evidence on 2026-05-31:
   - Legacy inspection confirmed the old Bazarr module had a SOAP implementation, but `list_subtitles()` was intentionally disabled and returned no results.
@@ -126,6 +127,15 @@
   - Compat search with `moviehash=0000000000000000`, `moviebytesize=123456789`, `moviehash_match=only`, `imdb_id=1234567`, and language `en` returned HTTP `200`, `100` results, all from `bsplayer`, all with `moviehash_match: true`.
   - Compat login returned HTTP `200`; compat download for the first BSPlayer `file_id` returned HTTP `200` and a stream link.
   - Fetching the stream link returned HTTP `200` with `53917` bytes of SRT content.
+- Fresh PR evidence on 2026-06-01:
+  - Branch diff against `origin/main` only touches `README.md`, `catalog.json`, `docs/provider-notes/bsplayer.md`, `providers/bsplayer/`, `tests/fixtures/bsplayer_video_hash_movie.json`, and `tests/test_bsplayer.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_bsplayer.py'`: `9` tests passed.
+  - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/bsplayer/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Attribution and em-dash scan over touched BSPlayer files found no matches.
+  - `python3 -B -m sdk smoke-test --provider bsplayer --language eng --video-fixture tests/fixtures/bsplayer_video_hash_movie.json`: `bsplayer ok`.
 - Remaining gates: none for the current BSPlayer migration proof.
 
 ### `embeddedsubtitles`
