@@ -102,6 +102,14 @@ class LanguageMappingTests(unittest.TestCase):
         )
         self.assertEqual(mapped, requested)
 
+    def test_spain_spanish_label_matches_generic_spanish_request(self):
+        requested = {"alpha3": "spa", "alpha2": "es"}
+        mapped = self.mod.site_language_to_payload(
+            "Español (España)",
+            [requested],
+        )
+        self.assertEqual(mapped, requested)
+
     def test_unrequested_language_returns_none(self):
         requested = [{"alpha3": "eng", "alpha2": "en"}]
         self.assertIsNone(
@@ -218,6 +226,55 @@ class ProviderSearchTests(unittest.TestCase):
             first["provider_payload"]["download_url"],
             "https://www.subtitulamos.tv/download/101/s01e01/en",
         )
+
+    def test_search_tries_later_exact_show_hits_when_first_has_no_episode(self):
+        provider = self.mod.SubtitulamosTVProvider()
+        calls = []
+        search_body = json.dumps(
+            [
+                {"show_id": "201", "show_name": "The Last of Us"},
+                {"show_id": "101", "show_name": "The Last of Us"},
+            ]
+        ).encode("utf-8")
+        first_show_body = b"""
+        <nav id="season-choices">
+          <a class="choice selected" href="/shows/201/seasons/1">Season 1</a>
+        </nav>
+        <nav id="episode-choices">
+          <a class="choice" href="/shows/201/seasons/1/episodes/2">Episode 2</a>
+        </nav>
+        """
+        routes = {
+            "https://www.subtitulamos.tv/search/query?q=The+Last+of+Us": search_body,
+            "https://www.subtitulamos.tv/shows/201": first_show_body,
+            "https://www.subtitulamos.tv/shows/101":
+                _fixture("subtitulamostv_show_the_last_of_us.html"),
+            "https://www.subtitulamos.tv/shows/101/seasons/1/episodes/1":
+                _fixture("subtitulamostv_episode_the_last_of_us_s01e01.html"),
+        }
+
+        def fake_get(url, timeout=None, referer=None):
+            del timeout, referer
+            calls.append(url)
+            if url not in routes:
+                raise AssertionError(f"unexpected URL: {url}")
+            return routes[url]
+
+        provider._http_get = fake_get
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "The Last of Us",
+                "season": 1,
+                "episode": 1,
+            },
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {},
+        )
+
+        self.assertEqual(results[0]["provider"], "subtitulamostv")
+        self.assertIn("https://www.subtitulamos.tv/shows/201", calls)
+        self.assertIn("https://www.subtitulamos.tv/shows/101", calls)
 
     def test_search_returns_empty_for_unsupported_language(self):
         provider, calls = self._provider_with_routes()

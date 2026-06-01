@@ -1181,7 +1181,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "3a61efa0ed0294616448e148c9dcfbe204c80e6f06173c0ab99ad2d285ed4094",
+        "bundle_sha256": "2afb11be41e8c6d57850870ce4d2babdf1f02c3a70c645f30932d6f113e60235",
         "config_schema": {
           "additionalProperties": false,
           "properties": {},
@@ -1194,7 +1194,7 @@
         "entry_class": "SubtitulamosTVProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "5d79341b6633bc021139e8d06060734542f05a5445f4b0c8b3749fb1ee9edac9"
+          "provider.py": "ae643ed91fda4e1a5712b5f68b8211b303b791711e14c5548185882c1df7216e"
         },
         "languages": [
           "ca",
@@ -1241,7 +1241,7 @@
         "supported_media": [
           "episode"
         ],
-        "version": "0.1.0"
+        "version": "0.1.1"
       }
     }
   ],

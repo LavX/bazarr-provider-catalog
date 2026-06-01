@@ -225,8 +225,11 @@ def site_language_to_payload(label, requested_languages=None):
         return None
     if requested_languages:
         site_key = _clean_text(label)
+        accepted_keys = {site_key}
+        if site_key == "Español (España)":
+            accepted_keys.add("Español")
         for requested in requested_languages:
-            if _language_key(requested) == site_key:
+            if _language_key(requested) in accepted_keys:
                 return dict(requested)
         return None
     return dict(base)
@@ -492,7 +495,7 @@ class SubtitulamosTVProvider:
             if not search_results:
                 continue
 
-            for show in search_results[:1]:
+            for show in search_results:
                 page_url = urllib.parse.urljoin(BASE_URL, f"/shows/{show['show_id']}")
                 _sleep(config)
                 page_body = self._http_get(page_url, timeout=HTTP_TIMEOUT_SECONDS, referer=BASE_URL)
