@@ -1,14 +1,14 @@
 import base64
 import hashlib
 import importlib.util
+import io
 import json
 import unittest
-import zlib
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "opensubtitles_org"
-FIXTURE_DIR = ROOT / "tests" / "fixtures"
 
 
 def _load_provider_module():
@@ -18,18 +18,6 @@ def _load_provider_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-SCRAPER_SEARCH_TV = json.loads(
-    (FIXTURE_DIR / "opensubtitles_scraper_search_tv.json").read_text(encoding="utf-8")
-)
-SCRAPER_SUBTITLES_TV = json.loads(
-    (FIXTURE_DIR / "opensubtitles_scraper_subtitles_tv.json").read_text(encoding="utf-8")
-)
-SCRAPER_DOWNLOAD = json.loads(
-    (FIXTURE_DIR / "opensubtitles_scraper_download.json").read_text(encoding="utf-8")
-)
-SRT_BODY = b"1\n00:00:01,000 --> 00:00:02,000\nWinter is coming.\n"
 
 
 EPISODE_VIDEO = {
@@ -47,315 +35,349 @@ EPISODE_VIDEO = {
     "original_name": "Game.of.Thrones.S01E01.1080p.WEB-DL",
 }
 
-
-MOVIE_VIDEO = {
-    "kind": "movie",
-    "title": "Dune",
-    "year": 2021,
-    "imdb_id": "tt1160419",
-    "fps": "23.976",
-    "size": 345678901,
-    "hashes": {"opensubtitles": "0011223344556677"},
-    "original_name": "Dune.2021.1080p.BluRay",
-}
+LANGUAGES = [{"alpha3": "eng", "alpha2": "en"}]
+SRT_BODY = b"1\n00:00:01,000 --> 00:00:02,000\nWinter is coming.\n"
 
 
-class ApiCriteriaTests(unittest.TestCase):
+class FakeResponse:
+    def __init__(self, url, status_code=200, text="", content=None, headers=None):
+        self.url = url
+        self.status_code = status_code
+        self.text = text
+        self.content = content if content is not None else text.encode("utf-8")
+        self.headers = headers or {}
+
+    def close(self):
+        pass
+
+
+class FakeCookieJar(list):
+    def set(self, name, value, domain=None, path="/"):
+        self.append(type("Cookie", (), {"name": name, "value": value, "domain": domain, "path": path})())
+
+    def update(self, cookies):
+        if isinstance(cookies, dict):
+            for name, value in cookies.items():
+                self.set(name, value)
+            return
+        for cookie in cookies:
+            self.append(cookie)
+
+
+class FakeSession:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+        self.headers = {}
+        self.cookies = FakeCookieJar()
+
+    def get(self, url, **kwargs):
+        self.calls.append(("GET", url, kwargs))
+        if not self.responses:
+            raise AssertionError(f"unexpected GET: {url}")
+        return self.responses.pop(0)
+
+
+def _zip_bytes(filename="Game.of.Thrones.S01E01.srt", body=SRT_BODY):
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w") as archive:
+        archive.writestr(filename, body)
+    return output.getvalue()
+
+
+SEARCH_HTML = """
+<table id="search_results">
+  <tr><th>poster</th><th>title</th><th>imdb</th><th>subs</th></tr>
+  <tr>
+    <td></td>
+    <td><a class="bnone" href="/en/search/sublanguageid-all/imdbid-1480055">"Game of Thrones" Winter Is Coming (2011)</a></td>
+    <td><a href="https://www.imdb.com/title/tt1480055/">IMDb</a></td>
+    <td>5</td>
+  </tr>
+</table>
+"""
+
+SUBTITLES_HTML = """
+<table>
+  <tr>
+    <td id="main1952619105">
+      <strong><a href="/en/subtitles/1952619105/game-of-thrones-winter-is-coming-en">"Game of Thrones" Winter Is Coming (2011)</a></strong><br />
+      Game.of.Thrones.S01E01.1080p.WEB-DL<br />
+      <a href="/en/profile/uploader">syncmaster</a>
+      <a href="/en/subtitleserve/sub/1952619105">4312x</a>
+      <span class="p">23.976</span>
+    </td>
+  </tr>
+</table>
+"""
+
+
+class ManifestSchemaTests(unittest.TestCase):
+    def test_manifest_exposes_native_antibot_settings_without_helper_or_xmlrpc_controls(self):
+        manifest = json.loads((PROVIDER_DIR / "provider.json").read_text(encoding="utf-8"))
+        properties = manifest["config_schema"]["properties"]
+
+        self.assertEqual(
+            sorted(properties),
+            [
+                "also_foreign",
+                "flaresolverr_timeout_ms",
+                "flaresolverr_url",
+                "only_foreign",
+                "request_delay_ms",
+                "skip_wrong_fps",
+                "use_tag_search",
+            ],
+        )
+        for hidden_field in (
+            "is_vip",
+            "password",
+            "scraper_service_url",
+            "timeout",
+            "use_ssl",
+            "use_web_scraper",
+            "username",
+        ):
+            self.assertNotIn(hidden_field, properties)
+        self.assertEqual(manifest["secret_fields"], [])
+
+
+class AntibotSessionTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
 
-    def test_episode_api_criteria_preserve_hash_tag_imdb_and_languages(self):
-        context = self.mod.build_search_context(
-            EPISODE_VIDEO, {"use_tag_search": True}
-        )
-
-        criteria = self.mod.build_xmlrpc_criteria(
-            context,
-            [{"alpha3": "hun", "alpha2": "hu"}, {"alpha3": "eng", "alpha2": "en"}],
-        )
-
-        self.assertEqual(
-            criteria,
+    def test_http_get_uses_ai_cloudscraper_and_solves_anubis_inline(self):
+        session = FakeSession(
             [
-                {
-                    "moviehash": "9f8e7d6c5b4a3210",
-                    "moviebytesize": "234567890",
-                    "sublanguageid": "eng,hun",
-                },
-                {
-                    "tag": "Game.of.Thrones.S01E01.1080p.WEB-DL",
-                    "sublanguageid": "eng,hun",
-                },
-                {
-                    "imdbid": "0944947",
-                    "season": 1,
-                    "episode": 1,
-                    "sublanguageid": "eng,hun",
-                },
-            ],
+                FakeResponse(
+                    "https://www.opensubtitles.org/.within.website/?redir=/",
+                    status_code=401,
+                    text='<script id="anubis_challenge">{}</script>',
+                ),
+                FakeResponse(
+                    "https://www.opensubtitles.org/en/search/subs",
+                    text="<html><title>Subtitles</title></html>",
+                ),
+            ]
         )
+        created = []
 
-    def test_movie_api_criteria_use_movie_imdb_without_episode_fields(self):
-        context = self.mod.build_search_context(MOVIE_VIDEO, {"use_tag_search": False})
+        class FakeCloudscraper:
+            @staticmethod
+            def create_scraper(**kwargs):
+                created.append(kwargs)
+                return session
 
-        criteria = self.mod.build_xmlrpc_criteria(context, [{"alpha3": "eng"}])
+        solved_calls = []
 
-        self.assertEqual(
-            criteria,
-            [
-                {
-                    "moviehash": "0011223344556677",
-                    "moviebytesize": "345678901",
-                    "sublanguageid": "eng",
-                },
-                {"imdbid": "1160419", "sublanguageid": "eng"},
-            ],
-        )
+        def fake_solve(active_session, challenge_url, original_url, timeout):
+            solved_calls.append((active_session, challenge_url, original_url, timeout))
+            active_session.cookies.set("techaro.lol-anubis-auth", "ok", domain=".opensubtitles.org")
+            return {"techaro.lol-anubis-auth": "ok"}
 
+        self.mod.cloudscraper = FakeCloudscraper
+        self.mod.solve_anubis_challenge = fake_solve
 
-class ScraperModeTests(unittest.TestCase):
-    def setUp(self):
-        self.mod = _load_provider_module()
-
-    def test_search_uses_health_tv_result_selection_and_language_mapping(self):
         provider = self.mod.OpenSubtitlesOrgProvider()
-        calls = []
+        response = provider._http_get("https://www.opensubtitles.org/", {})
 
-        def get_json(url, timeout=15):
-            calls.append(("GET", url, timeout))
-            self.assertEqual(url, "http://helper:8000/health")
-            return {"ok": True}
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(session.calls), 2)
+        self.assertEqual(session.calls[0][1], "https://www.opensubtitles.org/")
+        self.assertEqual(session.calls[1][1], "https://www.opensubtitles.org/")
+        self.assertIs(solved_calls[0][0], session)
+        self.assertEqual(solved_calls[0][1], "https://www.opensubtitles.org/.within.website/?redir=/")
+        self.assertEqual(solved_calls[0][2], "https://www.opensubtitles.org/")
+        self.assertEqual(created[0]["interpreter"], "native")
+        self.assertFalse(created[0]["enable_cookie_persistence"])
 
-        def post_json(url, payload, timeout=120):
-            calls.append(("POST", url, payload, timeout))
-            if url == "http://helper:8000/api/v1/search/tv":
-                return SCRAPER_SEARCH_TV
-            if url == "http://helper:8000/api/v1/subtitles":
-                return SCRAPER_SUBTITLES_TV
-            raise AssertionError(f"unexpected URL: {url}")
-
-        provider._http_get_json = get_json
-        provider._http_post_json = post_json
-
-        results = provider.search(
-            EPISODE_VIDEO,
+    def test_http_get_uses_flaresolverr_after_cloudflare_challenge(self):
+        session = FakeSession(
             [
-                {"alpha3": "eng", "alpha2": "en"},
-                {"alpha3": "hun", "alpha2": "hu", "hi": True},
-            ],
+                FakeResponse(
+                    "https://www.opensubtitles.org/en/search",
+                    status_code=403,
+                    text="<html>Just a moment... challenge-platform</html>",
+                    headers={"cf-ray": "abc"},
+                ),
+                FakeResponse(
+                    "https://www.opensubtitles.org/en/search",
+                    text="<html><title>Search</title></html>",
+                ),
+            ]
+        )
+
+        class FakeCloudscraper:
+            @staticmethod
+            def create_scraper(**kwargs):
+                return session
+
+        flaresolverr_calls = []
+
+        def fake_post(url, payload, timeout):
+            flaresolverr_calls.append((url, payload, timeout))
+            return {
+                "solution": {
+                    "cookies": [
+                        {"name": "cf_clearance", "value": "clear", "domain": ".opensubtitles.org"}
+                    ],
+                    "userAgent": "Solved UA",
+                }
+            }
+
+        self.mod.cloudscraper = FakeCloudscraper
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        provider._post_flaresolverr = fake_post
+
+        response = provider._http_get(
+            "https://www.opensubtitles.org/en/search",
             {
-                "use_web_scraper": True,
-                "scraper_service_url": "helper:8000",
-                "skip_wrong_fps": True,
+                "flaresolverr_url": "http://127.0.0.1:8191/v1",
+                "flaresolverr_timeout_ms": 45000,
             },
         )
 
-        self.assertEqual(calls[0], ("GET", "http://helper:8000/health", 15))
-        self.assertEqual(
-            calls[1],
-            (
-                "POST",
-                "http://helper:8000/api/v1/search/tv",
-                {
-                    "query": "Game of Thrones",
-                    "imdb_id": "tt0944947",
-                    "year": 2011,
-                    "kind": "episode",
-                },
-                120,
-            ),
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(session.calls), 2)
+        self.assertEqual(session.headers["User-Agent"], "Solved UA")
+        self.assertEqual(flaresolverr_calls[0][0], "http://127.0.0.1:8191/v1")
+        self.assertEqual(flaresolverr_calls[0][1]["cmd"], "request.get")
+        self.assertEqual(flaresolverr_calls[0][1]["url"], "https://www.opensubtitles.org/en/search")
+        self.assertEqual(flaresolverr_calls[0][1]["maxTimeout"], 45000)
+
+    def test_cloudflare_without_flaresolverr_is_visible_error(self):
+        session = FakeSession(
+            [
+                FakeResponse(
+                    "https://www.opensubtitles.org/en/search",
+                    status_code=403,
+                    text="<html>Just a moment... challenge-platform</html>",
+                    headers={"cf-ray": "abc"},
+                ),
+            ]
         )
-        self.assertEqual(
-            calls[2],
-            (
-                "POST",
-                "http://helper:8000/api/v1/subtitles",
-                {
-                    "movie_url": "https://www.opensubtitles.org/en/search/sublanguageid-all/idmovie-121361",
-                    "languages": ["en", "hu"],
-                    "season": 1,
-                    "episode": 1,
-                },
-                120,
-            ),
+
+        class FakeCloudscraper:
+            @staticmethod
+            def create_scraper(**kwargs):
+                return session
+
+        self.mod.cloudscraper = FakeCloudscraper
+        provider = self.mod.OpenSubtitlesOrgProvider()
+
+        with self.assertRaisesRegex(self.mod.ServiceUnavailable, "FlareSolverr"):
+            provider._http_get("https://www.opensubtitles.org/en/search", {})
+
+    def test_http_get_does_not_treat_normal_200_page_as_cloudflare_challenge(self):
+        session = FakeSession(
+            [
+                FakeResponse(
+                    "https://www.opensubtitles.org/en/search",
+                    status_code=200,
+                    text="<html><title>Search</title><script src='/challenge-platform/h/b/scripts.js'></script></html>",
+                ),
+            ]
         )
-        self.assertEqual(len(results), 2)
+
+        class FakeCloudscraper:
+            @staticmethod
+            def create_scraper(**kwargs):
+                return session
+
+        self.mod.cloudscraper = FakeCloudscraper
+        provider = self.mod.OpenSubtitlesOrgProvider()
+
+        response = provider._http_get("https://www.opensubtitles.org/en/search", {})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(session.calls), 1)
+
+
+class NativeSearchTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_search_uses_native_opensubtitles_pages_and_returns_candidates(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        calls = []
+
+        def fake_get(url, config):
+            calls.append(url)
+            if "search/sublanguageid-all/imdbid-1480055" in url:
+                return FakeResponse(url, text=SEARCH_HTML)
+            if "search/sublanguageid-eng/imdbid-1480055" in url:
+                return FakeResponse(url, text=SUBTITLES_HTML)
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = fake_get
+
+        results = provider.search(EPISODE_VIDEO, LANGUAGES, {"skip_wrong_fps": True})
+
+        self.assertEqual(calls[0], "https://www.opensubtitles.org/en/search/sublanguageid-all/imdbid-1480055")
+        self.assertEqual(calls[1], "https://www.opensubtitles.org/en/search/sublanguageid-eng/imdbid-1480055")
+        self.assertEqual(len(results), 1)
         first = results[0]
         self.assertEqual(first["provider"], "opensubtitles_org")
-        self.assertEqual(first["provider_payload"]["legacy_provider_id"], "opensubtitles")
-        self.assertEqual(first["provider_payload"]["mode"], "scraper")
+        self.assertEqual(first["provider_payload"]["mode"], "native")
         self.assertEqual(first["provider_payload"]["subtitle_id"], "1952619105")
+        self.assertEqual(first["provider_payload"]["download_url"], "https://www.opensubtitles.org/en/subtitles/1952619105/game-of-thrones-winter-is-coming-en")
         self.assertEqual(first["language"]["alpha3"], "eng")
-        self.assertIn("series", first["matches"])
-        self.assertIn("season", first["matches"])
         self.assertIn("episode", first["matches"])
         self.assertIn("imdb_id", first["matches"])
         self.assertEqual(first["display"]["download_count"], 4312)
 
-    def test_only_foreign_keeps_forced_subtitles_and_marks_language(self):
-        provider = self.mod.OpenSubtitlesOrgProvider()
-        provider._http_get_json = lambda url, timeout=15: {"ok": True}
-        provider._http_post_json = lambda url, payload, timeout=120: (
-            SCRAPER_SEARCH_TV
-            if url.endswith("/api/v1/search/tv")
-            else SCRAPER_SUBTITLES_TV
-        )
-
-        results = provider.search(
-            EPISODE_VIDEO,
-            [{"alpha3": "eng", "alpha2": "en", "forced": True}],
-            {
-                "use_web_scraper": True,
-                "scraper_service_url": "http://helper:8000",
-                "only_foreign": True,
-            },
-        )
-
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["provider_payload"]["subtitle_id"], "1952619106")
-        self.assertTrue(results[0]["language"]["forced"])
-
-    def test_scraper_download_decodes_base64_payload(self):
+    def test_search_parses_direct_imdb_subtitle_listing_without_extra_page_fetch(self):
         provider = self.mod.OpenSubtitlesOrgProvider()
         calls = []
 
-        def post_json(url, payload, timeout=120):
-            calls.append((url, payload, timeout))
-            self.assertEqual(url, "http://helper:8000/api/v1/download/subtitle")
-            return SCRAPER_DOWNLOAD
+        def fake_get(url, config):
+            calls.append(url)
+            if "search/sublanguageid-all/imdbid-1480055" in url:
+                return FakeResponse(url, text=SUBTITLES_HTML)
+            raise AssertionError(f"unexpected URL: {url}")
 
-        provider._http_post_json = post_json
+        provider._http_get = fake_get
+
+        results = provider.search(EPISODE_VIDEO, LANGUAGES, {"skip_wrong_fps": True})
+
+        self.assertEqual(calls, ["https://www.opensubtitles.org/en/search/sublanguageid-all/imdbid-1480055"])
+        self.assertEqual(len(results), 1)
+        first = results[0]
+        self.assertEqual(first["provider_payload"]["subtitle_id"], "1952619105")
+        self.assertEqual(first["language"]["alpha3"], "eng")
+        self.assertIn("episode", first["matches"])
+
+    def test_download_fetches_direct_zip_and_returns_subtitle_payload(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        calls = []
+        archive = _zip_bytes()
+
+        def fake_get(url, config):
+            calls.append(url)
+            return FakeResponse(
+                url,
+                content=archive,
+                headers={"content-type": "application/zip"},
+            )
+
+        provider._http_get = fake_get
 
         result = provider.download(
             {
                 "provider": "opensubtitles_org",
-                "schema": 1,
-                "mode": "scraper",
+                "mode": "native",
                 "subtitle_id": "1952619105",
-                "download_url": "https://www.opensubtitles.org/en/subtitles/1952619105",
+                "download_url": "https://www.opensubtitles.org/en/subtitles/1952619105/game-of-thrones-winter-is-coming-en",
+                "filename": "Game.of.Thrones.S01E01.srt",
             },
             {"alpha3": "eng", "alpha2": "en"},
-            {
-                "use_web_scraper": True,
-                "scraper_service_url": "helper:8000",
-            },
+            {},
         )
 
         data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
-        self.assertEqual(calls[0][1]["subtitle_id"], "1952619105")
+        self.assertEqual(calls, ["https://dl.opensubtitles.org/en/download/sub/1952619105"])
         self.assertEqual(data, SRT_BODY)
         self.assertEqual(result["content_sha256"], hashlib.sha256(SRT_BODY).hexdigest())
-
-
-class XmlRpcModeTests(unittest.TestCase):
-    def setUp(self):
-        self.mod = _load_provider_module()
-
-    def test_api_search_parses_forced_hi_and_filters_unrequested_languages(self):
-        provider = self.mod.OpenSubtitlesOrgProvider()
-        provider._api_token = "token"
-        provider._api_server = object()
-        api_items = [
-            {
-                "SubLanguageID": "eng",
-                "SubHearingImpaired": "0",
-                "SubtitlesLink": "https://www.opensubtitles.org/en/subtitles/111",
-                "IDSubtitleFile": "111",
-                "MatchedBy": "tag",
-                "MovieKind": "episode",
-                "MovieHash": "9f8e7d6c5b4a3210",
-                "MovieName": "\"Game of Thrones\" Winter Is Coming",
-                "MovieReleaseName": "Game.of.Thrones.S01E01.1080p.WEB-DL",
-                "MovieYear": "2011",
-                "MovieFPS": "23.976",
-                "SeriesIMDBParent": "0944947",
-                "IDMovieImdb": "1480055",
-                "SeriesSeason": "1",
-                "SeriesEpisode": "1",
-                "SubFileName": "Game.of.Thrones.S01E01.srt",
-                "SubEncoding": "utf-8",
-                "SubForeignPartsOnly": "0",
-                "UserNickName": "syncmaster",
-                "SubDownloadsCnt": "1234",
-            },
-            {
-                "SubLanguageID": "eng",
-                "SubHearingImpaired": "0",
-                "SubtitlesLink": "https://www.opensubtitles.org/en/subtitles/112",
-                "IDSubtitleFile": "112",
-                "MatchedBy": "imdbid",
-                "MovieKind": "episode",
-                "MovieHash": "",
-                "MovieName": "\"Game of Thrones\" Winter Is Coming",
-                "MovieReleaseName": "Game.of.Thrones.S01E01.Forced",
-                "MovieYear": "2011",
-                "MovieFPS": "23.976",
-                "SeriesIMDBParent": "0944947",
-                "IDMovieImdb": "1480055",
-                "SeriesSeason": "1",
-                "SeriesEpisode": "1",
-                "SubFileName": "Game.of.Thrones.S01E01.Forced.srt",
-                "SubEncoding": "",
-                "SubForeignPartsOnly": "1",
-                "UserNickName": "",
-                "SubDownloadsCnt": "55",
-            },
-        ]
-
-        candidates = provider.parse_api_subtitles(
-            api_items,
-            EPISODE_VIDEO,
-            [{"alpha3": "eng", "alpha2": "en"}],
-            self.mod.build_search_context(EPISODE_VIDEO, {"use_tag_search": True}),
-            {"also_foreign": False, "skip_wrong_fps": True},
-        )
-
-        self.assertEqual(len(candidates), 1)
-        first = candidates[0]
-        self.assertEqual(first["provider_payload"]["mode"], "api")
-        self.assertEqual(first["provider_payload"]["subtitle_id"], "111")
-        self.assertEqual(first["uploader"], "syncmaster")
-        self.assertIn("hash", first["matches"])
-        self.assertIn("imdb_id", first["matches"])
-        self.assertEqual(first["display"]["download_count"], 1234)
-
-    def test_api_download_uses_xmlrpc_and_decompresses_response(self):
-        provider = self.mod.OpenSubtitlesOrgProvider()
-        provider._api_token = "token"
-
-        class FakeServer:
-            def __init__(self):
-                self.calls = []
-
-            def DownloadSubtitles(self, token, subtitle_ids):
-                self.calls.append((token, subtitle_ids))
-                compressed = zlib.compress(SRT_BODY)
-                return {
-                    "status": "200 OK",
-                    "data": [
-                        {
-                            "data": base64.b64encode(compressed).decode("ascii"),
-                        }
-                    ],
-                }
-
-        fake_server = FakeServer()
-        provider._api_server = fake_server
-
-        result = provider.download(
-            {
-                "provider": "opensubtitles_org",
-                "schema": 1,
-                "mode": "api",
-                "subtitle_id": "111",
-            },
-            {"alpha3": "eng"},
-            {"use_web_scraper": False},
-        )
-
-        data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
-        self.assertEqual(fake_server.calls, [("token", ["111"])])
-        self.assertEqual(data, SRT_BODY)
 
 
 if __name__ == "__main__":
