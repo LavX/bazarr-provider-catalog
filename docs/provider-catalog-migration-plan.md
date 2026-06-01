@@ -657,6 +657,7 @@
 - Branch: `catalog-zimuku`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/zimuku`
 - Current checkpoint: `f9a9eff Fix Zimuku dependency lock`
+- Pull request: [#69](https://github.com/LavX/bazarr-provider-catalog/pull/69), open draft, head `catalog-zimuku`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -688,9 +689,11 @@
   - `f9a9eff` adds the missing transitive pins, adds the catalog regression, and bumps Zimuku to `0.1.1`.
   - `python3 -B -m unittest discover -s tests -p 'test_catalog.py' -k py7zz`: `1` test passed.
   - `python3 -B -m unittest discover -s tests -p 'test_zimuku.py'`: `6` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `13` tests passed, `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/zimuku/provider.py`: passed.
-  - `git diff --check`: clean.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Attribution and AI-credit scan over touched Zimuku files found no matches.
   - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
   - Live smoke after the dependency-lock fix still failed with `zimuku yunsuo captcha response required`.
 - Provider Hub test-server evidence on 2026-06-01:
