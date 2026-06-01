@@ -1141,6 +1141,14 @@
   - `git diff --check`: clean.
   - Attribution and em-dash scan over `providers/subsarr`, `tests/test_subsarr.py`, `README.md`, and `catalog.json` found no matches.
   - Bazarr test host has no Subsarr container, no Provider Hub `subsarr` installation, and saved Bazarr config has `subsarr.base_url: ''`.
+- Fresh local evidence on 2026-06-01:
+  - Worktree recheck confirmed `/tmp/bazarr_catalog_provider_worktrees/subsarr` is a linked git worktree on branch `catalog-subsarr`, clean, and tracking `origin/catalog-subsarr`.
+  - `python3 -B -m unittest discover -s tests -p 'test_subsarr.py'`: `7` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subsarr/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/subsarr`, `tests/test_subsarr.py`, `README.md`, and `catalog.json` found no matches.
 - Remaining gates:
   - Run SDK smoke search and download against a reachable self-hosted Subsarr service when a test `base_url` is available.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` is deployed on `bazarr-ui-test`; `subsarr` remains unproved only because the test service URL is missing.
@@ -1175,6 +1183,17 @@
   - Attribution and em-dash scan over `providers/assrt`, `tests/test_assrt.py`, `README.md`, and `catalog.json` found no matches.
   - Provider Hub staged and activated Assrt `0.1.0` from commit `c4e2440fceaca97e1d5d4fe4397713a7825614ee` on `bazarr-ui-test`.
   - Bazarr settings inspection through the settings object showed `assrt.token` is empty, so Assrt was disabled again after activation to avoid no-token compat fanout noise.
+- Fresh local and credential evidence on 2026-06-01:
+  - Recreated `/tmp/bazarr_catalog_provider_worktrees/assrt` as a linked git worktree on branch `catalog-assrt`, clean, and tracking `origin/catalog-assrt`.
+  - `python3 -B -m unittest discover -s tests -p 'test_assrt.py'`: `7` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/assrt/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/assrt`, `tests/test_assrt.py`, `README.md`, and `catalog.json` found no matches.
+  - No-token `https://api.assrt.net/v1/user/quota?token=` probe returned `{"errmsg":"invalid token","status":20001}`.
+  - Test-server config check read only `assrt.token` presence and length from `/home/lavx/bazarr-data/config/config.yaml`; the token is empty.
+  - Test-server Provider Hub state file `/home/lavx/bazarr-data/provider_hub/state.json` currently has no active Assrt installation.
 - Remaining gates:
   - Run SDK smoke search and download when a test Assrt token is available.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` is deployed on `bazarr-ui-test`; Assrt remains unproved only because the test token is missing.
