@@ -29,7 +29,7 @@
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
-- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, and `subsynchro`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
+- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, and `subtitrarinoi`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
 - Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead for Provider Hub migration on 2026-05-31 and re-confirmed on 2026-06-01. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof unless a verified upstream origin returns.
 - Existing provider worktrees:
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
@@ -1470,9 +1470,26 @@
   - Public probes confirmed `POST /paginare_filme.php` returns current `div id="round"` rows for IMDb and title searches.
   - The live Breaking Bad row exposes a working ZIP archive at the legacy relative download URL shape.
   - `python3 -B -m sdk smoke-test --provider subtitrarinoi --language ron --video-fixture tests/fixtures/subtitrarinoi_video_breaking_bad_s01e01.json --expect-min-results 1`: `subtitrarinoi ok`.
-- Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subtitrarinoi` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+- Fresh local and live evidence on 2026-06-01:
+  - Branch `catalog-subtitrarinoi` was pushed at `8fc7785`.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_subtitrarinoi.py'`: `11` tests passed.
+  - `python3 -B -m py_compile providers/subtitrarinoi/provider.py`: passed.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/subtitrarinoi`, `tests/test_subtitrarinoi.py`, `README.md`, `catalog.json`, and `docs/provider-notes/subtitrarinoi.md` found no matches.
+  - `python3 -B -m sdk smoke-test --provider subtitrarinoi --language ron --video-fixture tests/fixtures/subtitrarinoi_video_breaking_bad_s01e01.json --expect-min-results 1`: `subtitrarinoi ok`.
+  - `python3 -B -m unittest discover -s tests`: `339` tests passed, `6` skipped.
+- Provider Hub test-server evidence on 2026-06-01:
+  - Official catalog source dev ref was set to `catalog-subtitrarinoi`; refresh returned `13` entries and resolved Subtitrari Noi `0.1.0` at commit `8fc7785dd05cb37b48c74485fe982dd7ebf45348`.
+  - `bazarr-ui-test` restarted healthy on image `ui-test-20260531-provider-hub-replacements-f245ae096`, revision `f245ae096`.
+  - Provider state after restart: active version `0.1.0`, `pending_restart=false`, `trusted=true`, `enabled=true`, `last_error=None`, manifest commit `8fc7785dd05cb37b48c74485fe982dd7ebf45348`.
+  - Runtime replacement policy contains `55` trusted migrated built-in ids, includes `subtitrarinoi`, and excludes `hosszupuska` and `podnapisi`.
+  - Compat search `GET /api/v1/subtitles?imdb_id=tt0903747&query=Breaking.Bad.S01E01.2160p.WEB-DL-CRFW.mkv&type=episode&season_number=1&episode_number=1&languages=ro&per_page=100` returned HTTP `200`, `21` total results, and `1` Subtitrari Noi result.
+  - Subtitrari Noi result: `file_id=20`, release `Sezoanele 1-5 complete`, subtitle id `subtitrarinoi:subtitrarinoi-74168-ro`.
+  - Compat download `POST /api/v1/download` for `file_id=20` returned HTTP `200`, a stream link, `remaining=999`, and `remaining_downloads=999`.
+  - Compat stream returned HTTP `200` and `39467` bytes. The payload starts with SRT cue `1` and timestamp `00:01:15,408 --> 00:01:17,619`.
+- Status:
+  - Subtitrari Noi is locally validated and proved through Provider Hub compat search, download, and stream on `bazarr-ui-test` for the Romanian episode path.
 
 ### `subtitriid`
 
