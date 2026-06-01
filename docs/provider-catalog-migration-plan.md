@@ -2393,6 +2393,7 @@
 - Branch: `catalog-subx`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subx`
 - Current checkpoint: `1f649cf Add SubX provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/49` opened as draft on 2026-06-01, head `catalog-subx`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -2417,18 +2418,20 @@
   - Branch `catalog-subx` was pushed at `1f649cf`.
   - Branch scope remains limited to `README.md`, `catalog.json`, `docs/provider-notes/subx.md`, `providers/subx`, and `tests/test_subx.py`.
   - `python3 -B -m unittest discover -s tests -p 'test_subx.py'`: `15` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/subx/provider.py`: passed.
-  - `python3 -B -m unittest discover -s tests`: `343` tests passed, `6` skipped.
-  - `git diff --check`: clean.
+  - `git diff --check origin/main...HEAD`: clean.
   - Attribution and em-dash scan over `providers/subx`, `tests/test_subx.py`, `docs/provider-notes/subx.md`, `README.md`, and `catalog.json` found no matches.
   - `https://subx-api.duckdns.org/api/health` returned HTTP `200` with version `7b60d84` and built timestamp `2026-05-22T12:27:43Z`.
   - No-key subtitle search probe returned HTTP `401` with `Missing bearer token`.
   - Invalid bearer-token probe returned HTTP `401` with `Invalid or expired token`.
+  - `python3 -B -m sdk smoke-test --provider subx --language spa --expect-min-results 1 --skip-download`: failed at the expected credential gate with `SubX api_key is required`.
+  - PR `#49` was verified open, draft, merge state `CLEAN`, head `1f649cf83ed84abd2e1474d6e796d14c9e56e249`.
   - Test-server config check read only API-key presence and length from `/home/lavx/bazarr-data/config/config.yaml`; `subx.api_key` is empty.
 - Remaining gates:
   - Run SDK live smoke search and download with a real SubX API key.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subx` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `subx` in the trusted replacement policy.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured SubX API key.
 
 ### `opensubtitlescom`
