@@ -2264,6 +2264,7 @@
 - Branch: `catalog-subdl`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subdl`
 - Current checkpoint: `7ff94cd Add SubDL provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/46` opened as draft on 2026-06-01, head `catalog-subdl`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -2286,16 +2287,18 @@
   - Branch `catalog-subdl` was pushed at `7ff94cd`.
   - Branch scope remains limited to `README.md`, `catalog.json`, `docs/provider-notes/subdl.md`, `providers/subdl`, and `tests/test_subdl.py`.
   - `python3 -B -m unittest discover -s tests -p 'test_subdl.py'`: `13` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/subdl/provider.py`: passed.
-  - `python3 -B -m unittest discover -s tests`: `341` tests passed, `6` skipped.
-  - `git diff --check`: clean.
+  - `git diff --check origin/main...HEAD`: clean.
   - Attribution and em-dash scan over `providers/subdl`, `tests/test_subdl.py`, `docs/provider-notes/subdl.md`, `README.md`, and `catalog.json` found no matches.
   - No-key API probe to `https://api.subdl.com/api/v1/subtitles?film_name=Inception&type=movie&languages=EN` returned HTTP `422`.
+  - `python3 -B -m sdk smoke-test --provider subdl --language eng --expect-min-results 1 --skip-download`: failed at the expected credential gate with `SubDL api_key is required`.
+  - PR `#46` was verified open, draft, merge state `CLEAN`, head `7ff94cd8e52bad87a10ad89f1e004060a4dd6d12`.
   - Test-server config check read only API-key presence and length from `/home/lavx/bazarr-data/config/config.yaml`; `subdl.api_key` is empty.
 - Remaining gates:
   - Run SDK live smoke search and download with a real SubDL API key.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subdl` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `subdl` in the trusted replacement policy.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured SubDL API key.
 
 ### `subsource`
