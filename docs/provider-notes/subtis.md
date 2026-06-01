@@ -22,4 +22,3 @@
 - GPL source was used only for behavior inventory.
 - Provider implementation is a new MIT rewrite using public HTTP/API behavior and captured fixtures.
 - No GPL parser code, regex structure, comments, or tests were copied.
-
