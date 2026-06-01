@@ -1183,6 +1183,7 @@
 - Branch: `catalog-podnapisi`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/podnapisi`
 - Current checkpoint: `8b3d09f Record Podnapisi test-host dead-origin check`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/73` opened as draft notes-only PR on 2026-06-01, head `catalog-podnapisi`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1214,6 +1215,7 @@
   - Fresh recheck on 2026-06-01 from this migration network: `curl -I --max-time 15 https://www.podnapisi.net/subtitles` fails DNS with `curl: (6) Could not resolve host`.
   - Bazarr test host recheck on 2026-06-01: `ssh lavx@192.168.100.6 curl -I --max-time 15 https://www.podnapisi.net/subtitles` fails DNS with `curl: (6) Could not resolve host`.
 - Dead-origin decision:
+  - Fresh notes-only PR validation on 2026-06-01: `python3 -B -m sdk validate` returned `catalog ok`; `python3 -B -m unittest discover -s tests -p 'test_catalog.py'` ran `12` tests passed with `6` skipped; `git diff --check origin/main...HEAD` was clean; attribution and em-dash scan over `docs/provider-notes/podnapisi.md` found no matches.
   - Treat Podnapisi as dead for Provider Hub migration unless `www.podnapisi.net` resolves and serves the original subtitle API again, or a verified replacement origin is found.
   - Do not add `podnapisi` to the core replacement policy while the origin is dead.
   - Do not open or merge Podnapisi as an active catalog provider while the origin is dead.
@@ -1481,6 +1483,7 @@
 - Branch: `catalog-hosszupuska`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`
 - Current checkpoint: `5ccb3a7 Record Hosszupuska test-host dead-origin check`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/74` opened as draft notes-only PR on 2026-06-01, head `catalog-hosszupuska`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1518,6 +1521,7 @@
   - Fresh recheck on 2026-06-01 from this migration network: `curl -I --max-time 15 http://hosszupuskasub.com/` fails with `curl: (7) Failed to connect to hosszupuskasub.com port 80`.
   - Bazarr test host recheck on 2026-06-01: `ssh lavx@192.168.100.6 curl -I --max-time 15 http://hosszupuskasub.com/` returns HTTP `308` to `https://hosszupuskasub.com/`, but `curl -I --max-time 15 https://hosszupuskasub.com/` fails with `curl: (35) TLS connect error`, and the legacy `sorozatok.php?sid=17617` path fails the same way after redirect.
 - Dead-origin decision:
+  - Fresh notes-only PR validation on 2026-06-01: `python3 -B -m sdk validate` returned `catalog ok`; `python3 -B -m unittest discover -s tests -p 'test_catalog.py'` ran `12` tests passed with `6` skipped; `git diff --check origin/main...HEAD` was clean; attribution and em-dash scan over `docs/provider-notes/hosszupuska.md` found no matches.
   - Treat Hosszupuska as dead for Provider Hub migration unless the original site returns or a verified replacement origin is found.
   - Re-run live Hosszupuska smoke only after the domain stops serving ParkLogic parking responses.
   - Do not add `hosszupuska` to the core replacement policy while the origin is dead.
