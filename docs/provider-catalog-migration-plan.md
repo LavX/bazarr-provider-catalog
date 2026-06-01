@@ -1906,6 +1906,7 @@
 - Branch: `catalog-subtitriid`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subtitriid`
 - Current checkpoint: `ba6e108 Add Subtitri.id provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/39` opened on 2026-06-01, head `catalog-subtitriid`, base `main`, merge state `CLEAN`.
 - Local evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1943,6 +1944,16 @@
   - Compat stream returned HTTP `200` and `110497` bytes. The payload starts with SRT cue `1` and timestamp `00:01:29,720 --> 00:01:34,669`.
 - Status:
   - Subtitri.id is locally validated and proved through Provider Hub compat search, download, and stream on `bazarr-ui-test` for the Latvian movie path.
+- Fresh PR evidence on 2026-06-01:
+  - `gh pr list --repo LavX/bazarr-provider-catalog --head catalog-subtitriid --json number,state,isDraft,reviewDecision,mergeStateStatus,url,title`: no existing PR before creation.
+  - `python3 -B -m unittest discover -s tests -p 'test_subtitriid.py'`: `12` tests passed.
+  - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subtitriid/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, docs, provider code, tests, and fixtures: no matches.
+  - `python3 -B -m sdk smoke-test --provider subtitriid --language lav --video-fixture tests/fixtures/subtitriid_video_inception.json --expect-min-results 1`: `subtitriid ok`.
+  - `gh pr view 39 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#39` is open, non-draft, head `catalog-subtitriid`, base `main`, merge state `CLEAN`.
 
 ### `supersubtitles`
 
