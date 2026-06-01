@@ -1482,6 +1482,7 @@
 - Branch: `catalog-nekur`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/nekur`
 - Current checkpoint: `41e428e Add Nekur provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/31` opened on 2026-06-01, head `catalog-nekur`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1515,6 +1516,16 @@
   - Compat stream returned HTTP `200` and `82459` bytes. The payload starts with an SRT BOM, cue `1`, and timestamp `00:00:05,339 --> 00:00:10,177`.
 - Status:
   - Nekur is locally validated and proved through Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+- Fresh PR evidence on 2026-06-01:
+  - `gh pr list --repo LavX/bazarr-provider-catalog --head catalog-nekur --json number,state,isDraft,reviewDecision,mergeStateStatus,url,title`: no existing PR before creation.
+  - `python3 -B -m unittest discover -s tests -p 'test_nekur.py'`: `6` tests passed.
+  - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/nekur/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, docs, provider code, tests, and fixtures: no matches.
+  - `python3 -B -m sdk smoke-test --provider nekur --language lav --video-fixture tests/fixtures/nekur_video_dune.json --config-json '{"request_delay_ms":0}' --expect-min-results 1`: `nekur ok`.
+  - `gh pr view 31 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#31` is open, non-draft, head `catalog-nekur`, base `main`, merge state `CLEAN`.
 
 ### `prijevodionline`
 
