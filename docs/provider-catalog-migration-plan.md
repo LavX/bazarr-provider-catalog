@@ -29,7 +29,7 @@
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
-- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subtitrarinoi`, `subtitriid`, `supersubtitles`, and `titrari`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
+- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subtitrarinoi`, `subtitriid`, `supersubtitles`, `titrari`, and `yavkanet`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
 - Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead for Provider Hub migration on 2026-05-31 and re-confirmed on 2026-06-01. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof unless a verified upstream origin returns.
 - Existing provider worktrees:
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
@@ -1648,9 +1648,28 @@
   - `curl -L --http1.1 --max-time 25 -A "Mozilla/5.0" https://yavka.net/`: HTTP `403`, Cloudflare managed challenge page.
   - `curl -L --http1.1 --max-time 25 -A "Mozilla/5.0" -e "https://yavka.net/" https://yavka.net/imdb/tt1160419`: HTTP `403`, Cloudflare managed challenge page.
   - `python3 -B -m sdk smoke-test --provider yavkanet --language bul --video-fixture tests/fixtures/yavkanet_video_dune_2021.json --expect-min-results 1 --skip-download`: failed with `yavkanet hit a Cloudflare challenge and no FlareSolverr URL is configured`.
+- Fresh local evidence on 2026-06-01:
+  - Branch `catalog-yavkanet` was pushed at `000921d`.
+  - `python3 -B -m unittest discover -s tests -p 'test_yavkanet.py'`: `12` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/yavkanet/provider.py`: passed.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/yavkanet`, `tests/test_yavkanet.py`, `README.md`, `catalog.json`, and `docs/provider-notes/yavkanet.md` found no matches.
+  - `python3 -B -m unittest discover -s tests`: `340` tests passed, `6` skipped.
+- Provider Hub test-server evidence on 2026-06-01:
+  - Official catalog source dev ref was set to `catalog-yavkanet`; refresh returned `13` entries and resolved YavkaNet `0.1.0` at commit `000921de80907ce8d4028f64b8488543c8026350`.
+  - Provider Hub staged YavkaNet `0.1.0`, installed dependencies successfully, and saved config `flaresolverr_url=http://127.0.0.1:8191/v1`, `flaresolverr_timeout_ms=60000`, and `request_delay_ms=0`.
+  - `bazarr-ui-test` restarted healthy on image `ui-test-20260531-provider-hub-replacements-f245ae096`.
+  - Provider state after restart: active version `0.1.0`, `pending_restart=false`, `trusted=true`, `enabled=true`, `last_error=None`, manifest commit `000921de80907ce8d4028f64b8488543c8026350`.
+  - Runtime replacement policy contains `55` trusted migrated built-in ids, includes `yavkanet`, and excludes `hosszupuska` and `podnapisi`.
+  - FlareSolverr endpoint `http://127.0.0.1:8191/v1` is reachable from inside `bazarr-ui-test`; a probe against `https://example.com` returned status `ok`.
+  - Compat search `GET /api/v1/subtitles?imdb_id=tt1160419&query=Dune.2021.1080p.WEB-DL.FLUX.mkv&type=movie&languages=bg&per_page=100` returned HTTP `200`, `14` total results, and `0` YavkaNet results.
+  - Direct active-bundle search with the same Dune fixture and stored FlareSolverr config failed with `CloudflareBlockedError: yavkanet FlareSolverr request failed: timed out`.
+  - Direct FlareSolverr probe for `https://yavka.net/imdb/tt1160419` with `maxTimeout=180000` failed after `186.52` seconds with HTTP `500`.
+  - FlareSolverr logs for that probe show `Challenge detected. Title found: Just a moment...` followed by `Error solving the challenge. Timeout after 180.0 seconds.`
 - Remaining gates:
-  - Re-run live smoke with a reachable FlareSolverr `/v1` endpoint in config.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `yavkanet` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Treat current YavkaNet proof as blocked by the origin Cloudflare challenge, not by Provider Hub config or branch deployment.
+  - Re-run live smoke with a solver, cookie, or FlareSolverr environment that can actually solve `https://yavka.net/imdb/tt1160419`.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `yifysubtitles`
