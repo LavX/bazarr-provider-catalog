@@ -1385,6 +1385,7 @@
 - Branch: `catalog-greeksubtitles`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles`
 - Current checkpoint: `da99eee Add GreekSubtitles provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/30` opened on 2026-06-01, head `catalog-greeksubtitles`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1417,6 +1418,16 @@
   - Compat stream returned HTTP `200` and `107398` bytes. The payload starts with an SRT BOM, cue `1`, and timestamp `00:00:04,120 --> 00:00:08,690`.
 - Status:
   - GreekSubtitles is locally validated and proved through Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+- Fresh PR evidence on 2026-06-01:
+  - `gh pr list --repo LavX/bazarr-provider-catalog --head catalog-greeksubtitles --json number,state,isDraft,reviewDecision,mergeStateStatus,url,title`: no existing PR before creation.
+  - `python3 -B -m unittest discover -s tests -p 'test_greeksubtitles.py'`: `9` tests passed.
+  - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/greeksubtitles/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, docs, provider code, tests, and fixtures: no matches.
+  - `python3 -B -m sdk smoke-test --provider greeksubtitles --language ell --video-fixture tests/fixtures/greeksubtitles_video_dune.json --config-json '{"request_delay_ms":0}' --expect-min-results 1`: `greeksubtitles ok`.
+  - `gh pr view 30 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#30` is open, non-draft, head `catalog-greeksubtitles`, base `main`, merge state `CLEAN`.
 
 ### `hosszupuska`
 
