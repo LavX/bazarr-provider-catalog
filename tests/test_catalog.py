@@ -63,6 +63,20 @@ class CatalogStructureTests(unittest.TestCase):
         self.assertTrue(manifest["provider_id"])
         self.assertTrue(manifest["version"])
 
+    def test_py7zz_providers_pin_requests_dependency_closure(self):
+        required = {"certifi", "charset-normalizer", "idna", "requests", "urllib3"}
+
+        for manifest_path in sorted((ROOT / "providers").glob("*/provider.json")):
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            dependencies = {
+                item["name"]
+                for item in manifest.get("dependencies", {}).get("requirements", [])
+            }
+            if "py7zz" not in dependencies:
+                continue
+            missing = sorted(required - dependencies)
+            self.assertEqual(missing, [], f"{manifest_path} is missing py7zz transitive pins")
+
 
 @unittest.skipUnless(importlib.util.find_spec("humanfriendly"), "requires smokehub provider dependencies")
 class SmokeProviderTests(unittest.TestCase):

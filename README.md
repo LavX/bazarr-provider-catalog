@@ -28,7 +28,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`subtitlestar`](providers/subtitlestar/) | 0.1.8 | Scrapes [subtitlestar.com](https://subtitlestar.com) for Persian/Farsi movie and episode subtitles. No login or API key. |
 | [`sub_scene`](providers/sub_scene/) | 0.1.9 | Scrapes [sub-scene.com](https://sub-scene.com) (Subscene clone) for movie and episode subtitles in 35+ languages including Vietnamese, Arabic, Bengali, Danish, Dutch. Uses cloudscraper with optional FlareSolverr fallback. |
 | [`subtitlecat`](providers/subtitlecat/) | 0.1.5 | Scrapes [subtitlecat.com](https://www.subtitlecat.com) (no login, no API key). Worked example for the [scraper authoring guide](docs/writing-a-scraper-provider.md). |
-| [`zimuku`](providers/zimuku/) | 0.1.0 | Scrapes [Zimuku / srtku.com](https://srtku.com) for Chinese and English movie and episode subtitles. Optional image captcha helper settings are available for Yunsuo verification. |
+| [`zimuku`](providers/zimuku/) | 0.1.1 | Scrapes [Zimuku / srtku.com](https://srtku.com) for Chinese and English movie and episode subtitles. Optional image captcha helper settings are available for Yunsuo verification. |
 | [`smoke`](providers/smoke/) | 0.2.0 | Deterministic no-network fixture for install / worker sanity checks. Not a real subtitle source. |
 
 Every provider here ships independently of Bazarr+ releases. [Contribute](#contributing) your own.
