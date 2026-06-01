@@ -2183,6 +2183,20 @@
   - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' https://avistaz.to/`: returned HTTP `200` with the public AvistaZ landing page.
   - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' https://avistaz.to/rules`: returned HTTP `302` to `https://avistaz.to/auth/login`.
   - Real release-page search and download require valid AvistaZ session cookies and a video refined with an AvistaZ `info_url`.
+- Fresh local and credential evidence on 2026-06-01:
+  - Recreated `/tmp/bazarr_catalog_provider_worktrees/avistaz` as a linked git worktree on branch `catalog-avistaz`, clean, and tracking `origin/catalog-avistaz` after push.
+  - Branch `catalog-avistaz` was pushed at `1b339e2`.
+  - Branch scope remains limited to `README.md`, `catalog.json`, `docs/provider-notes/avistaz.md`, `providers/avistaz`, and `tests/test_avistaz.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_avistaz.py'`: `7` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/avistaz/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/avistaz`, `tests/test_avistaz.py`, `docs/provider-notes/avistaz.md`, `README.md`, and `catalog.json` found no matches.
+  - Manifest and catalog language counts both remain `173`.
+  - Public `https://avistaz.to/` probe returned HTTP `200`.
+  - Unauthenticated `https://avistaz.to/rules` probe returned HTTP `302` to `https://avistaz.to/auth/login`.
+  - Test-server config check read only cookie and user-agent presence plus length from `/home/lavx/bazarr-data/config/config.yaml`; `avistaz.cookies` and `avistaz.user_agent` are empty.
 - Remaining gates:
   - Run SDK live smoke search and download with valid AvistaZ cookies and a known AvistaZ release-page fixture or test-server media item.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `avistaz` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
