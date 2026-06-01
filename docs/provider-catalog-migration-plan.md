@@ -949,6 +949,7 @@
 - Branch: `catalog-animekalesi`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/animekalesi`
 - Current checkpoint: `b5db085 Add AnimeKalesi provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/22` opened on 2026-06-01, head `catalog-animekalesi`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -974,6 +975,15 @@
   - Compat query-only episode search for `query=Jujutsu.Kaisen.2.S01E01.Hidden.Inventory.mkv`, `type=episode`, `season_number=1`, `episode_number=1`, and `languages=tr` returned HTTP `200`, `12` total results, including `2` AnimeKalesi results.
   - Compat login returned HTTP `200`; compat download for AnimeKalesi `file_id=2` returned HTTP `200` and a stream link.
   - Fetching the stream link returned HTTP `200` with `27626` bytes of SRT content.
+- Fresh PR evidence on 2026-06-01:
+  - Branch diff against `origin/main` only touches `README.md`, `catalog.json`, `providers/animekalesi/`, AnimeKalesi fixtures, and `tests/test_animekalesi.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_animekalesi.py'`: `9` tests passed.
+  - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/animekalesi/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Attribution and em-dash scan over touched AnimeKalesi files found no matches.
+  - `python3 -B -m sdk smoke-test --provider animekalesi --language tur --video-fixture tests/fixtures/animekalesi_video_jujutsu_kaisen_2_e01.json --expect-min-results 1`: `animekalesi ok`.
 - Remaining gates: none for the current AnimeKalesi migration proof.
 
 ### `animesubinfo`
