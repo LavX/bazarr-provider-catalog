@@ -732,6 +732,40 @@ class TestCloudflareHttp(unittest.TestCase):
         self.assertEqual(nonce, 0)
         self.assertEqual(digest, "04" + "f" * 62)
 
+    def test_extract_anubis_challenge_reads_rules_wrapper(self):
+        challenge = subscene_module._extract_anubis_challenge(
+            '<script id="anubis_challenge">'
+            + json.dumps(
+                {
+                    "rules": {"algorithm": "fast", "difficulty": 8},
+                    "challenge": {"id": "abc", "randomData": "random"},
+                }
+            )
+            + "</script>"
+        )
+
+        self.assertEqual(challenge["id"], "abc")
+        self.assertEqual(challenge["randomData"], "random")
+        self.assertEqual(challenge["difficulty"], 8)
+        self.assertEqual(challenge["method"], "fast")
+
+    def test_extract_anubis_challenge_accepts_string_challenge(self):
+        challenge = subscene_module._extract_anubis_challenge(
+            '<script id="anubis_challenge">'
+            + json.dumps(
+                {
+                    "rules": {"algorithm": "slow", "difficulty": 7},
+                    "challenge": "random-string",
+                }
+            )
+            + "</script>"
+        )
+
+        self.assertEqual(challenge["id"], "random-string")
+        self.assertEqual(challenge["randomData"], "random-string")
+        self.assertEqual(challenge["difficulty"], 7)
+        self.assertEqual(challenge["method"], "slow")
+
     def test_extract_anubis_challenge_unescapes_meta_refresh_url(self):
         challenge = subscene_module._extract_anubis_challenge(
             '<meta http-equiv="refresh" content="0; url=/.within.website/x/cmd/anubis/api/pass-challenge?foo=1&amp;bar=2">'
