@@ -19,6 +19,7 @@
 - Current checkout audit on 2026-06-01: `git worktree list --porcelain` shows all 60 provider-class modules linked under `/tmp/bazarr_catalog_provider_worktrees`, plus the planning worktree. The missing-provider check against `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/` returned no missing worktrees.
 - Helper coverage: `opensubtitles_scraper.py` is not a provider-class module. Its behavior is covered inside the `catalog-opensubtitles` / `opensubtitles_org` branch, but the current implementation no longer defaults to a sidecar helper.
 - OpenSubtitles.org current branch evidence: `catalog-opensubtitles` at `af065c7` uses `ai-cloudscraper==3.8.4`, inline Anubis solving, request throttling, optional FlareSolverr fallback for Cloudflare challenges, and a legacy `cloudscraper` argument retry for runtimes that reject `enable_cookie_persistence`.
+- Existing SubScene maintenance PR evidence: `fix/sub-scene-smi-download` at `0a4ad79` switches SubScene to `ai-cloudscraper==3.8.4` with the same native session shape and legacy argument retry, bumps SubScene to `0.1.11`, and PR `#14` is open, non-draft, and merge state `CLEAN`. A direct venv probe still returned Cloudflare HTTP `403` with `cf-mitigated: challenge`, so FlareSolverr remains the required fallback for this origin.
 - Core replacement-policy evidence: Bazarr core branch `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`, contains a trusted replacement policy for 55 active migrated built-ins, the compat AniDB ID bridge needed by anime providers, and the compat NapiProjekt hash bridge. It excludes dead-origin providers `hosszupuska`, `podnapisi`, `subscenter`, and `xsubs`, and excludes legacy `opensubtitles` because the catalog rewrite ships as `opensubtitles_org`.
 - Test-server core evidence: `bazarr-ui-test` was updated on 2026-05-31 to image version `ui-test-20260531-provider-hub-replacements-f245ae096`, revision `f245ae096`, and returned healthy. The earlier test image based on old head `456071d10` failed because the image did not contain database migration `6c9f1b8d2e3a`; rebasing the core branch onto current `origin/development` fixed that mismatch.
 - License boundary: `/home/lavx/bazarr/LICENSE` is GPL-3.0. This catalog is MIT. Provider implementations in this repo must be clean-room MIT rewrites, not copied or mechanically translated GPL provider files.
@@ -58,7 +59,7 @@
   - `ktuvit`: branch `catalog-ktuvit`, worktree `/tmp/bazarr_catalog_provider_worktrees/ktuvit`, current head `9d3162e`
   - `legendasdivx`: branch `catalog-legendasdivx`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasdivx`, current head `02bbb60`
   - `legendasnet`: branch `catalog-legendasnet`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasnet`, current head `983878f`
-  - `napiprojekt`: branch `catalog-napiprojekt`, worktree `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`, current head `5d9fb63`
+  - `napiprojekt`: branch `catalog-napiprojekt`, worktree `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`, current head `47a7f82`
   - `napisy24`: branch `catalog-napisy24`, worktree `/tmp/bazarr_catalog_provider_worktrees/napisy24`, current head `34a9720`
   - `nekur`: branch `catalog-nekur`, worktree `/tmp/bazarr_catalog_provider_worktrees/nekur`, current head `41e428e`
   - `opensubtitles`: branch `catalog-opensubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitles`, current head `af065c7`
@@ -73,7 +74,7 @@
   - `subdl`: branch `catalog-subdl`, worktree `/tmp/bazarr_catalog_provider_worktrees/subdl`, current head `7ff94cd`
   - `subf2m`: branch `catalog-subf2m`, worktree `/tmp/bazarr_catalog_provider_worktrees/subf2m`, current head `35bb9c4`
   - `subs4free`: branch `catalog-subs4free`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4free`, current head `f7ca9ac`
-  - `subs4series`: branch `catalog-subs4series`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4series`, current head `b91856e`
+  - `subs4series`: branch `catalog-subs4series`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4series`, current head `4237a99`
   - `subsarr`: branch `catalog-subsarr`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsarr`, current head `e154cee`
   - `subscenter`: branch `catalog-subscenter`, worktree `/tmp/bazarr_catalog_provider_worktrees/subscenter`, current head `57de626`, dead origin
   - `subsource`: branch `catalog-subsource`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsource`, current head `d50b08f`
@@ -601,8 +602,8 @@
 
 - Branch: `catalog-subs4series`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subs4series`
-- Current checkpoint: `b91856e Add Subs4Series Cloudflare fallback`
-- Pull request: [#68](https://github.com/LavX/bazarr-provider-catalog/pull/68), open draft, head `catalog-subs4series`, base `main`, merge state `CLEAN`.
+- Current checkpoint: `4237a99 Use ai-cloudscraper for Subs4Series`
+- Pull request: [#68](https://github.com/LavX/bazarr-provider-catalog/pull/68), open draft, head `catalog-subs4series`, base `main`, merge state `CLEAN`, head OID `4237a99012f3099e9928dd228a13b0ba3d6b1dd6`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -647,7 +648,20 @@
   - Compat stream returned HTTP `200` but `0` bytes, so Subs4Series is not complete.
   - Direct active-bundle download tracing showed the generated `getSub-...html` target returns Cloudflare `403` `Attention Required!` on both GET and POST from the test server.
   - FlareSolverr browser-session probes could load detail and anti-block pages, but GET on the download target returned the detail or anti-block page and POST on the target returned the site homepage HTML, not a subtitle archive.
+- ai-cloudscraper retry evidence on 2026-06-01:
+  - `4237a99` switches Subs4Series from legacy `cloudscraper==1.2.71` to `ai-cloudscraper==3.8.4`, using the OpenSubtitles.org native session shape: custom browser User-Agent, native interpreter, disabled cookie persistence, debug disabled, and a TypeError retry for runtimes that reject `enable_cookie_persistence`.
+  - `README.md`, `catalog.json`, `docs/provider-notes/subs4series.md`, `providers/subs4series/provider.json`, `providers/subs4series/provider.py`, and `tests/test_subs4series.py` were updated, and Subs4Series was bumped to `0.1.2`.
+  - `python3 -B -m unittest discover -s tests -p 'test_subs4series.py'`: `11` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subs4series/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, Subs4Series notes, provider code, and tests found no matches.
+  - `python3 -B -m unittest discover -s tests`: `339` tests passed, `6` skipped.
+  - Temporary venv probe with `ai-cloudscraper==3.8.4` fetched `https://www.subs4series.com/search_report.php?search=Game+of+Thrones&searchType=1` with HTTP `200`, `server: cloudflare`, no `cf-mitigated` challenge header, and `149414` bytes of HTML.
+  - `gh pr view 68 --repo LavX/bazarr-provider-catalog --json number,mergeStateStatus,headRefOid,isDraft,state,reviewDecision`: PR `#68` is open, draft, merge state `CLEAN`, head `4237a99012f3099e9928dd228a13b0ba3d6b1dd6`.
 - Remaining gates:
+  - Restage Subs4Series `0.1.2` on `bazarr-ui-test` before rerunning compat proof.
   - Prove Provider Hub compat download and non-empty stream bytes on `bazarr-ui-test`.
   - Resolve the test-server Cloudflare block on `getSub-...html` download targets. Search is now proven through compat, but download target retrieval is still blocked by the origin from the test-server egress.
   - If live Subs4Series presents reCAPTCHA during compat proof, configure `captcha_response` or a `captcha_solver_url` helper and rerun download proof.
@@ -1132,8 +1146,8 @@
 
 - Branch: `catalog-napiprojekt`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`
-- Current checkpoint: `5d9fb63 Add NapiProjekt provider`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/25` opened on 2026-06-01, head `catalog-napiprojekt`, base `main`, merge state `CLEAN`.
+- Current checkpoint: `47a7f82 Use ai-cloudscraper for NapiProjekt`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/25` opened on 2026-06-01, head `catalog-napiprojekt`, base `main`, merge state `CLEAN`, head OID `47a7f8235ce7492aa2d62f94dc86605d07001b89`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1176,7 +1190,19 @@
   - Prohibited punctuation and attribution scan across README, catalog, provider code, tests, and fixtures: no matches.
   - `python3 -B -m sdk smoke-test --provider napiprojekt --language pol --video-fixture tests/fixtures/napiprojekt_video_shrek.json --config-json '{"only_authors":false,"only_real_names":false}' --expect-min-results 1`: `napiprojekt ok`.
   - `gh pr view 25 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#25` is open, non-draft, head `catalog-napiprojekt`, base `main`, merge state `CLEAN`.
-- Remaining gates: none for the current NapiProjekt migration proof. Author-filtered catalog scraping still depends on a reachable FlareSolverr `/v1` endpoint when NapiProjekt serves a Cloudflare challenge.
+- ai-cloudscraper retry evidence on 2026-06-01:
+  - `47a7f82` switches NapiProjekt from legacy `cloudscraper==1.2.71` to `ai-cloudscraper==3.8.4`, using the OpenSubtitles.org native session shape: custom browser User-Agent, native interpreter, disabled cookie persistence, debug disabled, and a TypeError retry for runtimes that reject `enable_cookie_persistence`.
+  - `README.md`, `catalog.json`, `providers/napiprojekt/provider.json`, `providers/napiprojekt/provider.py`, and `tests/test_napiprojekt.py` were updated, and NapiProjekt was bumped to `0.1.1`.
+  - `python3 -B -m unittest discover -s tests -p 'test_napiprojekt.py'`: `15` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/napiprojekt/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, provider code, and tests found no matches.
+  - `python3 -B -m unittest discover -s tests`: `343` tests passed, `6` skipped.
+  - Temporary venv probe with `ai-cloudscraper==3.8.4` still returned HTTP `403` for `https://www.napiprojekt.pl/ajax/search_catalog.php`, with `cf-mitigated: challenge`, `server: cloudflare`, and a `Just a moment...` challenge page.
+  - `gh pr view 25 --repo LavX/bazarr-provider-catalog --json number,mergeStateStatus,headRefOid,isDraft,state,reviewDecision`: PR `#25` is open, non-draft, merge state `CLEAN`, head `47a7f8235ce7492aa2d62f94dc86605d07001b89`.
+- Remaining gates: none for the current NapiProjekt hash-path migration proof. Restage NapiProjekt `0.1.1` on `bazarr-ui-test` before any fresh Provider Hub proof. Author-filtered catalog scraping still depends on a reachable FlareSolverr `/v1` endpoint when NapiProjekt serves a Cloudflare challenge.
 
 ### `podnapisi`
 
