@@ -2098,6 +2098,20 @@
   - `curl -sS -i --max-time 20 'https://subx-api.duckdns.org/api/subtitles/search?title=Dexter&limit=1'`: returned HTTP `401` with `Missing bearer token`.
   - `curl -sS -i --max-time 20 -H 'Authorization: Bearer invalid-test-key' 'https://subx-api.duckdns.org/api/subtitles/search?title=Dexter&limit=1'`: returned HTTP `401` with `Invalid or expired token`.
   - Real live search and download require a SubX `api_key`.
+- Fresh local and credential evidence on 2026-06-01:
+  - Recreated `/tmp/bazarr_catalog_provider_worktrees/subx` as a linked git worktree on branch `catalog-subx`, clean, and tracking `origin/catalog-subx` after push.
+  - Branch `catalog-subx` was pushed at `1f649cf`.
+  - Branch scope remains limited to `README.md`, `catalog.json`, `docs/provider-notes/subx.md`, `providers/subx`, and `tests/test_subx.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_subx.py'`: `15` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subx/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `343` tests passed, `6` skipped.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/subx`, `tests/test_subx.py`, `docs/provider-notes/subx.md`, `README.md`, and `catalog.json` found no matches.
+  - `https://subx-api.duckdns.org/api/health` returned HTTP `200` with version `7b60d84` and built timestamp `2026-05-22T12:27:43Z`.
+  - No-key subtitle search probe returned HTTP `401` with `Missing bearer token`.
+  - Invalid bearer-token probe returned HTTP `401` with `Invalid or expired token`.
+  - Test-server config check read only API-key presence and length from `/home/lavx/bazarr-data/config/config.yaml`; `subx.api_key` is empty.
 - Remaining gates:
   - Run SDK live smoke search and download with a real SubX API key.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subx` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
