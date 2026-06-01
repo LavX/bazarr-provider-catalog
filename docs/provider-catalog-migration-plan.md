@@ -829,6 +829,7 @@
 - Branch: `catalog-wizdom`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/wizdom`
 - Current checkpoint: `2d5425c Add Wizdom provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/72` opened as draft on 2026-06-01, head `catalog-wizdom`, base `main`, merge state `CLEAN`.
 - Local evidence on 2026-05-29:
   - `python3 -B -m unittest discover -s tests -p 'test_wizdom.py'`: `11` tests passed.
   - `python3 -B -m sdk validate`: `catalog ok`.
@@ -851,6 +852,8 @@
   - Local direct probe `GET https://api.tmdb.org/3/search/movie?...query=Inception...year=2010` returned HTTP `200` with current TMDB search results.
   - Local direct probe `GET https://wizdom.xyz/` returned Cloudflare HTTP `522`; local direct probe `GET https://wizdom.xyz/api/releases/tt1375666` timed out after `25` seconds with `0` bytes received.
   - `bazarr-ui-test` direct probe `GET https://wizdom.xyz/` returned Cloudflare HTTP `522`; `GET https://wizdom.xyz/api/releases/tt1375666` timed out after `25` seconds with `0` bytes received.
+  - Fresh check before draft PR `#72`: `python3 -B -m sdk smoke-test --provider wizdom --language heb --video-fixture tests/fixtures/wizdom_video_inception.json --expect-min-results 1 --skip-download` still failed with `wizdom search failed: The read operation timed out`.
+  - Fresh direct probes before draft PR `#72`: `GET https://wizdom.xyz/` returned Cloudflare HTTP `522`, and `GET https://wizdom.xyz/api/releases/tt1375666` returned Cloudflare HTTP `522`.
 - Provider Hub test-server evidence on 2026-06-01:
   - Branch `catalog-wizdom` was pushed at `2d5425ce8f2e35ef897dc51eac59a30be7ef4366`.
   - Official catalog source dev ref was set to `catalog-wizdom`; refresh returned `13` entries and resolved Wizdom `0.1.0` at commit `2d5425ce8f2e35ef897dc51eac59a30be7ef4366`.
@@ -859,6 +862,7 @@
   - Runtime replacement policy contains `55` trusted migrated built-in ids, includes `wizdom`, and excludes `hosszupuska` and `podnapisi`.
   - Compat search `GET /api/v1/subtitles?imdb_id=tt1375666&query=Inception.2010.1080p.BluRay.x264.mkv&type=movie&languages=he&per_page=100` returned HTTP `200`, `34` total rows, and `0` Wizdom rows.
 - Remaining gates:
+  - Keep PR `#72` draft until Wizdom live search and download proof can be captured.
   - Treat current Wizdom proof as blocked by `wizdom.xyz` origin timeout or Cloudflare `522`, not by TMDB, local parser behavior, branch deployment, or Provider Hub loading.
   - Re-run live Wizdom smoke when `wizdom.xyz` stops timing out or returning Cloudflare `522`.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
