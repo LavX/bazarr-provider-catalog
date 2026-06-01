@@ -14,18 +14,19 @@
 
 - Source inventory: 60 provider modules with provider classes were found under `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/`.
 - Excluded helper modules: `__init__.py`, `_agent_list.py`, `avistaz_network.py`, `mixins.py`, `opensubtitles_scraper.py`, `utils.py`.
-- Main-branch catalog inventory: 14 bundles currently ship from `main` after the Gestdown and BSPlayer merges.
+- Main-branch catalog inventory: 17 bundles currently ship from `main` after the Gestdown, BSPlayer, Subtis, SubtitulamosTV, and TVSubtitles merges.
 - Branch inventory: all 60 legacy provider-class modules have matching `catalog-*` branches.
 - Current checkout audit on 2026-06-01: `git worktree list --porcelain` shows all 60 provider-class modules linked under `/tmp/bazarr_catalog_provider_worktrees`, plus the planning worktree. The missing-provider check against `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/` returned no missing worktrees.
 - Helper coverage: `opensubtitles_scraper.py` is not a provider-class module. Its behavior is covered inside the `catalog-opensubtitles` / `opensubtitles_org` branch, but the current implementation no longer defaults to a sidecar helper.
 - OpenSubtitles.org current branch evidence: `catalog-opensubtitles` at `af065c7` uses `ai-cloudscraper==3.8.4`, inline Anubis solving, request throttling, optional FlareSolverr fallback for Cloudflare challenges, and a legacy `cloudscraper` argument retry for runtimes that reject `enable_cookie_persistence`.
 - Existing SubScene maintenance PR evidence: `fix/sub-scene-smi-download` at `dc6af25` switches SubScene to `ai-cloudscraper==3.8.4` with the same native session shape and legacy argument retry, adds inline Anubis challenge solving, treats Anubis difficulty as bits, detects embedded Anubis pages by body, honors Anubis `Refresh` headers, unescapes meta-refresh URLs, bumps SubScene to `0.1.13`, caps multi-page FlareSolverr fallback at `10000` ms, caps the outer FlareSolverr HTTP call to the same deadline, expands ABI-specific dependency hashes across Bazarr+ Python `3.12`, `3.13`, and `3.14` on linux/amd64 and linux/arm64, and PR `#14` is open, non-draft, and merge state `CLEAN`.
 - Cloudflare parity sweep on 2026-06-01: pushed the OpenSubtitles.org three-layer anti-bot path, `ai-cloudscraper==3.8.4`, inline Anubis `/.within.website/` solving, and optional FlareSolverr fallback, to `wizdom` at `4164e52`, `turkcealtyaziorg` at `8c184b2`, `yavkanet` at `5b35d11`, `napiprojekt` at `24eea15`, `subs4series` at `7dd5e86`, and `sub_scene` at `33c714a`. Local provider tests, `py_compile`, `sdk validate`, `test_catalog.py`, `git diff --check`, and attribution or prohibited punctuation scans passed for each touched branch.
+- Cloudflare live recheck on 2026-06-02: escalated SDK smoke with the current anti-bot branches returned `subs4series ok` and `napiprojekt ok`; YavkaNet still returned `yavkanet hit a Cloudflare challenge and no FlareSolverr URL is configured`; TurkceAltyazi.org still required FlareSolverr or matching cookies and User-Agent; Wizdom still timed out against `wizdom.xyz`; SubScene's anti-bot unit suite passed `70` tests.
 - SubScene local evidence on 2026-06-02 after review fixes and Anubis parity: `test_sub_scene.py` ran `70` tests passed, `test_catalog.py` ran `12` tests passed with `6` skipped, `sdk validate` returned `catalog ok`, `py_compile` passed, full `unittest discover -s tests` ran `336` tests passed with `6` skipped, `git diff --check` was clean, and PR `#14` current unresolved review threads returned `[]`.
 - Prior SubScene test-server evidence on 2026-06-01: active Provider Hub state after restage was version `0.1.11`, commit `41b9fc0f460b228d4e8061aaa692233a629a7818`, enabled `true`, `pending_restart=false`, `last_error=null`. Final Dune compat search returned HTTP `200`, `79` total results, and `0` SubScene rows. Focused logs showed `sub_scene FlareSolverr request failed: HTTP Error 500: Internal Server Error` and final fanout marked `sub_scene=ok:15566ms`, not `worker exceeded 30s`. This needs restage before treating `0.1.13` as live test-server proof.
 - Provider Hub source-dependency evidence: `ai-cloudscraper==3.8.4` requires `Js2Py`, whose `pyjsparser==2.7.1` dependency is source-only. Bazarr core PR [#173](https://github.com/LavX/bazarr/pull/173), branch `fix/provider-hub-source-deps` at `b4e53d0ed`, changes the Provider Hub installer from `--only-binary=:all:` to `--prefer-binary` while keeping `--require-hashes`, allowing hash-checked source dependencies. `bazarr-ui-test` was hot-patched with that installer for the live staging evidence below.
 - Catalog runtime-matrix evidence: catalog PR [#75](https://github.com/LavX/bazarr-provider-catalog/pull/75), branch `fix/provider-runtime-matrix` at `b97435d`, defines Provider Hub Python support as `>=3.12,<3.15` with concrete targets `3.12`, `3.13`, and `3.14`, adds `sdk runtime-matrix`, and documents wheel hash coverage for pure, ABI-specific, and stable ABI wheels such as `cp311-abi3`. It was merged into `main` at `39565cbd349ec3809040ba3394d4c080c1870ed8`.
-- Merge progress on 2026-06-01 UTC: PR [#75](https://github.com/LavX/bazarr-provider-catalog/pull/75), PR [#15](https://github.com/LavX/bazarr-provider-catalog/pull/15), and PR [#17](https://github.com/LavX/bazarr-provider-catalog/pull/17) were merged after local verification and live PR inspection. Remaining open PRs temporarily reported merge state `UNKNOWN` while GitHub recalculated against the new base.
+- Merge progress on 2026-06-01 UTC: PR [#75](https://github.com/LavX/bazarr-provider-catalog/pull/75), PR [#15](https://github.com/LavX/bazarr-provider-catalog/pull/15), PR [#17](https://github.com/LavX/bazarr-provider-catalog/pull/17), PR [#18](https://github.com/LavX/bazarr-provider-catalog/pull/18), PR [#20](https://github.com/LavX/bazarr-provider-catalog/pull/20), and PR [#19](https://github.com/LavX/bazarr-provider-catalog/pull/19) were merged after local verification and live PR inspection.
 - Core replacement-policy evidence: Bazarr core branch `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`, contains a trusted replacement policy for 55 active migrated built-ins, the compat AniDB ID bridge needed by anime providers, and the compat NapiProjekt hash bridge. It excludes dead-origin providers `hosszupuska`, `podnapisi`, `subscenter`, and `xsubs`, and excludes legacy `opensubtitles` because the catalog rewrite ships as `opensubtitles_org`.
 - Test-server core evidence: `bazarr-ui-test` was updated on 2026-05-31 to image version `ui-test-20260531-provider-hub-replacements-f245ae096`, revision `f245ae096`, and returned healthy. The earlier test image based on old head `456071d10` failed because the image did not contain database migration `6c9f1b8d2e3a`; rebasing the core branch onto current `origin/development` fixed that mismatch.
 - License boundary: `/home/lavx/bazarr/LICENSE` is GPL-3.0. This catalog is MIT. Provider implementations in this repo must be clean-room MIT rewrites, not copied or mechanically translated GPL provider files.
@@ -38,7 +39,7 @@
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Source provider-class modules: 60 after excluding `__init__.py`, `_agent_list.py`, `avistaz_network.py`, `mixins.py`, `opensubtitles_scraper.py`, and `utils.py`.
 - Current linked provider worktrees: all 60 provider-class modules have dedicated worktrees under `/tmp/bazarr_catalog_provider_worktrees/<provider>`.
-- Current catalog checkout inventory: this planning worktree is intentionally not rebased onto `main`, but live `main` now ships 14 Provider Hub bundles, adding `gestdown` and `bsplayer` to the previous 12 bundle baseline.
+- Current catalog checkout inventory: this planning worktree is intentionally not rebased onto `main`, but live `main` now ships 17 Provider Hub bundles, adding `gestdown`, `bsplayer`, `subtis`, `subtitulamostv`, and `tvsubtitles` to the previous 12 bundle baseline.
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
 - Core source-dependency branch: `fix/provider-hub-source-deps` in `/tmp/bazarr_provider_hub_source_deps`, current head `b4e53d0ed`, pushed and opened as Bazarr PR `#173`.
 - Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subtitrarinoi`, `subtitriid`, `supersubtitles`, `titrari`, `yavkanet`, `yifysubtitles`, and `subs4free`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
@@ -714,6 +715,8 @@
   - `python3 -B -m py_compile providers/subs4series/provider.py`: passed.
   - `git diff --check`: clean.
   - Attribution and prohibited punctuation scan over README, catalog, Subs4Series notes, provider code, and tests found no matches.
+- Live anti-bot recheck on 2026-06-02:
+  - Sandbox DNS could not resolve `www.subs4series.com`, then the escalated live smoke `python3 -B -m sdk smoke-test --provider subs4series --language ell --video-fixture tests/fixtures/subs4series_video_game_of_thrones_s01e01.json --config-json '{"request_delay_ms":0}' --expect-min-results 1 --skip-download` returned `subs4series ok`.
 - Remaining gates: none for the current Subs4Series migration proof. PR remains draft pending maintainer choice.
 
 ### `zimuku`
@@ -844,7 +847,7 @@
 - Branch: `catalog-subtis`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subtis`
 - Current checkpoint: `bad7110 Handle Subtis lookup failures and scores`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/18` opened on 2026-06-01, head `catalog-subtis`, base `main`, merge state `CLEAN`.
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/18` merged on 2026-06-01 UTC at merge commit `2055cc1a2689b0c5774252c3922c8411af02c9fb`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
 - Local evidence on 2026-05-29:
@@ -887,7 +890,7 @@
   - Direct Subtis endpoint probes showed hash, byte, and filename lookups now return `404`, while the alternative endpoint still returns `200` with a subtitle candidate for the fixture.
   - `python3 -B -m sdk smoke-test --provider subtis --language spa --video-fixture tests/fixtures/subtis_video_man_of_steel.json --expect-min-results 1`: `subtis ok`.
 - Review-fix evidence on 2026-06-02:
-  - PR `#18` head `bad711068191a57d35a3a2e22ee16e4e24cca7aa` is open and merge state `CLEAN`.
+  - PR `#18` final head `bad711068191a57d35a3a2e22ee16e4e24cca7aa` was verified `CLEAN` before merge.
   - Subtis now only swallows `SubtisNotFound` during the search cascade, so transient authoritative lookup failures surface instead of falling through to weaker lookups.
   - Spanish language payloads with only `alpha2: es` now return catalog language `alpha3: spa`.
   - Byte-size, filename, and alternative lookup candidates now preserve their non-hash score in `score_without_hash`.
@@ -897,6 +900,7 @@
   - `python3 -B -m py_compile providers/subtis/provider.py`: passed.
   - `python3 -B -m unittest discover -s tests`: `339` tests passed, `6` skipped.
   - `git diff --check`: clean.
+  - `gh pr view 18 --repo LavX/bazarr-provider-catalog --json state,mergedAt,mergeCommit,headRefOid`: PR `#18` is `MERGED`, merge commit `2055cc1a2689b0c5774252c3922c8411af02c9fb`, final head `bad711068191a57d35a3a2e22ee16e4e24cca7aa`.
 - Remaining gates: none for the current Subtis migration proof.
 
 ### `wizdom`
@@ -945,6 +949,8 @@
   - `python3 -B -m py_compile providers/wizdom/provider.py`: passed.
   - `git diff --check`: clean.
   - Attribution and prohibited punctuation scan over README, catalog, Wizdom notes, provider code, and tests found no matches.
+- Live anti-bot recheck on 2026-06-02:
+  - Escalated live smoke `python3 -B -m sdk smoke-test --provider wizdom --language heb --video-fixture tests/fixtures/wizdom_video_inception.json --config-json '{"request_delay_ms":0}' --expect-min-results 1 --skip-download` failed with `Wizdom request failed: HTTPSConnectionPool(host='wizdom.xyz', port=443): Read timed out. (read timeout=15)`.
 - Remaining gates:
   - Keep PR `#72` draft until Wizdom live search and download proof can be captured.
   - Treat current Wizdom proof as blocked by `wizdom.xyz` origin timeout or Cloudflare `522`, not by TMDB, local parser behavior, branch deployment, or Provider Hub loading.
@@ -955,8 +961,8 @@
 
 - Branch: `catalog-tvsubtitles`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/tvsubtitles`
-- Current checkpoint: `80a5c47 Parse TVSubtitles episode language headers`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/19` opened on 2026-06-01, head `catalog-tvsubtitles`, base `main`, merge state `CLEAN`.
+- Current checkpoint: `7d4a7ed Parse TVSubtitles episode language headers`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/19` merged on 2026-06-01 UTC at merge commit `c688b9e88b52f611cc2fb63243b8ba60710d1b56`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -991,23 +997,24 @@
   - Attribution and em-dash scan over touched TVSubtitles files found no matches.
   - `python3 -B -m sdk smoke-test --provider tvsubtitles --language eng --video-fixture tests/fixtures/tvsubtitles_video_the_office_s01e02.json --expect-min-results 1`: `tvsubtitles ok`.
 - Review-fix evidence on 2026-06-02:
-  - PR `#19` head `80a5c47c3f91fd82d4062e3b70581e28ec533d89` is open and merge state `CLEAN`.
+  - PR `#19` final head `7d4a7edea148a89a186c15393f4b3d9a5afa3cb9` was rebased onto current `main`, verified `CLEAN`, and merged.
   - The parser now falls back to the nearest episode-listing language section header when a `subtitle-*.html` block has no flag image.
   - Regression coverage added a no-flag subtitle block under an `English subtitles` section header.
   - `python3 -B -m unittest discover -s tests -p 'test_tvsubtitles.py'`: `13` tests passed.
   - `python3 -B -m sdk validate`: `catalog ok`.
-  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed, `6` skipped.
   - `python3 -B -m py_compile providers/tvsubtitles/provider.py`: passed.
-  - `python3 -B -m unittest discover -s tests`: `341` tests passed, `6` skipped.
   - `git diff --check`: clean.
+  - Attribution and prohibited punctuation scan over touched TVSubtitles files found no matches.
+  - `gh pr view 19 --repo LavX/bazarr-provider-catalog --json state,mergedAt,mergeCommit,headRefOid`: PR `#19` is `MERGED`, merge commit `c688b9e88b52f611cc2fb63243b8ba60710d1b56`, final head `7d4a7edea148a89a186c15393f4b3d9a5afa3cb9`.
 - Remaining gates: none for the current TVSubtitles migration proof.
 
 ### `subtitulamostv`
 
 - Branch: `catalog-subtitulamostv`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subtitulamostv`
-- Current checkpoint: `9ac6f4d Fix SubtitulamosTV fixture trailing blank`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/20` opened on 2026-06-01, head `catalog-subtitulamostv`, base `main`, merge state `CLEAN`.
+- Current checkpoint: `5d38b6d Fix SubtitulamosTV review feedback`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/20` merged on 2026-06-01 UTC at merge commit `8adbcb6b7cafa268c54af59e33960c66fad88068`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -1042,6 +1049,18 @@
   - `git diff --check origin/main...HEAD`: clean after commit `9ac6f4d`.
   - Attribution and em-dash scan over touched SubtitulamosTV files found no matches.
   - `python3 -B -m sdk smoke-test --provider subtitulamostv --language eng --video-fixture tests/fixtures/subtitulamostv_video_the_last_ship_s05e10.json --expect-min-results 1`: `subtitulamostv ok`.
+- Review-fix evidence on 2026-06-02:
+  - PR `#20` final head `5d38b6dc9f3f22ff32e367b6a0527bae13ea77d3` was verified `CLEAN`; both active review threads became outdated after the fix.
+  - Generic Spanish requests now accept the site label `Español (España)`.
+  - Search now tries all exact show hits before giving up when the first match has no target episode.
+  - Provider version was bumped to `0.1.1`.
+  - `python3 -B -m unittest discover -s tests -p 'test_subtitulamostv.py'`: `18` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subtitulamostv/provider.py`: passed.
+  - `git diff --check`: clean.
+  - Attribution and prohibited punctuation scan over touched SubtitulamosTV files found no matches.
+  - `gh pr view 20 --repo LavX/bazarr-provider-catalog --json state,mergedAt,mergeCommit,headRefOid`: PR `#20` is `MERGED`, merge commit `8adbcb6b7cafa268c54af59e33960c66fad88068`, final head `5d38b6dc9f3f22ff32e367b6a0527bae13ea77d3`.
 - Remaining gates: none for the current SubtitulamosTV migration proof.
 
 ### `greeksubs`
@@ -1297,6 +1316,8 @@
   - `python3 -B -m py_compile providers/napiprojekt/provider.py`: passed.
   - `git diff --check`: clean.
   - Attribution and prohibited punctuation scan over README, catalog, provider code, and tests found no matches.
+- Live anti-bot recheck on 2026-06-02:
+  - Escalated live smoke `python3 -B -m sdk smoke-test --provider napiprojekt --language pol --video-fixture tests/fixtures/napiprojekt_video_shrek.json --config-json '{"request_delay_ms":0}' --expect-min-results 1 --skip-download` returned `napiprojekt ok`.
 - Remaining gates: none for the current NapiProjekt hash-path migration proof. Author-filtered catalog scraping still depends on a reachable FlareSolverr `/v1` endpoint when NapiProjekt serves a Cloudflare challenge.
 
 ### `podnapisi`
@@ -2318,6 +2339,8 @@
   - Active Provider Hub state after restage: version `0.1.1`, commit `f40f6d34c9952389e0676fafd46b19f009d20def`, enabled `true`, `pending_restart=false`, `last_error=null`.
   - Final compat search `GET /api/v1/subtitles?imdb_id=tt1160419&query=Dune.2021.1080p.WEB-DL.FLUX.mkv&type=movie&languages=bg&per_page=100` returned HTTP `200`, `14` total results, and `0` YavkaNet rows.
   - Focused logs show the YavkaNet worker now returns `yavkanet FlareSolverr request failed: HTTP Error 500: Internal Server Error` inside the worker deadline. Final fanout marked `yavkanet=ok:14949ms`, not `worker exceeded 30s`.
+- Live anti-bot recheck on 2026-06-02:
+  - Escalated live smoke `python3 -B -m sdk smoke-test --provider yavkanet --language bul --video-fixture tests/fixtures/yavkanet_video_dune_2021.json --config-json '{"request_delay_ms":0}' --expect-min-results 1 --skip-download` failed with `yavkanet hit a Cloudflare challenge and no FlareSolverr URL is configured`.
 - Remaining gates:
   - Treat current YavkaNet proof as blocked by the origin Cloudflare challenge and the configured FlareSolverr endpoint returning HTTP `500`, not by Provider Hub config, dependency installation, branch deployment, or worker deadline.
   - Re-run live smoke with a solver, cookie, or FlareSolverr environment that can actually solve `https://yavka.net/imdb/tt1160419`.
@@ -2821,6 +2844,8 @@
   - The same venv smoke with local `http://127.0.0.1:8191/v1` failed because local FlareSolverr is not running: connection refused.
   - `bazarr-ui-test` FlareSolverr probe against `https://turkcealtyazi.org/` returned HTTP `500`, so the current test-server solver cannot yet clear this origin challenge.
   - `gh pr view 53 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,headRefOid,title`: PR `#53` is open, draft, head `catalog-turkcealtyaziorg`, base `main`, merge state `UNKNOWN`, head `54522cdb628c207c6a448ac33a33f640f0aad78c`.
+- Live anti-bot recheck on 2026-06-02:
+  - Escalated live smoke `python3 -B -m sdk smoke-test --provider turkcealtyaziorg --language tur --video-fixture /tmp/turkcealtyaziorg_inception_video.json --config-json '{"request_delay_ms":0}' --expect-min-results 1 --skip-download` failed with `TurkceAltyazi is presenting a Cloudflare challenge; configure FlareSolverr URL or matching cookies and User-Agent`.
 - Remaining gates:
   - Run SDK live smoke search and download with valid TurkceAltyazi.org cookies and User-Agent, or a FlareSolverr environment that can solve this origin.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `turkcealtyaziorg` in the trusted replacement policy.
