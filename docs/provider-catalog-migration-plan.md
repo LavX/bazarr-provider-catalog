@@ -991,6 +991,7 @@
 - Branch: `catalog-animesubinfo`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/animesubinfo`
 - Current checkpoint: `b2be823 Add AnimeSub.info provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/23` opened on 2026-06-01, head `catalog-animesubinfo`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1018,6 +1019,17 @@
   - Compat query-only episode search for `query=Kimetsu.no.Yaiba.S01E01.HorribleSubs.mkv`, `type=episode`, `season_number=1`, `episode_number=1`, and `languages=pl` returned HTTP `200`, `7` total results, including `3` AnimeSub.info results.
   - Compat login returned HTTP `200`; compat download for AnimeSub.info `file_id=1` returned HTTP `200` and a stream link.
   - Fetching the stream link returned HTTP `200` with `28644` bytes of SRT content.
+- Fresh PR evidence on 2026-06-01:
+  - `gh pr list --repo LavX/bazarr-provider-catalog --head catalog-animesubinfo --json number,state,isDraft,reviewDecision,mergeStateStatus,url,title`: no existing PR before creation.
+  - `python3 -B -m unittest discover -s tests -p 'test_animesubinfo.py'`: `9` tests passed.
+  - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/animesubinfo/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, provider code, tests, and fixtures: no matches.
+  - `python3 -B -m sdk smoke-test --provider animesubinfo --language pol --video-fixture tests/fixtures/animesubinfo_video_kimetsu_ep01.json --expect-min-results 1`: `animesubinfo ok`.
+  - `python3 -B -m sdk smoke-test --provider animesubinfo --language pol --video-fixture tests/fixtures/animesubinfo_video_akira.json --expect-min-results 1`: `animesubinfo ok`.
+  - `gh pr view 23 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#23` is open, non-draft, head `catalog-animesubinfo`, base `main`, merge state `CLEAN`.
 - Remaining gates: none for the current AnimeSub.info migration proof.
 
 ### `animetosho`
