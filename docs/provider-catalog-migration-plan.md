@@ -2530,6 +2530,7 @@
 - Branch: `catalog-cinemaz`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/cinemaz`
 - Current checkpoint: `df1b3bd Add CinemaZ provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/52` opened as draft on 2026-06-01, head `catalog-cinemaz`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -2553,18 +2554,20 @@
   - Branch `catalog-cinemaz` was pushed at `df1b3bd`.
   - Branch scope remains limited to `README.md`, `catalog.json`, `docs/provider-notes/cinemaz.md`, `providers/cinemaz`, and `tests/test_cinemaz.py`.
   - `python3 -B -m unittest discover -s tests -p 'test_cinemaz.py'`: `7` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/cinemaz/provider.py`: passed.
-  - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
-  - `git diff --check`: clean.
+  - `git diff --check origin/main...HEAD`: clean.
   - Attribution and em-dash scan over `providers/cinemaz`, `tests/test_cinemaz.py`, `docs/provider-notes/cinemaz.md`, `README.md`, and `catalog.json` found no matches.
   - Manifest and catalog language counts both remain `173`.
   - Public `https://cinemaz.to/` probe returned HTTP `200`.
   - Unauthenticated `https://cinemaz.to/rules` probe returned HTTP `302` to `https://cinemaz.to/auth/login`.
+  - `python3 -B -m sdk smoke-test --provider cinemaz --language eng --video-fixture /tmp/cinemaz_release_video.json --expect-min-results 1 --skip-download`: failed at the expected credential gate with `CinemaZ cookies are required`.
+  - PR `#52` was verified open, draft, merge state `CLEAN`, head `df1b3bd4d72163888b68ba2e659bacd016af96d7`.
   - Test-server config check read only cookie and user-agent presence plus length from `/home/lavx/bazarr-data/config/config.yaml`; `cinemaz.cookies` and `cinemaz.user_agent` are empty.
 - Remaining gates:
   - Run SDK live smoke search and download with valid CinemaZ cookies and a known CinemaZ release-page fixture or test-server media item.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `cinemaz` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `cinemaz` in the trusted replacement policy.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured CinemaZ cookies.
 
 ### `turkcealtyaziorg`
