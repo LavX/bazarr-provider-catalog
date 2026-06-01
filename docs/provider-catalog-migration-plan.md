@@ -2267,6 +2267,20 @@
   - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' https://turkcealtyazi.org/`: returned HTTP `403` with `cf-mitigated: challenge`.
   - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' 'https://turkcealtyazi.org/find.php?cat=sub&find=1375666'`: returned HTTP `403` with `cf-mitigated: challenge`.
   - Real search and download require valid TurkceAltyazi.org Cloudflare cookies paired with a browser User-Agent.
+- Fresh local and credential evidence on 2026-06-01:
+  - Recreated `/tmp/bazarr_catalog_provider_worktrees/turkcealtyaziorg` as a linked git worktree on branch `catalog-turkcealtyaziorg`, clean, and tracking `origin/catalog-turkcealtyaziorg` after push.
+  - Branch `catalog-turkcealtyaziorg` was pushed at `6ec4f09`.
+  - Branch scope remains limited to `README.md`, `catalog.json`, `docs/provider-notes/turkcealtyaziorg.md`, `providers/turkcealtyaziorg`, and `tests/test_turkcealtyaziorg.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_turkcealtyaziorg.py'`: `10` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/turkcealtyaziorg/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `338` tests passed, `6` skipped.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/turkcealtyaziorg`, `tests/test_turkcealtyaziorg.py`, `docs/provider-notes/turkcealtyaziorg.md`, `README.md`, and `catalog.json` found no matches.
+  - Manifest and catalog language counts both remain `2`.
+  - Public `https://turkcealtyazi.org/` probe returned HTTP `403` with `cf-mitigated: challenge`.
+  - Subtitle search probe for IMDb `tt1375666` returned HTTP `403` with `cf-mitigated: challenge`.
+  - Test-server config check read only cookie and user-agent presence plus length from `/home/lavx/bazarr-data/config/config.yaml`; `turkcealtyaziorg.cookies` and `turkcealtyaziorg.user_agent` are empty.
 - Remaining gates:
   - Run SDK live smoke search and download with valid TurkceAltyazi.org cookies and User-Agent.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `turkcealtyaziorg` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
