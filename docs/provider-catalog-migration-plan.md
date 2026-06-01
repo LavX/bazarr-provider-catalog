@@ -2685,8 +2685,8 @@
 
 - Branch: `catalog-turkcealtyaziorg`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/turkcealtyaziorg`
-- Current checkpoint: `6ec4f09 Add TurkceAltyazi.org provider`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/53` opened as draft on 2026-06-01, head `catalog-turkcealtyaziorg`, base `main`, merge state `CLEAN`.
+- Current checkpoint: `54522cd Use ai-cloudscraper for TurkceAltyazi Cloudflare`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/53` opened as draft on 2026-06-01, head `catalog-turkcealtyaziorg`, base `main`, latest checked merge state `UNKNOWN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -2721,10 +2721,24 @@
   - `python3 -B -m sdk smoke-test --provider turkcealtyaziorg --language tur --video-fixture /tmp/turkcealtyaziorg_inception_video.json --expect-min-results 1 --skip-download`: failed at the expected Cloudflare gate with `TurkceAltyazi is presenting a Cloudflare challenge; configure matching cookies and User-Agent`.
   - PR `#53` was verified open, draft, merge state `CLEAN`, head `6ec4f09d7fd0b5773ef57a7f7d54115335e46937`.
   - Test-server config check read only cookie and user-agent presence plus length from `/home/lavx/bazarr-data/config/config.yaml`; `turkcealtyaziorg.cookies` and `turkcealtyaziorg.user_agent` are empty.
+- ai-cloudscraper retry evidence on 2026-06-01:
+  - `54522cd` switches TurkceAltyazi.org to `ai-cloudscraper==3.8.4`, using the OpenSubtitles.org native session shape: custom browser User-Agent, native interpreter, disabled cookie persistence, debug disabled, and a TypeError retry for runtimes that reject `enable_cookie_persistence`.
+  - The provider now exposes optional `flaresolverr_url`, `flaresolverr_timeout_ms`, and `request_delay_ms` settings, caps FlareSolverr timeouts at `25000` ms, keeps manual Cloudflare cookies secret, and bumps TurkceAltyazi.org to `0.1.1`.
+  - `python3 -B -m unittest discover -s tests -p 'test_turkcealtyaziorg.py'`: `13` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/turkcealtyaziorg/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan over README, catalog, TurkceAltyazi.org notes, provider code, and tests found no matches.
+  - `python3 -B -m unittest discover -s tests`: `341` tests passed, `6` skipped.
+  - Temporary venv smoke with `ai-cloudscraper==3.8.4` still failed at the Cloudflare gate for the Inception fixture without a solver: `TurkceAltyazi is presenting a Cloudflare challenge; configure FlareSolverr URL or matching cookies and User-Agent`.
+  - The same venv smoke with local `http://127.0.0.1:8191/v1` failed because local FlareSolverr is not running: connection refused.
+  - `bazarr-ui-test` FlareSolverr probe against `https://turkcealtyazi.org/` returned HTTP `500`, so the current test-server solver cannot yet clear this origin challenge.
+  - `gh pr view 53 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,headRefOid,title`: PR `#53` is open, draft, head `catalog-turkcealtyaziorg`, base `main`, merge state `UNKNOWN`, head `54522cdb628c207c6a448ac33a33f640f0aad78c`.
 - Remaining gates:
-  - Run SDK live smoke search and download with valid TurkceAltyazi.org cookies and User-Agent.
+  - Run SDK live smoke search and download with valid TurkceAltyazi.org cookies and User-Agent, or a FlareSolverr environment that can solve this origin.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `turkcealtyaziorg` in the trusted replacement policy.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured TurkceAltyazi.org cookies.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured TurkceAltyazi.org cookies or a working solver.
 
 ## Why OpenSubtitles.org Is Tricky
 
