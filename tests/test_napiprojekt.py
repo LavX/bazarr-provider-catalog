@@ -4,6 +4,7 @@ import importlib.util
 import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "napiprojekt"
@@ -240,6 +241,38 @@ class CloudflareTests(unittest.TestCase):
                 b"<title>Just a moment...</title>",
             )
         )
+
+    def test_create_cloudscraper_uses_ai_cloudscraper_options(self):
+        scraper = object()
+
+        with patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper) as create_scraper:
+            result = self.mod._create_cloudscraper()
+
+        self.assertIs(result, scraper)
+        create_scraper.assert_called_once_with(
+            browser={"custom": self.mod.USER_AGENT},
+            interpreter="native",
+            enable_cookie_persistence=False,
+            debug=False,
+        )
+
+    def test_create_cloudscraper_retries_without_cookie_persistence_for_legacy_ai_cloudscraper(self):
+        scraper = object()
+
+        with patch.object(
+            self.mod.cloudscraper,
+            "create_scraper",
+            side_effect=[
+                TypeError("unexpected keyword argument 'enable_cookie_persistence'"),
+                scraper,
+            ],
+        ) as create_scraper:
+            result = self.mod._create_cloudscraper()
+
+        self.assertIs(result, scraper)
+        self.assertEqual(create_scraper.call_count, 2)
+        self.assertEqual(create_scraper.call_args_list[0].kwargs["enable_cookie_persistence"], False)
+        self.assertNotIn("enable_cookie_persistence", create_scraper.call_args_list[1].kwargs)
 
     def test_cloudscraper_challenge_raises_without_flaresolverr(self):
         provider = self.mod.NapiProjektProvider()

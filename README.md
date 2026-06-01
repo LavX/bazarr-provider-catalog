@@ -23,7 +23,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`kitsunekko`](providers/kitsunekko/) | 0.1.0 | Scrapes [Kitsunekko](https://kitsunekko.net) for anime subtitle directories and ZIP packs. No login or API key. |
 | [`moviesubtitles`](providers/moviesubtitles/) | 0.1.0 | Scrapes [Moviesubtitles.org](https://www.moviesubtitles.org) for movie subtitles, including multipart archives. No login or API key. |
 | [`my_subs`](providers/my_subs/) | 0.1.1 | Scrapes [My-Subs.co](https://my-subs.co) for movie and episode subtitles in many languages. No login or API key. |
-| [`napiprojekt`](providers/napiprojekt/) | 0.1.0 | Searches [NapiProjekt](https://www.napiprojekt.pl) for Polish subtitles using hash lookup and catalog scraping with optional author filters. No login or API key. |
+| [`napiprojekt`](providers/napiprojekt/) | 0.1.1 | Searches [NapiProjekt](https://www.napiprojekt.pl) for Polish subtitles using hash lookup and catalog scraping with optional author filters. Uses ai-cloudscraper with optional FlareSolverr fallback. |
 | [`subcentral`](providers/subcentral/) | 0.1.0 | Scrapes [SubCentral.de](https://www.subcentral.de) forum subtitle threads for German and English episode releases. No login or API key. |
 | [`subhd`](providers/subhd/) | 0.1.3 | Scrapes [SubHD.tv](https://subhd.tv) for Chinese-first movie and episode subtitles with multilingual releases. No login or API key. |
 | [`subtitlestar`](providers/subtitlestar/) | 0.1.8 | Scrapes [subtitlestar.com](https://subtitlestar.com) for Persian/Farsi movie and episode subtitles. No login or API key. |

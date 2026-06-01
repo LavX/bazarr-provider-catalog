@@ -54,11 +54,28 @@ class CloudflareBlockedError(RuntimeError):
 class _MissingCloudscraper:
     def create_scraper(self, **kwargs):
         del kwargs
-        raise CloudflareBlockedError("napiprojekt cloudscraper dependency is not installed")
+        raise CloudflareBlockedError("napiprojekt ai-cloudscraper dependency is not installed")
 
 
 if cloudscraper is None:  # pragma: no cover
     cloudscraper = _MissingCloudscraper()
+
+
+def _create_cloudscraper():
+    options = {
+        "browser": {"custom": USER_AGENT},
+        "interpreter": "native",
+        "enable_cookie_persistence": False,
+        "debug": False,
+    }
+    try:
+        return cloudscraper.create_scraper(**options)
+    except TypeError as error:
+        if "enable_cookie_persistence" not in str(error):
+            raise
+        fallback_options = dict(options)
+        fallback_options.pop("enable_cookie_persistence", None)
+        return cloudscraper.create_scraper(**fallback_options)
 
 
 def get_subhash(video_hash):
@@ -376,7 +393,7 @@ def _get_cloudscraper(state):
     state = state if isinstance(state, dict) else {}
     scraper = state.get("cloudscraper")
     if scraper is None:
-        scraper = cloudscraper.create_scraper(browser={"browser": "chrome", "platform": "linux", "desktop": True})
+        scraper = _create_cloudscraper()
         state["cloudscraper"] = scraper
     return scraper
 

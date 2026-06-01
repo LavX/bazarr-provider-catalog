@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "129a2c1191c6d22148f330a960cb0f167ac26c0f7e9ce6de0e588f9d0b7df8e6",
+  "bundle_sha256": "b7800c46dd373bbb93d5cbc3fd2d60819a3a7f148bece15d2a7d522ae872b5df",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -14,7 +14,7 @@
       },
       "flaresolverr_url": {
         "default": "",
-        "description": "Optional FlareSolverr /v1 endpoint used when NapiProjekt catalog scraping receives a Cloudflare challenge.",
+        "description": "Optional FlareSolverr /v1 endpoint used when ai-cloudscraper receives a Cloudflare challenge during NapiProjekt catalog scraping.",
         "title": "FlareSolverr URL",
         "type": "string"
       },
@@ -37,10 +37,73 @@
     "requirements": [
       {
         "hashes": [
+          "sha256:a94627e4c065d4de21cb8ca5b357c523d97158084fc5f67777d1c5d86630e0e9"
+        ],
+        "name": "ai-cloudscraper",
+        "version": "3.8.4"
+      },
+      {
+        "hashes": [
+          "sha256:bc6b9d7ba62045542265ef954c260e1d903516ab9364b5be1466f969c887d138"
+        ],
+        "name": "ai-urllib4",
+        "version": "2.2.0"
+      },
+      {
+        "hashes": [
+          "sha256:4708045e2d7a6c6bdf8aafa8ed39649eaf926a4543b54560659129e3365953c4"
+        ],
+        "name": "aiohappyeyeballs",
+        "version": "2.6.2"
+      },
+      {
+        "hashes": [
+          "sha256:241a94f7de7c0c3b616627aaad530fe2cb620084a8b144d3be7b6ecfe95bae3b"
+        ],
+        "name": "aiohttp",
+        "version": "3.13.5"
+      },
+      {
+        "hashes": [
+          "sha256:053243f8b92b990551949e63930a839ff0cf0b0ebbe0597b0f3fb19e1a0fe82e"
+        ],
+        "name": "aiosignal",
+        "version": "1.4.0"
+      },
+      {
+        "hashes": [
+          "sha256:4d4c1eb3250f735f59ce842d8d92cd2927c008bd52008797ba030b5787c41f3b"
+        ],
+        "name": "asyncio-throttle",
+        "version": "1.0.2"
+      },
+      {
+        "hashes": [
+          "sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309"
+        ],
+        "name": "attrs",
+        "version": "26.1.0"
+      },
+      {
+        "hashes": [
+          "sha256:cf9cba6f5b78a2071ec6fb1e7bd39acf35071d90a81231d67e92d637776a6a63"
+        ],
+        "name": "brotli",
+        "version": "1.2.0"
+      },
+      {
+        "hashes": [
           "sha256:3c52e209ba0a4ad7aebe60436a4ab349c39e1e602e8c134221e546902ad25897"
         ],
         "name": "certifi",
         "version": "2026.5.20"
+      },
+      {
+        "hashes": [
+          "sha256:afb8db5439b81cf9c9d0c80404b60c3cc9c3add93e114dcae767f1477cb53775"
+        ],
+        "name": "cffi",
+        "version": "2.0.0"
       },
       {
         "hashes": [
@@ -51,17 +114,80 @@
       },
       {
         "hashes": [
-          "sha256:76f50ca529ed2279e220837befdec892626f9511708e200d48d5bb76ded679b0"
+          "sha256:bd72e68b06bb1e96913f97dd4901119bc17f39d4586a5adf2d3e47bc2b9d58b5"
         ],
-        "name": "cloudscraper",
-        "version": "1.2.71"
+        "name": "cryptography",
+        "version": "48.0.0"
       },
       {
         "hashes": [
-          "sha256:cc246e3a3f89580c3a951b5ad298ca4638078b2cdd4f115654332b5c26daded5"
+          "sha256:cba69cb73723c3f329622e34bdbf5ce1f80c21c290ff04256cff1cd3c2036ed2"
+        ],
+        "name": "frozenlist",
+        "version": "1.8.0"
+      },
+      {
+        "hashes": [
+          "sha256:466e48829084efe2548012b855df21540b96f2e20e51bd124c851536556a592c"
         ],
         "name": "idna",
-        "version": "3.16"
+        "version": "3.17"
+      },
+      {
+        "hashes": [
+          "sha256:40a508a79e2f8d624e3f2e604f90a1e6f46ac75b416d7f4745939ff4a2e95e09"
+        ],
+        "name": "Js2Py",
+        "version": "0.74"
+      },
+      {
+        "hashes": [
+          "sha256:7eee46ccb30ff48a1e35bb818cc90846c6be2b68240e42a78599166722cea709"
+        ],
+        "name": "multidict",
+        "version": "6.7.1"
+      },
+      {
+        "hashes": [
+          "sha256:e00820e192c8dbebcafb383ebbf99030895f09905e7a0eb2e0340a0bcc2bc825"
+        ],
+        "name": "propcache",
+        "version": "0.5.2"
+      },
+      {
+        "hashes": [
+          "sha256:076a2d2f923fd4821644f5ba89f059523da90dc9014e85f8e45a5774ca5bc6f9"
+        ],
+        "name": "psutil",
+        "version": "7.2.2"
+      },
+      {
+        "hashes": [
+          "sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992"
+        ],
+        "name": "pycparser",
+        "version": "3.0"
+      },
+      {
+        "hashes": [
+          "sha256:c8987bd3307a39bc03df5c8e0e3d8be0c4c3518b7f044b0f4c15d1aa78f52575"
+        ],
+        "name": "pycryptodome",
+        "version": "3.23.0"
+      },
+      {
+        "hashes": [
+          "sha256:be60da6b778cc5a5296a69d8e7d614f1f870faf94e1b1b6ac591f2ad5d729579"
+        ],
+        "name": "pyjsparser",
+        "version": "2.7.1"
+      },
+      {
+        "hashes": [
+          "sha256:4f9d971bc5298b8bc1fab282803da04bf000c755d4ad9d99b52de2569ca19a70"
+        ],
+        "name": "pyOpenSSL",
+        "version": "26.2.0"
       },
       {
         "hashes": [
@@ -86,18 +212,46 @@
       },
       {
         "hashes": [
+          "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"
+        ],
+        "name": "six",
+        "version": "1.17.0"
+      },
+      {
+        "hashes": [
+          "sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548"
+        ],
+        "name": "typing_extensions",
+        "version": "4.15.0"
+      },
+      {
+        "hashes": [
+          "sha256:eb1a66c3ef5847adf7a834f1be0800581b683b5608e74f86ecbcef8ab91bb85d"
+        ],
+        "name": "tzlocal",
+        "version": "5.3.1"
+      },
+      {
+        "hashes": [
           "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
         ],
         "name": "urllib3",
         "version": "2.7.0"
+      },
+      {
+        "hashes": [
+          "sha256:e51b2cf5ec89a8b8470177641ed62a3ba22d74e1e898e06ad53aa77972487208"
+        ],
+        "name": "yarl",
+        "version": "1.24.2"
       }
     ]
   },
-  "description": "Searches NapiProjekt for Polish subtitles using hash lookup and catalog scraping with optional author filters. Uses cloudscraper with optional FlareSolverr fallback for catalog Cloudflare challenges.",
+  "description": "Searches NapiProjekt for Polish subtitles using hash lookup and catalog scraping with optional author filters. Uses ai-cloudscraper with optional FlareSolverr fallback for catalog Cloudflare challenges.",
   "entry_class": "NapiProjektProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "04854e257e277397e035ca59f4521814269fc06cdb9bd8120fc544fdf5019f8d"
+    "provider.py": "75f5784ef8f76d606a91d7fb2129244c2a20ea2a3cefc0e79d45f4014e5533af"
   },
   "languages": [
     "pol"
@@ -119,5 +273,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.0"
+  "version": "0.1.1"
 }
