@@ -29,7 +29,7 @@
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
-- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, `soustitreseu`, `subclub`, and `subssabbz`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
+- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, and `subsunacs`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
 - Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead for Provider Hub migration on 2026-05-31 and re-confirmed on 2026-06-01. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof unless a verified upstream origin returns.
 - Existing provider worktrees:
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
@@ -1389,9 +1389,26 @@
   - Current public detail pages expose direct `/getentry.php?id=<id>&ei=<index>` subtitle files.
   - `python3 -B -m sdk smoke-test --provider subsunacs --language eng --video-fixture tests/fixtures/subsunacs_video_dune.json --expect-min-results 1`: `subsunacs ok`.
   - `python3 -B -m sdk smoke-test --provider subsunacs --language bul --video-fixture tests/fixtures/subsunacs_video_game_of_thrones_s01e01.json --expect-min-results 1`: `subsunacs ok`.
-- Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subsunacs` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+- Fresh local evidence on 2026-06-01:
+  - Recreated the isolated provider worktree at `/tmp/bazarr_catalog_provider_worktrees/subsunacs` from branch `catalog-subsunacs`.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_subsunacs.py'`: `9` tests passed.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over SubsUnacs provider, tests, README, catalog, and notes found no matches.
+  - `python3 -B -m sdk smoke-test --provider subsunacs --language eng --video-fixture tests/fixtures/subsunacs_video_dune.json --expect-min-results 1`: `subsunacs ok`.
+  - `python3 -B -m sdk smoke-test --provider subsunacs --language bul --video-fixture tests/fixtures/subsunacs_video_game_of_thrones_s01e01.json --expect-min-results 1`: `subsunacs ok`.
+- Provider Hub test-server evidence on 2026-06-01:
+  - `catalog-subsunacs` was pushed to origin and now tracks `origin/catalog-subsunacs` at `6394dffff34e63c0dd1d0ec752321926ba1873a2`.
+  - Official catalog source dev ref was set to `catalog-subsunacs`; refresh returned `13` entries and resolved SubsUnacs `0.1.0` at commit `6394dffff34e63c0dd1d0ec752321926ba1873a2`.
+  - `bazarr-ui-test` restarted healthy on image `ui-test-20260531-provider-hub-replacements-f245ae096`, revision `f245ae096`.
+  - Provider state after restart: active version `0.1.0`, `pending_restart=false`, `trusted=true`, `enabled=true`, `last_error=None`, manifest commit `6394dffff34e63c0dd1d0ec752321926ba1873a2`.
+  - Runtime replacement policy contains `55` trusted migrated built-in ids, includes `subsunacs`, and excludes `hosszupuska` and `podnapisi`.
+  - Compat search `GET /api/v1/subtitles?imdb_id=tt0944947&query=Game.of.Thrones.S01E01.HDTV.XviD-FEVER.avi&type=episode&season_number=1&episode_number=1&languages=bg&per_page=100` returned HTTP `200`, `30` total results, and `1` SubsUnacs result.
+  - Matching SubsUnacs result: `file_id=135`, release `game.of.thrones.s01e01.hdtv.xvid-fever.srt`, subtitle id `subsunacs:subsunacs-36cfef1da3529b21`.
+  - Compat download `POST /api/v1/download` for `file_id=135` returned HTTP `200`, a stream link, `remaining=999`, and `remaining_downloads=999`.
+  - Compat stream returned HTTP `200` and `51676` bytes. The payload starts with SRT cue `1` and timestamp `00:01:55,418 --> 00:01:58,420`.
+- Status:
+  - SubsUnacs is locally validated and proved through Provider Hub compat search, download, and stream on `bazarr-ui-test` for the Bulgarian episode path.
 
 ### `subsynchro`
 
