@@ -312,24 +312,26 @@
 - Branch: `catalog-legendasdivx`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/legendasdivx`
 - Current checkpoint: `02bbb60 Add LegendasDivx provider`
+- Pull request: [#59](https://github.com/LavX/bazarr-provider-catalog/pull/59), open draft, head `catalog-legendasdivx`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
-- Local evidence on 2026-05-31:
+- Local evidence on 2026-06-01:
   - Legacy inspection confirmed movie and episode support, Portugal Portuguese and Brazilian Portuguese languages, required `username` and `password`, legacy `skip_wrong_fps`, login through `/forum/ucp.php?mode=login`, `modules.php` search flow, series IMDb episode search, daily search limit counter, uploader/hits/frame-rate parsing, and direct ZIP/RAR download extraction.
   - Bazarr UI/config inspection confirmed settings `username`, `password`, and `skip_wrong_fps`, with `username` and `password` classified as secrets.
   - Red TDD gate `python3 -B -m unittest discover -s tests -p test_legendasdivx.py`: failed because `providers/legendasdivx/provider.py` did not exist.
   - `python3 -B -m unittest discover -s tests -p test_legendasdivx.py`: `6` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/legendasdivx/provider.py`: passed.
   - `python3 -B -m unittest discover -s tests`: `334` tests passed, `6` skipped.
-  - `git diff --check` and `git diff --cached --check`: clean.
+  - `git diff --check origin/main...HEAD`: clean.
   - Manifest language count matches the Bazarr LegendasDivx UI language registry: `2` entries.
-  - Attribution and em-dash scan over touched LegendasDivx files found no matches.
-- Live evidence on 2026-05-31:
-  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 https://www.legendasdivx.pt/`: returned HTTP `200` from Cloudflare with LegendasDivx session cookies.
-  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 'https://www.legendasdivx.pt/forum/ucp.php?mode=login'`: returned HTTP `200`.
-  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 'https://www.legendasdivx.pt/modules.php?name=Downloads&file=jz&d_op=search&op=_jz00&query=tt1160419&temporada=&episodio=&imdb='`: returned HTTP `302` to `/modules.php?name=Your_Account` without credentials.
+  - Attribution and AI-credit scan over touched LegendasDivx files found no matches.
+- Live evidence on 2026-06-01:
+  - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://www.legendasdivx.pt/`: returned HTTP `200`.
+  - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' 'https://www.legendasdivx.pt/forum/ucp.php?mode=login'`: returned HTTP `200`.
+  - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' 'https://www.legendasdivx.pt/modules.php?name=Downloads&file=jz&d_op=search&op=_jz00&query=tt1160419&temporada=&episodio=&imdb='`: returned HTTP `302` to `modules.php?name=Your_Account`.
   - Real search and download require valid LegendasDivx credentials.
 - Remaining gates:
   - Run SDK live smoke search and download with valid LegendasDivx credentials.
