@@ -50,7 +50,7 @@
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
   - `animekalesi`: branch `catalog-animekalesi`, worktree `/tmp/bazarr_catalog_provider_worktrees/animekalesi`, current head `b5db085`
   - `animesubinfo`: branch `catalog-animesubinfo`, worktree `/tmp/bazarr_catalog_provider_worktrees/animesubinfo`, current head `d45ba06`
-  - `animetosho`: branch `catalog-animetosho`, worktree `/tmp/bazarr_catalog_provider_worktrees/animetosho`, current head `b515efb`
+  - `animetosho`: branch `catalog-animetosho`, worktree `/tmp/bazarr_catalog_provider_worktrees/animetosho`, current head `b0b6982`
   - `assrt`: branch `catalog-assrt`, worktree `/tmp/bazarr_catalog_provider_worktrees/assrt`, current head `c4e2440`
   - `avistaz`: branch `catalog-avistaz`, worktree `/tmp/bazarr_catalog_provider_worktrees/avistaz`, current head `1b339e2`
   - `betaseries`: branch `catalog-betaseries`, worktree `/tmp/bazarr_catalog_provider_worktrees/betaseries`, current head `461ab52`
@@ -1237,8 +1237,8 @@
 
 - Branch: `catalog-animetosho`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/animetosho`
-- Current checkpoint: `00a7614 Clarify AnimeTosho batch filtering`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/24` opened on 2026-06-01, head `catalog-animetosho`, base `main`, merge state `CLEAN`.
+- Current checkpoint: `b0b6982 Fix AnimeTosho subtitle flag filtering`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/24` opened on 2026-06-01, head `catalog-animetosho`, base `main`, current head `b0b6982`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1302,6 +1302,17 @@
   - `python3 -B -m unittest discover -s tests`: `456` tests passed with `6` skipped.
   - `git diff --check --cached` was clean, and the AnimeTosho PR diff scan found no attribution or prohibited punctuation matches.
   - PR `#24` head is `00a7614f97dcc346f28c31025805f7a7eb496d4a`, merge state `CLEAN`, and all review threads are outdated.
+- Latest review-fix evidence on 2026-06-02:
+  - `b0b6982` preserves AnimeTosho Spanish country variants as `ES` or `MX`, filters requested `forced` and `hi` flags when Bazarr supplies them, bumps AnimeTosho to `0.1.3`, and rebuilds `catalog.json`.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_animetosho.py'`: failed on missing Spanish country variants, forced-track filtering, and HI-track filtering.
+  - `python3 -B -m unittest discover -s tests -p 'test_animetosho.py'`: `20` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m py_compile providers/animetosho/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: returned Python `3.12`, `3.13`, and `3.14`.
+  - `python3 -B -m unittest discover -s tests`: `459` tests passed with `6` skipped.
+  - `git diff --check` and `git diff --cached --check` were clean, and the AnimeTosho diff scan found no attribution or prohibited punctuation matches.
+  - PR `#24` head is `b0b6982fa40fa43d7cca2749e70571af09b1d250`, merge state `CLEAN`, non-draft, and all review threads are outdated.
 - Remaining gates: none for the current AnimeTosho migration proof.
 
 ### `napiprojekt`
