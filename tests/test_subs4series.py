@@ -37,23 +37,26 @@ def _zip_body():
 
 
 class FakeScraperResponse:
-    def __init__(self, status_code, headers, content):
+    def __init__(self, status_code, headers, content, url="https://www.subs4series.com/search_report.php"):
         self.status_code = status_code
         self.headers = headers
         self.content = content
+        self.text = content.decode("utf-8", "ignore")
+        self.url = url
 
     def raise_for_status(self):
-        raise AssertionError("Cloudflare response should be handled before raise_for_status")
+        if self.status_code >= 400:
+            raise AssertionError("Cloudflare response should be handled before raise_for_status")
 
 
 class FakeScraper:
     def __init__(self, response):
-        self.response = response
+        self.responses = response if isinstance(response, list) else [response]
         self.calls = []
 
     def get(self, url, headers=None, timeout=None):
         self.calls.append((url, headers or {}, timeout))
-        return self.response
+        return self.responses.pop(0)
 
 
 class FakeUrlopenResponse:
@@ -288,6 +291,53 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         self.assertEqual(create_scraper.call_count, 2)
         self.assertEqual(create_scraper.call_args_list[0].kwargs["enable_cookie_persistence"], False)
         self.assertNotIn("enable_cookie_persistence", create_scraper.call_args_list[1].kwargs)
+
+    def test_http_get_solves_anubis_inline_before_retrying_original_url(self):
+        provider = self.mod.Subs4SeriesProvider()
+        challenge_response = FakeScraperResponse(
+            401,
+            {},
+            b'<script id="anubis_challenge">{}</script>',
+            url="https://www.subs4series.com/.within.website/?redir=/search_report.php",
+        )
+        scraper = FakeScraper(
+            [
+                challenge_response,
+                FakeScraperResponse(200, {}, b"<option>Game of Thrones</option>"),
+            ]
+        )
+        solved_calls = []
+
+        def fake_solve(active_scraper, challenge_url, original_url, timeout):
+            solved_calls.append((active_scraper, challenge_url, original_url, timeout))
+            return {"techaro.lol-anubis-auth": "ok"}
+
+        with patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), patch.object(
+            self.mod,
+            "solve_anubis_challenge",
+            side_effect=fake_solve,
+        ):
+            body = provider._http_get("https://www.subs4series.com/search_report.php?search=Game+of+Thrones&searchType=1")
+
+        self.assertIn(b"Game of Thrones", body)
+        self.assertEqual(len(scraper.calls), 2)
+        self.assertEqual(
+            scraper.calls[0][0],
+            "https://www.subs4series.com/search_report.php?search=Game+of+Thrones&searchType=1",
+        )
+        self.assertEqual(
+            scraper.calls[1][0],
+            "https://www.subs4series.com/search_report.php?search=Game+of+Thrones&searchType=1",
+        )
+        self.assertIs(solved_calls[0][0], scraper)
+        self.assertEqual(
+            solved_calls[0][1],
+            "https://www.subs4series.com/.within.website/?redir=/search_report.php",
+        )
+        self.assertEqual(
+            solved_calls[0][2],
+            "https://www.subs4series.com/search_report.php?search=Game+of+Thrones&searchType=1",
+        )
 
     def test_http_get_uses_flaresolverr_after_cloudflare_block(self):
         provider = self.mod.Subs4SeriesProvider()
