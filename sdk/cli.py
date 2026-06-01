@@ -35,11 +35,12 @@ SUPPORTED_CONFIG_TYPES = {"string", "boolean", "number", "integer"}
 DISALLOWED_SCHEMA_KEYS = {"$ref", "oneOf", "anyOf", "allOf", "not", "items"}
 SUPPORTED_PYTHON_REQUIRES = ">=3.12,<3.15"
 SUPPORTED_PYTHON_VERSIONS = ("3.12", "3.13", "3.14")
-SUPPORTED_PYTHON_ABI_TAGS = ("cp312", "cp313", "cp314")
+SUPPORTED_PYTHON_ABI_TAGS = ("cp312", "cp313", "cp314", "abi3")
 SUPPORTED_WHEEL_PLATFORM_TAGS = ("manylinux2014_x86_64", "manylinux2014_aarch64")
 WHEEL_COVERAGE_POLICY = (
     "Use a py3-none-any wheel when available. ABI-specific wheels must include "
-    "hashes for cp312, cp313, and cp314 on every Bazarr+ platform you support."
+    "hashes for cp312, cp313, cp314, or a compatible stable-ABI wheel such as "
+    "cp311-abi3, on every Bazarr+ platform you support."
 )
 
 

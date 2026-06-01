@@ -145,7 +145,8 @@ class SdkCliTests(unittest.TestCase):
 
         self.assertEqual(matrix["python_requires"], ">=3.12,<3.15")
         self.assertEqual(matrix["python_versions"], ["3.12", "3.13", "3.14"])
-        self.assertEqual(matrix["abi_tags"], ["cp312", "cp313", "cp314"])
+        self.assertEqual(matrix["abi_tags"], ["cp312", "cp313", "cp314", "abi3"])
+        self.assertIn("cp311-abi3", matrix["wheel_coverage"])
         self.assertIn("py3-none-any", matrix["wheel_coverage"])
         self.assertNotIn("3.11", result.stdout)
 

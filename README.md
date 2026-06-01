@@ -99,7 +99,7 @@ python3 -B -m unittest discover -s tests
 
 Provider Hub workers target the Bazarr+ Python runtime range `>=3.12,<3.15`: Python `3.12`, `3.13`, and `3.14`. Python `3.11` is not the compatibility floor for this catalog.
 
-Pure wheels such as `py3-none-any` can be covered by one hash. ABI-specific wheels need hashes for every supported ABI tag, currently `cp312`, `cp313`, and `cp314`, on every Bazarr+ platform the provider is expected to install on. Check the current policy with:
+Pure wheels such as `py3-none-any` can be covered by one hash. ABI-specific wheels need hashes for every supported ABI tag, currently `cp312`, `cp313`, and `cp314`, or a compatible stable-ABI wheel such as `cp311-abi3`, on every Bazarr+ platform the provider is expected to install on. Check the current policy with:
 
 ```bash
 python3 -B -m sdk runtime-matrix

@@ -125,7 +125,7 @@ Rules:
 - Pin exact versions.
 - Include SHA256 wheel hashes.
 - Include every direct and transitive dependency needed under `--require-hashes`.
-- Use wheels, not sdists. Pure `py3-none-any` wheels can share one hash, while ABI-specific wheels need coverage for `cp312`, `cp313`, and `cp314` on every Bazarr+ platform the provider should install on.
+- Use wheels, not sdists. Pure `py3-none-any` wheels can share one hash, while ABI-specific wheels need coverage for `cp312`, `cp313`, and `cp314`, or a compatible stable-ABI wheel such as `cp311-abi3`, on every Bazarr+ platform the provider should install on.
 - Run `python3 -B -m sdk validate` after every manifest change.
 - Bump the provider version for every runtime behavior change.
 

@@ -114,7 +114,7 @@ python3 -m pip download humanfriendly==10.0 --only-binary=:all: --no-deps -d dis
 python3 -m pip hash dist/humanfriendly-10.0-py2.py3-none-any.whl
 ```
 
-List every direct and transitive dependency that pip needs under `--require-hashes`. A pure `py3-none-any` wheel usually needs one hash. A compiled or ABI-specific wheel needs hashes for all supported runtime tags, currently `cp312`, `cp313`, and `cp314`, and for every platform tag Bazarr+ installs on.
+List every direct and transitive dependency that pip needs under `--require-hashes`. A pure `py3-none-any` wheel usually needs one hash. A compiled or ABI-specific wheel needs hashes for all supported runtime tags, currently `cp312`, `cp313`, and `cp314`, or a compatible stable-ABI wheel such as `cp311-abi3`. ABI-specific and stable-ABI wheels still need hashes for every platform tag Bazarr+ installs on.
 
 For ABI-specific packages, repeat wheel collection for each supported Python version and platform. Example shape:
 
