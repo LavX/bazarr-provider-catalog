@@ -320,7 +320,7 @@ def extract_download(body, payload=None):
         with zipfile.ZipFile(stream) as archive:
             selected = select_subtitle_file(archive.namelist(), payload)
             return _normalize_line_endings(archive.read(selected)), _subtitle_extension(selected) or "srt"
-    subtitle_format = _format_from_filename(payload.get("filename"))
+    subtitle_format = _subtitle_format_from_body(body) or _format_from_filename(payload.get("filename"))
     if not _is_supported_subtitle_body(body, subtitle_format):
         raise ValueError("animekalesi direct download did not return a supported subtitle")
     return _normalize_line_endings(body), subtitle_format
@@ -373,17 +373,25 @@ def _episode_marker_status(basename, season, episode):
 
 
 def _is_supported_subtitle_body(body, subtitle_format):
+    return _subtitle_format_from_body(body) == subtitle_format
+
+
+def _subtitle_format_from_body(body):
     text = _decode_body(body).lstrip("\ufeff").strip()
     if not text:
-        return False
+        return None
     lowered = text[:4096].lower()
     if lowered.startswith("<!doctype") or lowered.startswith("<html") or "<body" in lowered:
-        return False
-    if subtitle_format == "vtt":
-        return text.startswith("WEBVTT") or "-->" in text
-    if subtitle_format in {"ass", "ssa"}:
-        return "[script info]" in lowered or "[events]" in lowered or "dialogue:" in lowered
-    return bool(_SRT_CUE_RE.search(text))
+        return None
+    if text.startswith("WEBVTT"):
+        return "vtt"
+    if "[script info]" in lowered or "[events]" in lowered or "dialogue:" in lowered:
+        return "ass"
+    if _SRT_CUE_RE.search(text):
+        return "srt"
+    if "-->" in text:
+        return "vtt"
+    return None
 
 
 def _links_inside(body, tag, element_id):

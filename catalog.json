@@ -4,7 +4,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "230f10ffa6a5df7eebf0c109645e5802cf1fb853f0608906f8730e1364307f0d",
+        "bundle_sha256": "3907a21ae7c419be51fc9daf0ede66a4d05ea18fd0267be7350b1f251eff43b1",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -26,7 +26,7 @@
         "entry_class": "AnimeKalesiProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "78ab13d4eedfad59785cc88cbdae21d3b2e6759b7a3020df7bbd1e602c39be89"
+          "provider.py": "7a87ca21d37580450f05be85490036185cc9ab115771940fbadfcf1071af9a06"
         },
         "languages": [
           "tur"
@@ -47,7 +47,7 @@
         "supported_media": [
           "episode"
         ],
-        "version": "0.1.1"
+        "version": "0.1.2"
       }
     },
     {

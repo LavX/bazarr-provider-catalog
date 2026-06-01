@@ -255,6 +255,27 @@ class AnimeKalesiProviderDownloadTests(unittest.TestCase):
                 {},
             )
 
+    def test_download_detects_ass_direct_download_body(self):
+        provider = self.mod.AnimeKalesiProvider()
+        provider._http_get = lambda url, timeout=15, referer=None: (
+            b"\xef\xbb\xbf[Script Info]\r\nTitle: ok\r\n[Events]\r\nDialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,Merhaba\r\n"
+        )
+
+        result = provider.download(
+            {
+                "provider": "animekalesi",
+                "schema": 1,
+                "download_url": "https://www.animekalesi.com/sa-8993-test-token",
+                "filename": "Jujutsu.Kaisen.2.S01E01.srt",
+            },
+            {"alpha3": "tur", "alpha2": "tr"},
+            {},
+        )
+
+        body = base64.b64decode(result["content_b64"])
+        self.assertTrue(body.startswith(b"\xef\xbb\xbf[Script Info]\n"))
+        self.assertEqual(result["format"], "ass")
+
 
 if __name__ == "__main__":
     unittest.main()
