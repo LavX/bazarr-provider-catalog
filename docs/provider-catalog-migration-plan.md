@@ -374,23 +374,25 @@
 - Branch: `catalog-napisy24`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/napisy24`
 - Current checkpoint: `34a9720 Add Napisy24 provider`
+- Pull request: [#61](https://github.com/LavX/bazarr-provider-catalog/pull/61), open draft, head `catalog-napisy24`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
-- Local evidence on 2026-05-31:
+- Local evidence on 2026-06-01:
   - Legacy inspection confirmed movie and episode support, Polish only, optional `username` and `password`, default API account fallback when either credential is missing, `napisy24` hash requirement, form POST API lookup, response statuses `OK-0`, `OK-1`, `OK-2`, `OK-3`, login error handling, embedded ZIP payload handling, and no separate upstream download step.
   - Bazarr UI/config inspection confirmed settings `username` and `password`, with both classified as secrets.
   - Red TDD gate `python3 -B -m unittest discover -s tests -p test_napisy24.py`: failed because `providers/napisy24/provider.py` did not exist.
   - `python3 -B -m unittest discover -s tests -p test_napisy24.py`: `6` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/napisy24/provider.py`: passed.
   - `python3 -B -m unittest discover -s tests`: `334` tests passed, `6` skipped.
-  - `git diff --check` and `git diff --cached --check`: clean.
+  - `git diff --check origin/main...HEAD`: clean.
   - Manifest language count matches the Bazarr Napisy24 UI language registry: `1` entry.
-  - Attribution and em-dash scan over touched Napisy24 files found no matches.
-- Live evidence on 2026-05-31:
-  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 http://napisy24.pl/`: returned HTTP `301` to `https://napisy24.pl/`.
-  - `curl -sS -i --max-time 20 -A BazarrProviderHub/1.0 -d 'postAction=CheckSub&ua=subliminal&ap=lanimilbus&fs=1&fh=0000000000000000&fn=probe.mkv&n24pref=1' http://napisy24.pl/run/CheckSubAgent.php`: returned HTTP `200` with `OK-0||` for a dummy hash.
+  - Attribution and AI-credit scan over touched Napisy24 files found no matches.
+- Live evidence on 2026-06-01:
+  - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' http://napisy24.pl/`: returned HTTP `301` to `https://napisy24.pl/`.
+  - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' -d 'postAction=CheckSub&ua=subliminal&ap=lanimilbus&fs=1&fh=0000000000000000&fn=probe.mkv&n24pref=1' http://napisy24.pl/run/CheckSubAgent.php`: returned HTTP `200` with `OK-0||` for a dummy hash.
 - Remaining gates:
   - Run SDK live smoke search and download with a real video fixture that has a valid Napisy24/OpenSubtitles hash.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `napisy24` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
