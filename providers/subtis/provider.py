@@ -56,7 +56,14 @@ class SubtisHttpClient:
 
 def _language_payload(language):
     payload = dict(language or {}) if isinstance(language, dict) else {"alpha3": str(language)}
-    payload.setdefault("alpha3", payload.get("alpha2") or "spa")
+    alpha3 = str(payload.get("alpha3") or "").lower()
+    alpha2 = str(payload.get("alpha2") or "").lower()
+    if not alpha3:
+        alpha3 = "spa" if alpha2 == "es" else alpha2 or "spa"
+    if alpha3 == "es":
+        alpha3 = "spa"
+    payload["alpha3"] = alpha3
+    payload.setdefault("alpha2", "es" if alpha3 == "spa" else alpha2)
     payload.setdefault("hi", False)
     payload.setdefault("forced", False)
     return payload
@@ -232,7 +239,7 @@ class SubtisProvider:
         for method, url, synced in cascade:
             try:
                 payload = self.http_client.get_json(url)
-            except (OSError, ValueError):
+            except SubtisNotFound:
                 payload = None
             parsed = _parse_api_payload(payload)
             if not parsed:
@@ -240,6 +247,8 @@ class SubtisProvider:
             download_url, title_name = parsed
             release_info = title_name if synced else f"{title_name} [fuzzy match]"
             fmt = _format_from_url(download_url)
+            score = 100 if method == "hash" else 60 if synced else 40
+            score_without_hash = 60 if method == "hash" else score
             return [
                 {
                     "provider": PROVIDER_ID,
@@ -248,8 +257,8 @@ class SubtisProvider:
                     "release_info": release_info,
                     "filename": os.path.basename(parse.urlparse(download_url).path) or f"subtis.{fmt}",
                     "matches": _matches(video, title_name, method),
-                    "score": 100 if method == "hash" else 60 if synced else 40,
-                    "score_without_hash": 60 if method == "hash" else 0,
+                    "score": score,
+                    "score_without_hash": score_without_hash,
                     "score_out_of": 100,
                     "hash_verifiable": method == "hash",
                     "hearing_impaired_verifiable": False,

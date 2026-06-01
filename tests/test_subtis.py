@@ -97,6 +97,8 @@ class SubtisProviderTests(unittest.TestCase):
         self.assertEqual(results[0]["release_info"], "Man of Steel 2013 720p BluRay x264-FELONY [fuzzy match]")
         self.assertIn("title", results[0]["matches"])
         self.assertIn("year", results[0]["matches"])
+        self.assertEqual(results[0]["score"], 40)
+        self.assertEqual(results[0]["score_without_hash"], 40)
 
     def test_search_uses_size_between_hash_and_filename(self):
         video = self.load_video()
@@ -108,6 +110,18 @@ class SubtisProviderTests(unittest.TestCase):
 
         self.assertEqual(provider.http_client.json_gets, [bytes_url])
         self.assertEqual(results[0]["provider_payload"]["method"], "bytes")
+        self.assertEqual(results[0]["score"], 60)
+        self.assertEqual(results[0]["score_without_hash"], 60)
+
+    def test_search_normalizes_alpha2_only_spanish_to_spa(self):
+        video = self.load_video()
+        hash_url = "https://api.subt.is/v1/subtitle/find/file/hash/5b8f8f4e41ccb21e"
+        provider = self.make_provider({hash_url: self.load_response()})
+
+        results = provider.search(video, [{"alpha2": "es"}], {})
+
+        self.assertEqual(results[0]["language"]["alpha3"], "spa")
+        self.assertEqual(results[0]["language"]["alpha2"], "es")
 
     def test_search_returns_empty_for_episode_or_non_spanish_language(self):
         provider = self.make_provider()
@@ -131,13 +145,13 @@ class SubtisProviderTests(unittest.TestCase):
         )
         self.assertEqual(provider.http_client.json_gets, [])
 
-    def test_search_continues_cascade_after_api_error(self):
+    def test_search_continues_cascade_after_not_found(self):
         video = self.load_video()
         hash_url = "https://api.subt.is/v1/subtitle/find/file/hash/5b8f8f4e41ccb21e"
         bytes_url = "https://api.subt.is/v1/subtitle/find/file/bytes/7033732714"
         provider = self.make_provider(
             {
-                hash_url: ValueError("invalid json"),
+                hash_url: self.module.SubtisNotFound("missing"),
                 bytes_url: self.load_response(),
             }
         )
@@ -147,6 +161,14 @@ class SubtisProviderTests(unittest.TestCase):
         self.assertEqual(provider.http_client.json_gets, [hash_url, bytes_url])
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["provider_payload"]["method"], "bytes")
+
+    def test_search_surfaces_transient_authoritative_lookup_failures(self):
+        video = self.load_video()
+        hash_url = "https://api.subt.is/v1/subtitle/find/file/hash/5b8f8f4e41ccb21e"
+        provider = self.make_provider({hash_url: ValueError("invalid json")})
+
+        with self.assertRaisesRegex(ValueError, "invalid json"):
+            provider.search(video, [{"alpha3": "spa"}], {})
 
     def test_search_ignores_payload_without_subtitle_link(self):
         video = self.load_video()
