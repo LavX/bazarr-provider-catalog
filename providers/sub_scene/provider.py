@@ -465,7 +465,7 @@ def _flaresolverr_get(url, timeout=30, config=None, state=None):
     try:
         with urllib.request.urlopen(
             request,
-            timeout=max(timeout, timeout_ms / 1000),
+            timeout=min(timeout, timeout_ms / 1000),
         ) as response:
             response_body = response.read()
     except Exception as exc:

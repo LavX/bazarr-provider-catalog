@@ -676,6 +676,7 @@ class TestCloudflareHttp(unittest.TestCase):
         payload = json.loads(request.data.decode("utf-8"))
         self.assertEqual(payload["cmd"], "request.get")
         self.assertEqual(payload["maxTimeout"], 10000)
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], 10)
         self.assertEqual(state["flaresolverr_cookies"]["cf_clearance"], "token")
         self.assertEqual(state["flaresolverr_user_agent"], "Mozilla/5.0 solved")
 
