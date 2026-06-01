@@ -524,22 +524,23 @@
 - Branch: `catalog-xsubs`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/xsubs`
 - Current checkpoint: `5a17922 Mark XSubs upstream dead`
+- Pull request: [#66](https://github.com/LavX/bazarr-provider-catalog/pull/66), open draft notes-only PR, head `catalog-xsubs`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
-- Local evidence on 2026-05-31:
+- Local evidence on 2026-06-01:
   - Legacy inspection confirmed episode-only support, optional `username` and `password`, CSRF login, logout, Greek-only language support, XML series index, series id lookup with article and year fallbacks, season id lookup, episode range expansion, unreleased subtitle filtering, direct subtitle downloads, and Windows-1253 subtitle encoding.
   - Bazarr UI/config inspection confirmed settings `username` and `password`, with both classified as secrets.
   - No active provider implementation, manifest, test fixtures, README entry, or catalog entry was promoted because the upstream no longer serves the legacy service.
   - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
   - `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
   - `rg -n "xsubs|XSubs" README.md catalog.json providers tests -S`: no matches.
-- Live evidence on 2026-05-31:
-  - Sandbox DNS could not resolve `xsubs.tv`, but escalated network probes reached the host.
-  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 http://xsubs.tv/`: returned HTTP `200`.
-  - `http://xsubs.tv/series/all.xml` returned HTTP `200`, but the body was an unrelated Korean-language link page instead of the legacy XML series index.
-  - `https://xsubs.tv/series/all.xml`, `http://www.xsubs.tv/series/all.xml`, and `https://www.xsubs.tv/series/all.xml` returned the same unrelated page.
-  - `http://xsubs.tv/xforum/account/signin/` returned the same unrelated page instead of the legacy login form.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Attribution and AI-credit scan over `docs/provider-notes/xsubs.md`: no matches.
+- Live evidence on 2026-06-01:
+  - `curl -sS -D - --max-time 20 -A 'BazarrProviderHub/1.0' http://xsubs.tv/series/all.xml`: returned HTTP `200` with unrelated Korean link-page HTML instead of the legacy XML series index.
+  - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' http://xsubs.tv/xforum/account/signin/`: returned HTTP `200` from the same unrelated host.
 - Remaining gates:
   - Treat XSubs as blocked/dead unless the original subtitle service returns or a verified replacement origin is found.
   - Do not add `xsubs` to the core replacement policy while the origin is dead.
