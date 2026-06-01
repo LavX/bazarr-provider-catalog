@@ -30,7 +30,8 @@ PROVIDER_ID = "yavkanet"
 BASE_URL = "https://yavka.net"
 HOME_URL = f"{BASE_URL}/"
 HTTP_TIMEOUT_SECONDS = 15
-DEFAULT_FLARESOLVERR_TIMEOUT_MS = 60000
+DEFAULT_FLARESOLVERR_TIMEOUT_MS = 25000
+MAX_FLARESOLVERR_TIMEOUT_MS = 25000
 SUPPORTED_LANGUAGES = {
     "bul": "bg",
     "eng": "en",
@@ -494,7 +495,7 @@ def _flaresolverr_timeout_ms(config):
         timeout = int((config or {}).get("flaresolverr_timeout_ms") or DEFAULT_FLARESOLVERR_TIMEOUT_MS)
     except (TypeError, ValueError):
         return DEFAULT_FLARESOLVERR_TIMEOUT_MS
-    return max(5000, min(timeout, 180000))
+    return max(5000, min(timeout, MAX_FLARESOLVERR_TIMEOUT_MS))
 
 
 def _is_cloudflare_exception(exc):
