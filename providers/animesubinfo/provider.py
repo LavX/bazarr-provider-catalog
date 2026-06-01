@@ -29,6 +29,9 @@ USER_AGENT = os.environ.get("SZ_USER_AGENT", "Sub-Zero/2")
 _NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
 _EPISODE_RE = re.compile(r"\b(?:ep|episode)\s*0*(\d{1,4})\b", re.I)
 _SEASON_RE = re.compile(r"\b(?:season|s)\s*0*(\d{1,2})\b|\b(\d{1,2})(?:nd|rd|th)\s+season\b", re.I)
+_SEASON_EPISODE_FILE_RE = re.compile(r"(?<![a-z0-9])s\d{1,2}\s*e0*(\d{1,3})(?!\d)", re.I)
+_EPISODE_FILE_RE = re.compile(r"\b(?:ep|episode)\s*0*(\d{1,4})\b", re.I)
+_EPISODE_X_FILE_RE = re.compile(r"(?<![a-z0-9])\d{1,2}x0*(\d{1,3})(?!\d)", re.I)
 _YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
 
 
@@ -105,7 +108,6 @@ def derive_matches(video, row):
         wanted_group = (video.get("release_group") or "").lower()
         if wanted_group and any(wanted_group == group.lower() for group in row.get("release_groups", [])):
             matches.append("release_group")
-        matches.append("episode")
     elif kind == "movie":
         wanted = _normalize(video.get("title"))
         if wanted and any(wanted in title or title in wanted for title in normalized_titles):
@@ -308,7 +310,8 @@ def extract_download(body, payload=None):
         with zipfile.ZipFile(stream) as archive:
             selected = select_subtitle_file(archive.namelist(), payload)
             return _normalize_line_endings(archive.read(selected)), _subtitle_extension(selected) or "srt"
-    return _normalize_line_endings(body or b""), _format_from_filename(payload.get("filename"))
+    subtitle_format = _subtitle_format_from_body(body) or _format_from_filename(payload.get("filename"))
+    return _normalize_line_endings(body or b""), subtitle_format
 
 
 def select_subtitle_file(names, payload):
@@ -320,17 +323,56 @@ def select_subtitle_file(names, payload):
     except (TypeError, ValueError):
         episode = None
 
+    if episode is not None:
+        explicit_matches = [name for name in candidates if episode in _explicit_episode_numbers(name)]
+        explicit_nonmatches = [
+            name
+            for name in candidates
+            if _explicit_episode_numbers(name) and episode not in _explicit_episode_numbers(name)
+        ]
+        generic_matches = [
+            name
+            for name in candidates
+            if not _explicit_episode_numbers(name) and _has_standalone_episode_number(name, episode)
+        ]
+        if explicit_matches:
+            candidates = explicit_matches
+        elif explicit_nonmatches and generic_matches:
+            candidates = generic_matches
+        elif explicit_nonmatches:
+            raise ValueError("animesubinfo archive contains no subtitle file for requested episode")
+
     def sort_key(name):
-        normalized = _normalize(os.path.basename(name))
         episode_rank = 1
-        if episode is not None and (
-            re.search(rf"\b(?:ep|episode)\s*0*{episode}\b", normalized)
-            or re.search(rf"(^|[^0-9])0*{episode}([^0-9]|$)", normalized)
-        ):
+        if episode is not None and _filename_episode_matches(name, episode):
             episode_rank = 0
         return (episode_rank, _extension_rank(name), len(name), name.lower())
 
     return sorted(candidates, key=sort_key)[0]
+
+
+def _explicit_episode_numbers(name):
+    basename = os.path.basename(name or "").lower()
+    numbers = []
+    for pattern in (_SEASON_EPISODE_FILE_RE, _EPISODE_FILE_RE, _EPISODE_X_FILE_RE):
+        for match in pattern.finditer(basename):
+            try:
+                numbers.append(int(match.group(1)))
+            except (TypeError, ValueError):
+                pass
+    return numbers
+
+
+def _has_standalone_episode_number(name, episode):
+    basename = os.path.basename(name or "").lower()
+    return re.search(rf"(?<![a-z0-9])0*{int(episode)}(?![a-z0-9])", basename) is not None
+
+
+def _filename_episode_matches(name, episode):
+    explicit_numbers = _explicit_episode_numbers(name)
+    if explicit_numbers:
+        return int(episode) in explicit_numbers
+    return _has_standalone_episode_number(name, episode)
 
 
 class _SubtitleTableParser(HTMLParser):
@@ -589,6 +631,23 @@ def _slug(value):
 
 def _format_from_filename(filename):
     return _subtitle_extension(filename or "") or "srt"
+
+
+def _subtitle_format_from_body(body):
+    normalized = _normalize_line_endings(body or b"").lstrip(b"\xef\xbb\xbf")
+    sample = normalized[:4096].lstrip().lower()
+    if not sample or sample.startswith(b"<!doctype") or sample.startswith(b"<html") or b"<html" in sample[:200]:
+        return None
+    if b"[v4 styles]" in sample:
+        return "ssa"
+    if b"[script info]" in sample or b"[events]" in sample or b"dialogue:" in sample:
+        return "ass"
+    if re.search(
+        rb"(?m)^\s*\d+\s*\n\s*\d{2}:\d{2}:\d{2}[,.]\d{3}\s+-->\s+\d{2}:\d{2}:\d{2}",
+        normalized,
+    ):
+        return "srt"
+    return None
 
 
 def _subtitle_extension(name):

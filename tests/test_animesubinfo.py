@@ -131,6 +131,32 @@ class AnimeSubInfoSearchTests(unittest.TestCase):
         self.assertEqual(first["provider_payload"]["search_query"], "Kimetsu no Yaiba ep01")
         self.assertEqual(first["provider_payload"]["title_type"], "org")
 
+    def test_derive_matches_does_not_assume_every_episode_row_matches(self):
+        video = {
+            "kind": "episode",
+            "series": "Kimetsu no Yaiba",
+            "season": 1,
+            "episode": 1,
+        }
+
+        wrong_episode = {
+            "title_org": "Kimetsu no Yaiba ep02",
+            "title_eng": "Demon Slayer ep02",
+            "title_alt": "",
+            "format_type": "Advanced SSA",
+            "release_groups": [],
+        }
+        season_only = {
+            "title_org": "Kimetsu no Yaiba season 1",
+            "title_eng": "Demon Slayer season 1",
+            "title_alt": "",
+            "format_type": "Advanced SSA",
+            "release_groups": [],
+        }
+
+        self.assertNotIn("episode", self.mod.derive_matches(video, wrong_episode))
+        self.assertNotIn("episode", self.mod.derive_matches(video, season_only))
+
     def test_search_returns_movie_candidate_with_year_match(self):
         provider = self.mod.AnimeSubInfoProvider()
         provider._http_get = lambda url, timeout=15, referer=None: AKIRA_HTML
@@ -255,6 +281,38 @@ class AnimeSubInfoDownloadTests(unittest.TestCase):
 
         self.assertEqual(base64.b64decode(result["content_b64"]), b"1\n00:00:01,000 --> 00:00:02,000\nOK\n")
         self.assertEqual(result["format"], "srt")
+
+    def test_download_detects_direct_ass_body_despite_synthetic_zip_name(self):
+        provider = self.mod.AnimeSubInfoProvider()
+        provider._http_post = lambda url, data, timeout=15, referer=None: (
+            b"\xef\xbb\xbf[Script Info]\r\nTitle: direct\r\n[Events]\r\nDialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,OK\r\n"
+        )
+
+        result = provider.download(
+            {
+                "provider": "animesubinfo",
+                "schema": 1,
+                "subtitle_id": "raw-ass",
+                "download_hash": "hash",
+                "download_url": "http://animesub.info/sciagnij.php",
+                "filename": "animesubinfo.direct.raw-ass.pl.zip",
+            },
+            {"alpha3": "pol", "alpha2": "pl"},
+            {},
+        )
+
+        self.assertEqual(result["format"], "ass")
+        self.assertTrue(base64.b64decode(result["content_b64"]).startswith(b"\xef\xbb\xbf[Script Info]\n"))
+
+    def test_archive_rejects_wrong_season_episode_marker(self):
+        with self.assertRaises(ValueError):
+            self.mod.select_subtitle_file(["Show.S01E02.srt"], {"episode": 1})
+
+        selected = self.mod.select_subtitle_file(
+            ["Show.S01E02.srt", "Show.S01E01.ass"],
+            {"episode": 1},
+        )
+        self.assertEqual(selected, "Show.S01E01.ass")
 
 
 if __name__ == "__main__":
