@@ -29,7 +29,7 @@
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
-- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subtitrarinoi`, `subtitriid`, and `supersubtitles`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
+- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subtitrarinoi`, `subtitriid`, `supersubtitles`, and `titrari`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
 - Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead for Provider Hub migration on 2026-05-31 and re-confirmed on 2026-06-01. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof unless a verified upstream origin returns.
 - Existing provider worktrees:
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
@@ -1603,9 +1603,31 @@
   - `python3 -B -m sdk smoke-test --provider titrari --language ron --video-fixture tests/fixtures/titrari_video_chernobyl_s01e01.json --expect-min-results 1 --skip-download`: `titrari ok`.
   - `python3 -B -m sdk smoke-test --provider titrari --language ron --video-fixture tests/fixtures/titrari_video_dune_2021.json --expect-min-results 1`: `titrari ok`.
   - `python3 -B -m sdk smoke-test --provider titrari --language ron --video-fixture tests/fixtures/titrari_video_chernobyl_s01e01.json --expect-min-results 1`: `titrari ok`.
-- Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `titrari` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+- Fresh local and live evidence on 2026-06-01:
+  - Branch `catalog-titrari` was pushed at `0781631`.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_titrari.py'`: `12` tests passed.
+  - `python3 -B -m py_compile providers/titrari/provider.py`: passed.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/titrari`, `tests/test_titrari.py`, `README.md`, `catalog.json`, and `docs/provider-notes/titrari.md` found no matches.
+  - `python3 -B -m sdk smoke-test --provider titrari --language ron --video-fixture tests/fixtures/titrari_video_dune_2021.json --expect-min-results 1`: `titrari ok`.
+  - `python3 -B -m sdk smoke-test --provider titrari --language ron --video-fixture tests/fixtures/titrari_video_chernobyl_s01e01.json --expect-min-results 1`: `titrari ok`.
+  - `python3 -B -m unittest discover -s tests`: `340` tests passed, `6` skipped.
+- Provider Hub test-server evidence on 2026-06-01:
+  - Official catalog source dev ref was set to `catalog-titrari`; refresh returned `13` entries and resolved Titrari `0.1.0` at commit `078163157f5e0613830dbba631565af735532d91`.
+  - `bazarr-ui-test` restarted healthy on image `ui-test-20260531-provider-hub-replacements-f245ae096`, revision `f245ae096`.
+  - Provider state after restart: active version `0.1.0`, `pending_restart=false`, `trusted=true`, `enabled=true`, `last_error=None`, manifest commit `078163157f5e0613830dbba631565af735532d91`.
+  - Runtime replacement policy contains `55` trusted migrated built-in ids, includes `titrari`, and excludes `hosszupuska` and `podnapisi`.
+  - Compat search `GET /api/v1/subtitles?imdb_id=tt1160419&query=Dune.2021.1080p.WEB.FLUX.mkv&type=movie&languages=ro&per_page=100` returned HTTP `200`, `50` total results, and `4` Titrari results.
+  - First Titrari movie result: `file_id=11`, release `Dune.2021.720p.BRRip.XviD.AC3-XVID Dune.2021.BRRip.XviD.MP3-XVID Dune 2021 1080p EUR BluRay AVC Atmos TrueHD 7 1-EVO Dune 2021 1080p Bluray Atmos TrueHD 7 1 x264-EVO Dune.2021.1080p.BluRay.REMUX.AVC.DTS-HD.MA.TrueHD.7.1.Atmos-FGT Dune.2021.1080p.BluRay.AVC.TrueHD.7.1.Atmos-CYBER Dune.2021.1080p.HMAX.WEB-DL.DDP5.1.Atmos.x264-EVO Dune.2021.1080p.HMAX.WEBRip.DDP5.1.Atmos.x264-CM Dune.2021.1080p.10bit.WEBRip.6CH.x265.HEVC-PSA Dune.2021.720p.HMAX.WEBRip.HQ.x265.10bit-GalaxyRG Dune.2021.1080p.HMAX.WEBRip.AAC5.1.10bits.x265-Rapta Dune.2021.1080p.HMAX.WEB-DL.DDP5.1.Atmos.HDR.H.265-FLUX`, subtitle id `titrari:titrari-124410-ron`.
+  - Compat download `POST /api/v1/download` for movie `file_id=11` returned HTTP `200`, a stream link, `remaining=999`, and `remaining_downloads=999`.
+  - Compat movie stream returned HTTP `200` and `93523` bytes. The payload starts with SRT cue `1` and timestamp `00:00:06,568 --> 00:00:11,398`.
+  - Compat search `GET /api/v1/subtitles?imdb_id=tt7366338&query=Chernobyl.S01E01.1080p.BluRay.mkv&type=episode&season_number=1&episode_number=1&languages=ro&per_page=100` returned HTTP `200`, `28` total results, and `2` Titrari results.
+  - First Titrari episode result: `file_id=54`, release `Sezonul 1 complet, 5 episoade , pentru 720p, 1080p, WEB-DL & BluRay`, subtitle id `titrari:titrari-116927-ron`.
+  - Compat download `POST /api/v1/download` for episode `file_id=54` returned HTTP `200`, a stream link, `remaining=999`, and `remaining_downloads=999`.
+  - Compat episode stream returned HTTP `200` and `34586` bytes. The payload starts with SRT cue `1` and timestamp `00:00:39,832 --> 00:00:41,667`.
+- Status:
+  - Titrari is locally validated and proved through Provider Hub compat search, download, and stream on `bazarr-ui-test` for Romanian movie and episode paths.
 
 ### `yavkanet`
 
