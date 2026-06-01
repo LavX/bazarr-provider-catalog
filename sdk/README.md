@@ -9,6 +9,7 @@ Authoring tooling for building subtitle provider plugins distributed through the
 - `python3 -B -m sdk validate`: validate `catalog.json`, manifests, file hashes, bundle hashes, and dependency locks.
 - `python3 -B -m sdk hash providers/<id>`: print the deterministic bundle SHA256 for a provider folder.
 - `python3 -B -m sdk build-catalog`: refresh provider file hashes and regenerate the embedded catalog.
+- `python3 -B -m sdk runtime-matrix`: print the supported Bazarr+ Provider Hub Python runtimes and wheel tags.
 - `python3 -B -m sdk smoke-test`: run a provider against the worker-shaped search/download contract.
 
 Useful smoke-test inputs:
@@ -90,6 +91,8 @@ Never include secret values in `release_info`, `display`, `provider_payload`, er
 
 Dependencies are installed into the provider venv, not into Bazarr. Each requirement must be exact and hash-locked.
 
+Provider Hub targets the Bazarr+ runtime range `>=3.12,<3.15`, currently Python `3.12`, `3.13`, and `3.14`. Python `3.11` is not the catalog floor. Use `python3 -B -m sdk runtime-matrix` for the current ABI tags before reviewing dependency hashes.
+
 ```json
 "dependencies": {
   "requirements": [
@@ -111,7 +114,16 @@ python3 -m pip download humanfriendly==10.0 --only-binary=:all: --no-deps -d dis
 python3 -m pip hash dist/humanfriendly-10.0-py2.py3-none-any.whl
 ```
 
-List every direct and transitive dependency that pip needs under `--require-hashes`.
+List every direct and transitive dependency that pip needs under `--require-hashes`. A pure `py3-none-any` wheel usually needs one hash. A compiled or ABI-specific wheel needs hashes for all supported runtime tags, currently `cp312`, `cp313`, and `cp314`, and for every platform tag Bazarr+ installs on.
+
+For ABI-specific packages, repeat wheel collection for each supported Python version and platform. Example shape:
+
+```bash
+python3 -m pip download cffi==1.17.1 --only-binary=:all: --no-deps \
+  --python-version 3.12 --implementation cp --abi cp312 \
+  --platform manylinux2014_x86_64 -d dist
+python3 -m pip hash dist/*.whl
+```
 
 ## Troubleshooting
 

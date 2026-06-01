@@ -117,13 +117,15 @@ Treat a `200` response with an empty stream as broken. The user sees no usable s
 
 Dependencies are installed into the provider venv, not into Bazarr itself.
 
+Provider Hub targets Bazarr+ Python `>=3.12,<3.15`, currently `3.12`, `3.13`, and `3.14`. Python `3.11` is not the catalog compatibility floor. Run `python3 -B -m sdk runtime-matrix` before reviewing dependency hashes.
+
 Rules:
 
 - Use stdlib unless a dependency removes real risk or complexity.
 - Pin exact versions.
 - Include SHA256 wheel hashes.
 - Include every direct and transitive dependency needed under `--require-hashes`.
-- Use wheels, not sdists.
+- Use wheels, not sdists. Pure `py3-none-any` wheels can share one hash, while ABI-specific wheels need coverage for `cp312`, `cp313`, and `cp314` on every Bazarr+ platform the provider should install on.
 - Run `python3 -B -m sdk validate` after every manifest change.
 - Bump the provider version for every runtime behavior change.
 
@@ -149,6 +151,7 @@ Useful commands:
 python3 -B -m unittest discover -s tests
 python3 -B -m sdk build-catalog
 python3 -B -m sdk validate
+python3 -B -m sdk runtime-matrix
 python3 -B -m sdk smoke-test --provider <provider> --language <alpha3> \
   --video-fixture tests/fixtures/<provider>_video_fixture.json \
   --expect-min-results 1

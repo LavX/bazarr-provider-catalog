@@ -4,7 +4,7 @@
 
 [![Bazarr+](https://img.shields.io/badge/Built%20for-Bazarr%2B-2ea44f?logo=github)](https://github.com/LavX/bazarr)
 [![Bazarr+ Docs](https://img.shields.io/badge/Docs-lavx.github.io%2Fbazarr-blue)](https://lavx.github.io/bazarr/)
-[![Python](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.12%20to%203.14-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
 ## What is this?
@@ -90,8 +90,19 @@ Use [`providers/smoke/`](providers/smoke/) for the manifest reference and [`prov
 ```bash
 python3 -B -m sdk build-catalog   # regenerate catalog.json from all provider manifests
 python3 -B -m sdk validate        # validate manifests, hashes, schema
+python3 -B -m sdk runtime-matrix  # print supported Bazarr+ Python runtimes
 python3 -B -m sdk smoke-test      # exercise a provider against the worker contract
 python3 -B -m unittest discover -s tests
+```
+
+## Runtime Matrix
+
+Provider Hub workers target the Bazarr+ Python runtime range `>=3.12,<3.15`: Python `3.12`, `3.13`, and `3.14`. Python `3.11` is not the compatibility floor for this catalog.
+
+Pure wheels such as `py3-none-any` can be covered by one hash. ABI-specific wheels need hashes for every supported ABI tag, currently `cp312`, `cp313`, and `cp314`, on every Bazarr+ platform the provider is expected to install on. Check the current policy with:
+
+```bash
+python3 -B -m sdk runtime-matrix
 ```
 
 Provider manifests declare pure Python `.py` files only. Dependencies, when needed, must be pinned wheel requirements with SHA256 hashes. See the [SDK reference](sdk/README.md).
