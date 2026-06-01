@@ -29,7 +29,7 @@
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
-- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, and `subsunacs`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
+- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, and `subsynchro`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
 - Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead for Provider Hub migration on 2026-05-31 and re-confirmed on 2026-06-01. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof unless a verified upstream origin returns.
 - Existing provider worktrees:
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
@@ -74,7 +74,7 @@
   - `subsro`: branch `catalog-subsro`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsro`, current head `4e63940`
   - `subssabbz`: branch `catalog-subssabbz`, worktree `/tmp/bazarr_catalog_provider_worktrees/subssabbz`, current head `3aa8f02`
   - `subsunacs`: branch `catalog-subsunacs`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsunacs`, current head `6394dff`
-  - `subsynchro`: branch `catalog-subsynchro`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsynchro`, current head `9f9084e`
+  - `subsynchro`: branch `catalog-subsynchro`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsynchro`, current head `20b207d`
   - `subtis`: branch `catalog-subtis`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtis`, current head `10a7aa3`
   - `subtitrarinoi`: branch `catalog-subtitrarinoi`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitrarinoi`, current head `8fc7785`
   - `subtitriid`: branch `catalog-subtitriid`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitriid`, current head `ba6e108`
@@ -1414,7 +1414,7 @@
 
 - Branch: `catalog-subsynchro`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subsynchro`
-- Current checkpoint: `9f9084e Add SubSynchro provider`
+- Current checkpoint: `20b207d Fix SubSynchro malformed release anchors`
 - Local evidence on 2026-05-29:
   - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_subsynchro.py'`: failed because `providers/subsynchro/provider.py` did not exist.
   - `python3 -B -m unittest discover -s tests -p 'test_subsynchro.py'`: `9` tests passed.
@@ -1427,10 +1427,29 @@
   - `python3 -B -m sdk smoke-test --provider subsynchro --language fra --video-fixture tests/fixtures/subsynchro_video_the_plastic_detox.json --expect-min-results 1`: failed with `subsynchro search failed: The read operation timed out`.
   - `POST /tous-les-films.html` for `The Plastic Detox` returned HTTP `302` to `/2025/33547-the-plastic-detox.html`, then timed out after `25` seconds with zero bytes received.
   - Direct homepage, film page, and download URL probes timed out with zero bytes received.
-- Remaining gates:
-  - Re-run live SubSynchro smoke when `www.subsynchro.com` serves film pages and downloads again.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subsynchro` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+- Fresh local and live evidence on 2026-06-01:
+  - Root cause traced to current live markup containing malformed group-anchor HTML, `EDITH</<a></li>`, before the real release anchor. The previous anchor parser skipped the release link in that row.
+  - Added regression coverage for malformed group anchors and changed release-link extraction to scan raw anchor start tags.
+  - `python3 -B -m sdk build-catalog`: `wrote catalog.json`.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_subsynchro.py'`: `10` tests passed.
+  - `python3 -B -m py_compile providers/subsynchro/provider.py`: passed.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/subsynchro`, `tests/test_subsynchro.py`, `README.md`, `catalog.json`, and `docs/provider-notes/subsynchro.md` found no matches.
+  - `python3 -B -m sdk smoke-test --provider subsynchro --language fra --video-fixture tests/fixtures/subsynchro_video_the_plastic_detox.json --expect-min-results 1`: `subsynchro ok`.
+  - `python3 -B -m unittest discover -s tests`: `338` tests passed, `6` skipped.
+- Provider Hub test-server evidence on 2026-06-01:
+  - Branch `catalog-subsynchro` was pushed at `20b207d`.
+  - Official catalog source dev ref was set to `catalog-subsynchro`; refresh returned `13` entries and resolved SubSynchro `0.1.1` at commit `20b207dc8750b419825fc2478322be79d77f8659`.
+  - `bazarr-ui-test` restarted healthy on image `ui-test-20260531-provider-hub-replacements-f245ae096`, revision `f245ae096`.
+  - Provider state after restart: active version `0.1.1`, `pending_restart=false`, `trusted=true`, `enabled=true`, `last_error=None`, manifest commit `20b207dc8750b419825fc2478322be79d77f8659`.
+  - Runtime replacement policy contains `55` trusted migrated built-in ids, includes `subsynchro`, and excludes `hosszupuska` and `podnapisi`.
+  - Compat search `GET /api/v1/subtitles?query=The.Plastic.Detox.2025.1080p.WEB.H264-EDITH.mkv&type=movie&languages=fr&per_page=100` returned HTTP `200`, `13` total results, and `1` SubSynchro result.
+  - SubSynchro result: `file_id=1`, release `The.Plastic.Detox.2026.1080p.WEB.H264-EDITH`, subtitle id `subsynchro:subsynchro-986`.
+  - Compat download `POST /api/v1/download` for `file_id=1` returned HTTP `200`, a stream link, `remaining=999`, and `remaining_downloads=999`.
+  - Compat stream returned HTTP `200` and `116017` bytes. The payload starts with SRT cue `1` and timestamp `00:00:06,006 --> 00:00:11,469`.
+- Status:
+  - SubSynchro is locally validated and proved through Provider Hub compat search, download, and stream on `bazarr-ui-test` for the French movie path.
 
 ### `subtitrarinoi`
 
