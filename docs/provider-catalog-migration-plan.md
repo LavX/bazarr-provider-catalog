@@ -2349,6 +2349,7 @@
 - Branch: `catalog-subsro`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subsro`
 - Current checkpoint: `4e63940 Add Subs.ro provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/48` opened as draft on 2026-06-01, head `catalog-subsro`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -2372,17 +2373,19 @@
   - Branch `catalog-subsro` was pushed at `4e63940`.
   - Branch scope remains limited to `README.md`, `catalog.json`, `docs/provider-notes/subsro.md`, `providers/subsro`, and `tests/test_subsro.py`.
   - `python3 -B -m unittest discover -s tests -p 'test_subsro.py'`: `15` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/subsro/provider.py`: passed.
-  - `python3 -B -m unittest discover -s tests`: `343` tests passed, `6` skipped.
-  - `git diff --check`: clean.
+  - `git diff --check origin/main...HEAD`: clean.
   - Attribution and em-dash scan over `providers/subsro`, `tests/test_subsro.py`, `docs/provider-notes/subsro.md`, `README.md`, and `catalog.json` found no matches.
   - No-key `https://api.subs.ro/v1.0/search/imdbid/tt22202452` probe returned HTTP `401` with `Missing API key`.
   - Invalid-key probe returned HTTP `403` with `Invalid API key`.
+  - `python3 -B -m sdk smoke-test --provider subsro --language ron --expect-min-results 1 --skip-download`: failed at the expected credential gate with `Subs.ro api_key is required`.
+  - PR `#48` was verified open, draft, merge state `CLEAN`, head `4e639403e4f31466430947f823d64d9a041e121d`.
   - Test-server config check read only API-key presence and length from `/home/lavx/bazarr-data/config/config.yaml`; `subsro.api_key` is empty.
 - Remaining gates:
   - Run SDK live smoke search and download with a real Subs.ro API key.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subsro` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `subsro` in the trusted replacement policy.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Subs.ro API key.
 
 ### `subx`
