@@ -60,6 +60,17 @@ EPISODE_HTML = b"""
 """
 
 
+EPISODE_HEADER_LANGUAGE_HTML = b"""
+<div style="clear:both; padding-top:10px;"><span><b>English subtitles</b></span></div>
+<a href="/subtitle-7001.html">
+  <div title="Download subtitles" class="subtitlen">
+    <h5>The.Office.US.S01E02.DVDRip.XviD-SAiNTS</h5>
+    <p title="rip">DVDRip</p>
+  </div>
+</a>
+"""
+
+
 class TvSubtitlesParserTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
@@ -100,6 +111,19 @@ class TvSubtitlesParserTests(unittest.TestCase):
         self.assertEqual(rows[0]["rip"], "DVDRip")
         self.assertEqual(rows[1]["language"], "por")
         self.assertEqual(rows[1]["country"], "BR")
+
+    def test_parse_episode_subtitles_uses_language_section_header(self):
+        rows = self.mod.parse_episode_subtitles(
+            EPISODE_HEADER_LANGUAGE_HTML,
+            series="The Office",
+            season=1,
+            episode=2,
+            year=2005,
+        )
+
+        self.assertEqual(rows[0]["subtitle_id"], "7001")
+        self.assertEqual(rows[0]["language"], "eng")
+        self.assertEqual(rows[0]["release"], "The.Office.US.S01E02.DVDRip.XviD-SAiNTS")
 
 
 class TvSubtitlesProviderTests(unittest.TestCase):

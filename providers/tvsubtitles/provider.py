@@ -55,6 +55,33 @@ FLAG_TO_LANGUAGE = {
     "jp": ("jpn", None),
     "ua": ("ukr", None),
 }
+LANGUAGE_LABEL_TO_LANGUAGE = {
+    "arabic": ("ara", None),
+    "bulgarian": ("bul", None),
+    "chinese": ("zho", None),
+    "czech": ("ces", None),
+    "danish": ("dan", None),
+    "dutch": ("nld", None),
+    "english": ("eng", None),
+    "finnish": ("fin", None),
+    "french": ("fra", None),
+    "german": ("deu", None),
+    "greek": ("ell", None),
+    "hungarian": ("hun", None),
+    "italian": ("ita", None),
+    "japanese": ("jpn", None),
+    "korean": ("kor", None),
+    "polish": ("pol", None),
+    "portuguese": ("por", None),
+    "portuguese(br)": ("por", "BR"),
+    "portuguese (br)": ("por", "BR"),
+    "romanian": ("ron", None),
+    "russian": ("rus", None),
+    "spanish": ("spa", None),
+    "swedish": ("swe", None),
+    "turkish": ("tur", None),
+    "ukrainian": ("ukr", None),
+}
 
 _SHOW_LINK_RE = re.compile(
     rb"<a\b[^>]*href=['\"]/?tvshow-(?P<id>\d+)\.html['\"][^>]*>(?P<title>.*?)</a>",
@@ -68,6 +95,10 @@ _EPISODE_PAGE_RE = re.compile(rb"episode-(?P<id>\d+)\.html", re.I)
 _EPISODE_NUMBER_RE = re.compile(rb"(\d+)\s*x\s*(\d+)", re.I)
 _SUBTITLE_BLOCK_RE = re.compile(
     rb"<a\b[^>]*href=['\"]/?subtitle-(?P<id>\d+)\.html['\"][^>]*>(?P<body>.*?)</a>",
+    re.I | re.S,
+)
+_SUBTITLE_LANGUAGE_HEADER_RE = re.compile(
+    rb"<div\b[^>]*>\s*<span\b[^>]*>.*?<b>\s*(?P<label>[^<]+?)\s+subtitles\s*</b>.*?</span>\s*</div>",
     re.I | re.S,
 )
 _FLAG_RE = re.compile(rb"flags/(?P<flag>[a-z]{2})\.(?:gif|png)", re.I)
@@ -135,28 +166,29 @@ def parse_episode_subtitles(body, series, season, episode, year=None):
         flag_match = _FLAG_RE.search(chunk)
         language = _language_from_flag(_decode(flag_match.group("flag")) if flag_match else "")
         if not language:
-            continue
-        h5_match = _H5_RE.search(chunk)
-        rip_match = _RIP_RE.search(chunk)
-        release = _strip_tags(h5_match.group("body")) if h5_match else ""
-        rip = _strip_tags(rip_match.group("body")) if rip_match else ""
-        subtitle_id = _decode(match.group("id"))
-        alpha3, country = language
-        rows.append(
-            {
-                "subtitle_id": subtitle_id,
-                "language": alpha3,
-                "country": country,
-                "series": _coerce_text(series) or "",
-                "season": _safe_int(season),
-                "episode": _safe_int(episode),
-                "year": _safe_int(year),
-                "rip": rip or None,
-                "release": release or None,
-                "release_info": _release_info(rip, release),
-                "page_link": f"{BASE_URL}/subtitle-{subtitle_id}.html",
-            }
-        )
+            language = _language_from_previous_header(body, match.start())
+        if language:
+            h5_match = _H5_RE.search(chunk)
+            rip_match = _RIP_RE.search(chunk)
+            release = _strip_tags(h5_match.group("body")) if h5_match else ""
+            rip = _strip_tags(rip_match.group("body")) if rip_match else ""
+            subtitle_id = _decode(match.group("id"))
+            alpha3, country = language
+            rows.append(
+                {
+                    "subtitle_id": subtitle_id,
+                    "language": alpha3,
+                    "country": country,
+                    "series": _coerce_text(series) or "",
+                    "season": _safe_int(season),
+                    "episode": _safe_int(episode),
+                    "year": _safe_int(year),
+                    "rip": rip or None,
+                    "release": release or None,
+                    "release_info": _release_info(rip, release),
+                    "page_link": f"{BASE_URL}/subtitle-{subtitle_id}.html",
+                }
+            )
     return rows
 
 
@@ -357,6 +389,18 @@ def _language_from_flag(flag):
     if alpha3:
         return alpha3, None
     return None
+
+
+def _language_from_previous_header(body, position):
+    language = None
+    for match in _SUBTITLE_LANGUAGE_HEADER_RE.finditer((body or b"")[:position]):
+        language = _language_from_label(_strip_tags(match.group("label")))
+    return language
+
+
+def _language_from_label(label):
+    normalized = _WS_RE.sub(" ", html.unescape(_coerce_text(label) or "").lower()).strip()
+    return LANGUAGE_LABEL_TO_LANGUAGE.get(normalized)
 
 
 def _requested_languages(languages):
