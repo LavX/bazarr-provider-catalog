@@ -40,6 +40,7 @@ _SEARCH_ROW_RE = re.compile(r"<tr\b[^>]*>(?P<body>.*?</tr>)", re.I | re.S)
 _HREF_RE = re.compile(r"""href=["'](?P<href>[^"']+)["']""", re.I)
 _TAG_RE = re.compile(r"<[^>]+>")
 _SUBTITLE_LINK_RE = re.compile(r"""href=["'](?P<href>/en/subtitles/(?P<id>\d+)[^"']*)["']""", re.I)
+_SUBLANGUAGE_RE = re.compile(r"/sublanguageid-(?P<code>[a-z0-9,]+)", re.I)
 _DOWNLOAD_LINK_RE = re.compile(
     r"""href=["'](?P<href>(?:https?://(?:www\.|dl\.)?opensubtitles\.org)?/(?:en/)?(?:download|subtitleserve)/(?:sub/)?[^"']+)["']""",
     re.I,
@@ -314,6 +315,23 @@ def _language_from_alpha2(alpha2, forced=False, hi=False):
     return LanguageInfo(alpha3=alpha3, alpha2=code, forced=forced, hi=hi)
 
 
+def _language_from_opensubtitles_code(code, forced=False, hi=False):
+    code = _clean_text(code).lower()
+    if not code or code == "all" or "," in code:
+        return None
+    if len(code) == 2:
+        return _language_from_alpha2(code, forced=forced, hi=hi)
+    alpha3 = _OPENSUBTITLES_TO_ALPHA3.get(code, code if len(code) == 3 else "")
+    if not alpha3:
+        return None
+    return LanguageInfo(
+        alpha3=alpha3,
+        alpha2=_ALPHA3_TO_ALPHA2.get(alpha3),
+        forced=forced,
+        hi=hi,
+    )
+
+
 def _opensubtitles_code(language):
     alpha3 = language.alpha3
     if alpha3 == "por" and language.country_alpha2 == "BR":
@@ -349,6 +367,24 @@ def _subtitle_language_codes(languages):
             seen.add(code)
             codes.append(code)
     return sorted(codes)
+
+
+def _score_from_matches(matches, include_hash=True):
+    weights = {
+        "hash": 100,
+        "imdb_id": 40,
+        "series": 20,
+        "title": 20,
+        "season": 10,
+        "episode": 10,
+        "year": 10,
+    }
+    score = 0
+    for match in matches:
+        if match == "hash" and not include_hash:
+            continue
+        score += weights.get(match, 0)
+    return min(score, 100)
 
 
 def _content_payload(content, format_=SUBTITLE_FORMAT, encoding=None):
@@ -466,6 +502,7 @@ def _candidate(
     uploader,
     download_count,
     video,
+    suppress_matches=False,
 ):
     subtitle_id = str(subtitle_id)
     matches = _matches_for_video(
@@ -479,18 +516,25 @@ def _candidate(
         episode,
         hash_value,
     )
+    if suppress_matches:
+        matches = []
+    score = _score_from_matches(matches)
+    score_without_hash = _score_from_matches(matches, include_hash=False)
     return {
         "id": f"{PROVIDER_ID}-native-{subtitle_id}",
         "provider": PROVIDER_ID,
         "language": language.payload(),
         "hearing_impaired": language.hi,
-        "hash_verifiable": True,
+        "hash_verifiable": bool(hash_value),
         "hearing_impaired_verifiable": True,
         "page_link": page_link,
         "release_info": release_name,
         "filename": filename,
         "uploader": uploader or "anonymous",
         "matches": matches,
+        "score": score,
+        "score_without_hash": score_without_hash,
+        "score_out_of": 100,
         "provider_payload": {
             "provider": PROVIDER_ID,
             "legacy_provider_id": LEGACY_PROVIDER_ID,
@@ -658,13 +702,51 @@ def _response_text(response):
     return getattr(response, "text", "") or (getattr(response, "content", b"") or b"").decode("utf-8", "replace")
 
 
-def _language_from_subtitle_url(url):
+def _language_from_page_url(url, forced=False, hi=False):
+    match = _SUBLANGUAGE_RE.search(urllib.parse.urlparse(url or "").path)
+    if not match:
+        return None
+    return _language_from_opensubtitles_code(match.group("code"), forced=forced, hi=hi)
+
+
+def _row_language_flags(row):
+    text = _strip_tags(row).lower()
+    hi = "hearing impaired" in text or "hearing-impaired" in text
+    forced = "foreign parts" in text or "forced" in text
+    return forced, hi
+
+
+def _html_lines(fragment):
+    with_breaks = re.sub(r"(?i)<br\s*/?>", "\n", fragment or "")
+    text = _TAG_RE.sub(" ", with_breaks)
+    return [_clean_text(line) for line in html.unescape(text).splitlines() if _clean_text(line)]
+
+
+def _release_name_from_row(row, title_text):
+    main = re.sub(r"<strong\b.*?</strong>", "\n", row, flags=re.I | re.S)
+    for line in _html_lines(main):
+        lower = line.lower()
+        if lower in {"hearing impaired", "foreign parts only", "forced"}:
+            continue
+        if re.fullmatch(r"\d+x", line):
+            continue
+        if re.fullmatch(r"\d{2}\.\d{3}", line):
+            continue
+        return line
+    return re.sub(r"\s*\(\d{4}\).*$", "", title_text).strip()
+
+
+def _language_from_subtitle_url(url, fallback_url=None, forced=False, hi=False):
     slug = urllib.parse.urlparse(url).path.rstrip("/").split("/")[-1]
     if "-" in slug:
         code = slug.rsplit("-", 1)[-1].lower()
-        if len(code) == 2:
-            return _language_from_alpha2(code)
-    return _language_from_alpha2("en")
+        language = _language_from_opensubtitles_code(code, forced=forced, hi=hi)
+        if language:
+            return language
+    language = _language_from_page_url(fallback_url, forced=forced, hi=hi)
+    if language:
+        return language
+    return _language_from_alpha2("en", forced=forced, hi=hi)
 
 
 def _parse_search_results(html_text, fallback_url, fallback_kind):
@@ -744,14 +826,7 @@ def _parse_subtitle_rows(html_text, movie_url):
         subtitle_id = link_match.group("id")
         title_text = _strip_tags(row)
         year_match = re.search(r"\((?P<year>\d{4})\)", title_text)
-        release_name = ""
-        main_text = _strip_tags(re.sub(r"<strong\b.*?</strong>", "", row, flags=re.I | re.S))
-        for part in re.split(r"\s{2,}", main_text):
-            if part and "x" != part and not part.endswith("x"):
-                release_name = part
-                break
-        if not release_name:
-            release_name = re.sub(r"\s*\(\d{4}\).*$", "", title_text).strip()
+        release_name = _release_name_from_row(row, title_text)
 
         download_match = re.search(r"(?P<count>\d+)x", row)
         fps_match = re.search(
@@ -760,7 +835,8 @@ def _parse_subtitle_rows(html_text, movie_url):
             re.I,
         )
         uploader_match = re.search(r"/en/profile/[^\"']+[\"'][^>]*>(?P<name>.*?)</a>", row, re.I | re.S)
-        language = _language_from_subtitle_url(page_link)
+        forced, hi = _row_language_flags(row)
+        language = _language_from_subtitle_url(page_link, movie_url, forced=forced, hi=hi)
         if not language:
             continue
         subtitles.append(
@@ -774,6 +850,7 @@ def _parse_subtitle_rows(html_text, movie_url):
                 "fps": float(fps_match.group("fps")) if fps_match else None,
                 "download_url": page_link,
                 "movie_year": int(year_match.group("year")) if year_match else None,
+                "hash_value": None,
             }
         )
     return subtitles
@@ -799,6 +876,18 @@ def _extract_subtitle_from_zip(content, preferred_filename=None):
         return archive.read(selected), selected
 
 
+def _episode_mismatch(item, context):
+    if context.kind != "episode" or context.season is None or context.episode is None:
+        return False
+    match = _EPISODE_TAG_RE.search(item.get("release_name") or "")
+    if not match:
+        return False
+    return (
+        _as_int(match.group("season")) != context.season
+        or _as_int(match.group("episode")) != context.episode
+    )
+
+
 class OpenSubtitlesOrgProvider:
     def __init__(self):
         self._session = None
@@ -818,7 +907,14 @@ class OpenSubtitlesOrgProvider:
                 "year": (video or {}).get("year"),
                 "imdb_id": context.imdb_id,
                 "kind": context.kind or "movie",
+                "url": search_url,
             }
+            if _subtitle_language_codes(languages or []) and "sublanguageid-all" in search_url:
+                language_candidates = self._subtitles_for_result(
+                    direct_result, video or {}, languages or [], context, config
+                )
+                if language_candidates:
+                    return language_candidates
             return self._candidates_from_items(
                 direct_items, direct_result, video or {}, languages or [], context, config, set()
             )
@@ -856,12 +952,19 @@ class OpenSubtitlesOrgProvider:
         return _content_payload(content, format_=os.path.splitext(payload.get("filename") or "")[1].lstrip(".") or SUBTITLE_FORMAT)
 
     def _build_search_url(self, query, context):
+        if context.use_tag_search and context.tag:
+            tag = urllib.parse.quote(context.tag, safe="")
+            return f"{BASE_URL}/en/search/sublanguageid-all/tag-{tag}"
         if context.imdb_id:
             imdb_number = re.sub(r"\D", "", context.imdb_id)
             return f"{BASE_URL}/en/search/sublanguageid-all/imdbid-{imdb_number}"
         params = {"MovieName": query, "action": "search"}
         if context.kind == "episode":
             params["SearchOnlyTVSeries"] = "on"
+            if context.season is not None:
+                params["Season"] = str(context.season)
+            if context.episode is not None:
+                params["Episode"] = str(context.episode)
         elif context.kind == "movie":
             params["SearchOnlyMovies"] = "on"
         return f"{BASE_URL}/en/search2?{urllib.parse.urlencode(params)}"
@@ -900,8 +1003,9 @@ class OpenSubtitlesOrgProvider:
             language = item["language"]
             if not _language_requested(language, languages):
                 continue
-            if _as_bool(config.get("skip_wrong_fps"), default=True) and _wrong_fps(video, item["fps"]):
+            if _episode_mismatch(item, context):
                 continue
+            suppress_matches = _as_bool(config.get("skip_wrong_fps"), default=True) and _wrong_fps(video, item["fps"])
             candidates.append(
                 _candidate(
                     subtitle_id=item["subtitle_id"],
@@ -916,10 +1020,11 @@ class OpenSubtitlesOrgProvider:
                     episode=context.episode,
                     filename=item["filename"],
                     fps=item["fps"],
-                    hash_value=context.hash_value,
+                    hash_value=item.get("hash_value"),
                     uploader=item["uploader"],
                     download_count=item["download_count"],
                     video=video,
+                    suppress_matches=suppress_matches,
                 )
             )
         return candidates

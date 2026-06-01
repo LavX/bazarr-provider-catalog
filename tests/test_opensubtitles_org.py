@@ -111,6 +111,64 @@ SUBTITLES_HTML = """
 </table>
 """
 
+HINDI_SUBTITLES_HTML = """
+<table>
+  <tr>
+    <td id="main1952619108">
+      <strong><a href="/en/subtitles/1952619108/game-of-thrones-winter-is-coming">"Game of Thrones" Winter Is Coming (2011)</a></strong><br />
+      Game.of.Thrones.S01E01.1080p.WEB-DL<br />
+      <a href="/en/profile/uploader">syncmaster</a>
+      <a href="/en/subtitleserve/sub/1952619108">12x</a>
+      <span class="p">23.976</span>
+    </td>
+  </tr>
+</table>
+"""
+
+HI_FORCED_SUBTITLES_HTML = """
+<table>
+  <tr>
+    <td id="main1952619109">
+      <strong><a href="/en/subtitles/1952619109/game-of-thrones-winter-is-coming-en">"Game of Thrones" Winter Is Coming (2011)</a></strong><br />
+      Game.of.Thrones.S01E01.1080p.WEB-DL<br />
+      Hearing Impaired<br />
+      Foreign parts only<br />
+      <a href="/en/profile/uploader">syncmaster</a>
+      <a href="/en/subtitleserve/sub/1952619109">22x</a>
+      <span class="p">23.976</span>
+    </td>
+  </tr>
+</table>
+"""
+
+WRONG_FPS_SUBTITLES_HTML = """
+<table>
+  <tr>
+    <td id="main1952619110">
+      <strong><a href="/en/subtitles/1952619110/game-of-thrones-winter-is-coming-en">"Game of Thrones" Winter Is Coming (2011)</a></strong><br />
+      Game.of.Thrones.S01E01.1080p.WEB-DL<br />
+      <a href="/en/profile/uploader">syncmaster</a>
+      <a href="/en/subtitleserve/sub/1952619110">9x</a>
+      <span class="p">25.000</span>
+    </td>
+  </tr>
+</table>
+"""
+
+WRONG_EPISODE_SUBTITLES_HTML = """
+<table>
+  <tr>
+    <td id="main1952619111">
+      <strong><a href="/en/subtitles/1952619111/game-of-thrones-the-kingsroad-en">"Game of Thrones" The Kingsroad (2011)</a></strong><br />
+      Game.of.Thrones.S01E02.1080p.WEB-DL<br />
+      <a href="/en/profile/uploader">syncmaster</a>
+      <a href="/en/subtitleserve/sub/1952619111">3x</a>
+      <span class="p">23.976</span>
+    </td>
+  </tr>
+</table>
+"""
+
 
 class ManifestSchemaTests(unittest.TestCase):
     def test_manifest_exposes_native_antibot_settings_without_helper_or_xmlrpc_controls(self):
@@ -350,8 +408,13 @@ class NativeSearchTests(unittest.TestCase):
         self.assertIn("episode", first["matches"])
         self.assertIn("imdb_id", first["matches"])
         self.assertEqual(first["display"]["download_count"], 4312)
+        self.assertNotIn("hash", first["matches"])
+        self.assertFalse(first["hash_verifiable"])
+        self.assertIn("score", first)
+        self.assertEqual(first["score"], first["score_without_hash"])
+        self.assertEqual(first["score_out_of"], 100)
 
-    def test_search_parses_direct_imdb_subtitle_listing_without_extra_page_fetch(self):
+    def test_search_fetches_requested_language_when_direct_imdb_listing_is_unfiltered(self):
         provider = self.mod.OpenSubtitlesOrgProvider()
         calls = []
 
@@ -359,18 +422,132 @@ class NativeSearchTests(unittest.TestCase):
             calls.append(url)
             if "search/sublanguageid-all/imdbid-1480055" in url:
                 return FakeResponse(url, text=SUBTITLES_HTML)
+            if "search/sublanguageid-eng/imdbid-1480055" in url:
+                return FakeResponse(url, text=SUBTITLES_HTML)
             raise AssertionError(f"unexpected URL: {url}")
 
         provider._http_get = fake_get
 
         results = provider.search(EPISODE_VIDEO, LANGUAGES, {"skip_wrong_fps": True})
 
-        self.assertEqual(calls, ["https://www.opensubtitles.org/en/search/sublanguageid-all/imdbid-1480055"])
+        self.assertEqual(
+            calls,
+            [
+                "https://www.opensubtitles.org/en/search/sublanguageid-all/imdbid-1480055",
+                "https://www.opensubtitles.org/en/search/sublanguageid-eng/imdbid-1480055",
+            ],
+        )
         self.assertEqual(len(results), 1)
         first = results[0]
         self.assertEqual(first["provider_payload"]["subtitle_id"], "1952619105")
         self.assertEqual(first["language"]["alpha3"], "eng")
         self.assertIn("episode", first["matches"])
+
+    def test_search_preserves_forced_and_hearing_impaired_row_flags(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+
+        def fake_get(url, config):
+            if "search/sublanguageid-all/imdbid-1480055" in url:
+                return FakeResponse(url, text=SEARCH_HTML)
+            if "search/sublanguageid-eng/imdbid-1480055" in url:
+                return FakeResponse(url, text=HI_FORCED_SUBTITLES_HTML)
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = fake_get
+
+        results = provider.search(
+            EPISODE_VIDEO,
+            [{"alpha3": "eng", "alpha2": "en", "forced": True, "hi": True}],
+            {"skip_wrong_fps": True},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0]["language"]["forced"])
+        self.assertTrue(results[0]["language"]["hi"])
+        self.assertTrue(results[0]["hearing_impaired"])
+
+    def test_search_uses_page_language_for_advertised_language_without_slug_suffix(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+
+        def fake_get(url, config):
+            if "search/sublanguageid-all/imdbid-1480055" in url:
+                return FakeResponse(url, text=SEARCH_HTML)
+            if "search/sublanguageid-hin/imdbid-1480055" in url:
+                return FakeResponse(url, text=HINDI_SUBTITLES_HTML)
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = fake_get
+
+        results = provider.search(
+            EPISODE_VIDEO,
+            [{"alpha3": "hin"}],
+            {"skip_wrong_fps": True},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["language"]["alpha3"], "hin")
+
+    def test_wrong_fps_candidate_is_kept_with_lowered_matches(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+
+        def fake_get(url, config):
+            if "search/sublanguageid-all/imdbid-1480055" in url:
+                return FakeResponse(url, text=SEARCH_HTML)
+            if "search/sublanguageid-eng/imdbid-1480055" in url:
+                return FakeResponse(url, text=WRONG_FPS_SUBTITLES_HTML)
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = fake_get
+
+        results = provider.search(EPISODE_VIDEO, LANGUAGES, {"skip_wrong_fps": True})
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["matches"], [])
+        self.assertEqual(results[0]["score"], 0)
+
+    def test_tag_search_builds_tag_lookup_before_imdb_lookup(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        context = self.mod.build_search_context(EPISODE_VIDEO, {"use_tag_search": True})
+
+        url = provider._build_search_url("Game of Thrones", context)
+
+        self.assertEqual(
+            url,
+            "https://www.opensubtitles.org/en/search/sublanguageid-all/tag-Game.of.Thrones.S01E01.1080p.WEB-DL",
+        )
+
+    def test_episode_search_without_imdb_sends_and_enforces_season_episode(self):
+        video = dict(EPISODE_VIDEO)
+        video.pop("imdb_id")
+        video.pop("series_imdb_id")
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        calls = []
+
+        def fake_get(url, config):
+            calls.append(url)
+            if "search2?" in url:
+                return FakeResponse(url, text=SEARCH_HTML)
+            if "search/sublanguageid-eng/imdbid-1480055" in url:
+                return FakeResponse(url, text=WRONG_EPISODE_SUBTITLES_HTML)
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = fake_get
+
+        results = provider.search(video, LANGUAGES, {"skip_wrong_fps": True})
+
+        self.assertIn("Season=1", calls[0])
+        self.assertIn("Episode=1", calls[0])
+        self.assertEqual(results, [])
+
+    def test_release_name_excludes_uploader_count_and_fps_metadata(self):
+        rows = self.mod._parse_subtitle_rows(
+            SUBTITLES_HTML,
+            "https://www.opensubtitles.org/en/search/sublanguageid-eng/imdbid-1480055",
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["release_name"], "Game.of.Thrones.S01E01.1080p.WEB-DL")
+        self.assertEqual(rows[0]["filename"], "Game.of.Thrones.S01E01.1080p.WEB-DL.en.srt")
 
     def test_download_fetches_direct_zip_and_returns_subtitle_payload(self):
         provider = self.mod.OpenSubtitlesOrgProvider()
