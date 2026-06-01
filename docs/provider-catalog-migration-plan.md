@@ -108,7 +108,7 @@
 - Branch: `catalog-bsplayer`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/bsplayer`
 - Current checkpoint: `c04f374 Add BSPlayer provider`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/17` opened as draft on 2026-06-01, head `catalog-bsplayer`, base `main`, merge state `CLEAN`.
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/17` opened on 2026-06-01, marked ready for review, head `catalog-bsplayer`, base `main`, merge state `CLEAN`.
 - Provider type: active API provider.
 - Local evidence on 2026-05-31:
   - Legacy inspection confirmed the old Bazarr module had a SOAP implementation, but `list_subtitles()` was intentionally disabled and returned no results.
@@ -738,7 +738,8 @@
 
 - Branch: `catalog-subtis`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subtis`
-- Current checkpoint: `10a7aa3 Add Subtis provider`
+- Current checkpoint: `4e7200d Fix Subtis fixture trailing blanks`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/18` opened on 2026-06-01, head `catalog-subtis`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
 - Local evidence on 2026-05-29:
@@ -768,6 +769,16 @@
   - Subtis result: `file_id=61`, release `Man of Steel [fuzzy match]`, subtitle id `subtis:subtis-f38417eceeb7f088`.
   - Compat download `POST /api/v1/download` for `file_id=61` returned HTTP `200`, a stream link, `remaining=999`, and `remaining_downloads=999`.
   - Compat stream returned HTTP `200` and `94820` bytes. The payload starts with SRT cue `1` and timestamp `00:00:00,000 --> 00:00:24,000`.
+- Fresh PR evidence on 2026-06-01:
+  - Branch diff against `origin/main` only touches `README.md`, `catalog.json`, `docs/provider-notes/subtis.md`, `providers/subtis/`, `tests/fixtures/subtis_search_response.json`, `tests/fixtures/subtis_video_man_of_steel.json`, and `tests/test_subtis.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_subtis.py'`: `9` tests passed.
+  - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subtis/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean after commit `4e7200d`.
+  - Attribution and em-dash scan over touched Subtis files found no matches.
+  - Direct Subtis endpoint probes showed hash, byte, and filename lookups now return `404`, while the alternative endpoint still returns `200` with a subtitle candidate for the fixture.
+  - `python3 -B -m sdk smoke-test --provider subtis --language spa --video-fixture tests/fixtures/subtis_video_man_of_steel.json --expect-min-results 1`: `subtis ok`.
 - Remaining gates: none for the current Subtis migration proof.
 
 ### `wizdom`
