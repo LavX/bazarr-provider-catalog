@@ -318,6 +318,10 @@ def _language_from_opensubtitles_code(code, forced=False, hi=False):
     code = _clean_text(code).lower()
     if not code or code == "all" or "," in code:
         return None
+    if code == "pob":
+        return LanguageInfo(alpha3="por", alpha2="pt", country_alpha2="BR", forced=forced, hi=hi)
+    if code == "spl":
+        return LanguageInfo(alpha3="spa", alpha2="es", country_alpha2="MX", forced=forced, hi=hi)
     if len(code) == 2:
         return _language_from_alpha2(code, forced=forced, hi=hi)
     alpha3 = _OPENSUBTITLES_TO_ALPHA3.get(code, code if len(code) == 3 else "")
@@ -349,12 +353,40 @@ def _requested_languages(languages):
     return parsed
 
 
-def _requested_keys(languages):
-    return {language.key for language in _requested_languages(languages)}
+def _language_requested(language, languages, config=None):
+    requested = _requested_languages(languages)
+    if not requested:
+        return False
+    config = config or {}
+    only_foreign = _as_bool(config.get("only_foreign"))
+    also_foreign = _as_bool(config.get("also_foreign"))
+    for requested_language in requested:
+        if language.alpha3 != requested_language.alpha3:
+            continue
+        if not _country_matches_request(language, requested_language):
+            continue
+        if language.hi != requested_language.hi:
+            continue
+        if only_foreign:
+            if language.forced:
+                return True
+            continue
+        if requested_language.forced:
+            if language.forced:
+                return True
+            continue
+        if language.forced and not also_foreign:
+            continue
+        return True
+    return False
 
 
-def _language_requested(language, languages):
-    return language.key in _requested_keys(languages)
+def _country_matches_request(language, requested_language):
+    if language.country_alpha2 == requested_language.country_alpha2:
+        return True
+    if not requested_language.country_alpha2 or language.country_alpha2:
+        return False
+    return _opensubtitles_code(language) == _opensubtitles_code(requested_language)
 
 
 def _subtitle_language_codes(languages):
@@ -393,12 +425,24 @@ def _content_payload(content, format_=SUBTITLE_FORMAT, encoding=None):
     payload = {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": digest,
+        "content_type": _content_type(format_),
         "empty": False,
         "format": format_,
     }
     if encoding:
         payload["encoding"] = encoding
     return payload
+
+
+def _content_type(format_):
+    normalized = (format_ or SUBTITLE_FORMAT).lower()
+    if normalized in {"ass", "ssa"}:
+        return "text/x-ssa"
+    if normalized == "vtt":
+        return "text/vtt"
+    if normalized == "sub":
+        return "text/plain"
+    return "application/x-subrip"
 
 
 def build_search_context(video, config):
@@ -1008,7 +1052,7 @@ class OpenSubtitlesOrgProvider:
                 continue
             seen.add(item["subtitle_id"])
             language = item["language"]
-            if not _language_requested(language, languages):
+            if not _language_requested(language, languages, config):
                 continue
             if _episode_mismatch(item, context):
                 continue
@@ -1051,8 +1095,11 @@ class OpenSubtitlesOrgProvider:
             response = session.get(url, timeout=timeout, allow_redirects=True)
         except Exception as exc:
             raise ServiceUnavailable(f"OpenSubtitles.org request failed: {exc}") from exc
-        if is_anubis_challenge(getattr(response, "url", ""), getattr(response, "status_code", 0)):
-            solved = solve_anubis_challenge(session, response.url, url, timeout=timeout)
+        challenge_url = getattr(response, "url", "") or url
+        if is_anubis_challenge(challenge_url, getattr(response, "status_code", 0)) or _extract_anubis_challenge(
+            _response_text(response)
+        ):
+            solved = solve_anubis_challenge(session, challenge_url, url, timeout=timeout)
             if not solved:
                 raise ServiceUnavailable("OpenSubtitles.org Anubis challenge could not be solved")
             response = session.get(url, timeout=timeout, allow_redirects=True)

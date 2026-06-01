@@ -125,6 +125,20 @@ HINDI_SUBTITLES_HTML = """
 </table>
 """
 
+PORTUGUESE_BR_SUBTITLES_HTML = """
+<table>
+  <tr>
+    <td id="main1952619112">
+      <strong><a href="/en/subtitles/1952619112/game-of-thrones-winter-is-coming">"Game of Thrones" Winter Is Coming (2011)</a></strong><br />
+      Game.of.Thrones.S01E01.1080p.WEB-DL<br />
+      <a href="/en/profile/uploader">syncmaster</a>
+      <a href="/en/subtitleserve/sub/1952619112">8x</a>
+      <span class="p">23.976</span>
+    </td>
+  </tr>
+</table>
+"""
+
 HI_FORCED_SUBTITLES_HTML = """
 <table>
   <tr>
@@ -135,6 +149,21 @@ HI_FORCED_SUBTITLES_HTML = """
       Foreign parts only<br />
       <a href="/en/profile/uploader">syncmaster</a>
       <a href="/en/subtitleserve/sub/1952619109">22x</a>
+      <span class="p">23.976</span>
+    </td>
+  </tr>
+</table>
+"""
+
+FORCED_SUBTITLES_HTML = """
+<table>
+  <tr>
+    <td id="main1952619113">
+      <strong><a href="/en/subtitles/1952619113/game-of-thrones-winter-is-coming-en">"Game of Thrones" Winter Is Coming (2011)</a></strong><br />
+      Game.of.Thrones.S01E01.1080p.WEB-DL<br />
+      Foreign parts only<br />
+      <a href="/en/profile/uploader">syncmaster</a>
+      <a href="/en/subtitleserve/sub/1952619113">10x</a>
       <span class="p">23.976</span>
     </td>
   </tr>
@@ -198,6 +227,22 @@ class ManifestSchemaTests(unittest.TestCase):
         ):
             self.assertNotIn(hidden_field, properties)
         self.assertEqual(manifest["secret_fields"], [])
+
+    def test_manifest_languages_round_trip_through_parser_filtering(self):
+        mod = _load_provider_module()
+        manifest = json.loads((PROVIDER_DIR / "provider.json").read_text(encoding="utf-8"))
+
+        for language in manifest["languages"]:
+            alpha3, _, country = language.partition("-")
+            requested = {"alpha3": alpha3}
+            if country:
+                requested["country_alpha2"] = country
+            code = mod._opensubtitles_code(
+                mod.LanguageInfo(alpha3=alpha3, country_alpha2=country or None)
+            )
+            parsed = mod._language_from_opensubtitles_code(code)
+            self.assertIsNotNone(parsed, language)
+            self.assertTrue(mod._language_requested(parsed, [requested], {}), language)
 
 
 class AntibotSessionTests(unittest.TestCase):
@@ -375,6 +420,48 @@ class AntibotSessionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(session.calls), 1)
 
+    def test_http_get_solves_in_place_anubis_body_before_returning_response(self):
+        session = FakeSession(
+            [
+                FakeResponse(
+                    "https://www.opensubtitles.org/en/search",
+                    status_code=403,
+                    text=(
+                        '<script id="anubis_challenge">'
+                        '{"challenge":{"id":"challenge-id","randomData":"abc","difficulty":4}}'
+                        "</script>"
+                    ),
+                ),
+                FakeResponse(
+                    "https://www.opensubtitles.org/en/search",
+                    text="<html><title>Search</title></html>",
+                ),
+            ]
+        )
+
+        class FakeCloudscraper:
+            @staticmethod
+            def create_scraper(**kwargs):
+                return session
+
+        solved_calls = []
+
+        def fake_solve(active_session, challenge_url, original_url, timeout):
+            solved_calls.append((active_session, challenge_url, original_url, timeout))
+            active_session.cookies.set("techaro.lol-anubis-auth", "ok", domain=".opensubtitles.org")
+            return {"techaro.lol-anubis-auth": "ok"}
+
+        self.mod.cloudscraper = FakeCloudscraper
+        self.mod.solve_anubis_challenge = fake_solve
+        provider = self.mod.OpenSubtitlesOrgProvider()
+
+        response = provider._http_get("https://www.opensubtitles.org/en/search", {})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(session.calls), 2)
+        self.assertEqual(solved_calls[0][1], "https://www.opensubtitles.org/en/search")
+        self.assertEqual(solved_calls[0][2], "https://www.opensubtitles.org/en/search")
+
 
 class NativeSearchTests(unittest.TestCase):
     def setUp(self):
@@ -466,6 +553,33 @@ class NativeSearchTests(unittest.TestCase):
         self.assertTrue(results[0]["language"]["hi"])
         self.assertTrue(results[0]["hearing_impaired"])
 
+    def test_foreign_config_includes_or_limits_forced_rows(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+
+        def fake_get(url, config):
+            if "search/sublanguageid-all/imdbid-1480055" in url:
+                return FakeResponse(url, text=SEARCH_HTML)
+            if "search/sublanguageid-eng/imdbid-1480055" in url:
+                return FakeResponse(url, text=SUBTITLES_HTML + FORCED_SUBTITLES_HTML)
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = fake_get
+
+        also_results = provider.search(
+            EPISODE_VIDEO,
+            LANGUAGES,
+            {"skip_wrong_fps": True, "also_foreign": True},
+        )
+        only_results = provider.search(
+            EPISODE_VIDEO,
+            LANGUAGES,
+            {"skip_wrong_fps": True, "only_foreign": True},
+        )
+
+        self.assertEqual([item["language"]["forced"] for item in also_results], [False, True])
+        self.assertEqual(len(only_results), 1)
+        self.assertTrue(only_results[0]["language"]["forced"])
+
     def test_search_uses_page_language_for_advertised_language_without_slug_suffix(self):
         provider = self.mod.OpenSubtitlesOrgProvider()
 
@@ -486,6 +600,28 @@ class NativeSearchTests(unittest.TestCase):
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["language"]["alpha3"], "hin")
+
+    def test_search_preserves_regional_language_keys_from_page_language(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+
+        def fake_get(url, config):
+            if "search/sublanguageid-all/imdbid-1480055" in url:
+                return FakeResponse(url, text=SEARCH_HTML)
+            if "search/sublanguageid-pob/imdbid-1480055" in url:
+                return FakeResponse(url, text=PORTUGUESE_BR_SUBTITLES_HTML)
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = fake_get
+
+        results = provider.search(
+            EPISODE_VIDEO,
+            [{"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR"}],
+            {"skip_wrong_fps": True},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["language"]["alpha3"], "por")
+        self.assertEqual(results[0]["language"]["country_alpha2"], "BR")
 
     def test_wrong_fps_candidate_is_kept_with_lowered_matches(self):
         provider = self.mod.OpenSubtitlesOrgProvider()
@@ -580,6 +716,7 @@ class NativeSearchTests(unittest.TestCase):
         self.assertEqual(calls, ["https://dl.opensubtitles.org/en/download/sub/1952619105"])
         self.assertEqual(data, SRT_BODY)
         self.assertEqual(result["content_sha256"], hashlib.sha256(SRT_BODY).hexdigest())
+        self.assertEqual(result["content_type"], "application/x-subrip")
 
 
 if __name__ == "__main__":
