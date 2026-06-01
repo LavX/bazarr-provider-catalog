@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "ed955a00b3890f526a70100b5ef0f562c505d2ac8a797abed226f732449a265f",
+  "bundle_sha256": "b28eb6f7f9eafa084fac901351955e9e361660e8621a712892e9015d32892103",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -247,11 +247,11 @@
       }
     ]
   },
-  "description": "Searches NapiProjekt for Polish subtitles using hash lookup and catalog scraping with optional author filters. Uses ai-cloudscraper with optional FlareSolverr fallback for catalog Cloudflare challenges.",
+  "description": "Searches NapiProjekt for Polish subtitles using hash lookup and catalog scraping with optional author filters. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback for catalog Cloudflare challenges.",
   "entry_class": "NapiProjektProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "feaa45779b918e5c0872f5e74741b241eee11eefe9f2301cfb53fb91a775cc25"
+    "provider.py": "b9bd900a49bb511308c0043676b99332a2cb4e0143e68f29792fdbf43b953e19"
   },
   "languages": [
     "pol"
@@ -273,5 +273,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.1"
+  "version": "0.1.2"
 }
