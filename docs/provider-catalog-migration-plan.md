@@ -22,7 +22,7 @@
 - Existing SubScene maintenance PR evidence: `fix/sub-scene-smi-download` at `33c714a` switches SubScene to `ai-cloudscraper==3.8.4` with the same native session shape and legacy argument retry, adds inline Anubis challenge solving, bumps SubScene to `0.1.13`, caps multi-page FlareSolverr fallback at `10000` ms, caps the outer FlareSolverr HTTP call to the same deadline, expands ABI-specific dependency hashes across Bazarr+ Python `3.12`, `3.13`, and `3.14` on linux/amd64 and linux/arm64, and PR `#14` is open, non-draft, and merge state `CLEAN`.
 - Cloudflare parity sweep on 2026-06-01: pushed the OpenSubtitles.org three-layer anti-bot path, `ai-cloudscraper==3.8.4`, inline Anubis `/.within.website/` solving, and optional FlareSolverr fallback, to `wizdom` at `4164e52`, `turkcealtyaziorg` at `8c184b2`, `yavkanet` at `5b35d11`, `napiprojekt` at `24eea15`, `subs4series` at `7dd5e86`, and `sub_scene` at `33c714a`. Local provider tests, `py_compile`, `sdk validate`, `test_catalog.py`, `git diff --check`, and attribution or prohibited punctuation scans passed for each touched branch.
 - SubScene local evidence on 2026-06-01 after review fixes and Anubis parity: `test_sub_scene.py` ran `66` tests passed, `test_catalog.py` ran `12` tests passed with `6` skipped, `sdk validate` returned `catalog ok`, `py_compile` passed, and `git diff --check` was clean.
-- Prior SubScene test-server evidence on 2026-06-01: active Provider Hub state after restage was version `0.1.11`, commit `41b9fc0f460b228d4e8061aaa692233a629a7818`, enabled `true`, `pending_restart=false`, `last_error=null`. Final Dune compat search returned HTTP `200`, `79` total results, and `0` SubScene rows. Focused logs showed `sub_scene FlareSolverr request failed: HTTP Error 500: Internal Server Error` and final fanout marked `sub_scene=ok:15566ms`, not `worker exceeded 30s`. This needs restage before treating `0.1.12` as live test-server proof.
+- Prior SubScene test-server evidence on 2026-06-01: active Provider Hub state after restage was version `0.1.11`, commit `41b9fc0f460b228d4e8061aaa692233a629a7818`, enabled `true`, `pending_restart=false`, `last_error=null`. Final Dune compat search returned HTTP `200`, `79` total results, and `0` SubScene rows. Focused logs showed `sub_scene FlareSolverr request failed: HTTP Error 500: Internal Server Error` and final fanout marked `sub_scene=ok:15566ms`, not `worker exceeded 30s`. This needs restage before treating `0.1.13` as live test-server proof.
 - Provider Hub source-dependency evidence: `ai-cloudscraper==3.8.4` requires `Js2Py`, whose `pyjsparser==2.7.1` dependency is source-only. Bazarr core PR [#173](https://github.com/LavX/bazarr/pull/173), branch `fix/provider-hub-source-deps` at `b4e53d0ed`, changes the Provider Hub installer from `--only-binary=:all:` to `--prefer-binary` while keeping `--require-hashes`, allowing hash-checked source dependencies. `bazarr-ui-test` was hot-patched with that installer for the live staging evidence below.
 - Catalog runtime-matrix evidence: catalog PR [#75](https://github.com/LavX/bazarr-provider-catalog/pull/75), branch `fix/provider-runtime-matrix` at `b97435d`, defines Provider Hub Python support as `>=3.12,<3.15` with concrete targets `3.12`, `3.13`, and `3.14`, adds `sdk runtime-matrix`, and documents wheel hash coverage for pure, ABI-specific, and stable ABI wheels such as `cp311-abi3`.
 - Core replacement-policy evidence: Bazarr core branch `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`, contains a trusted replacement policy for 55 active migrated built-ins, the compat AniDB ID bridge needed by anime providers, and the compat NapiProjekt hash bridge. It excludes dead-origin providers `hosszupuska`, `podnapisi`, `subscenter`, and `xsubs`, and excludes legacy `opensubtitles` because the catalog rewrite ships as `opensubtitles_org`.
@@ -689,6 +689,14 @@
   - Active Provider Hub state after restage: version `0.1.2`, commit `2d080b64f70ea555c7975950c0c799ed95f9b21e`, enabled `true`, `pending_restart=false`, `last_error=null`.
   - Final compat search for `Game.of.Thrones.S01E01.HDTV.XviD-FEVER.avi` returned HTTP `200`, `121` total results, and `1` Subs4Series row.
   - Compat download for Subs4Series `file_id=109` returned HTTP `200`; the stream returned HTTP `200`, `application/x-subrip`, and `422368` bytes.
+- Inline Anubis parity evidence on 2026-06-01:
+  - `7dd5e86` adds inline Anubis solving before the existing Cloudflare fallback and bumps Subs4Series to `0.1.3`.
+  - `python3 -B -m unittest discover -s tests -p 'test_subs4series.py'`: `12` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subs4series/provider.py`: passed.
+  - `git diff --check`: clean.
+  - Attribution and prohibited punctuation scan over README, catalog, Subs4Series notes, provider code, and tests found no matches.
 - Remaining gates: none for the current Subs4Series migration proof. PR remains draft pending maintainer choice.
 
 ### `zimuku`
@@ -1253,6 +1261,14 @@
   - Active Provider Hub state after restage: version `0.1.1`, commit `fed875603202c12c67a2ae8a0274a0782ed2ea98`, enabled `true`, `pending_restart=false`, `last_error=null`.
   - Final compat search for Shrek hash `444563eef63f83d47cabb888f7a45113` returned HTTP `200`, `26` total results, and `1` NapiProjekt row.
   - Compat download for NapiProjekt `file_id=11` returned HTTP `200`; the stream returned HTTP `200`, `application/x-subrip`, and `67901` bytes.
+- Inline Anubis parity evidence on 2026-06-01:
+  - `24eea15` adds inline Anubis solving before the existing Cloudflare fallback and bumps NapiProjekt to `0.1.2`.
+  - `python3 -B -m unittest discover -s tests -p 'test_napiprojekt.py'`: `17` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/napiprojekt/provider.py`: passed.
+  - `git diff --check`: clean.
+  - Attribution and prohibited punctuation scan over README, catalog, provider code, and tests found no matches.
 - Remaining gates: none for the current NapiProjekt hash-path migration proof. Author-filtered catalog scraping still depends on a reachable FlareSolverr `/v1` endpoint when NapiProjekt serves a Cloudflare challenge.
 
 ### `podnapisi`
