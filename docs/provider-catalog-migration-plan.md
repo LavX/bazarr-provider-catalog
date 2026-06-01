@@ -1281,6 +1281,7 @@
 - Branch: `catalog-assrt`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/assrt`
 - Current checkpoint: `c4e2440 Add Assrt provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/28` opened as draft on 2026-06-01, head `catalog-assrt`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1316,6 +1317,16 @@
   - No-token `https://api.assrt.net/v1/user/quota?token=` probe returned `{"errmsg":"invalid token","status":20001}`.
   - Test-server config check read only `assrt.token` presence and length from `/home/lavx/bazarr-data/config/config.yaml`; the token is empty.
   - Test-server Provider Hub state file `/home/lavx/bazarr-data/provider_hub/state.json` currently has no active Assrt installation.
+- Fresh PR evidence on 2026-06-01:
+  - `gh pr list --repo LavX/bazarr-provider-catalog --head catalog-assrt --json number,state,isDraft,reviewDecision,mergeStateStatus,url,title`: no existing PR before creation.
+  - `python3 -B -m unittest discover -s tests -p 'test_assrt.py'`: `7` tests passed.
+  - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/assrt/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, provider code, tests, and fixtures: no matches.
+  - No-token `https://api.assrt.net/v1/user/quota?token=` probe returned `{"errmsg":"invalid token","status":20001}`.
+  - `gh pr view 28 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#28` is open, draft, head `catalog-assrt`, base `main`, merge state `CLEAN`.
 - Remaining gates:
   - Run SDK smoke search and download when a test Assrt token is available.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` is deployed on `bazarr-ui-test`; Assrt remains unproved only because the test token is missing.
