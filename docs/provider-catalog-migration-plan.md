@@ -865,7 +865,8 @@
 
 - Branch: `catalog-subtitulamostv`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subtitulamostv`
-- Current checkpoint: `f75eafd Add SubtitulamosTV provider`
+- Current checkpoint: `9ac6f4d Fix SubtitulamosTV fixture trailing blank`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/20` opened on 2026-06-01, head `catalog-subtitulamostv`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -891,6 +892,15 @@
   - Compat query-only episode search for `query=The.Last.Ship.S05E10.1080p.WEBRip.x264-TBS.mkv`, `type=episode`, `season_number=5`, `episode_number=10`, and `languages=en` returned HTTP `200`, `48` total results, including `1` SubtitulamosTV result for release `MeGusta`.
   - Compat login returned HTTP `200`; compat download for SubtitulamosTV `file_id=3` returned HTTP `200` and a stream link.
   - Fetching the stream link returned HTTP `200` with `25611` bytes of SRT content.
+- Fresh PR evidence on 2026-06-01:
+  - Branch diff against `origin/main` only touches `README.md`, `catalog.json`, `docs/provider-notes/subtitulamostv.md`, `providers/subtitulamostv/`, SubtitulamosTV fixtures, and `tests/test_subtitulamostv.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_subtitulamostv.py'`: `16` tests passed.
+  - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subtitulamostv/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean after commit `9ac6f4d`.
+  - Attribution and em-dash scan over touched SubtitulamosTV files found no matches.
+  - `python3 -B -m sdk smoke-test --provider subtitulamostv --language eng --video-fixture tests/fixtures/subtitulamostv_video_the_last_ship_s05e10.json --expect-min-results 1`: `subtitulamostv ok`.
 - Remaining gates: none for the current SubtitulamosTV migration proof.
 
 ### `greeksubs`
