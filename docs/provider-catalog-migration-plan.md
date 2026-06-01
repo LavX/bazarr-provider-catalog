@@ -19,7 +19,9 @@
 - Current checkout audit on 2026-06-01: `git worktree list --porcelain` shows all 60 provider-class modules linked under `/tmp/bazarr_catalog_provider_worktrees`, plus the planning worktree. The missing-provider check against `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/` returned no missing worktrees.
 - Helper coverage: `opensubtitles_scraper.py` is not a provider-class module. Its behavior is covered inside the `catalog-opensubtitles` / `opensubtitles_org` branch, but the current implementation no longer defaults to a sidecar helper.
 - OpenSubtitles.org current branch evidence: `catalog-opensubtitles` at `af065c7` uses `ai-cloudscraper==3.8.4`, inline Anubis solving, request throttling, optional FlareSolverr fallback for Cloudflare challenges, and a legacy `cloudscraper` argument retry for runtimes that reject `enable_cookie_persistence`.
-- Existing SubScene maintenance PR evidence: `fix/sub-scene-smi-download` at `0a4ad79` switches SubScene to `ai-cloudscraper==3.8.4` with the same native session shape and legacy argument retry, bumps SubScene to `0.1.11`, and PR `#14` is open, non-draft, and merge state `CLEAN`. A direct venv probe still returned Cloudflare HTTP `403` with `cf-mitigated: challenge`, so FlareSolverr remains the required fallback for this origin.
+- Existing SubScene maintenance PR evidence: `fix/sub-scene-smi-download` at `41b9fc0` switches SubScene to `ai-cloudscraper==3.8.4` with the same native session shape and legacy argument retry, keeps SubScene at `0.1.11`, caps multi-page FlareSolverr fallback at `10000` ms, and PR `#14` is open, non-draft, and merge state `CLEAN`. Final `bazarr-ui-test` compat searches returned no SubScene rows because the configured FlareSolverr endpoint returned HTTP `500`, but this now fails inside the worker deadline instead of killing the worker.
+- SubScene final test-server evidence on 2026-06-01: active Provider Hub state after restage is version `0.1.11`, commit `41b9fc0f460b228d4e8061aaa692233a629a7818`, enabled `true`, `pending_restart=false`, `last_error=null`. Final Dune compat search returned HTTP `200`, `79` total results, and `0` SubScene rows. Focused logs show `sub_scene FlareSolverr request failed: HTTP Error 500: Internal Server Error` and final fanout marked `sub_scene=ok:15566ms`, not `worker exceeded 30s`.
+- Provider Hub source-dependency evidence: `ai-cloudscraper==3.8.4` requires `Js2Py`, whose `pyjsparser==2.7.1` dependency is source-only. Bazarr core PR [#173](https://github.com/LavX/bazarr/pull/173), branch `fix/provider-hub-source-deps` at `b4e53d0ed`, changes the Provider Hub installer from `--only-binary=:all:` to `--prefer-binary` while keeping `--require-hashes`, allowing hash-checked source dependencies. `bazarr-ui-test` was hot-patched with that installer for the live staging evidence below.
 - Core replacement-policy evidence: Bazarr core branch `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`, contains a trusted replacement policy for 55 active migrated built-ins, the compat AniDB ID bridge needed by anime providers, and the compat NapiProjekt hash bridge. It excludes dead-origin providers `hosszupuska`, `podnapisi`, `subscenter`, and `xsubs`, and excludes legacy `opensubtitles` because the catalog rewrite ships as `opensubtitles_org`.
 - Test-server core evidence: `bazarr-ui-test` was updated on 2026-05-31 to image version `ui-test-20260531-provider-hub-replacements-f245ae096`, revision `f245ae096`, and returned healthy. The earlier test image based on old head `456071d10` failed because the image did not contain database migration `6c9f1b8d2e3a`; rebasing the core branch onto current `origin/development` fixed that mismatch.
 - License boundary: `/home/lavx/bazarr/LICENSE` is GPL-3.0. This catalog is MIT. Provider implementations in this repo must be clean-room MIT rewrites, not copied or mechanically translated GPL provider files.
@@ -34,6 +36,7 @@
 - Current linked provider worktrees: all 60 provider-class modules have dedicated worktrees under `/tmp/bazarr_catalog_provider_worktrees/<provider>`.
 - Current catalog checkout inventory: 12 Provider Hub bundles are present in this planning worktree: `bollynook`, `fansubs`, `isubtitles`, `kitsunekko`, `moviesubtitles`, `my_subs`, `smoke`, `sub_scene`, `subcentral`, `subhd`, `subtitlecat`, and `subtitlestar`.
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
+- Core source-dependency branch: `fix/provider-hub-source-deps` in `/tmp/bazarr_provider_hub_source_deps`, current head `b4e53d0ed`, pushed and opened as Bazarr PR `#173`.
 - Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subtitrarinoi`, `subtitriid`, `supersubtitles`, `titrari`, `yavkanet`, `yifysubtitles`, and `subs4free`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
 - Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead for Provider Hub migration on 2026-05-31 and re-confirmed on 2026-06-01. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof unless a verified upstream origin returns.
 - OpenSubtitles.org current state: branch `catalog-opensubtitles` is clean at `af065c7` and PR `#16` is open. Local validation, direct native search, and direct native download passed, but Bazarr compat proof is still incomplete because the compat key cannot stage or enable Provider Hub bundles and the current compat search results do not include `opensubtitles_org`.
@@ -602,8 +605,8 @@
 
 - Branch: `catalog-subs4series`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subs4series`
-- Current checkpoint: `4237a99 Use ai-cloudscraper for Subs4Series`
-- Pull request: [#68](https://github.com/LavX/bazarr-provider-catalog/pull/68), open draft, head `catalog-subs4series`, base `main`, merge state `CLEAN`, head OID `4237a99012f3099e9928dd228a13b0ba3d6b1dd6`.
+- Current checkpoint: `2d080b6 Cap Subs4Series FlareSolverr timeout`
+- Pull request: [#68](https://github.com/LavX/bazarr-provider-catalog/pull/68), open draft, head `catalog-subs4series`, base `main`, merge state `CLEAN`, head OID `2d080b64f70ea555c7975950c0c799ed95f9b21e`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -660,11 +663,14 @@
   - `python3 -B -m unittest discover -s tests`: `339` tests passed, `6` skipped.
   - Temporary venv probe with `ai-cloudscraper==3.8.4` fetched `https://www.subs4series.com/search_report.php?search=Game+of+Thrones&searchType=1` with HTTP `200`, `server: cloudflare`, no `cf-mitigated` challenge header, and `149414` bytes of HTML.
   - `gh pr view 68 --repo LavX/bazarr-provider-catalog --json number,mergeStateStatus,headRefOid,isDraft,state,reviewDecision`: PR `#68` is open, draft, merge state `CLEAN`, head `4237a99012f3099e9928dd228a13b0ba3d6b1dd6`.
-- Remaining gates:
-  - Restage Subs4Series `0.1.2` on `bazarr-ui-test` before rerunning compat proof.
-  - Prove Provider Hub compat download and non-empty stream bytes on `bazarr-ui-test`.
-  - Resolve the test-server Cloudflare block on `getSub-...html` download targets. Search is now proven through compat, but download target retrieval is still blocked by the origin from the test-server egress.
-  - If live Subs4Series presents reCAPTCHA during compat proof, configure `captcha_response` or a `captcha_solver_url` helper and rerun download proof.
+- Timeout-cap and final test-server evidence on 2026-06-01:
+  - `2d080b6` caps Subs4Series FlareSolverr fallback at `25000` ms so the fallback cannot exceed the Provider Hub worker deadline.
+  - `python3 -B -m unittest discover -s tests -p test_subs4series.py`: `11` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - Active Provider Hub state after restage: version `0.1.2`, commit `2d080b64f70ea555c7975950c0c799ed95f9b21e`, enabled `true`, `pending_restart=false`, `last_error=null`.
+  - Final compat search for `Game.of.Thrones.S01E01.HDTV.XviD-FEVER.avi` returned HTTP `200`, `121` total results, and `1` Subs4Series row.
+  - Compat download for Subs4Series `file_id=109` returned HTTP `200`; the stream returned HTTP `200`, `application/x-subrip`, and `422368` bytes.
+- Remaining gates: none for the current Subs4Series migration proof. PR remains draft pending maintainer choice.
 
 ### `zimuku`
 
@@ -1146,8 +1152,8 @@
 
 - Branch: `catalog-napiprojekt`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`
-- Current checkpoint: `47a7f82 Use ai-cloudscraper for NapiProjekt`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/25` opened on 2026-06-01, head `catalog-napiprojekt`, base `main`, merge state `CLEAN`, head OID `47a7f8235ce7492aa2d62f94dc86605d07001b89`.
+- Current checkpoint: `fed8756 Cap NapiProjekt FlareSolverr timeout`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/25` opened on 2026-06-01, head `catalog-napiprojekt`, base `main`, merge state `CLEAN`, head OID `fed875603202c12c67a2ae8a0274a0782ed2ea98`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1202,7 +1208,14 @@
   - `python3 -B -m unittest discover -s tests`: `343` tests passed, `6` skipped.
   - Temporary venv probe with `ai-cloudscraper==3.8.4` still returned HTTP `403` for `https://www.napiprojekt.pl/ajax/search_catalog.php`, with `cf-mitigated: challenge`, `server: cloudflare`, and a `Just a moment...` challenge page.
   - `gh pr view 25 --repo LavX/bazarr-provider-catalog --json number,mergeStateStatus,headRefOid,isDraft,state,reviewDecision`: PR `#25` is open, non-draft, merge state `CLEAN`, head `47a7f8235ce7492aa2d62f94dc86605d07001b89`.
-- Remaining gates: none for the current NapiProjekt hash-path migration proof. Restage NapiProjekt `0.1.1` on `bazarr-ui-test` before any fresh Provider Hub proof. Author-filtered catalog scraping still depends on a reachable FlareSolverr `/v1` endpoint when NapiProjekt serves a Cloudflare challenge.
+- Timeout-cap and final test-server evidence on 2026-06-01:
+  - `fed8756` caps NapiProjekt FlareSolverr fallback at `25000` ms so catalog fallback cannot exceed the Provider Hub worker deadline.
+  - `python3 -B -m unittest discover -s tests -p test_napiprojekt.py`: `16` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - Active Provider Hub state after restage: version `0.1.1`, commit `fed875603202c12c67a2ae8a0274a0782ed2ea98`, enabled `true`, `pending_restart=false`, `last_error=null`.
+  - Final compat search for Shrek hash `444563eef63f83d47cabb888f7a45113` returned HTTP `200`, `26` total results, and `1` NapiProjekt row.
+  - Compat download for NapiProjekt `file_id=11` returned HTTP `200`; the stream returned HTTP `200`, `application/x-subrip`, and `67901` bytes.
+- Remaining gates: none for the current NapiProjekt hash-path migration proof. Author-filtered catalog scraping still depends on a reachable FlareSolverr `/v1` endpoint when NapiProjekt serves a Cloudflare challenge.
 
 ### `podnapisi`
 
@@ -2155,8 +2168,8 @@
 
 - Branch: `catalog-yavkanet`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/yavkanet`
-- Current checkpoint: `42487cd Use ai-cloudscraper for YavkaNet`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/42` opened as draft on 2026-06-01, head `catalog-yavkanet`, base `main`, merge state `CLEAN`, head OID `42487cd027d75c1af49fad011b17489e56ce95a9`.
+- Current checkpoint: `f40f6d3 Tighten YavkaNet Cloudflare timeout`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/42` opened as draft on 2026-06-01, head `catalog-yavkanet`, base `main`, merge state `CLEAN`, head OID `f40f6d34c9952389e0676fafd46b19f009d20def`.
 - Local evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -2216,8 +2229,15 @@
   - The same venv probe with OpenSubtitles.org-style headers, `compatibility_mode=True`, and explicit Cloudflare v2, v3, and Turnstile solving enabled still returned HTTP `403`.
   - Local FlareSolverr probe `http://127.0.0.1:8191/v1` failed with connection refused in this environment.
   - `gh pr view 42 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title,headRefOid`: PR `#42` is open, draft, head `catalog-yavkanet`, base `main`, merge state `CLEAN`, head `42487cd027d75c1af49fad011b17489e56ce95a9`.
+- Timeout-cap and final test-server evidence on 2026-06-01:
+  - `cad814a` capped YavkaNet FlareSolverr fallback at `25000` ms; final `f40f6d3` tightens the cap to `10000` ms so the multi-step Cloudflare path returns inside the Provider Hub worker deadline.
+  - `python3 -B -m unittest discover -s tests -p test_yavkanet.py`: `13` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - Active Provider Hub state after restage: version `0.1.1`, commit `f40f6d34c9952389e0676fafd46b19f009d20def`, enabled `true`, `pending_restart=false`, `last_error=null`.
+  - Final compat search `GET /api/v1/subtitles?imdb_id=tt1160419&query=Dune.2021.1080p.WEB-DL.FLUX.mkv&type=movie&languages=bg&per_page=100` returned HTTP `200`, `14` total results, and `0` YavkaNet rows.
+  - Focused logs show the YavkaNet worker now returns `yavkanet FlareSolverr request failed: HTTP Error 500: Internal Server Error` inside the worker deadline. Final fanout marked `yavkanet=ok:14949ms`, not `worker exceeded 30s`.
 - Remaining gates:
-  - Treat current YavkaNet proof as blocked by the origin Cloudflare challenge, not by Provider Hub config or branch deployment.
+  - Treat current YavkaNet proof as blocked by the origin Cloudflare challenge and the configured FlareSolverr endpoint returning HTTP `500`, not by Provider Hub config, dependency installation, branch deployment, or worker deadline.
   - Re-run live smoke with a solver, cookie, or FlareSolverr environment that can actually solve `https://yavka.net/imdb/tt1160419`.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
