@@ -15,8 +15,8 @@
 - Source inventory: 60 provider modules with provider classes were found under `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/`.
 - Excluded helper modules: `__init__.py`, `_agent_list.py`, `avistaz_network.py`, `mixins.py`, `opensubtitles_scraper.py`, `utils.py`.
 - Main-branch catalog inventory: 12 bundles currently ship from `main`.
-- Historical branch inventory: all 60 legacy provider-class modules had matching `catalog-*` branches recorded as of 2026-05-31.
-- Current checkout audit on 2026-06-01: `git worktree list --porcelain` shows 30 linked provider worktrees under `/tmp/bazarr_catalog_provider_worktrees`, plus the planning worktree. Treat older per-provider checkpoint rows as ledger history until the specific worktree is rechecked.
+- Branch inventory: all 60 legacy provider-class modules have matching `catalog-*` branches.
+- Current checkout audit on 2026-06-01: `git worktree list --porcelain` shows all 60 provider-class modules linked under `/tmp/bazarr_catalog_provider_worktrees`, plus the planning worktree. The missing-provider check against `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/` returned no missing worktrees.
 - Helper coverage: `opensubtitles_scraper.py` is not a provider-class module. Its behavior is covered inside the `catalog-opensubtitles` / `opensubtitles_org` branch, but the current implementation no longer defaults to a sidecar helper.
 - OpenSubtitles.org current branch evidence: `catalog-opensubtitles` at `c8f013c` uses `ai-cloudscraper==3.8.4`, inline Anubis solving, request throttling, and optional FlareSolverr fallback for Cloudflare challenges.
 - Core replacement-policy evidence: Bazarr core branch `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`, contains a trusted replacement policy for 55 active migrated built-ins, the compat AniDB ID bridge needed by anime providers, and the compat NapiProjekt hash bridge. It excludes dead-origin providers `hosszupuska`, `podnapisi`, `subscenter`, and `xsubs`, and excludes legacy `opensubtitles` because the catalog rewrite ships as `opensubtitles_org`.
@@ -30,13 +30,13 @@
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Source provider-class modules: 60 after excluding `__init__.py`, `_agent_list.py`, `avistaz_network.py`, `mixins.py`, `opensubtitles_scraper.py`, and `utils.py`.
-- Current linked provider worktrees: 30 provider worktrees were present on 2026-06-01: `assrt`, `avistaz`, `betaseries`, `cinemaz`, `gestdown`, `hdbits`, `jimaku`, `opensubtitles`, `opensubtitlescom`, `regielive`, `shooter`, `subdl`, `subs4free`, `subs4series`, `subsarr`, `subsource`, `subsro`, `subsunacs`, `subsynchro`, `subtis`, `subtitrarinoi`, `subtitriid`, `subx`, `supersubtitles`, `titrari`, `turkcealtyaziorg`, `wizdom`, `yavkanet`, `yifysubtitles`, and `zimuku`.
+- Current linked provider worktrees: all 60 provider-class modules have dedicated worktrees under `/tmp/bazarr_catalog_provider_worktrees/<provider>`.
 - Current catalog checkout inventory: 12 Provider Hub bundles are present in this planning worktree: `bollynook`, `fansubs`, `isubtitles`, `kitsunekko`, `moviesubtitles`, `my_subs`, `smoke`, `sub_scene`, `subcentral`, `subhd`, `subtitlecat`, and `subtitlestar`.
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
 - Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subtitrarinoi`, `subtitriid`, `supersubtitles`, `titrari`, `yavkanet`, `yifysubtitles`, and `subs4free`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
 - Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead for Provider Hub migration on 2026-05-31 and re-confirmed on 2026-06-01. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof unless a verified upstream origin returns.
 - OpenSubtitles.org current state: branch `catalog-opensubtitles` is clean at `c8f013c` and PR `#16` is open. Local validation, direct native search, and direct native download passed, but Bazarr compat proof is still incomplete because the compat key cannot stage or enable Provider Hub bundles and the current compat search results do not include `opensubtitles_org`.
-- The historical provider worktree list below is a ledger. Before editing any provider, run `git worktree list --porcelain` and `git status --short --branch` for that provider's exact worktree.
+- Before editing any provider, run `git worktree list --porcelain` and `git status --short --branch` for that provider's exact worktree.
 - Existing provider worktrees:
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
   - `animekalesi`: branch `catalog-animekalesi`, worktree `/tmp/bazarr_catalog_provider_worktrees/animekalesi`, current head `b5db085`
@@ -52,7 +52,7 @@
   - `greeksubs`: branch `catalog-greeksubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubs`, current head `1ec84fa`
   - `greeksubtitles`: branch `catalog-greeksubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles`, current head `da99eee`
   - `hdbits`: branch `catalog-hdbits`, worktree `/tmp/bazarr_catalog_provider_worktrees/hdbits`, current head `42d7f02`
-  - `hosszupuska`: branch `catalog-hosszupuska`, worktree `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`, current head `2b36db2`, dead origin
+  - `hosszupuska`: branch `catalog-hosszupuska`, worktree `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`, current head `5ccb3a7`, dead origin
   - `jimaku`: branch `catalog-jimaku`, worktree `/tmp/bazarr_catalog_provider_worktrees/jimaku`, current head `112d345`
   - `karagarga`: branch `catalog-karagarga`, worktree `/tmp/bazarr_catalog_provider_worktrees/karagarga`, current head `0167ba8`
   - `ktuvit`: branch `catalog-ktuvit`, worktree `/tmp/bazarr_catalog_provider_worktrees/ktuvit`, current head `9d3162e`
@@ -64,7 +64,7 @@
   - `opensubtitles`: branch `catalog-opensubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitles`, current head `c8f013c`
   - `opensubtitlescom`: branch `catalog-opensubtitlescom`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitlescom`, current head `885985f`
   - `pipocas`: branch `catalog-pipocas`, worktree `/tmp/bazarr_catalog_provider_worktrees/pipocas`, current head `4fe281b`
-  - `podnapisi`: branch `catalog-podnapisi`, worktree `/tmp/bazarr_catalog_provider_worktrees/podnapisi`, current head `d04b05b`, dead origin
+  - `podnapisi`: branch `catalog-podnapisi`, worktree `/tmp/bazarr_catalog_provider_worktrees/podnapisi`, current head `8b3d09f`, dead origin
   - `prijevodionline`: branch `catalog-prijevodionline`, worktree `/tmp/bazarr_catalog_provider_worktrees/prijevodionline`, current head `9c1d795`
   - `regielive`: branch `catalog-regielive`, worktree `/tmp/bazarr_catalog_provider_worktrees/regielive`, current head `fb5a2ae`
   - `shooter`: branch `catalog-shooter`, worktree `/tmp/bazarr_catalog_provider_worktrees/shooter`, current head `3d794c2`
@@ -97,7 +97,7 @@
   - `xsubs`: branch `catalog-xsubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/xsubs`, current head `5a17922`, dead origin
   - `yavkanet`: branch `catalog-yavkanet`, worktree `/tmp/bazarr_catalog_provider_worktrees/yavkanet`, current head `000921d`
   - `yifysubtitles`: branch `catalog-yifysubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/yifysubtitles`, current head `6d4ecff`
-  - `zimuku`: branch `catalog-zimuku`, worktree `/tmp/bazarr_catalog_provider_worktrees/zimuku`, current head `7d5a056`
+  - `zimuku`: branch `catalog-zimuku`, worktree `/tmp/bazarr_catalog_provider_worktrees/zimuku`, current head `f9a9eff`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
