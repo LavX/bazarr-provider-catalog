@@ -825,6 +825,7 @@
 - Branch: `catalog-tvsubtitles`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/tvsubtitles`
 - Current checkpoint: `875df4e Add TVsubtitles provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/19` opened on 2026-06-01, head `catalog-tvsubtitles`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -849,6 +850,15 @@
   - Compat query-only episode search for `query=The.Office.S01E02.Diversity.Day.HDTV.XviD.avi`, `type=episode`, `season_number=1`, `episode_number=2`, and `languages=en` returned HTTP `200`, `63` total results, including `2` TVSubtitles results.
   - Compat login returned HTTP `200`; compat download for TVSubtitles `file_id=1` returned HTTP `200` and a stream link.
   - Fetching the stream link returned HTTP `200` with `24861` bytes of SRT content.
+- Fresh PR evidence on 2026-06-01:
+  - Branch diff against `origin/main` only touches `README.md`, `catalog.json`, `providers/tvsubtitles/`, `tests/fixtures/tvsubtitles_video_the_office_s01e02.json`, and `tests/test_tvsubtitles.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_tvsubtitles.py'`: `12` tests passed.
+  - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/tvsubtitles/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Attribution and em-dash scan over touched TVSubtitles files found no matches.
+  - `python3 -B -m sdk smoke-test --provider tvsubtitles --language eng --video-fixture tests/fixtures/tvsubtitles_video_the_office_s01e02.json --expect-min-results 1`: `tvsubtitles ok`.
 - Remaining gates: none for the current TVSubtitles migration proof.
 
 ### `subtitulamostv`
