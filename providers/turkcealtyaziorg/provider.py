@@ -4,17 +4,24 @@ import base64
 import hashlib
 import html
 import io
+import json
 import os
 import re
 import shutil
 import subprocess
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
 from html.parser import HTMLParser
 from http.cookies import SimpleCookie
+
+try:
+    import cloudscraper
+except ImportError:  # pragma: no cover, dependency is declared in provider.json
+    cloudscraper = None
 
 try:
     import py7zz
@@ -29,6 +36,8 @@ DEFAULT_USER_AGENT = (
     "(KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
 )
 HTTP_TIMEOUT_SECONDS = 30
+DEFAULT_FLARESOLVERR_TIMEOUT_MS = 25000
+MAX_FLARESOLVERR_TIMEOUT_MS = 25000
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
 SUPPORTED_LANGUAGE_CODES = {"tur", "eng"}
 _SXXEXX_RE = re.compile(r"\bs(?P<season>\d{1,2})\s*[._ -]?e(?P<episode>\d{1,3})\b", re.I)
@@ -78,9 +87,37 @@ class HttpResponse:
         self.headers = dict(headers or {})
 
 
+class _MissingCloudscraper:
+    @staticmethod
+    def create_scraper(**kwargs):
+        raise RuntimeError("TurkceAltyazi.org ai-cloudscraper dependency is not installed")
+
+
+if cloudscraper is None:  # pragma: no cover, dependency is declared in provider.json
+    cloudscraper = _MissingCloudscraper()
+
+
+def _create_cloudscraper_session():
+    kwargs = {
+        "browser": {"custom": DEFAULT_USER_AGENT},
+        "interpreter": "native",
+        "enable_cookie_persistence": False,
+        "debug": False,
+    }
+    try:
+        return cloudscraper.create_scraper(**kwargs)
+    except TypeError as exc:
+        if "enable_cookie_persistence" not in str(exc):
+            raise
+        kwargs.pop("enable_cookie_persistence")
+        return cloudscraper.create_scraper(**kwargs)
+
+
 class TurkceAltyaziOrgProvider:
     def __init__(self):
         self._access_checked = False
+        self._last_request_at = 0.0
+        self._session = None
 
     def search(self, video, languages, config):
         video = video or {}
@@ -94,7 +131,7 @@ class TurkceAltyaziOrgProvider:
         cookies = _parse_cookies(config)
         self._ensure_access(config, cookies)
         search_url = f"{BASE_URL}/find.php?{urllib.parse.urlencode({'cat': 'sub', 'find': imdb_id})}"
-        response = self._http_get(search_url, self._headers(config), cookies, timeout=HTTP_TIMEOUT_SECONDS)
+        response = self._http_get(search_url, self._headers(config), cookies, timeout=HTTP_TIMEOUT_SECONDS, config=config)
         _raise_for_status(response, "TurkceAltyazi search")
         if _is_not_found(response.body):
             return []
@@ -117,12 +154,12 @@ class TurkceAltyaziOrgProvider:
         config = dict(config or {})
         cookies = _parse_cookies(config)
         headers = self._headers(config)
-        page_response = self._http_get(page_url, headers, cookies, timeout=HTTP_TIMEOUT_SECONDS)
+        page_response = self._http_get(page_url, headers, cookies, timeout=HTTP_TIMEOUT_SECONDS, config=config)
         _raise_for_status(page_response, "TurkceAltyazi download page")
         form = parse_download_form(page_response.body)
         post_headers = dict(headers)
         post_headers["Referer"] = page_url
-        archive_response = self._http_post(DOWNLOAD_URL, form, post_headers, cookies, timeout=10)
+        archive_response = self._http_post(DOWNLOAD_URL, form, post_headers, cookies, timeout=10, config=config)
         _raise_for_status(archive_response, "TurkceAltyazi archive download")
         body, filename = extract_download(
             archive_response.body,
@@ -135,49 +172,144 @@ class TurkceAltyaziOrgProvider:
     def _ensure_access(self, config, cookies):
         if self._access_checked:
             return
-        response = self._http_get(BASE_URL, self._headers(config), cookies, timeout=10, allow_redirects=False)
+        response = self._http_get(BASE_URL, self._headers(config), cookies, timeout=10, allow_redirects=False, config=config)
         _raise_for_status(response, "TurkceAltyazi access check")
         self._access_checked = True
 
     def _headers(self, config):
-        user_agent = str((config or {}).get("user_agent") or "").strip() or DEFAULT_USER_AGENT
+        session_user_agent = ""
+        if self._session is not None:
+            session_user_agent = str(self._session.headers.get("User-Agent") or "").strip()
+        user_agent = str((config or {}).get("user_agent") or "").strip() or session_user_agent or DEFAULT_USER_AGENT
         return {
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Referer": BASE_URL,
             "User-Agent": user_agent,
         }
 
-    def _http_get(self, url, headers, cookies, timeout=HTTP_TIMEOUT_SECONDS, allow_redirects=True):
-        return _http_request("GET", url, headers, cookies, timeout=timeout, allow_redirects=allow_redirects)
+    def _get_session(self):
+        if self._session is None:
+            self._session = _create_cloudscraper_session()
+            self._session.headers.update({"User-Agent": DEFAULT_USER_AGENT})
+        return self._session
 
-    def _http_post(self, url, data, headers, cookies, timeout=HTTP_TIMEOUT_SECONDS):
-        return _http_request("POST", url, headers, cookies, data=data, timeout=timeout)
+    def _http_get(self, url, headers, cookies, timeout=HTTP_TIMEOUT_SECONDS, allow_redirects=True, config=None):
+        return self._http_request(
+            "GET",
+            url,
+            headers,
+            cookies,
+            timeout=timeout,
+            allow_redirects=allow_redirects,
+            config=config,
+        )
 
+    def _http_post(self, url, data, headers, cookies, timeout=HTTP_TIMEOUT_SECONDS, config=None):
+        return self._http_request("POST", url, headers, cookies, data=data, timeout=timeout, config=config)
 
-def _http_request(method, url, headers, cookies, data=None, timeout=HTTP_TIMEOUT_SECONDS, allow_redirects=True):
-    request_headers = dict(headers or {})
-    if cookies:
-        request_headers["Cookie"] = "; ".join(f"{key}={value}" for key, value in cookies.items())
-    body = None
-    if data is not None:
-        body = urllib.parse.urlencode(data).encode("utf-8")
-        request_headers["Content-Type"] = "application/x-www-form-urlencoded"
-    request = urllib.request.Request(url, data=body, headers=request_headers, method=method)
-    opener = urllib.request.build_opener()
-    if not allow_redirects:
-        opener = urllib.request.build_opener(_NoRedirectHandler)
-    try:
-        with opener.open(request, timeout=timeout) as response:
-            return HttpResponse(response.status, response.read(), dict(response.headers.items()))
-    except urllib.error.HTTPError as exc:
-        return HttpResponse(exc.code, exc.read(), dict(exc.headers.items()))
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"TurkceAltyazi request failed: {exc.reason}") from exc
+    def _http_request(
+        self,
+        method,
+        url,
+        headers,
+        cookies,
+        data=None,
+        timeout=HTTP_TIMEOUT_SECONDS,
+        allow_redirects=True,
+        config=None,
+    ):
+        self._apply_delay(config)
+        response = self._send(method, url, headers, cookies, data, timeout, allow_redirects)
+        if _is_cloudflare_challenge(response) and _flaresolverr_url(config):
+            self._fallback_to_flaresolverr(url, config)
+            retry_headers = dict(headers or {})
+            retry_headers["User-Agent"] = self._get_session().headers.get("User-Agent", DEFAULT_USER_AGENT)
+            response = self._send(method, url, retry_headers, cookies, data, timeout, allow_redirects)
+        return response
 
+    def _send(self, method, url, headers, cookies, data, timeout, allow_redirects):
+        session = self._get_session()
+        request_headers = dict(headers or {})
+        request_cookies = cookies or None
+        try:
+            if method == "POST":
+                response = session.post(
+                    url,
+                    data=data,
+                    headers=request_headers,
+                    cookies=request_cookies,
+                    timeout=timeout,
+                    allow_redirects=allow_redirects,
+                )
+            else:
+                response = session.get(
+                    url,
+                    headers=request_headers,
+                    cookies=request_cookies,
+                    timeout=timeout,
+                    allow_redirects=allow_redirects,
+                )
+        except Exception as exc:
+            raise RuntimeError(f"TurkceAltyazi request failed: {exc}") from exc
+        return _session_response(response)
 
-class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
+    def _apply_delay(self, config):
+        delay_ms = _config_int((config or {}).get("request_delay_ms")) or 0
+        if delay_ms <= 0:
+            return
+        elapsed = time.monotonic() - self._last_request_at
+        wait_for = delay_ms / 1000 - elapsed
+        if wait_for > 0:
+            time.sleep(wait_for)
+        self._last_request_at = time.monotonic()
+
+    def _fallback_to_flaresolverr(self, url, config):
+        endpoint = _flaresolverr_url(config)
+        if not endpoint:
+            return
+        max_timeout = _flaresolverr_timeout_ms(config)
+        payload = {"cmd": "request.get", "url": url, "maxTimeout": max_timeout}
+        data = self._post_flaresolverr(endpoint, payload, timeout=max(max_timeout / 1000 + 5, 15))
+        solution = data.get("solution") or {}
+        self._inject_solution(solution)
+
+    def _post_flaresolverr(self, url, payload, timeout):
+        body = json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            url,
+            data=body,
+            headers={"Content-Type": "application/json", "User-Agent": DEFAULT_USER_AGENT},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                response_body = response.read()
+        except urllib.error.URLError as exc:
+            raise PermissionError(f"TurkceAltyazi FlareSolverr request failed: {exc.reason}") from exc
+        try:
+            data = json.loads(response_body.decode("utf-8"))
+        except json.JSONDecodeError as exc:
+            raise PermissionError("TurkceAltyazi FlareSolverr returned invalid JSON") from exc
+        if data.get("status") == "error":
+            raise PermissionError(f"TurkceAltyazi FlareSolverr error: {data.get('message') or 'unknown error'}")
+        return data
+
+    def _inject_solution(self, solution):
+        session = self._get_session()
+        user_agent = solution.get("userAgent")
+        if user_agent:
+            session.headers["User-Agent"] = user_agent
+        for cookie in solution.get("cookies") or []:
+            name = cookie.get("name")
+            value = cookie.get("value")
+            if not name or value is None:
+                continue
+            session.cookies.set(
+                name,
+                value,
+                domain=cookie.get("domain") or ".turkcealtyazi.org",
+                path=cookie.get("path") or "/",
+            )
 
 
 def _parse_cookies(config):
@@ -187,6 +319,32 @@ def _parse_cookies(config):
     cookie = SimpleCookie()
     cookie.load(value)
     return {key: morsel.value for key, morsel in cookie.items()}
+
+
+def _session_response(response):
+    body = getattr(response, "content", b"")
+    if isinstance(body, str):
+        body = body.encode("utf-8")
+    headers = dict(getattr(response, "headers", {}) or {})
+    return HttpResponse(getattr(response, "status_code", 200), body, headers)
+
+
+def _flaresolverr_url(config):
+    return str((config or {}).get("flaresolverr_url") or "").strip()
+
+
+def _flaresolverr_timeout_ms(config):
+    configured = _config_int((config or {}).get("flaresolverr_timeout_ms")) or DEFAULT_FLARESOLVERR_TIMEOUT_MS
+    return max(1000, min(configured, MAX_FLARESOLVERR_TIMEOUT_MS))
+
+
+def _config_int(value):
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _requested_languages(languages):
@@ -210,7 +368,9 @@ def _video_imdb_id(video):
 
 def _raise_for_status(response, context):
     if _is_cloudflare_challenge(response):
-        raise PermissionError("TurkceAltyazi is presenting a Cloudflare challenge; configure matching cookies and User-Agent")
+        raise PermissionError(
+            "TurkceAltyazi is presenting a Cloudflare challenge; configure FlareSolverr URL or matching cookies and User-Agent"
+        )
     if response.status >= 400:
         raise RuntimeError(f"{context} failed with HTTP {response.status}")
 

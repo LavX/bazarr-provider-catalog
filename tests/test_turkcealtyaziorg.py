@@ -113,6 +113,34 @@ def _zip_body():
     return stream.getvalue()
 
 
+class FakeCookieJar(dict):
+    def set(self, name, value, domain=None, path=None):
+        self[name] = {"value": value, "domain": domain, "path": path}
+
+
+class FakeResponse:
+    def __init__(self, status_code=200, body=b"ok", headers=None):
+        self.status_code = status_code
+        self.content = body
+        self.headers = headers or {}
+
+
+class FakeSession:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.headers = {}
+        self.cookies = FakeCookieJar()
+        self.calls = []
+
+    def get(self, url, headers=None, cookies=None, timeout=None, allow_redirects=True):
+        self.calls.append(("GET", url, headers, cookies, timeout, allow_redirects))
+        return self.responses.pop(0)
+
+    def post(self, url, data=None, headers=None, cookies=None, timeout=None, allow_redirects=True):
+        self.calls.append(("POST", url, data, headers, cookies, timeout, allow_redirects))
+        return self.responses.pop(0)
+
+
 class TurkceAltyaziSearchTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
@@ -129,7 +157,7 @@ class TurkceAltyaziSearchTests(unittest.TestCase):
 
     def test_search_skips_unsupported_language_without_network(self):
         provider = self.mod.TurkceAltyaziOrgProvider()
-        provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True: self.fail(f"unexpected URL: {url}")
+        provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True, config=None: self.fail(f"unexpected URL: {url}")
 
         results = provider.search({"kind": "movie", "imdb_id": "tt1375666"}, [{"alpha3": "spa"}], {})
 
@@ -139,7 +167,7 @@ class TurkceAltyaziSearchTests(unittest.TestCase):
         provider = self.mod.TurkceAltyaziOrgProvider()
         calls = []
 
-        def get_response(url, headers, cookies, timeout=30, allow_redirects=True):
+        def get_response(url, headers, cookies, timeout=30, allow_redirects=True, config=None):
             del timeout, allow_redirects
             calls.append((url, headers, cookies))
             if url == "https://turkcealtyazi.org":
@@ -169,7 +197,7 @@ class TurkceAltyaziSearchTests(unittest.TestCase):
 
     def test_episode_search_filters_season_episode_and_keeps_season_pack(self):
         provider = self.mod.TurkceAltyaziOrgProvider()
-        provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True: self.mod.HttpResponse(
+        provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True, config=None: self.mod.HttpResponse(
             200, b"home" if url == "https://turkcealtyazi.org" else _episode_search_page(), {}
         )
 
@@ -189,7 +217,7 @@ class TurkceAltyaziSearchTests(unittest.TestCase):
 
     def test_search_returns_empty_for_not_found_meta(self):
         provider = self.mod.TurkceAltyaziOrgProvider()
-        provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True: self.mod.HttpResponse(
+        provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True, config=None: self.mod.HttpResponse(
             200,
             b'<html><head><meta name="description" content="404 Error"></head></html>',
             {},
@@ -202,7 +230,7 @@ class TurkceAltyaziSearchTests(unittest.TestCase):
 
     def test_search_reports_cloudflare_challenge(self):
         provider = self.mod.TurkceAltyaziOrgProvider()
-        provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True: self.mod.HttpResponse(
+        provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True, config=None: self.mod.HttpResponse(
             403,
             b"<html><title>Just a moment...</title></html>",
             {"cf-mitigated": "challenge"},
@@ -210,6 +238,111 @@ class TurkceAltyaziSearchTests(unittest.TestCase):
 
         with self.assertRaisesRegex(PermissionError, "Cloudflare"):
             provider.search({"kind": "movie", "imdb_id": "tt1375666"}, [{"alpha3": "tur"}], {})
+
+    def test_http_get_uses_ai_cloudscraper_by_default(self):
+        session = FakeSession([FakeResponse()])
+        created = []
+
+        class FakeCloudscraper:
+            @staticmethod
+            def create_scraper(**kwargs):
+                created.append(kwargs)
+                return session
+
+        self.mod.cloudscraper = FakeCloudscraper
+        provider = self.mod.TurkceAltyaziOrgProvider()
+
+        response = provider._http_get(
+            "https://turkcealtyazi.org",
+            provider._headers({}),
+            {},
+            config={},
+        )
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(created[0]["interpreter"], "native")
+        self.assertFalse(created[0]["enable_cookie_persistence"])
+        self.assertEqual(session.calls[0][0], "GET")
+
+    def test_get_session_retries_without_cookie_persistence_for_legacy_cloudscraper(self):
+        session = FakeSession([FakeResponse()])
+        created = []
+
+        class FakeCloudscraper:
+            @staticmethod
+            def create_scraper(**kwargs):
+                created.append(dict(kwargs))
+                if "enable_cookie_persistence" in kwargs:
+                    raise TypeError(
+                        "Session.__init__() got an unexpected keyword argument 'enable_cookie_persistence'"
+                    )
+                return session
+
+        self.mod.cloudscraper = FakeCloudscraper
+        provider = self.mod.TurkceAltyaziOrgProvider()
+
+        provider._http_get("https://turkcealtyazi.org", provider._headers({}), {}, config={})
+
+        self.assertEqual(len(created), 2)
+        self.assertFalse(created[0]["enable_cookie_persistence"])
+        self.assertNotIn("enable_cookie_persistence", created[1])
+        self.assertEqual(created[1]["interpreter"], "native")
+
+    def test_http_get_uses_flaresolverr_after_cloudflare_challenge(self):
+        session = FakeSession(
+            [
+                FakeResponse(
+                    403,
+                    b"<html><title>Just a moment...</title></html>",
+                    {"cf-mitigated": "challenge"},
+                ),
+                FakeResponse(200, b"<html>solved</html>"),
+            ]
+        )
+
+        class FakeCloudscraper:
+            @staticmethod
+            def create_scraper(**kwargs):
+                return session
+
+        flaresolverr_calls = []
+
+        def fake_post(url, payload, timeout):
+            flaresolverr_calls.append((url, payload, timeout))
+            return {
+                "solution": {
+                    "cookies": [
+                        {"name": "cf_clearance", "value": "clear", "domain": ".turkcealtyazi.org"}
+                    ],
+                    "userAgent": "Solved UA",
+                }
+            }
+
+        self.mod.cloudscraper = FakeCloudscraper
+        provider = self.mod.TurkceAltyaziOrgProvider()
+        provider._post_flaresolverr = fake_post
+
+        response = provider._http_get(
+            "https://turkcealtyazi.org/find.php?cat=sub&find=1375666",
+            provider._headers({}),
+            {},
+            config={
+                "flaresolverr_url": "http://127.0.0.1:8191/v1",
+                "flaresolverr_timeout_ms": 45000,
+            },
+        )
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(len(session.calls), 2)
+        self.assertEqual(session.headers["User-Agent"], "Solved UA")
+        self.assertEqual(flaresolverr_calls[0][0], "http://127.0.0.1:8191/v1")
+        self.assertEqual(flaresolverr_calls[0][1]["cmd"], "request.get")
+        self.assertEqual(
+            flaresolverr_calls[0][1]["url"],
+            "https://turkcealtyazi.org/find.php?cat=sub&find=1375666",
+        )
+        self.assertEqual(flaresolverr_calls[0][1]["maxTimeout"], 25000)
+        self.assertEqual(session.cookies["cf_clearance"]["value"], "clear")
 
 
 class TurkceAltyaziDownloadTests(unittest.TestCase):
@@ -220,12 +353,12 @@ class TurkceAltyaziDownloadTests(unittest.TestCase):
         provider = self.mod.TurkceAltyaziOrgProvider()
         calls = []
 
-        def get_response(url, headers, cookies, timeout=30, allow_redirects=True):
+        def get_response(url, headers, cookies, timeout=30, allow_redirects=True, config=None):
             del timeout, allow_redirects
             calls.append(("GET", url, headers, cookies))
             return self.mod.HttpResponse(200, _download_page(), {})
 
-        def post_response(url, data, headers, cookies, timeout=30):
+        def post_response(url, data, headers, cookies, timeout=30, config=None):
             del timeout
             calls.append(("POST", url, data, headers, cookies))
             return self.mod.HttpResponse(200, _zip_body(), {"content-type": "application/zip"})
@@ -253,10 +386,10 @@ class TurkceAltyaziDownloadTests(unittest.TestCase):
 
     def test_download_extracts_rar_with_extractor(self):
         provider = self.mod.TurkceAltyaziOrgProvider()
-        provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True: self.mod.HttpResponse(
+        provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True, config=None: self.mod.HttpResponse(
             200, _download_page(), {}
         )
-        provider._http_post = lambda url, data, headers, cookies, timeout=30: self.mod.HttpResponse(
+        provider._http_post = lambda url, data, headers, cookies, timeout=30, config=None: self.mod.HttpResponse(
             200, b"Rar!\x1a\x07\x00body", {"content-type": "application/vnd.rar"}
         )
 

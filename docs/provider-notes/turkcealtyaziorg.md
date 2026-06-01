@@ -17,9 +17,10 @@ Clean-room target for `turkcealtyaziorg`.
 
 ## Compatibility quirks
 
-- Cloudflare can block the site without matching browser cookies and User-Agent. Keep `cookies` optional, secret, and available for `cf_clearance`.
-- The default User-Agent should stay browser-like; a caller-supplied User-Agent must be paired with any supplied cookies.
-- A HTTP 403 Cloudflare challenge should raise a clear access error instead of returning empty results.
+- Cloudflare can block the site without matching browser cookies and User-Agent. The provider now uses `ai-cloudscraper` by default, keeps `cookies` optional and secret for manual `cf_clearance`, and can use an optional FlareSolverr `/v1` URL if the native session still receives a Cloudflare challenge.
+- The default User-Agent should stay browser-like. A caller-supplied User-Agent should remain paired with any supplied cookies.
+- A HTTP 403 Cloudflare challenge should raise a clear access error instead of returning empty results when no working cookies or FlareSolverr fallback are configured.
+- FlareSolverr timeouts are capped at `25000` ms to stay inside the Provider Hub worker deadline.
 - Search results should preserve IMDb, season, episode, release group, hearing-impaired, uploader, and season-pack match behavior.
 - Season-pack archives must not fall back to a wrong episode member.
 - Live verification on 2026-05-31 from this environment returned a Cloudflare challenge for the homepage and IMDb search without cookies.
