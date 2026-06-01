@@ -2056,6 +2056,19 @@
   - `curl -sS -i --max-time 20 https://api.subs.ro/v1.0/search/imdbid/tt22202452`: returned HTTP `401` with `Missing API key` and `x-subs-api-version: 1.0`.
   - `curl -sS -i --max-time 20 -H 'X-Subs-Api-Key: invalid-test-key' https://api.subs.ro/v1.0/search/imdbid/tt22202452`: returned HTTP `403` with `Invalid API key` and `x-subs-api-version: 1.0`.
   - Real live search and download require a Subs.ro `api_key`.
+- Fresh local and credential evidence on 2026-06-01:
+  - Recreated `/tmp/bazarr_catalog_provider_worktrees/subsro` as a linked git worktree on branch `catalog-subsro`, clean, and tracking `origin/catalog-subsro` after push.
+  - Branch `catalog-subsro` was pushed at `4e63940`.
+  - Branch scope remains limited to `README.md`, `catalog.json`, `docs/provider-notes/subsro.md`, `providers/subsro`, and `tests/test_subsro.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_subsro.py'`: `15` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subsro/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `343` tests passed, `6` skipped.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/subsro`, `tests/test_subsro.py`, `docs/provider-notes/subsro.md`, `README.md`, and `catalog.json` found no matches.
+  - No-key `https://api.subs.ro/v1.0/search/imdbid/tt22202452` probe returned HTTP `401` with `Missing API key`.
+  - Invalid-key probe returned HTTP `403` with `Invalid API key`.
+  - Test-server config check read only API-key presence and length from `/home/lavx/bazarr-data/config/config.yaml`; `subsro.api_key` is empty.
 - Remaining gates:
   - Run SDK live smoke search and download with a real Subs.ro API key.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subsro` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
