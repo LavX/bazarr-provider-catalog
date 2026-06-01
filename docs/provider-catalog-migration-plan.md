@@ -464,25 +464,25 @@
 - Branch: `catalog-titlovi`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/titlovi`
 - Current checkpoint: `933fb47 Add Titlovi provider`
+- Pull request: [#64](https://github.com/LavX/bazarr-provider-catalog/pull/64), open draft, head `catalog-titlovi`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
-- Local evidence on 2026-05-31:
+- Local evidence on 2026-06-01:
   - Legacy inspection confirmed movie and episode support, required `username` and `password`, token login, six UI languages, Titlovi language-label conversion, duplicate Serbian handling, paginated API search up to three pages, season-only episode search with local episode filtering, episode-zero packs, inconsistent title-name fixes, direct/ZIP/RAR downloads, Serbian Latin/Cyrillic bundled archive selection, and HTTP `429` rate-limit handling.
   - Bazarr UI/config inspection confirmed settings `username` and `password`, with both classified as secrets.
   - Red TDD gate `python3 -B -m unittest discover -s tests -p test_titlovi.py`: failed because `providers/titlovi/provider.py` did not exist.
-  - `python3 -B -m unittest discover -s tests -p test_titlovi.py`: `6` tests passed.
-  - `python3 -B -m sdk build-catalog`: `wrote catalog.json`.
+  - `python3 -B -m unittest discover -s tests -p test_titlovi.py`: `10` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/titlovi/provider.py`: passed.
-  - `python3 -B -m unittest discover -s tests`: `334` tests passed, `6` skipped.
-  - `git diff --check` and `git diff --cached --check`: clean.
+  - `python3 -B -m unittest discover -s tests`: `338` tests passed, `6` skipped.
+  - `git diff --check origin/main...HEAD`: clean.
   - Manifest language count matches the Bazarr Titlovi UI language registry: `6` entries.
-  - Attribution and em-dash scan over touched Titlovi files found no matches.
-- Live evidence on 2026-05-31:
-  - Sandbox DNS could not resolve `kodi.titlovi.com`, but escalated network probes reached the API.
-  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 https://kodi.titlovi.com/api/subtitles/gettoken`: returned HTTP `405` with `allow: POST`.
-  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 https://kodi.titlovi.com/api/subtitles/search`: returned HTTP `405` with `allow: GET`.
+  - Attribution and AI-credit scan over touched Titlovi files found no matches.
+- Live evidence on 2026-06-01:
+  - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://kodi.titlovi.com/api/subtitles/gettoken`: returned HTTP `405` with `POST` allowed.
+  - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://kodi.titlovi.com/api/subtitles/search`: returned HTTP `401` without credentials.
   - Real search and download require valid Titlovi credentials.
 - Remaining gates:
   - Run SDK live smoke search and download with valid Titlovi credentials.
