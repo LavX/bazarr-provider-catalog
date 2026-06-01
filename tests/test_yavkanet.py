@@ -132,8 +132,36 @@ class YavkaNetCloudflareTests(unittest.TestCase):
             body = self.mod.http_get("https://yavka.net/imdb/tt1160419", state=state)
 
         self.assertEqual(body, b"<html>ok</html>")
-        create_scraper.assert_called_once()
+        create_scraper.assert_called_once_with(
+            browser={"custom": self.mod.USER_AGENT},
+            interpreter="native",
+            enable_cookie_persistence=False,
+            debug=False,
+        )
         scraper.get.assert_called_once()
+
+    def test_http_get_retries_without_cookie_persistence_for_legacy_cloudscraper(self):
+        scraper = mock.MagicMock()
+        scraper.get.return_value = FakeResponse(b"<html>ok</html>")
+        created = []
+
+        def create_scraper(**kwargs):
+            created.append(dict(kwargs))
+            if "enable_cookie_persistence" in kwargs:
+                raise TypeError(
+                    "Session.__init__() got an unexpected keyword argument 'enable_cookie_persistence'"
+                )
+            return scraper
+
+        with mock.patch.object(self.mod.cloudscraper, "create_scraper", side_effect=create_scraper):
+            body = self.mod.http_get("https://yavka.net/imdb/tt1160419", state={})
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(len(created), 2)
+        self.assertFalse(created[0]["enable_cookie_persistence"])
+        self.assertEqual(created[0]["interpreter"], "native")
+        self.assertNotIn("enable_cookie_persistence", created[1])
+        self.assertEqual(created[1]["interpreter"], "native")
 
     def test_http_get_uses_flaresolverr_fallback_after_challenge(self):
         scraper = mock.MagicMock()

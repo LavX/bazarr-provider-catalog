@@ -77,11 +77,27 @@ class CloudflareBlockedError(RuntimeError):
 
 class _MissingCloudscraper:
     def create_scraper(self, *args, **kwargs):
-        raise CloudflareBlockedError("yavkanet cloudscraper dependency is not installed")
+        raise CloudflareBlockedError("yavkanet ai-cloudscraper dependency is not installed")
 
 
 if cloudscraper is None:  # pragma: no cover, dependency is declared in provider.json
     cloudscraper = _MissingCloudscraper()
+
+
+def _create_cloudscraper_session():
+    kwargs = {
+        "browser": {"custom": USER_AGENT},
+        "interpreter": "native",
+        "enable_cookie_persistence": False,
+        "debug": False,
+    }
+    try:
+        return cloudscraper.create_scraper(**kwargs)
+    except TypeError as exc:
+        if "enable_cookie_persistence" not in str(exc):
+            raise
+        kwargs.pop("enable_cookie_persistence")
+        return cloudscraper.create_scraper(**kwargs)
 
 
 def parse_imdb_results(body):
@@ -383,7 +399,7 @@ def _http_request(method, url, data=None, timeout=HTTP_TIMEOUT_SECONDS, config=N
 def _get_cloudscraper(state):
     scraper = state.get("cloudscraper")
     if scraper is None:
-        scraper = cloudscraper.create_scraper(browser={"custom": USER_AGENT})
+        scraper = _create_cloudscraper_session()
         state["cloudscraper"] = scraper
     return scraper
 
