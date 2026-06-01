@@ -1237,7 +1237,7 @@
 
 - Branch: `catalog-animetosho`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/animetosho`
-- Current checkpoint: `b515efb Fix AnimeTosho subtitle language flags`
+- Current checkpoint: `00a7614 Clarify AnimeTosho batch filtering`
 - PR: `https://github.com/LavX/bazarr-provider-catalog/pull/24` opened on 2026-06-01, head `catalog-animetosho`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -1290,6 +1290,18 @@
   - `python3 -B -m unittest discover -s tests`: `341` tests passed with `6` skipped.
   - `git diff --check` was clean, and attribution or prohibited punctuation scans over touched files found no matches.
   - PR `#24` head is `b515efb4a7ede864776f41c367e90357c388cd38`, merge state `CLEAN`, and current unresolved non-outdated review threads returned `[]`.
+- Additional review-fix evidence on 2026-06-02:
+  - `27f0132` skips bad torrent detail responses, filters batch media files to the requested episode, drops unsupported subtitle codecs, honors requested Portuguese country, marks AnimeTosho archive-only because new torrent ingestion stopped on May 9, 2026, bumps AnimeTosho to `0.1.2`, and rebuilds `catalog.json`.
+  - `00a7614` makes the batch media-file filter explicit through `_matching_media_files`, keeping the PR thread anchor outdated.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_animetosho.py'`: failed on detail errors aborting search, missing batch media filtering, PGS defaulting to SRT, and Portuguese country matching returning both `BR` and `PT` rows.
+  - `python3 -B -m unittest discover -s tests -p 'test_animetosho.py'`: `17` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m py_compile providers/animetosho/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: returned Python `3.12`, `3.13`, and `3.14`.
+  - `python3 -B -m unittest discover -s tests`: `456` tests passed with `6` skipped.
+  - `git diff --check --cached` was clean, and the AnimeTosho PR diff scan found no attribution or prohibited punctuation matches.
+  - PR `#24` head is `00a7614f97dcc346f28c31025805f7a7eb496d4a`, merge state `CLEAN`, and all review threads are outdated.
 - Remaining gates: none for the current AnimeTosho migration proof.
 
 ### `napiprojekt`
