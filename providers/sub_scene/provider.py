@@ -554,7 +554,8 @@ def _flaresolverr_timeout_ms(config):
         timeout = int((config or {}).get("flaresolverr_timeout_ms") or DEFAULT_FLARESOLVERR_TIMEOUT_MS)
     except (TypeError, ValueError):
         return DEFAULT_FLARESOLVERR_TIMEOUT_MS
-    return max(5000, min(timeout, MAX_FLARESOLVERR_TIMEOUT_MS))
+    bounded_timeout = min(timeout, MAX_FLARESOLVERR_TIMEOUT_MS)
+    return max(5000, bounded_timeout)
 
 
 def _flaresolverr_http_timeout_seconds(timeout, timeout_ms):
