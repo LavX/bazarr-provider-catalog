@@ -412,7 +412,7 @@ class CloudflareTests(unittest.TestCase):
 
         def fake_urlopen(request, timeout):
             del request, timeout
-            return _FakeUrlopenResponse(
+            return _FakeUrlOpenResponse(
                 json.dumps({"status": "ok", "solution": {"response": text}}).encode("utf-8")
             )
 
