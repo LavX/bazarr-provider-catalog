@@ -1086,6 +1086,7 @@
 - Branch: `catalog-napiprojekt`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`
 - Current checkpoint: `5d9fb63 Add NapiProjekt provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/25` opened on 2026-06-01, head `catalog-napiprojekt`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1118,6 +1119,16 @@
   - Compat movie search for `imdb_id=tt0126029`, `query=Shrek.2001.1080p.BluRay.x264.mkv`, `type=movie`, `languages=pl`, `moviehash=444563eef63f83d47cabb888f7a45113`, and `moviehash_match=include` returned HTTP `200`, `25` total results, including `1` NapiProjekt result with `moviehash_match` true.
   - Compat login returned HTTP `200`; compat download for NapiProjekt `file_id=13` returned HTTP `200` and a stream link.
   - Fetching the stream link returned HTTP `200` with `67901` bytes of SRT content.
+- Fresh PR evidence on 2026-06-01:
+  - `gh pr list --repo LavX/bazarr-provider-catalog --head catalog-napiprojekt --json number,state,isDraft,reviewDecision,mergeStateStatus,url,title`: no existing PR before creation.
+  - `python3 -B -m unittest discover -s tests -p 'test_napiprojekt.py'`: `13` tests passed.
+  - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/napiprojekt/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, provider code, tests, and fixtures: no matches.
+  - `python3 -B -m sdk smoke-test --provider napiprojekt --language pol --video-fixture tests/fixtures/napiprojekt_video_shrek.json --config-json '{"only_authors":false,"only_real_names":false}' --expect-min-results 1`: `napiprojekt ok`.
+  - `gh pr view 25 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#25` is open, non-draft, head `catalog-napiprojekt`, base `main`, merge state `CLEAN`.
 - Remaining gates: none for the current NapiProjekt migration proof. Author-filtered catalog scraping still depends on a reachable FlareSolverr `/v1` endpoint when NapiProjekt serves a Cloudflare challenge.
 
 ### `podnapisi`
