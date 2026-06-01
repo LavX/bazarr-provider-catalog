@@ -4,6 +4,55 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "3907a21ae7c419be51fc9daf0ede66a4d05ea18fd0267be7350b1f251eff43b1",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between HTTP calls to animekalesi.com.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Scrapes AnimeKalesi episode subtitle pages for Turkish anime subtitles. Direct subtitle files and ZIP packages are supported.",
+        "entry_class": "AnimeKalesiProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "7a87ca21d37580450f05be85490036185cc9ab115771940fbadfcf1071af9a06"
+        },
+        "languages": [
+          "tur"
+        ],
+        "name": "AnimeKalesi",
+        "provider_id": "animekalesi",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/animekalesi",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "episode"
+        ],
+        "version": "0.1.2"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "418a51393a876478e8eca61adcb2e81c2e26b99d93179b9b682d6eb75012322f",
         "config_schema": {
           "additionalProperties": false,
@@ -93,6 +142,91 @@
           "movie"
         ],
         "version": "0.1.1"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "71d3c3f57dd92ea613775352e0a18173aa1bb34c3598d248da0124c0023049f4",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "api_url": {
+              "description": "Optional BSPlayer SOAP endpoint override. Leave blank to try the standard subdomains.",
+              "title": "API URL override",
+              "type": "string"
+            },
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional delay before the searchSubtitles SOAP call.",
+              "maximum": 10000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            },
+            "timeout_seconds": {
+              "default": 12,
+              "description": "HTTP timeout for BSPlayer SOAP calls.",
+              "maximum": 60,
+              "minimum": 3,
+              "title": "Timeout (seconds)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Uses the BSPlayer subtitles SOAP API for hash and size based movie and episode subtitle lookup.",
+        "entry_class": "BSPlayerProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "dfd2e9a61d562e2a9b674a3892b1248acb6a0a2976d50f90212568e7a68814c9"
+        },
+        "languages": [
+          "ara",
+          "bul",
+          "ces",
+          "dan",
+          "deu",
+          "ell",
+          "eng",
+          "fin",
+          "fra",
+          "hun",
+          "ita",
+          "jpn",
+          "kor",
+          "nld",
+          "pol",
+          "por",
+          "ron",
+          "rus",
+          "spa",
+          "swe",
+          "tur",
+          "ukr",
+          "zho"
+        ],
+        "name": "BSPlayer",
+        "provider_id": "bsplayer",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/bsplayer",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.0"
       }
     },
     {
@@ -249,6 +383,158 @@
           "episode"
         ],
         "version": "0.1.3"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "bd7fe7608a6d01fe8aa029c8b34363d6e59bd045ef82189eda32f02e040cfb2f",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "locked_retry_delay_ms": {
+              "default": 30000,
+              "description": "Delay before retrying when Gestdown returns HTTP 423.",
+              "maximum": 30000,
+              "minimum": 0,
+              "title": "Locked retry delay (ms)",
+              "type": "integer"
+            },
+            "request_timeout_seconds": {
+              "default": 30,
+              "description": "HTTP request timeout for Gestdown API calls.",
+              "maximum": 120,
+              "minimum": 1,
+              "title": "Request timeout (seconds)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Uses the public Gestdown API for episode subtitles by TVDB show id, season, episode, and language. No login or API key required.",
+        "entry_class": "GestdownProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "297bd9efbc985cd1713692ee05004190c684f3bd7d03e41a7185d043a7ab4d4c"
+        },
+        "languages": [
+          "ara",
+          "aze",
+          "ben",
+          "bos",
+          "bul",
+          "cat",
+          "ces",
+          "dan",
+          "deu",
+          "ell",
+          "eng",
+          "eus",
+          "fas",
+          "fin",
+          "fra",
+          "glg",
+          "heb",
+          "hrv",
+          "hun",
+          "hye",
+          "ind",
+          "ita",
+          "jpn",
+          "kor",
+          "mkd",
+          "msa",
+          "nld",
+          "nor",
+          "pol",
+          "por",
+          "pt-BR",
+          "ron",
+          "rus",
+          "slk",
+          "slv",
+          "spa",
+          "sqi",
+          "sr-Cyrl",
+          "sr-Latn",
+          "srp",
+          "swe",
+          "tha",
+          "tur",
+          "ukr",
+          "vie",
+          "zho"
+        ],
+        "name": "Gestdown",
+        "provider_id": "gestdown",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/gestdown",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "episode"
+        ],
+        "version": "0.1.0"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "cc5f9ae5ce3265334128919992d1f34ed9015a4a86fea5a8fdcbbc54d52c2514",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between HTTP calls to greeksubs.net.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Scrapes greeksubs.net for Greek movie and episode subtitles by IMDb id. No login or API key required.",
+        "entry_class": "GreekSubsProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "e4f324d55329304227f939c006a5644ff37a5ce4d6edfa5fd4fa977f06d93122"
+        },
+        "languages": [
+          "ell"
+        ],
+        "name": "GreekSubs",
+        "provider_id": "greeksubs",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/greeksubs",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.0"
       }
     },
     {
@@ -1221,6 +1507,46 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "7e74f072215ed1376d62abf8926f777498805cddb3b29fc66092108925b4c159",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {},
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Queries api.subt.is for Spanish movie subtitles using hash, file size, filename, and alternative filename lookups. No login or API key required.",
+        "entry_class": "SubtisProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "87101ac8bdad86fa7f297d6ab9bda78ace2d25691c186278c346d9b44aab2039"
+        },
+        "languages": [
+          "spa"
+        ],
+        "name": "Subtis",
+        "provider_id": "subtis",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/subtis",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie"
+        ],
+        "version": "0.1.0"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "94e3744f5daac8effa567393bb19d7c7b97eb3a094e1ac85bac0ba82566b6376",
         "config_schema": {
           "additionalProperties": false,
@@ -1373,6 +1699,143 @@
           "episode"
         ],
         "version": "0.1.8"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "2afb11be41e8c6d57850870ce4d2babdf1f02c3a70c645f30932d6f113e60235",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {},
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Scrapes subtitulamos.tv for episode subtitles in Spanish, English, Catalan, Galician, and Portuguese. No login or API key required.",
+        "entry_class": "SubtitulamosTVProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "ae643ed91fda4e1a5712b5f68b8211b303b791711e14c5548185882c1df7216e"
+        },
+        "languages": [
+          "ca",
+          "en",
+          "en-GB",
+          "en-US",
+          "es",
+          "es-AR",
+          "es-BO",
+          "es-CL",
+          "es-CO",
+          "es-CR",
+          "es-DO",
+          "es-EC",
+          "es-GT",
+          "es-HN",
+          "es-MX",
+          "es-NI",
+          "es-PA",
+          "es-PE",
+          "es-PR",
+          "es-PY",
+          "es-SV",
+          "es-US",
+          "es-UY",
+          "es-VE",
+          "gl",
+          "pt",
+          "pt-BR"
+        ],
+        "name": "SubtitulamosTV",
+        "provider_id": "subtitulamostv",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/subtitulamostv",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "episode"
+        ],
+        "version": "0.1.1"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "c1499f4e7e3a1363bad3d2a65eb0e7be818e90ccfc4905b491513cde38419b6d",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between HTTP calls to tvsubtitles.net.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Scrapes tvsubtitles.net for episode subtitles in broad multilingual coverage. No login or API key required.",
+        "entry_class": "TvSubtitlesProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "a86671513a668e22036d2d65c4b87475e27068edf6938070697906bb5b154d90"
+        },
+        "languages": [
+          "ara",
+          "bul",
+          "ces",
+          "dan",
+          "deu",
+          "ell",
+          "eng",
+          "fin",
+          "fra",
+          "hun",
+          "ita",
+          "jpn",
+          "kor",
+          "nld",
+          "pol",
+          "por",
+          "ron",
+          "rus",
+          "spa",
+          "swe",
+          "tur",
+          "ukr",
+          "zho"
+        ],
+        "name": "TVsubtitles",
+        "provider_id": "tvsubtitles",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/tvsubtitles",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "episode"
+        ],
+        "version": "0.1.1"
       }
     }
   ],
