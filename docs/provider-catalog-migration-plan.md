@@ -874,6 +874,7 @@
   - `bazarr-ui-test` direct probe `GET https://wizdom.xyz/` returned Cloudflare HTTP `522`; `GET https://wizdom.xyz/api/releases/tt1375666` timed out after `25` seconds with `0` bytes received.
   - Fresh check before draft PR `#72`: `python3 -B -m sdk smoke-test --provider wizdom --language heb --video-fixture tests/fixtures/wizdom_video_inception.json --expect-min-results 1 --skip-download` still failed with `wizdom search failed: The read operation timed out`.
   - Fresh direct probes before draft PR `#72`: `GET https://wizdom.xyz/` returned Cloudflare HTTP `522`, and `GET https://wizdom.xyz/api/releases/tt1375666` returned Cloudflare HTTP `522`.
+  - Temporary venv probe with `ai-cloudscraper==3.8.4` still returned Cloudflare HTTP `522` for both `https://wizdom.xyz/` and `https://wizdom.xyz/api/releases/tt1375666`, with `server: cloudflare` and the standard `522` body. No provider-layer Cloudflare fallback was added because this is still an origin timeout, not a browser challenge.
 - Provider Hub test-server evidence on 2026-06-01:
   - Branch `catalog-wizdom` was pushed at `2d5425ce8f2e35ef897dc51eac59a30be7ef4366`.
   - Official catalog source dev ref was set to `catalog-wizdom`; refresh returned `13` entries and resolved Wizdom `0.1.0` at commit `2d5425ce8f2e35ef897dc51eac59a30be7ef4366`.
