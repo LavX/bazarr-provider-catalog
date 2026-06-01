@@ -744,7 +744,8 @@
 
 - Branch: `catalog-shooter`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/shooter`
-- Current checkpoint: `3d794c2 Add Shooter provider`
+- Current checkpoint: `103d8ee Fix Shooter fixture trailing blanks`
+- Pull request: [#71](https://github.com/LavX/bazarr-provider-catalog/pull/71), open draft, head `catalog-shooter`, base `main`, merge state `CLEAN`.
 - Local evidence on 2026-05-29:
   - `python3 -B -m unittest discover -s tests -p 'test_shooter.py'`: `7` tests passed.
   - `python3 -B -m sdk validate`: `catalog ok`.
@@ -756,14 +757,15 @@
 - Fresh local evidence on 2026-06-01:
   - Recreated isolated worktree `/tmp/bazarr_catalog_provider_worktrees/shooter` from branch `catalog-shooter`.
   - `python3 -B -m unittest discover -s tests -p 'test_shooter.py'`: `8` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/shooter/provider.py`: passed.
-  - `git diff --check`: clean.
-  - Attribution and em-dash scan over `providers/shooter`, `tests/test_shooter.py`, `README.md`, `catalog.json`, and `docs/provider-notes/shooter.md` found no matches.
+  - `103d8ee` removes trailing blank lines from the Shooter fixture files so `git diff --check origin/main...HEAD` is clean.
+  - Attribution scan over `providers/shooter`, `tests/test_shooter.py`, `README.md`, `catalog.json`, `docs/provider-notes/shooter.md`, and Shooter fixtures found no matches.
   - `python3 -B -m unittest discover -s tests`: `336` tests passed, `6` skipped.
 - Live evidence on 2026-06-01:
   - Direct provider search with the synthetic fixture hash reached the Shooter API and returned `0` results, proving the route still returns the expected no-results shape without disclosing real media metadata.
-  - `catalog-shooter` was pushed to GitHub at commit `3d794c2e1adeb6e08df841e71b8c87249b577c94`.
+  - `catalog-shooter` was pushed to GitHub at commit `103d8eef06ffecf2e0921c00b73c9ee9c134f018`.
   - Official Provider Hub catalog source was refreshed from `catalog-shooter`; the Shooter manifest resolved to version `0.1.0` at commit `3d794c2e1adeb6e08df841e71b8c87249b577c94`.
   - Provider Hub staged Shooter with no broken requirements, then `bazarr-ui-test` restarted healthy.
   - Provider state after restart: active version `0.1.0`, `pending_restart=false`, `trusted=true`, `enabled=true`, `last_error=None`, manifest commit `3d794c2e1adeb6e08df841e71b8c87249b577c94`.
