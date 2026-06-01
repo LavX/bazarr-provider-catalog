@@ -1219,6 +1219,18 @@
 - Live smoke evidence on 2026-05-29:
   - No-key `https://api.betaseries.com/episodes/display?...` probe returned API error code `1001`, `Please set an API key.`
   - Real search and download smoke require a valid BetaSeries API key.
+- Fresh local and credential evidence on 2026-06-01:
+  - Recreated `/tmp/bazarr_catalog_provider_worktrees/betaseries` as a linked git worktree on branch `catalog-betaseries`, clean, and tracking `origin/catalog-betaseries` after push.
+  - Branch `catalog-betaseries` was pushed at `461ab52`.
+  - Branch scope remains limited to `README.md`, `catalog.json`, `providers/betaseries`, `tests/test_betaseries.py`, and BetaSeries fixtures.
+  - `python3 -B -m unittest discover -s tests -p 'test_betaseries.py'`: `7` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/betaseries/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/betaseries`, `tests/test_betaseries.py`, `README.md`, and `catalog.json` found no matches.
+  - No-key `https://api.betaseries.com/episodes/display?id=1` probe returned API error code `1001`, `Please set an API key.`
+  - Test-server config check read only token presence and length from `/home/lavx/bazarr-data/config/config.yaml`; `betaseries.token` is empty.
 - Remaining gates:
   - Run SDK smoke search and download when a test BetaSeries API key is available.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `betaseries` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
