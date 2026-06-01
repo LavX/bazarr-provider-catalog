@@ -1232,6 +1232,7 @@
 - Branch: `catalog-subsarr`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subsarr`
 - Current checkpoint: `e154cee Add Subsarr provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/27` opened as draft on 2026-06-01, head `catalog-subsarr`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1261,6 +1262,15 @@
   - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
   - `git diff --check`: clean.
   - Attribution and em-dash scan over `providers/subsarr`, `tests/test_subsarr.py`, `README.md`, and `catalog.json` found no matches.
+- Fresh PR evidence on 2026-06-01:
+  - `gh pr list --repo LavX/bazarr-provider-catalog --head catalog-subsarr --json number,state,isDraft,reviewDecision,mergeStateStatus,url,title`: no existing PR before creation.
+  - `python3 -B -m unittest discover -s tests -p 'test_subsarr.py'`: `7` tests passed.
+  - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subsarr/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, provider code, tests, and fixtures: no matches.
+  - `gh pr view 27 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#27` is open, draft, head `catalog-subsarr`, base `main`, merge state `CLEAN`.
 - Remaining gates:
   - Run SDK smoke search and download against a reachable self-hosted Subsarr service when a test `base_url` is available.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` is deployed on `bazarr-ui-test`; `subsarr` remains unproved only because the test service URL is missing.
