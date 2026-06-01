@@ -494,25 +494,25 @@
 - Branch: `catalog-titulky`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/titulky`
 - Current checkpoint: `8394a28 Add Titulky provider`
+- Pull request: [#65](https://github.com/LavX/bazarr-provider-catalog/pull/65), open draft, head `catalog-titulky`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
-- Local evidence on 2026-05-31:
+- Local evidence on 2026-06-01:
   - Legacy inspection confirmed movie and episode support, required VIP `username` and `password`, `approved_only`, `skip_wrong_fps`, session login through the premium site root, serial browse by IMDb id, movie-as-season-zero behavior, episode row parsing, Czech/Slovak flag language parsing, approved/unapproved row classes, detail-page FPS parsing, direct/ZIP/RAR downloads, daily download-limit detection, HTTP `429` rate-limit handling, and Europe/Prague daily reset semantics in Bazarr core.
   - Bazarr UI/config inspection confirmed settings `username`, `password`, `approved_only`, and `skip_wrong_fps`, with `username` and `password` classified as secrets.
   - Red TDD gate `python3 -B -m unittest discover -s tests -p test_titulky.py`: failed because `providers/titulky/provider.py` did not exist.
-  - `python3 -B -m unittest discover -s tests -p test_titulky.py`: `6` tests passed.
-  - `python3 -B -m sdk build-catalog`: `wrote catalog.json`.
+  - `python3 -B -m unittest discover -s tests -p test_titulky.py`: `9` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/titulky/provider.py`: passed.
-  - `python3 -B -m unittest discover -s tests`: `334` tests passed, `6` skipped.
-  - `git diff --check` and `git diff --cached --check`: clean.
+  - `python3 -B -m unittest discover -s tests`: `337` tests passed, `6` skipped.
+  - `git diff --check origin/main...HEAD`: clean.
   - Manifest language count matches the Bazarr Titulky UI language registry: `2` entries.
-  - Attribution and em-dash scan over touched Titulky files found no matches.
-- Live evidence on 2026-05-31:
-  - Sandbox DNS could not resolve `premium.titulky.com`, but escalated network probes reached the site.
-  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 https://premium.titulky.com/`: returned HTTP `200`.
-  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 'https://premium.titulky.com/?action=serial&step=0&id=1160419'`: returned HTTP `200`.
+  - Attribution and AI-credit scan over touched Titulky files found no matches.
+- Live evidence on 2026-06-01:
+  - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://premium.titulky.com/`: returned HTTP `200`.
+  - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' 'https://premium.titulky.com/?action=serial&step=0&id=1160419'`: returned HTTP `200`.
   - Real search and download require valid Titulky VIP credentials.
 - Remaining gates:
   - Run SDK live smoke search and download with valid Titulky VIP credentials.
