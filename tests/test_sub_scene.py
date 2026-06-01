@@ -25,6 +25,19 @@ from provider import (
 )
 
 
+class TestDependencyLocks(unittest.TestCase):
+    def test_binary_dependency_hashes_cover_bazarr_plus_python_matrix(self):
+        manifest_path = Path(__file__).parent.parent / "providers" / "sub_scene" / "provider.json"
+        manifest = json.loads(manifest_path.read_text())
+        requirements = {
+            item["name"]: item
+            for item in manifest["dependencies"]["requirements"]
+        }
+
+        self.assertGreaterEqual(len(requirements["aiohttp"]["hashes"]), 6)
+        self.assertGreaterEqual(len(requirements["cffi"]["hashes"]), 6)
+
+
 class FakeUrlopenResponse:
     def __init__(self, body):
         self.body = body
