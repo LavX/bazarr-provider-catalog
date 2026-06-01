@@ -551,6 +551,7 @@
 - Branch: `catalog-subs4free`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subs4free`
 - Current checkpoint: `f7ca9ac Add Subs4Free provider`
+- Pull request: [#67](https://github.com/LavX/bazarr-provider-catalog/pull/67), open ready for review, head `catalog-subs4free`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -574,10 +575,11 @@
 - Fresh local and live evidence on 2026-06-01:
   - Branch `catalog-subs4free` was pushed at `f7ca9ac`.
   - `python3 -B -m unittest discover -s tests -p 'test_subs4free.py'`: `7` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/subs4free/provider.py`: passed.
-  - `git diff --check`: clean.
-  - Attribution and em-dash scan over `providers/subs4free`, `tests/test_subs4free.py`, `README.md`, `catalog.json`, and `docs/provider-notes/subs4free.md` found no matches.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Attribution and AI-credit scan over `providers/subs4free`, `tests/test_subs4free.py`, `README.md`, `catalog.json`, and `docs/provider-notes/subs4free.md` found no matches.
   - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
   - `python3 -B -m sdk smoke-test --provider subs4free --language ell --video-fixture tests/fixtures/subs4free_video_inception_2010.json --expect-min-results 1`: `subs4free ok`.
 - Provider Hub test-server evidence on 2026-06-01:
