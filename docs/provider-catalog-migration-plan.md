@@ -29,7 +29,7 @@
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
-- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subtitrarinoi`, `subtitriid`, `supersubtitles`, `titrari`, `yavkanet`, and `yifysubtitles`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
+- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subtitrarinoi`, `subtitriid`, `supersubtitles`, `titrari`, `yavkanet`, `yifysubtitles`, and `subs4free`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
 - Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead for Provider Hub migration on 2026-05-31 and re-confirmed on 2026-06-01. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof unless a verified upstream origin returns.
 - Existing provider worktrees:
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
@@ -525,9 +525,29 @@
   - `curl -sS -L --max-time 20 -A 'Mozilla/5.0 BazarrProviderHub' 'https://www.subs4free.info/search_report.php?search=Inception&searchType=1'`: returned current `movie-details` rows for Inception.
   - `python3 -B -m sdk smoke-test --provider subs4free --language ell --video-fixture tests/fixtures/subs4free_video_inception_2010.json --expect-min-results 1 --skip-download`: passed outside the sandbox network restriction.
   - `python3 -B -m sdk smoke-test --provider subs4free --language ell --video-fixture tests/fixtures/subs4free_video_inception_2010.json --expect-min-results 1`: passed outside the sandbox network restriction, including download.
-- Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subs4free` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+- Fresh local and live evidence on 2026-06-01:
+  - Branch `catalog-subs4free` was pushed at `f7ca9ac`.
+  - `python3 -B -m unittest discover -s tests -p 'test_subs4free.py'`: `7` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subs4free/provider.py`: passed.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/subs4free`, `tests/test_subs4free.py`, `README.md`, `catalog.json`, and `docs/provider-notes/subs4free.md` found no matches.
+  - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
+  - `python3 -B -m sdk smoke-test --provider subs4free --language ell --video-fixture tests/fixtures/subs4free_video_inception_2010.json --expect-min-results 1`: `subs4free ok`.
+- Provider Hub test-server evidence on 2026-06-01:
+  - Official catalog source dev ref was set to `catalog-subs4free`; refresh returned `13` entries and resolved Subs4Free `0.1.0` at commit `f7ca9ac599bf2ced93596e9b014bf42d70e2e00f`.
+  - Provider Hub staged Subs4Free `0.1.0`, installed dependencies successfully, and saved config `request_delay_ms=0`.
+  - `bazarr-ui-test` restarted healthy on image `ui-test-20260531-provider-hub-replacements-f245ae096`.
+  - Provider state after restart: active version `0.1.0`, `pending_restart=false`, `trusted=true`, `enabled=true`, `last_error=None`, manifest commit `f7ca9ac599bf2ced93596e9b014bf42d70e2e00f`.
+  - Runtime replacement policy contains `55` trusted migrated built-in ids, includes `subs4free`, and excludes `hosszupuska` and `podnapisi`.
+  - A direct active-bundle search against the Inception Greek fixture returned `14` Subs4Free candidates.
+  - Initial compat searches for `Inception.2010.1080p.BluRay.x264.mkv` returned no Subs4Free rows because higher-ranked cached and non-Subs4Free rows filled the pages; a fresh release-specific key was used for proof.
+  - Compat search `GET /api/v1/subtitles?imdb_id=tt1375666&query=Inception.2010.1080p.BRRip.x265.HazMatt.mkv&type=movie&languages=el&per_page=100` returned HTTP `200`, `140` total results, and `14` Subs4Free rows.
+  - First Subs4Free result: `file_id=354`, release `Inception 2010 1080p BluRay H264 AAC-RARBG [SubRip]`, subtitle id `subs4free:subs4free-s3591aab93d-ell`.
+  - Compat download `POST /api/v1/download` for `file_id=354` returned HTTP `200`, a stream link, `remaining=999`, and `remaining_downloads=999`.
+  - Compat stream returned HTTP `200` and `150646` bytes. The payload starts with SRT cue `0`, timestamp `00:00:00,000 --> 00:00:02,500`, and the source marker line from the downloaded subtitle.
+- Status:
+  - Subs4Free is locally validated and proved through Provider Hub compat search, download, and stream on `bazarr-ui-test` for the Greek movie path.
 
 ### `subs4series`
 
