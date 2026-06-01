@@ -18,7 +18,8 @@ Clean-room target for `yifysubtitles`.
 - HTTP `404` from the IMDb page means the movie has no YIFY subtitle page and returns no results.
 - Rows are sorted by Provider Hub score, then YIFY rating.
 - Archive member selection prefers release title, resolution, source, and release group matches.
-- Live verification on 2026-05-31 reached Cloudflare but `/movie-imdb/tt1160419` returned HTTP `504`, so live smoke could not prove current search results from this environment.
+- An early 2026-05-31 probe reached Cloudflare and returned HTTP `504`, but later live and Provider Hub compat proof succeeded.
+- Current 2026-06-01 live smoke succeeds with the browser-style `urllib` request path. Do not add `ai-cloudscraper` or FlareSolverr unless the site starts serving a real Cloudflare challenge instead of normal HTML.
 
 ## License notes
 
