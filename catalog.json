@@ -577,14 +577,14 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "b7800c46dd373bbb93d5cbc3fd2d60819a3a7f148bece15d2a7d522ae872b5df",
+        "bundle_sha256": "ed955a00b3890f526a70100b5ef0f562c505d2ac8a797abed226f732449a265f",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
             "flaresolverr_timeout_ms": {
-              "default": 60000,
-              "description": "Maximum time FlareSolverr may spend solving a Cloudflare challenge.",
-              "maximum": 180000,
+              "default": 25000,
+              "description": "Maximum time FlareSolverr may spend solving a Cloudflare challenge. Capped below the Provider Hub worker deadline.",
+              "maximum": 25000,
               "minimum": 5000,
               "title": "FlareSolverr timeout (ms)",
               "type": "integer"
@@ -828,7 +828,7 @@
         "entry_class": "NapiProjektProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "75f5784ef8f76d606a91d7fb2129244c2a20ea2a3cefc0e79d45f4014e5533af"
+          "provider.py": "feaa45779b918e5c0872f5e74741b241eee11eefe9f2301cfb53fb91a775cc25"
         },
         "languages": [
           "pol"

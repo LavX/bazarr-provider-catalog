@@ -285,6 +285,12 @@ class CloudflareTests(unittest.TestCase):
         finally:
             self.mod.cloudscraper.create_scraper = original
 
+    def test_flaresolverr_timeout_is_capped_below_worker_deadline(self):
+        self.assertEqual(
+            self.mod._flaresolverr_timeout_ms({"flaresolverr_timeout_ms": 45000}),
+            25000,
+        )
+
 
 class _FakeResponse:
     def __init__(self, status_code, content, headers=None):

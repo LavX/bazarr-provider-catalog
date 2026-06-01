@@ -21,7 +21,8 @@ HASH_DOWNLOAD_URL = "https://napiprojekt.pl/unit_napisy/dl.php"
 CATALOG_SEARCH_URL = "https://www.napiprojekt.pl/ajax/search_catalog.php"
 CATALOG_BASE_URL = "https://www.napiprojekt.pl"
 HTTP_TIMEOUT_SECONDS = 15
-DEFAULT_FLARESOLVERR_TIMEOUT_MS = 60000
+DEFAULT_FLARESOLVERR_TIMEOUT_MS = 25000
+MAX_FLARESOLVERR_TIMEOUT_MS = 25000
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -441,7 +442,7 @@ def _flaresolverr_timeout_ms(config):
         timeout = int((config or {}).get("flaresolverr_timeout_ms") or DEFAULT_FLARESOLVERR_TIMEOUT_MS)
     except (TypeError, ValueError):
         timeout = DEFAULT_FLARESOLVERR_TIMEOUT_MS
-    return min(max(timeout, 5000), 180000)
+    return min(max(timeout, 5000), MAX_FLARESOLVERR_TIMEOUT_MS)
 
 
 def _candidate(payload, release_info, matches, score, display=None):
