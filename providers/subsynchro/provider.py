@@ -29,6 +29,7 @@ USER_AGENT = (
 )
 
 _ANCHOR_RE = re.compile(rb"<a\b(?P<attrs>[^>]*)>(?P<label>.*?)</a>", re.I | re.S)
+_ANCHOR_OPEN_RE = re.compile(rb"<a\b(?P<attrs>[^>]*)>", re.I | re.S)
 _ARTICLE_RE = re.compile(rb"<article\b(?P<attrs>[^>]*)>(?P<body>.*?)</article>", re.I | re.S)
 _FILM_HEADER_RE = re.compile(
     rb"<h1\b[^>]*>\s*<strong>(?P<title>.*?)</strong>.*?(?P<year>\d{4})",
@@ -365,7 +366,8 @@ def _film_identity(body):
 
 
 def _release_link(row_body):
-    for attrs, _label in _iter_anchors(row_body):
+    for match in _ANCHOR_OPEN_RE.finditer(row_body or b""):
+        attrs = match.group("attrs")
         href = _attr(attrs, "href")
         title = _attr(attrs, "title")
         if href.endswith(".html") and "/" in href and title:

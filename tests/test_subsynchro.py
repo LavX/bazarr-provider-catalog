@@ -68,6 +68,25 @@ class SubsynchroParserTests(unittest.TestCase):
             "https://www.subsynchro.com/2025/the-plastic-detox/the-plastic-detox-2026-1080p-web-h264-edith.html",
         )
 
+    def test_parse_film_releases_handles_malformed_group_anchor(self):
+        body = b"""
+        <h1><strong>The Plastic Detox</strong> <a href="2025.html"><span>, realise en </span> 2025</a></h1>
+        <table>
+          <tr id="release_163562" class="ligne fichier_1" data-format="web_1080p">
+            <td class="col2"><a href="toutes-les-releases-du-groupe-EDITH.html" title="Les releases du groupe EDITH">EDITH</<a></li>
+            <td class="col3"><a href="2025/the-plastic-detox/the-plastic-detox-2026-1080p-web-h264-edith.html" title="The.Plastic.Detox.2026.1080p.WEB.H264-EDITH">The.Plastic.Detox.2026.1080p.WEB.H264-</a><a href="toutes-les-releases-du-groupe-EDITH.html" title="EDITH"><strong class="group_name">EDITH</strong></a></td>
+          </tr>
+        </table>
+        """
+
+        rows = self.mod.parse_film_releases(body)
+
+        self.assertEqual(rows[0]["release_id"], "163562")
+        self.assertEqual(
+            rows[0]["release_url"],
+            "https://www.subsynchro.com/2025/the-plastic-detox/the-plastic-detox-2026-1080p-web-h264-edith.html",
+        )
+
     def test_parse_release_files_extracts_download_link(self):
         rows = self.mod.parse_release_files(
             RELEASE_HTML,
