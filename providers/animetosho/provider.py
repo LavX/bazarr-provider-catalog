@@ -125,7 +125,7 @@ def parse_torrent_subtitles(body, entry):
                 continue
             info = attachment.get("info") if isinstance(attachment.get("info"), dict) else {}
             language = _language_payload(info)
-            if language["alpha3"] not in SUPPORTED_LANGUAGES:
+            if not language:
                 continue
             subtitle_id = _int_or_none(attachment.get("id"))
             if subtitle_id is None:
@@ -140,7 +140,7 @@ def parse_torrent_subtitles(body, entry):
                 "release_info": entry.get("title") or filename,
                 "download_url": _storage_url(subtitle_id),
                 "size_bytes": _int_or_zero(attachment.get("size")),
-                "forced": bool(_int_or_zero(info.get("forced"))),
+                "forced": language["forced"],
                 "hearing_impaired": _is_hearing_impaired(info),
                 "codec": info.get("codec"),
                 "track_id": info.get("trackid"),
@@ -305,12 +305,13 @@ def _load_json(body):
 
 
 def _language_payload(info):
-    raw = str(info.get("lang") or "eng").lower()
+    raw_value = info.get("lang")
+    raw = str(raw_value or "eng").lower()
     alpha3 = BIBLIOGRAPHIC_TO_CANONICAL.get(raw, raw)
     if len(alpha3) == 2:
         alpha3 = ALPHA2_TO_ALPHA3.get(alpha3, alpha3)
     if alpha3 not in SUPPORTED_LANGUAGES:
-        alpha3 = "eng"
+        return None
     name = str(info.get("name") or "")
     country_alpha2 = "BR" if alpha3 == "por" and _is_brazilian_portuguese(name) else None
     return {
@@ -318,7 +319,7 @@ def _language_payload(info):
         "alpha2": ALPHA3_TO_ALPHA2.get(alpha3),
         "country_alpha2": country_alpha2,
         "hi": _is_hearing_impaired(info),
-        "forced": bool(_int_or_zero(info.get("forced"))),
+        "forced": _is_forced(info),
     }
 
 
@@ -330,6 +331,11 @@ def _is_brazilian_portuguese(name):
 def _is_hearing_impaired(info):
     name = _normalize(info.get("name") or "")
     return "sdh" in name.split() or "hearing impaired" in name or "hi" in name.split()
+
+
+def _is_forced(info):
+    name = _normalize(info.get("name") or "")
+    return bool(_int_or_zero(info.get("forced"))) or "forced" in name.split()
 
 
 def _format_from_attachment(info):

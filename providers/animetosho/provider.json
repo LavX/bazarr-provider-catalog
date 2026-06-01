@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "4ab014a660cce66d3a69b1c1a5eb2342f5f14122533ca72e811a3700c04fc096",
+  "bundle_sha256": "4e2b32b39340a4250ae1c8177e5c4d829d5a9ea84b3666ec2f91d24dfcaf2945",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -30,7 +30,7 @@
   "entry_class": "AnimeToshoProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "aa1b21b8a5e7fb09e3094a81079d9e52a27bafe9a820f93db8b41710d36f3793"
+    "provider.py": "44500a92ca0607126559618c5989654641505e922d256a63d7adba08edca7bd4"
   },
   "languages": [
     "ara",
@@ -67,5 +67,5 @@
   "supported_media": [
     "episode"
   ],
-  "version": "0.1.0"
+  "version": "0.1.1"
 }

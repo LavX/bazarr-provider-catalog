@@ -100,6 +100,25 @@ class ParseTorrentSubtitlesTests(unittest.TestCase):
         self.assertEqual(rows[0]["language"]["alpha3"], "eng")
         self.assertEqual(rows[0]["language"]["alpha2"], "en")
 
+    def test_unsupported_valid_language_is_dropped_instead_of_relabelled_english(self):
+        rows = self.mod.parse_torrent_subtitles(
+            TORRENT_DETAIL,
+            {"id": 616869, "title": "[ToonsHub] Solo Leveling S01E12"},
+        )
+
+        self.assertNotIn(2001915, {row["subtitle_id"] for row in rows})
+
+    def test_forced_track_names_set_forced_language_flag(self):
+        rows = self.mod.parse_torrent_subtitles(
+            TORRENT_DETAIL,
+            {"id": 616869, "title": "[ToonsHub] Solo Leveling S01E12"},
+        )
+        forced = {row["subtitle_id"]: row for row in rows if row["subtitle_id"] in {2001923, 2001924, 2001925, 2001926, 2001927}}
+
+        self.assertEqual(set(forced), {2001923, 2001924, 2001925, 2001926, 2001927})
+        self.assertTrue(all(row["forced"] for row in forced.values()))
+        self.assertTrue(all(row["language"]["forced"] for row in forced.values()))
+
     def test_brazilian_portuguese_preserves_country(self):
         body = _torrent_body(
             [
