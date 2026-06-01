@@ -2079,6 +2079,7 @@
 - Branch: `catalog-yavkanet`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/yavkanet`
 - Current checkpoint: `000921d Add YavkaNet provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/42` opened as draft on 2026-06-01, head `catalog-yavkanet`, base `main`, merge state `CLEAN`.
 - Local evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -2112,6 +2113,18 @@
   - Direct active-bundle search with the same Dune fixture and stored FlareSolverr config failed with `CloudflareBlockedError: yavkanet FlareSolverr request failed: timed out`.
   - Direct FlareSolverr probe for `https://yavka.net/imdb/tt1160419` with `maxTimeout=180000` failed after `186.52` seconds with HTTP `500`.
   - FlareSolverr logs for that probe show `Challenge detected. Title found: Just a moment...` followed by `Error solving the challenge. Timeout after 180.0 seconds.`
+- Fresh PR evidence on 2026-06-01:
+  - `gh pr list --repo LavX/bazarr-provider-catalog --head catalog-yavkanet --json number,state,isDraft,reviewDecision,mergeStateStatus,url,title`: no existing PR before creation.
+  - `git ls-remote --heads origin catalog-yavkanet`: remote branch exists at `000921de80907ce8d4028f64b8488543c8026350`.
+  - `python3 -B -m unittest discover -s tests -p 'test_yavkanet.py'`: `12` tests passed.
+  - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/yavkanet/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, docs, provider code, tests, and fixtures: no matches.
+  - `python3 -B -m sdk smoke-test --provider yavkanet --language bul --video-fixture tests/fixtures/yavkanet_video_dune_2021.json --expect-min-results 1 --skip-download`: failed with `yavkanet hit a Cloudflare challenge and no FlareSolverr URL is configured`.
+  - `git branch --set-upstream-to=origin/catalog-yavkanet catalog-yavkanet`: local branch now tracks the provider branch instead of `origin/main`.
+  - `gh pr view 42 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#42` is open, draft, head `catalog-yavkanet`, base `main`, merge state `CLEAN`.
 - Remaining gates:
   - Treat current YavkaNet proof as blocked by the origin Cloudflare challenge, not by Provider Hub config or branch deployment.
   - Re-run live smoke with a solver, cookie, or FlareSolverr environment that can actually solve `https://yavka.net/imdb/tt1160419`.
