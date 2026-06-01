@@ -432,23 +432,25 @@
 - Branch: `catalog-subscenter`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subscenter`
 - Current checkpoint: `57de626 Mark SubsCenter upstream dead`
+- Pull request: [#63](https://github.com/LavX/bazarr-provider-catalog/pull/63), open draft notes-only PR, head `catalog-subscenter`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
-- Local evidence on 2026-05-31:
+- Local evidence on 2026-06-01:
   - Legacy inspection confirmed movie and episode support, Hebrew only, optional `username` and `password`, CSRF cookie login, title suggestion lookup, nested subtitle JSON parsing, duplicate release merge by subtitle id, hearing-impaired flags, ZIP downloads, and daily-limit handling for non-ZIP responses.
   - Bazarr UI/config inspection confirmed `subscenter` currently exposes no UI inputs, while the legacy provider still accepts optional credentials.
   - Red TDD gate `python3 -B -m unittest discover -s tests -p test_subscenter.py`: failed because `providers/subscenter/provider.py` did not exist.
   - Temporary clean-room implementation passed `python3 -B -m unittest discover -s tests -p test_subscenter.py`: `6` tests passed, then was removed because the upstream does not resolve.
-  - Final notes-only branch `python3 -B -m sdk build-catalog`: `wrote catalog.json`.
   - Final notes-only branch `python3 -B -m sdk validate`: `catalog ok`.
+  - Final notes-only branch `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
   - Final notes-only branch `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
   - `rg -n "subscenter|SubsCenter" README.md catalog.json providers tests -S`: no matches.
-  - `git diff --check` and `git diff --cached --check`: clean.
-- Live evidence on 2026-05-31:
-  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 http://www.subscenter.info/he/`: failed with `curl: (6) Could not resolve host`.
-  - Escalated curl checks for `http://www.subscenter.info/he/`, `http://subscenter.info/he/`, `https://www.subscenter.info/he/`, and `https://subscenter.info/he/` all failed DNS resolution.
-  - Public DNS checks through `dig +short @1.1.1.1` and `dig +short @8.8.8.8` returned no address records for `www.subscenter.info` and `subscenter.info`.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Attribution and AI-credit scan over `docs/provider-notes/subscenter.md`: no matches.
+- Live evidence on 2026-06-01:
+  - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' http://www.subscenter.info/he/`: failed with `curl: (6) Could not resolve host`.
+  - `dig +short @1.1.1.1 subscenter.info`: returned no address records.
+- Historical live smoke evidence on 2026-05-31:
   - `python3 -B -m sdk smoke-test --provider subscenter --language heb --video-fixture tests/fixtures/subscenter_video_dune_2021.json --expect-min-results 1 --skip-download` failed with sandbox DNS error.
   - The same SDK smoke test with escalated network failed with `No address associated with hostname`.
 - Remaining gates:
