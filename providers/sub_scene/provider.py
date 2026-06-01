@@ -124,11 +124,28 @@ class CloudflareBlockedError(RuntimeError):
 
 class _MissingCloudscraper:
     def create_scraper(self, *args, **kwargs):
-        raise CloudflareBlockedError("sub_scene cloudscraper dependency is not installed")
+        raise CloudflareBlockedError("sub_scene ai-cloudscraper dependency is not installed")
 
 
 if cloudscraper is None:  # pragma: no cover, dependency is declared in provider.json
     cloudscraper = _MissingCloudscraper()
+
+
+def _create_cloudscraper_session():
+    options = {
+        "browser": {"custom": USER_AGENT},
+        "interpreter": "native",
+        "enable_cookie_persistence": False,
+        "debug": False,
+    }
+    try:
+        return cloudscraper.create_scraper(**options)
+    except TypeError as exc:
+        if "enable_cookie_persistence" not in str(exc):
+            raise
+        fallback_options = dict(options)
+        fallback_options.pop("enable_cookie_persistence", None)
+        return cloudscraper.create_scraper(**fallback_options)
 
 
 class SubsceneSearchParser(HTMLParser):
@@ -395,9 +412,7 @@ def _get_cloudscraper(state):
         state = {}
     scraper = state.get("cloudscraper")
     if scraper is None:
-        scraper = cloudscraper.create_scraper(
-            browser={"custom": USER_AGENT},
-        )
+        scraper = _create_cloudscraper_session()
         state["cloudscraper"] = scraper
     return scraper
 
@@ -483,7 +498,7 @@ def _flaresolverr_get(url, timeout=30, config=None, state=None):
 
 
 def _http_get(url, timeout=30, config=None, state=None, referer=None):
-    """Make HTTP GET request with cloudscraper and optional FlareSolverr fallback."""
+    """Make HTTP GET request with ai-cloudscraper and optional FlareSolverr fallback."""
     state = state if state is not None else {}
     config = config or {}
     try:

@@ -570,7 +570,7 @@ class TestCloudflareHttp(unittest.TestCase):
             )
         )
 
-    def test_http_get_uses_cloudscraper_by_default(self):
+    def test_http_get_uses_ai_cloudscraper_by_default(self):
         response = MagicMock()
         response.status_code = 200
         response.headers = {}
@@ -586,10 +586,42 @@ class TestCloudflareHttp(unittest.TestCase):
             )
 
         self.assertEqual(body, b"<html>ok</html>")
-        create_scraper.assert_called_once()
+        create_scraper.assert_called_once_with(
+            browser={"custom": subscene_module.USER_AGENT},
+            interpreter="native",
+            enable_cookie_persistence=False,
+            debug=False,
+        )
         scraper.get.assert_called_once()
         self.assertEqual(scraper.get.call_args.kwargs["timeout"], 30)
         self.assertIn("User-Agent", scraper.get.call_args.kwargs["headers"])
+
+    def test_http_get_retries_without_cookie_persistence_for_legacy_ai_cloudscraper(self):
+        response = MagicMock()
+        response.status_code = 200
+        response.headers = {}
+        response.content = b"<html>ok</html>"
+        scraper = MagicMock()
+        scraper.get.return_value = response
+
+        with patch(
+            "provider.cloudscraper.create_scraper",
+            side_effect=[
+                TypeError("unexpected keyword argument 'enable_cookie_persistence'"),
+                scraper,
+            ],
+        ) as create_scraper:
+            body = subscene_module._http_get(
+                "https://sub-scene.com/search?query=Dune",
+                config={},
+                state={},
+            )
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(create_scraper.call_count, 2)
+        self.assertEqual(create_scraper.call_args_list[0].kwargs["enable_cookie_persistence"], False)
+        self.assertNotIn("enable_cookie_persistence", create_scraper.call_args_list[1].kwargs)
+        scraper.get.assert_called_once()
 
     def test_http_get_uses_flaresolverr_fallback_after_cloudflare_challenge(self):
         challenge_response = MagicMock()
