@@ -2021,6 +2021,7 @@
 - Branch: `catalog-titrari`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/titrari`
 - Current checkpoint: `0781631 Add Titrari provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/41` opened on 2026-06-01, head `catalog-titrari`, base `main`, merge state `CLEAN`.
 - Local evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -2061,6 +2062,17 @@
   - Compat episode stream returned HTTP `200` and `34586` bytes. The payload starts with SRT cue `1` and timestamp `00:00:39,832 --> 00:00:41,667`.
 - Status:
   - Titrari is locally validated and proved through Provider Hub compat search, download, and stream on `bazarr-ui-test` for Romanian movie and episode paths.
+- Fresh PR evidence on 2026-06-01:
+  - `gh pr list --repo LavX/bazarr-provider-catalog --head catalog-titrari --json number,state,isDraft,reviewDecision,mergeStateStatus,url,title`: no existing PR before creation.
+  - `python3 -B -m unittest discover -s tests -p 'test_titrari.py'`: `12` tests passed.
+  - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/titrari/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, docs, provider code, tests, and fixtures: no matches.
+  - `python3 -B -m sdk smoke-test --provider titrari --language ron --video-fixture tests/fixtures/titrari_video_dune_2021.json --expect-min-results 1`: `titrari ok`.
+  - `python3 -B -m sdk smoke-test --provider titrari --language ron --video-fixture tests/fixtures/titrari_video_chernobyl_s01e01.json --expect-min-results 1`: `titrari ok`.
+  - `gh pr view 41 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#41` is open, non-draft, head `catalog-titrari`, base `main`, merge state `CLEAN`.
 
 ### `yavkanet`
 
