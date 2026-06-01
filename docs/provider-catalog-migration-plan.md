@@ -19,8 +19,9 @@
 - Current checkout audit on 2026-06-01: `git worktree list --porcelain` shows all 60 provider-class modules linked under `/tmp/bazarr_catalog_provider_worktrees`, plus the planning worktree. The missing-provider check against `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/` returned no missing worktrees.
 - Helper coverage: `opensubtitles_scraper.py` is not a provider-class module. Its behavior is covered inside the `catalog-opensubtitles` / `opensubtitles_org` branch, but the current implementation no longer defaults to a sidecar helper.
 - OpenSubtitles.org current branch evidence: `catalog-opensubtitles` at `af065c7` uses `ai-cloudscraper==3.8.4`, inline Anubis solving, request throttling, optional FlareSolverr fallback for Cloudflare challenges, and a legacy `cloudscraper` argument retry for runtimes that reject `enable_cookie_persistence`.
-- Existing SubScene maintenance PR evidence: `fix/sub-scene-smi-download` at `08bd132` switches SubScene to `ai-cloudscraper==3.8.4` with the same native session shape and legacy argument retry, bumps SubScene to `0.1.12`, caps multi-page FlareSolverr fallback at `10000` ms, caps the outer FlareSolverr HTTP call to the same deadline, expands ABI-specific dependency hashes across Bazarr+ Python `3.12`, `3.13`, and `3.14` on linux/amd64 and linux/arm64, and PR `#14` is open, non-draft, and merge state `CLEAN`.
-- SubScene local evidence on 2026-06-01 after review fixes: `test_sub_scene.py` ran `65` tests passed, `test_catalog.py` ran `12` tests passed with `6` skipped, `sdk validate` returned `catalog ok`, `py_compile` passed, `git diff --check` was clean, and full `unittest discover -s tests` ran `331` tests passed with `6` skipped.
+- Existing SubScene maintenance PR evidence: `fix/sub-scene-smi-download` at `33c714a` switches SubScene to `ai-cloudscraper==3.8.4` with the same native session shape and legacy argument retry, adds inline Anubis challenge solving, bumps SubScene to `0.1.13`, caps multi-page FlareSolverr fallback at `10000` ms, caps the outer FlareSolverr HTTP call to the same deadline, expands ABI-specific dependency hashes across Bazarr+ Python `3.12`, `3.13`, and `3.14` on linux/amd64 and linux/arm64, and PR `#14` is open, non-draft, and merge state `CLEAN`.
+- Cloudflare parity sweep on 2026-06-01: pushed the OpenSubtitles.org three-layer anti-bot path, `ai-cloudscraper==3.8.4`, inline Anubis `/.within.website/` solving, and optional FlareSolverr fallback, to `wizdom` at `4164e52`, `turkcealtyaziorg` at `8c184b2`, `yavkanet` at `5b35d11`, `napiprojekt` at `24eea15`, `subs4series` at `7dd5e86`, and `sub_scene` at `33c714a`. Local provider tests, `py_compile`, `sdk validate`, `test_catalog.py`, `git diff --check`, and attribution or prohibited punctuation scans passed for each touched branch.
+- SubScene local evidence on 2026-06-01 after review fixes and Anubis parity: `test_sub_scene.py` ran `66` tests passed, `test_catalog.py` ran `12` tests passed with `6` skipped, `sdk validate` returned `catalog ok`, `py_compile` passed, and `git diff --check` was clean.
 - Prior SubScene test-server evidence on 2026-06-01: active Provider Hub state after restage was version `0.1.11`, commit `41b9fc0f460b228d4e8061aaa692233a629a7818`, enabled `true`, `pending_restart=false`, `last_error=null`. Final Dune compat search returned HTTP `200`, `79` total results, and `0` SubScene rows. Focused logs showed `sub_scene FlareSolverr request failed: HTTP Error 500: Internal Server Error` and final fanout marked `sub_scene=ok:15566ms`, not `worker exceeded 30s`. This needs restage before treating `0.1.12` as live test-server proof.
 - Provider Hub source-dependency evidence: `ai-cloudscraper==3.8.4` requires `Js2Py`, whose `pyjsparser==2.7.1` dependency is source-only. Bazarr core PR [#173](https://github.com/LavX/bazarr/pull/173), branch `fix/provider-hub-source-deps` at `b4e53d0ed`, changes the Provider Hub installer from `--only-binary=:all:` to `--prefer-binary` while keeping `--require-hashes`, allowing hash-checked source dependencies. `bazarr-ui-test` was hot-patched with that installer for the live staging evidence below.
 - Catalog runtime-matrix evidence: catalog PR [#75](https://github.com/LavX/bazarr-provider-catalog/pull/75), branch `fix/provider-runtime-matrix` at `b97435d`, defines Provider Hub Python support as `>=3.12,<3.15` with concrete targets `3.12`, `3.13`, and `3.14`, adds `sdk runtime-matrix`, and documents wheel hash coverage for pure, ABI-specific, and stable ABI wheels such as `cp311-abi3`.
@@ -97,7 +98,7 @@
   - `titrari`: branch `catalog-titrari`, worktree `/tmp/bazarr_catalog_provider_worktrees/titrari`, current head `0781631`
   - `titulky`: branch `catalog-titulky`, worktree `/tmp/bazarr_catalog_provider_worktrees/titulky`, current head `8394a28`
   - `turkcealtyaziorg`: branch `catalog-turkcealtyaziorg`, worktree `/tmp/bazarr_catalog_provider_worktrees/turkcealtyaziorg`, current head `6ec4f09`
-  - `tvsubtitles`: branch `catalog-tvsubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/tvsubtitles`, current head `875df4e`
+  - `tvsubtitles`: branch `catalog-tvsubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/tvsubtitles`, current head `80a5c47`
   - `whisperai`: branch `catalog-whisperai`, worktree `/tmp/bazarr_catalog_provider_worktrees/whisperai`, current head `0eeb964`, local/generated provider
   - `wizdom`: branch `catalog-wizdom`, worktree `/tmp/bazarr_catalog_provider_worktrees/wizdom`, current head `2d5425c`
   - `xsubs`: branch `catalog-xsubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/xsubs`, current head `5a17922`, dead origin
@@ -623,7 +624,7 @@
 
 - Branch: `catalog-subs4series`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subs4series`
-- Current checkpoint: `2d080b6 Cap Subs4Series FlareSolverr timeout`
+- Current checkpoint: `7dd5e86 Add inline Anubis retry to Subs4Series`
 - Pull request: [#68](https://github.com/LavX/bazarr-provider-catalog/pull/68), open draft, head `catalog-subs4series`, base `main`, merge state `CLEAN`, head OID `2d080b64f70ea555c7975950c0c799ed95f9b21e`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -866,7 +867,7 @@
 
 - Branch: `catalog-wizdom`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/wizdom`
-- Current checkpoint: `2d5425c Add Wizdom provider`
+- Current checkpoint: `4164e52 Add OpenSubtitles antibot path to Wizdom`
 - PR: `https://github.com/LavX/bazarr-provider-catalog/pull/72` opened as draft on 2026-06-01, head `catalog-wizdom`, base `main`, merge state `CLEAN`.
 - Local evidence on 2026-05-29:
   - `python3 -B -m unittest discover -s tests -p 'test_wizdom.py'`: `11` tests passed.
@@ -892,7 +893,7 @@
   - `bazarr-ui-test` direct probe `GET https://wizdom.xyz/` returned Cloudflare HTTP `522`; `GET https://wizdom.xyz/api/releases/tt1375666` timed out after `25` seconds with `0` bytes received.
   - Fresh check before draft PR `#72`: `python3 -B -m sdk smoke-test --provider wizdom --language heb --video-fixture tests/fixtures/wizdom_video_inception.json --expect-min-results 1 --skip-download` still failed with `wizdom search failed: The read operation timed out`.
   - Fresh direct probes before draft PR `#72`: `GET https://wizdom.xyz/` returned Cloudflare HTTP `522`, and `GET https://wizdom.xyz/api/releases/tt1375666` returned Cloudflare HTTP `522`.
-  - Temporary venv probe with `ai-cloudscraper==3.8.4` still returned Cloudflare HTTP `522` for both `https://wizdom.xyz/` and `https://wizdom.xyz/api/releases/tt1375666`, with `server: cloudflare` and the standard `522` body. No provider-layer Cloudflare fallback was added because this is still an origin timeout, not a browser challenge.
+  - Temporary venv probe with `ai-cloudscraper==3.8.4` still returned Cloudflare HTTP `522` for both `https://wizdom.xyz/` and `https://wizdom.xyz/api/releases/tt1375666`, with `server: cloudflare` and the standard `522` body. This was pre-parity evidence that the blocker looked like an origin timeout, not a browser challenge.
 - Provider Hub test-server evidence on 2026-06-01:
   - Branch `catalog-wizdom` was pushed at `2d5425ce8f2e35ef897dc51eac59a30be7ef4366`.
   - Official catalog source dev ref was set to `catalog-wizdom`; refresh returned `13` entries and resolved Wizdom `0.1.0` at commit `2d5425ce8f2e35ef897dc51eac59a30be7ef4366`.
@@ -900,6 +901,14 @@
   - Provider state after restart: active version `0.1.0`, `pending_restart=false`, `trusted=true`, `enabled=true`, `last_error=None`, manifest commit `2d5425ce8f2e35ef897dc51eac59a30be7ef4366`.
   - Runtime replacement policy contains `55` trusted migrated built-in ids, includes `wizdom`, and excludes `hosszupuska` and `podnapisi`.
   - Compat search `GET /api/v1/subtitles?imdb_id=tt1375666&query=Inception.2010.1080p.BluRay.x264.mkv&type=movie&languages=he&per_page=100` returned HTTP `200`, `34` total rows, and `0` Wizdom rows.
+- Anti-bot parity update on 2026-06-01:
+  - `4164e52` adds the OpenSubtitles.org-style native anti-bot path to Wizdom: `ai-cloudscraper==3.8.4`, inline Anubis solving, optional FlareSolverr fallback, and version `0.1.1`.
+  - `python3 -B -m unittest discover -s tests -p 'test_wizdom.py'`: `16` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/wizdom/provider.py`: passed.
+  - `git diff --check`: clean.
+  - Attribution and prohibited punctuation scan over README, catalog, Wizdom notes, provider code, and tests found no matches.
 - Remaining gates:
   - Keep PR `#72` draft until Wizdom live search and download proof can be captured.
   - Treat current Wizdom proof as blocked by `wizdom.xyz` origin timeout or Cloudflare `522`, not by TMDB, local parser behavior, branch deployment, or Provider Hub loading.
@@ -910,7 +919,7 @@
 
 - Branch: `catalog-tvsubtitles`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/tvsubtitles`
-- Current checkpoint: `875df4e Add TVsubtitles provider`
+- Current checkpoint: `80a5c47 Parse TVSubtitles episode language headers`
 - PR: `https://github.com/LavX/bazarr-provider-catalog/pull/19` opened on 2026-06-01, head `catalog-tvsubtitles`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -945,6 +954,16 @@
   - `git diff --check origin/main...HEAD`: clean.
   - Attribution and em-dash scan over touched TVSubtitles files found no matches.
   - `python3 -B -m sdk smoke-test --provider tvsubtitles --language eng --video-fixture tests/fixtures/tvsubtitles_video_the_office_s01e02.json --expect-min-results 1`: `tvsubtitles ok`.
+- Review-fix evidence on 2026-06-02:
+  - PR `#19` head `80a5c47c3f91fd82d4062e3b70581e28ec533d89` is open and merge state `CLEAN`.
+  - The parser now falls back to the nearest episode-listing language section header when a `subtitle-*.html` block has no flag image.
+  - Regression coverage added a no-flag subtitle block under an `English subtitles` section header.
+  - `python3 -B -m unittest discover -s tests -p 'test_tvsubtitles.py'`: `13` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m py_compile providers/tvsubtitles/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `341` tests passed, `6` skipped.
+  - `git diff --check`: clean.
 - Remaining gates: none for the current TVSubtitles migration proof.
 
 ### `subtitulamostv`
@@ -1171,7 +1190,7 @@
 
 - Branch: `catalog-napiprojekt`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`
-- Current checkpoint: `fed8756 Cap NapiProjekt FlareSolverr timeout`
+- Current checkpoint: `24eea15 Add inline Anubis retry to NapiProjekt`
 - PR: `https://github.com/LavX/bazarr-provider-catalog/pull/25` opened on 2026-06-01, head `catalog-napiprojekt`, base `main`, merge state `CLEAN`, head OID `fed875603202c12c67a2ae8a0274a0782ed2ea98`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -2187,7 +2206,7 @@
 
 - Branch: `catalog-yavkanet`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/yavkanet`
-- Current checkpoint: `f40f6d3 Tighten YavkaNet Cloudflare timeout`
+- Current checkpoint: `5b35d11 Add inline Anubis retry to YavkaNet`
 - PR: `https://github.com/LavX/bazarr-provider-catalog/pull/42` opened as draft on 2026-06-01, head `catalog-yavkanet`, base `main`, merge state `CLEAN`, head OID `f40f6d34c9952389e0676fafd46b19f009d20def`.
 - Local evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -2708,7 +2727,7 @@
 
 - Branch: `catalog-turkcealtyaziorg`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/turkcealtyaziorg`
-- Current checkpoint: `54522cd Use ai-cloudscraper for TurkceAltyazi Cloudflare`
+- Current checkpoint: `8c184b2 Add inline Anubis retry to TurkceAltyazi`
 - PR: `https://github.com/LavX/bazarr-provider-catalog/pull/53` opened as draft on 2026-06-01, head `catalog-turkcealtyaziorg`, base `main`, latest checked merge state `UNKNOWN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
