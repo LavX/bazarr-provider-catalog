@@ -908,6 +908,7 @@
 - Branch: `catalog-greeksubs`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/greeksubs`
 - Current checkpoint: `1ec84fa Add GreekSubs provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/21` opened on 2026-06-01, head `catalog-greeksubs`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -932,6 +933,15 @@
   - Compat movie search for `query=Dune.2021.1080p.WEBRip.mkv`, `type=movie`, `imdb_id=1160419`, and `languages=el` returned HTTP `200`, `17` total results, including `1` GreekSubs result for release `DUNE (2021)`.
   - Compat login returned HTTP `200`; compat download for GreekSubs `file_id=15` returned HTTP `200` and a stream link.
   - Fetching the stream link returned HTTP `200` with `107129` bytes of SRT content.
+- Fresh PR evidence on 2026-06-01:
+  - Branch diff against `origin/main` only touches `README.md`, `catalog.json`, `docs/provider-notes/greeksubs.md`, `providers/greeksubs/`, GreekSubs fixtures, and `tests/test_greeksubs.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_greeksubs.py'`: `8` tests passed.
+  - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/greeksubs/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Attribution and em-dash scan over touched GreekSubs files found no matches.
+  - `python3 -B -m sdk smoke-test --provider greeksubs --language ell --video-fixture tests/fixtures/greeksubs_video_dune.json --expect-min-results 1`: `greeksubs ok`.
 - Remaining gates: none for the current GreekSubs migration proof.
 
 ### `animekalesi`
