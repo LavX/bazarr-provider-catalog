@@ -143,6 +143,7 @@
 - Branch: `catalog-embeddedsubtitles`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/embeddedsubtitles`
 - Current checkpoint: `a8257a4 Add EmbeddedSubtitles provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/54` opened as draft on 2026-06-01, head `catalog-embeddedsubtitles`, base `main`, merge state `CLEAN`.
 - Provider type: local/generated provider.
 - Local evidence on 2026-05-31:
   - Legacy inspection confirmed this is not a web source. It extracts embedded text subtitle streams from local media files.
@@ -154,9 +155,21 @@
   - `git diff --check`: clean.
   - `python3 -B -m unittest discover -s tests`: `336` tests passed, `6` skipped.
   - Generated-media smoke with real local `ffprobe` and `ffmpeg`: `embeddedsubtitles ok`.
+- Fresh PR evidence on 2026-06-01:
+  - Branch `catalog-embeddedsubtitles` was pushed at `a8257a4` and set to track `origin/catalog-embeddedsubtitles`.
+  - Branch scope remains limited to `README.md`, `catalog.json`, `docs/provider-notes/embeddedsubtitles.md`, `providers/embeddedsubtitles`, `tests/fixtures/embeddedsubtitles_video.json`, and `tests/test_embeddedsubtitles.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_embeddedsubtitles.py'`: `8` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/embeddedsubtitles/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Attribution and em-dash scan over `README.md`, `catalog.json`, `docs/provider-notes/embeddedsubtitles.md`, `providers/embeddedsubtitles`, `tests/test_embeddedsubtitles.py`, and `tests/fixtures/embeddedsubtitles_video.json` found no matches.
+  - Generated `/tmp/embeddedsubtitles_sample.mkv` with `ffmpeg`, one video stream and one English SRT stream.
+  - `python3 -B -m sdk smoke-test --provider embeddedsubtitles --language eng --video-fixture /tmp/embeddedsubtitles_sample_video.json --expect-min-results 1`: `embeddedsubtitles ok`.
+  - PR `#54` was verified open, draft, merge state `CLEAN`, head `a8257a4f98bf825a3ad3cb2c2bb0c9d5df6bcb16`.
 - Remaining gates:
   - Confirm Bazarr Provider Hub workers receive readable media paths and executable `ffprobe` and `ffmpeg` paths on the test server.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `embeddedsubtitles` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `embeddedsubtitles` in the trusted replacement policy.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with a local media fixture containing an embedded text subtitle stream.
 
 ### `whisperai`
