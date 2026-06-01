@@ -24,7 +24,8 @@ USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
-DEFAULT_FLARESOLVERR_TIMEOUT_MS = 60000
+DEFAULT_FLARESOLVERR_TIMEOUT_MS = 25000
+MAX_FLARESOLVERR_TIMEOUT_MS = 25000
 CLOUDFLARE_STATUS_CODES = {403, 429, 503}
 CLOUDFLARE_BODY_MARKERS = (
     "just a moment",
@@ -379,7 +380,7 @@ def _flaresolverr_timeout_ms(config):
         timeout = int((config or {}).get("flaresolverr_timeout_ms") or DEFAULT_FLARESOLVERR_TIMEOUT_MS)
     except (TypeError, ValueError):
         return DEFAULT_FLARESOLVERR_TIMEOUT_MS
-    return max(5000, min(timeout, 180000))
+    return max(5000, min(timeout, MAX_FLARESOLVERR_TIMEOUT_MS))
 
 
 def _cookie_header(cookies):

@@ -647,14 +647,14 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "d4227962b9b440d92da61f55a544ab364a6a4d593e30e98a57fdaaf9ebe93a8d",
+        "bundle_sha256": "2fa84a4cef372484763a173f76f41134311d1b0a4f8c299fe3a92a978d9d5282",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
             "flaresolverr_timeout_ms": {
-              "default": 60000,
-              "description": "Maximum time FlareSolverr may spend solving a Cloudflare challenge.",
-              "maximum": 180000,
+              "default": 25000,
+              "description": "Maximum time FlareSolverr may spend solving a Cloudflare challenge. Capped below the Provider Hub worker deadline.",
+              "maximum": 25000,
               "minimum": 5000,
               "title": "FlareSolverr timeout (ms)",
               "type": "integer"
@@ -894,7 +894,7 @@
         "entry_class": "SubSceneProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "bcb7112534e73ae5b73a1213d6c27b896a16e92309844ce3499320196356c506"
+          "provider.py": "4b0b3104be6f9580dbc4229958559f59287ae69c64dea2eccc9114c2f13568bc"
         },
         "languages": [
           "ara",
