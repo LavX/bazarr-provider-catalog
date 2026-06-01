@@ -2015,6 +2015,19 @@
   - `curl -sS -i --max-time 20 https://api.subsource.net/api/v1/movies/search`: returned HTTP `401` with `API key required` and noted `X-API-Key` header or `api_key` query parameter.
   - `curl -sS -i --max-time 20 -H 'X-API-Key: invalid-test-key' 'https://api.subsource.net/api/v1/movies/search?searchType=text&q=inception'`: returned HTTP `401` with `Invalid API key`.
   - Fetching `https://subsource.net/api-docs` directly from this environment returned a Cloudflare challenge page, while the API endpoint itself returned JSON auth errors.
+- Fresh local and credential evidence on 2026-06-01:
+  - Recreated `/tmp/bazarr_catalog_provider_worktrees/subsource` as a linked git worktree on branch `catalog-subsource`, clean, and tracking `origin/catalog-subsource` after push.
+  - Branch `catalog-subsource` was pushed at `d50b08f`.
+  - Branch scope remains limited to `README.md`, `catalog.json`, `docs/provider-notes/subsource.md`, `providers/subsource`, and `tests/test_subsource.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_subsource.py'`: `10` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subsource/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `338` tests passed, `6` skipped.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/subsource`, `tests/test_subsource.py`, `docs/provider-notes/subsource.md`, `README.md`, and `catalog.json` found no matches.
+  - No-key `https://api.subsource.net/api/v1/movies/search` probe returned HTTP `401` with `API key required`.
+  - Invalid-key probe returned HTTP `401` with `Invalid API key`.
+  - Test-server config check read only API-key presence and length from `/home/lavx/bazarr-data/config/config.yaml`; `subsource.apikey` is empty.
 - Remaining gates:
   - Run SDK live smoke search and download with a real SubSource API key.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subsource` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
