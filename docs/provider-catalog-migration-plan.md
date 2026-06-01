@@ -2141,6 +2141,20 @@
   - `curl -sS -i --max-time 20 -H 'User-Agent: BazarrProviderHub/1.0' https://api.opensubtitles.com/api/v1/infos/languages`: returned HTTP `200` with the current API language table.
   - `curl -sS -i --max-time 20 -H 'Api-Key: invalid-test-key' -H 'User-Agent: BazarrProviderHub/1.0' https://api.opensubtitles.com/api/v1/subtitles`: returned HTTP `403` with `You cannot consume this service`.
   - Real search and download require a valid OpenSubtitles.com username, password, and API key.
+- Fresh local and credential evidence on 2026-06-01:
+  - Recreated `/tmp/bazarr_catalog_provider_worktrees/opensubtitlescom` as a linked git worktree on branch `catalog-opensubtitlescom`, clean, and tracking `origin/catalog-opensubtitlescom` after push.
+  - Branch `catalog-opensubtitlescom` was pushed at `885985f`.
+  - Branch scope remains limited to `README.md`, `catalog.json`, `docs/provider-notes/opensubtitlescom.md`, `providers/opensubtitlescom`, and `tests/test_opensubtitlescom.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_opensubtitlescom.py'`: `12` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/opensubtitlescom/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `340` tests passed, `6` skipped.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/opensubtitlescom`, `tests/test_opensubtitlescom.py`, `docs/provider-notes/opensubtitlescom.md`, `README.md`, and `catalog.json` found no matches.
+  - Manifest and catalog language counts both remain `422`.
+  - Live `https://api.opensubtitles.com/api/v1/infos/languages` probe returned HTTP `200`.
+  - Invalid API key subtitle probe returned HTTP `403` with `You cannot consume this service`.
+  - Test-server config check read only credential presence and length from `/home/lavx/bazarr-data/config/config.yaml`; `opensubtitlescom.username`, `opensubtitlescom.password`, and `opensubtitlescom.api_key` are empty or absent.
 - Remaining gates:
   - Run SDK live smoke search and download with real OpenSubtitles.com credentials.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `opensubtitlescom` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
