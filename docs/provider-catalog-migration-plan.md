@@ -147,7 +147,7 @@
 - Branch: `catalog-embeddedsubtitles`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/embeddedsubtitles`
 - Current checkpoint: `a8257a4 Add EmbeddedSubtitles provider`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/54` opened as draft on 2026-06-01, head `catalog-embeddedsubtitles`, base `main`, merge state `CLEAN`.
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/54` opened on 2026-06-01 and marked ready for review, head `catalog-embeddedsubtitles`, base `main`, merge state `CLEAN`.
 - Provider type: local/generated provider.
 - Local evidence on 2026-05-31:
   - Legacy inspection confirmed this is not a web source. It extracts embedded text subtitle streams from local media files.
@@ -170,11 +170,27 @@
   - Attribution and em-dash scan over `README.md`, `catalog.json`, `docs/provider-notes/embeddedsubtitles.md`, `providers/embeddedsubtitles`, `tests/test_embeddedsubtitles.py`, and `tests/fixtures/embeddedsubtitles_video.json` found no matches.
   - Generated `/tmp/embeddedsubtitles_sample.mkv` with `ffmpeg`, one video stream and one English SRT stream.
   - `python3 -B -m sdk smoke-test --provider embeddedsubtitles --language eng --video-fixture /tmp/embeddedsubtitles_sample_video.json --expect-min-results 1`: `embeddedsubtitles ok`.
-  - PR `#54` was verified open, draft, merge state `CLEAN`, head `a8257a4f98bf825a3ad3cb2c2bb0c9d5df6bcb16`.
-- Remaining gates:
-  - Confirm Bazarr Provider Hub workers receive readable media paths and executable `ffprobe` and `ffmpeg` paths on the test server.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `embeddedsubtitles` in the trusted replacement policy.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with a local media fixture containing an embedded text subtitle stream.
+  - PR `#54` was verified open with head `a8257a4f98bf825a3ad3cb2c2bb0c9d5df6bcb16`.
+- Provider Hub test-server evidence on 2026-06-01:
+  - `bazarr-ui-test` has executable `/usr/bin/ffprobe` and `/usr/bin/ffmpeg`.
+  - Official catalog source dev ref was set to `catalog-embeddedsubtitles`; refresh resolved EmbeddedSubtitles `0.1.0` at commit `a8257a4f98bf825a3ad3cb2c2bb0c9d5df6bcb16`.
+  - Provider Hub staged EmbeddedSubtitles with no broken requirements, then `bazarr-ui-test` restarted healthy.
+  - Active Provider Hub state after restart: version `0.1.0`, commit `a8257a4f98bf825a3ad3cb2c2bb0c9d5df6bcb16`, enabled `true`, `pending_restart=false`, `last_error=null`.
+  - Library scan found real media files with embedded text subtitle streams. The proof fixture was `2036.Nexus.Dawn.2017.1080p.BluRay.x264-FLAME[N1C].mkv`, IMDb `tt7326248`, with an English `subrip` stream. Direct `ffmpeg` extraction returned `4807` bytes.
+  - Initial compat stream proof against a large remux returned a valid download link but `0` bytes before switching to the smaller proof fixture.
+  - Compat search `GET /api/v1/subtitles?imdb_id=tt7326248&query=2036.Nexus.Dawn.2017.1080p.BluRay.x264-FLAME%5BN1C%5D.mkv&type=movie&languages=en&per_page=100` returned HTTP `200`, `21` total results, and `1` EmbeddedSubtitles row.
+  - EmbeddedSubtitles result: `file_id=1`, release `English`, subtitle id `embeddedsubtitles:embeddedsubtitles-581949127222b6d1`.
+  - Compat download `POST /api/v1/download` for `file_id=1` returned HTTP `200`, a stream link, `remaining=999`, and `remaining_downloads=999`.
+  - Compat stream returned HTTP `200`, `application/x-subrip`, and `4793` bytes. The payload starts with SRT cue `1` and timestamp `00:00:00,625 --> 00:00:04,295`.
+  - `python3 -B -m unittest discover -s tests -p 'test_embeddedsubtitles.py'`: `8` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/embeddedsubtitles/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan over README, catalog, EmbeddedSubtitles notes, provider code, tests, and fixtures found no matches.
+  - `python3 -B -m unittest discover -s tests`: `336` tests passed, `6` skipped.
+  - PR `#54` is open, non-draft, merge state `CLEAN`, head `a8257a4f98bf825a3ad3cb2c2bb0c9d5df6bcb16`.
+- Remaining gates: none for the current EmbeddedSubtitles migration proof.
 
 ### `whisperai`
 
