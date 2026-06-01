@@ -25,6 +25,19 @@ from provider import (
 )
 
 
+class TestDependencyLocks(unittest.TestCase):
+    def test_binary_dependency_hashes_cover_bazarr_plus_python_matrix(self):
+        manifest_path = Path(__file__).parent.parent / "providers" / "sub_scene" / "provider.json"
+        manifest = json.loads(manifest_path.read_text())
+        requirements = {
+            item["name"]: item
+            for item in manifest["dependencies"]["requirements"]
+        }
+
+        self.assertGreaterEqual(len(requirements["aiohttp"]["hashes"]), 6)
+        self.assertGreaterEqual(len(requirements["cffi"]["hashes"]), 6)
+
+
 class FakeUrlopenResponse:
     def __init__(self, body):
         self.body = body
@@ -341,6 +354,25 @@ class TestDownloadSubtitle(unittest.TestCase):
         self.assertEqual(result["filename"], "Show.S01E05.ass")
         self.assertEqual(result["format"], "ass")
 
+    def test_extracts_sami_file_from_zip(self):
+        content = b"\xef\xbb\xbf<SAMI>\r\n<BODY>\r\n<SYNC Start=1000><P>Hello</P>"
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("Dune.2021.1080p.WEBRip.x264-RARBG.smi", content)
+
+        with patch("provider._http_get", return_value=zip_buffer.getvalue()):
+            result = subscene_module._download_subtitle(
+                "/download/2604448",
+                video={"kind": "movie", "title": "Dune: Part One", "year": 2021},
+                config={},
+                state={},
+            )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["content"], content)
+        self.assertEqual(result["filename"], "Dune.2021.1080p.WEBRip.x264-RARBG.smi")
+        self.assertEqual(result["format"], "smi")
+
     def test_ignores_appledouble_sidecar_entries(self):
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zf:
@@ -551,7 +583,7 @@ class TestCloudflareHttp(unittest.TestCase):
             )
         )
 
-    def test_http_get_uses_cloudscraper_by_default(self):
+    def test_http_get_uses_ai_cloudscraper_by_default(self):
         response = MagicMock()
         response.status_code = 200
         response.headers = {}
@@ -567,10 +599,217 @@ class TestCloudflareHttp(unittest.TestCase):
             )
 
         self.assertEqual(body, b"<html>ok</html>")
-        create_scraper.assert_called_once()
+        create_scraper.assert_called_once_with(
+            browser={"custom": subscene_module.USER_AGENT},
+            interpreter="native",
+            enable_cookie_persistence=False,
+            debug=False,
+        )
         scraper.get.assert_called_once()
         self.assertEqual(scraper.get.call_args.kwargs["timeout"], 30)
         self.assertIn("User-Agent", scraper.get.call_args.kwargs["headers"])
+
+    def test_http_get_retries_without_cookie_persistence_for_legacy_ai_cloudscraper(self):
+        response = MagicMock()
+        response.status_code = 200
+        response.headers = {}
+        response.content = b"<html>ok</html>"
+        scraper = MagicMock()
+        scraper.get.return_value = response
+
+        with patch(
+            "provider.cloudscraper.create_scraper",
+            side_effect=[
+                TypeError("unexpected keyword argument 'enable_cookie_persistence'"),
+                scraper,
+            ],
+        ) as create_scraper:
+            body = subscene_module._http_get(
+                "https://sub-scene.com/search?query=Dune",
+                config={},
+                state={},
+            )
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(create_scraper.call_count, 2)
+        self.assertEqual(create_scraper.call_args_list[0].kwargs["enable_cookie_persistence"], False)
+        self.assertNotIn("enable_cookie_persistence", create_scraper.call_args_list[1].kwargs)
+        scraper.get.assert_called_once()
+
+    def test_http_get_solves_anubis_inline_before_retrying_original_url(self):
+        challenge_response = MagicMock()
+        challenge_response.status_code = 401
+        challenge_response.headers = {}
+        challenge_response.content = b'<script id="anubis_challenge">{}</script>'
+        challenge_response.text = '<script id="anubis_challenge">{}</script>'
+        challenge_response.url = "https://sub-scene.com/.within.website/?redir=/search"
+        solved_response = MagicMock()
+        solved_response.status_code = 200
+        solved_response.headers = {}
+        solved_response.content = b"<html>ok</html>"
+        solved_response.text = "<html>ok</html>"
+        solved_response.url = "https://sub-scene.com/search?query=Dune"
+        scraper = MagicMock()
+        scraper.get.side_effect = [challenge_response, solved_response]
+        solved_calls = []
+
+        def fake_solve(active_scraper, challenge_url, original_url, timeout):
+            solved_calls.append((active_scraper, challenge_url, original_url, timeout))
+            return {"techaro.lol-anubis-auth": "ok"}
+
+        with patch("provider.cloudscraper.create_scraper", return_value=scraper), patch(
+            "provider.solve_anubis_challenge",
+            side_effect=fake_solve,
+        ):
+            body = subscene_module._http_get(
+                "https://sub-scene.com/search?query=Dune",
+                config={},
+                state={},
+            )
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(scraper.get.call_count, 2)
+        self.assertEqual(scraper.get.call_args_list[0].args[0], "https://sub-scene.com/search?query=Dune")
+        self.assertEqual(scraper.get.call_args_list[1].args[0], "https://sub-scene.com/search?query=Dune")
+        self.assertIs(solved_calls[0][0], scraper)
+        self.assertEqual(solved_calls[0][1], "https://sub-scene.com/.within.website/?redir=/search")
+        self.assertEqual(solved_calls[0][2], "https://sub-scene.com/search?query=Dune")
+
+    def test_http_get_detects_embedded_anubis_body_before_returning_html(self):
+        challenge_response = MagicMock()
+        challenge_response.status_code = 200
+        challenge_response.headers = {}
+        challenge_response.content = b'<script id="anubis_challenge">{}</script>'
+        challenge_response.text = '<script id="anubis_challenge">{}</script>'
+        challenge_response.url = "https://sub-scene.com/search?query=Dune"
+        solved_response = MagicMock()
+        solved_response.status_code = 200
+        solved_response.headers = {}
+        solved_response.content = b"<html>ok</html>"
+        solved_response.text = "<html>ok</html>"
+        solved_response.url = "https://sub-scene.com/search?query=Dune"
+        scraper = MagicMock()
+        scraper.get.side_effect = [challenge_response, solved_response]
+        solved_calls = []
+
+        def fake_solve(active_scraper, challenge_url, original_url, timeout):
+            solved_calls.append((active_scraper, challenge_url, original_url, timeout))
+            return {"techaro.lol-anubis-auth": "ok"}
+
+        with patch("provider.cloudscraper.create_scraper", return_value=scraper), patch(
+            "provider.solve_anubis_challenge",
+            side_effect=fake_solve,
+        ):
+            body = subscene_module._http_get(
+                "https://sub-scene.com/search?query=Dune",
+                config={},
+                state={},
+            )
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(scraper.get.call_count, 2)
+        self.assertEqual(solved_calls[0][1], "https://sub-scene.com/search?query=Dune")
+        self.assertEqual(solved_calls[0][2], "https://sub-scene.com/search?query=Dune")
+
+    def test_solve_pow_treats_difficulty_as_leading_zero_bits(self):
+        class FakeHash:
+            def __init__(self, digest):
+                self.digest = digest
+
+            def hexdigest(self):
+                return self.digest
+
+        digests = ["04" + "f" * 62, "00000" + "f" * 59]
+        calls = []
+
+        def fake_sha256(data):
+            calls.append(data)
+            return FakeHash(digests[len(calls) - 1])
+
+        with patch("provider.hashlib.sha256", side_effect=fake_sha256):
+            nonce, digest = subscene_module._solve_pow("random", 5)
+
+        self.assertEqual(nonce, 0)
+        self.assertEqual(digest, "04" + "f" * 62)
+
+    def test_extract_anubis_challenge_reads_rules_wrapper(self):
+        challenge = subscene_module._extract_anubis_challenge(
+            '<script id="anubis_challenge">'
+            + json.dumps(
+                {
+                    "rules": {"algorithm": "fast", "difficulty": 8},
+                    "challenge": {"id": "abc", "randomData": "random"},
+                }
+            )
+            + "</script>"
+        )
+
+        self.assertEqual(challenge["id"], "abc")
+        self.assertEqual(challenge["randomData"], "random")
+        self.assertEqual(challenge["difficulty"], 8)
+        self.assertEqual(challenge["method"], "fast")
+
+    def test_extract_anubis_challenge_accepts_string_challenge(self):
+        challenge = subscene_module._extract_anubis_challenge(
+            '<script id="anubis_challenge">'
+            + json.dumps(
+                {
+                    "rules": {"algorithm": "slow", "difficulty": 7},
+                    "challenge": "random-string",
+                }
+            )
+            + "</script>"
+        )
+
+        self.assertEqual(challenge["id"], "random-string")
+        self.assertEqual(challenge["randomData"], "random-string")
+        self.assertEqual(challenge["difficulty"], 7)
+        self.assertEqual(challenge["method"], "slow")
+
+    def test_extract_anubis_challenge_unescapes_meta_refresh_url(self):
+        challenge = subscene_module._extract_anubis_challenge(
+            '<meta http-equiv="refresh" content="0; url=/.within.website/x/cmd/anubis/api/pass-challenge?foo=1&amp;bar=2">'
+        )
+
+        self.assertEqual(
+            challenge["redirect_url"],
+            "/.within.website/x/cmd/anubis/api/pass-challenge?foo=1&bar=2",
+        )
+
+    def test_solve_anubis_challenge_honors_refresh_header(self):
+        class Cookie:
+            name = "techaro.lol-anubis-auth"
+            value = "ok"
+
+        class CookieJar(list):
+            def update(self, cookies):
+                self.extend(cookies)
+
+        first_response = MagicMock()
+        first_response.text = ""
+        first_response.headers = {
+            "Refresh": "0; url=/.within.website/x/cmd/anubis/api/pass-challenge?foo=1"
+        }
+        first_response.cookies = []
+        solved_response = MagicMock()
+        solved_response.cookies = [Cookie()]
+        session = MagicMock()
+        session.get.side_effect = [first_response, solved_response]
+        session.cookies = CookieJar()
+
+        with patch("provider.time.sleep"):
+            cookies = subscene_module.solve_anubis_challenge(
+                session,
+                "https://sub-scene.com/.within.website/?redir=/search",
+                "https://sub-scene.com/search?query=Dune",
+                timeout=30,
+            )
+
+        self.assertEqual(cookies, {"techaro.lol-anubis-auth": "ok"})
+        self.assertEqual(
+            session.get.call_args_list[1].args[0],
+            "https://sub-scene.com/.within.website/x/cmd/anubis/api/pass-challenge?foo=1",
+        )
 
     def test_http_get_uses_flaresolverr_fallback_after_cloudflare_challenge(self):
         challenge_response = MagicMock()
@@ -611,7 +850,8 @@ class TestCloudflareHttp(unittest.TestCase):
         self.assertEqual(request.full_url, "http://flaresolverr:8191/v1")
         payload = json.loads(request.data.decode("utf-8"))
         self.assertEqual(payload["cmd"], "request.get")
-        self.assertEqual(payload["maxTimeout"], 45000)
+        self.assertEqual(payload["maxTimeout"], 10000)
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], 10)
         self.assertEqual(state["flaresolverr_cookies"]["cf_clearance"], "token")
         self.assertEqual(state["flaresolverr_user_agent"], "Mozilla/5.0 solved")
 
