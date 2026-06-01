@@ -553,7 +553,7 @@
 
 - Branch: `catalog-subs4series`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subs4series`
-- Current checkpoint: `4dbe046 Add Subs4Series provider`
+- Current checkpoint: `b91856e Add Subs4Series Cloudflare fallback`
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -574,9 +574,32 @@
   - Live detail-page probes found the current `a.style55ws` download target shape.
   - `python3 -B -m sdk smoke-test --provider subs4series --language eng --video-fixture tests/fixtures/subs4series_video_game_of_thrones_s01e01.json --expect-min-results 1 --skip-download`: passed outside the sandbox network restriction.
   - `python3 -B -m sdk smoke-test --provider subs4series --language eng --video-fixture tests/fixtures/subs4series_video_game_of_thrones_s01e01.json --expect-min-results 1`: passed outside the sandbox network restriction, including download. One earlier full live run timed out on origin read, but an immediate curl decomposition and final full smoke both succeeded.
+- Local evidence on 2026-06-01:
+  - Test-server direct active-bundle search initially failed with Cloudflare `403` `Attention Required!` on `https://www.subs4series.com/search_report.php?search=Game+of+Thrones&searchType=1`.
+  - Test-server FlareSolverr at `http://127.0.0.1:8191/v1` fetched the same search URL in `3.86` seconds, returned HTTP `200`, real suggestion HTML, `3` cookies, and a solved User-Agent.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_subs4series.py'`: failed with `TypeError: Subs4SeriesProvider._http_get() got an unexpected keyword argument 'config'` for the new FlareSolverr fallback test.
+  - `b91856e` adds cloudscraper-first, optional FlareSolverr fallback for Cloudflare-blocked GET requests, stores returned cookies/User-Agent, exposes `flaresolverr_url` and `flaresolverr_timeout_ms`, and bumps Subs4Series to `0.1.1`.
+  - `python3 -B -m unittest discover -s tests -p 'test_subs4series.py'`: `9` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subs4series/provider.py`: passed.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over touched Subs4Series files found no matches.
+  - `python3 -B -m unittest discover -s tests`: `337` tests passed, `6` skipped.
+  - `python3 -B -m sdk smoke-test --provider subs4series --language eng --video-fixture tests/fixtures/subs4series_video_game_of_thrones_s01e01.json --expect-min-results 1`: `subs4series ok`.
+- Provider Hub test-server evidence on 2026-06-01:
+  - Official catalog source dev ref was set to `catalog-subs4series`; refresh returned `13` entries and resolved Subs4Series `0.1.1` at commit `b91856ed2b105c80b4843c846aeff421b067a9ff`.
+  - Provider Hub staged Subs4Series `0.1.1`, found no broken requirements, and saved config `request_delay_ms=0`, `flaresolverr_url=http://127.0.0.1:8191/v1`, and `flaresolverr_timeout_ms=60000`.
+  - Provider state after restart: active version `0.1.1`, `pending_restart=false`, `trusted=true`, `enabled=true`, `last_error=None`, manifest commit `b91856ed2b105c80b4843c846aeff421b067a9ff`.
+  - Replacement policy contained `55` trusted ids, included `subs4series`, and excluded `hosszupuska` and `podnapisi`.
+  - Compat search `GET /api/v1/subtitles?imdb_id=tt0944947&query=Game.of.Thrones.S01E01.HDTV.XviD-FEVER.avi&type=episode&season_number=1&episode_number=1&languages=en&per_page=100` returned HTTP `200`, `119` total results over `2` pages, and `1` Subs4Series row.
+  - First Subs4Series row: page `2`, `file_id=118`, release `Game of Thrones - 01x01 - Winter is Coming [HDTV XviD-FEVER]`, subtitle id `subs4series:69f3c23c83b7591e25b4802e12dcaa0acd09f12f`.
+  - Compat login returned HTTP `200`; compat download `POST /api/v1/download` for `file_id=118` returned HTTP `200`, a stream link, `remaining=999`, and `remaining_downloads=999`.
+  - Compat stream returned HTTP `200` but `0` bytes, so Subs4Series is not complete.
+  - Direct active-bundle download tracing showed the generated `getSub-...html` target returns Cloudflare `403` `Attention Required!` on both GET and POST from the test server.
+  - FlareSolverr browser-session probes could load detail and anti-block pages, but GET on the download target returned the detail or anti-block page and POST on the target returned the site homepage HTML, not a subtitle archive.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subs4series` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+  - Prove Provider Hub compat download and non-empty stream bytes on `bazarr-ui-test`.
+  - Resolve the test-server Cloudflare block on `getSub-...html` download targets. Search is now proven through compat, but download target retrieval is still blocked by the origin from the test-server egress.
   - If live Subs4Series presents reCAPTCHA during compat proof, configure `captcha_response` or a `captcha_solver_url` helper and rerun download proof.
 
 ### `zimuku`
