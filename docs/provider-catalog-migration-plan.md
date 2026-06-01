@@ -67,13 +67,13 @@
   - `podnapisi`: branch `catalog-podnapisi`, worktree `/tmp/bazarr_catalog_provider_worktrees/podnapisi`, current head `8b3d09f`, dead origin
   - `prijevodionline`: branch `catalog-prijevodionline`, worktree `/tmp/bazarr_catalog_provider_worktrees/prijevodionline`, current head `9c1d795`
   - `regielive`: branch `catalog-regielive`, worktree `/tmp/bazarr_catalog_provider_worktrees/regielive`, current head `fb5a2ae`
-  - `shooter`: branch `catalog-shooter`, worktree `/tmp/bazarr_catalog_provider_worktrees/shooter`, current head `3d794c2`
+  - `shooter`: branch `catalog-shooter`, worktree `/tmp/bazarr_catalog_provider_worktrees/shooter`, current head `103d8ee`
   - `soustitreseu`: branch `catalog-soustitreseu`, worktree `/tmp/bazarr_catalog_provider_worktrees/soustitreseu`, current head `ed93af8`
   - `subclub`: branch `catalog-subclub`, worktree `/tmp/bazarr_catalog_provider_worktrees/subclub`, current head `0849eae`
   - `subdl`: branch `catalog-subdl`, worktree `/tmp/bazarr_catalog_provider_worktrees/subdl`, current head `7ff94cd`
   - `subf2m`: branch `catalog-subf2m`, worktree `/tmp/bazarr_catalog_provider_worktrees/subf2m`, current head `35bb9c4`
   - `subs4free`: branch `catalog-subs4free`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4free`, current head `f7ca9ac`
-  - `subs4series`: branch `catalog-subs4series`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4series`, current head `4dbe046`
+  - `subs4series`: branch `catalog-subs4series`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4series`, current head `b91856e`
   - `subsarr`: branch `catalog-subsarr`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsarr`, current head `e154cee`
   - `subscenter`: branch `catalog-subscenter`, worktree `/tmp/bazarr_catalog_provider_worktrees/subscenter`, current head `57de626`, dead origin
   - `subsource`: branch `catalog-subsource`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsource`, current head `d50b08f`
@@ -84,7 +84,7 @@
   - `subtis`: branch `catalog-subtis`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtis`, current head `4e7200d`
   - `subtitrarinoi`: branch `catalog-subtitrarinoi`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitrarinoi`, current head `8fc7785`
   - `subtitriid`: branch `catalog-subtitriid`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitriid`, current head `ba6e108`
-  - `subtitulamostv`: branch `catalog-subtitulamostv`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitulamostv`, current head `f75eafd`
+  - `subtitulamostv`: branch `catalog-subtitulamostv`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitulamostv`, current head `9ac6f4d`
   - `subx`: branch `catalog-subx`, worktree `/tmp/bazarr_catalog_provider_worktrees/subx`, current head `1f649cf`
   - `supersubtitles`: branch `catalog-supersubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/supersubtitles`, current head `3f96078`
   - `titlovi`: branch `catalog-titlovi`, worktree `/tmp/bazarr_catalog_provider_worktrees/titlovi`, current head `933fb47`
@@ -1182,7 +1182,7 @@
 
 - Branch: `catalog-podnapisi`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/podnapisi`
-- Current checkpoint: `d04b05b Record Podnapisi dead-origin recheck`
+- Current checkpoint: `8b3d09f Record Podnapisi test-host dead-origin check`
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1480,7 +1480,7 @@
 
 - Branch: `catalog-hosszupuska`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`
-- Current checkpoint: `2b36db2 Record Hosszupuska dead-origin recheck`
+- Current checkpoint: `5ccb3a7 Record Hosszupuska test-host dead-origin check`
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
