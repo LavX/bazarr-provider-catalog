@@ -1898,6 +1898,18 @@
   - `curl -L --max-time 20 -H 'Content-Type: application/json' --data '{}' https://hdbits.org/api/torrents`: returned HDBits JSON `{"status":3,"message":"Json missing or malformed"}`.
   - `curl -L -I --max-time 20 https://hdbits.org/`: redirected to `/login?returnto=%2F`; the login page returned a Cloudflare challenge. The JSON API endpoint still responded to the no-credential probe.
   - Real live search and download require an HDBits `username` and `passkey`.
+- Fresh local and credential evidence on 2026-06-01:
+  - Recreated `/tmp/bazarr_catalog_provider_worktrees/hdbits` as a linked git worktree on branch `catalog-hdbits`, clean, and tracking `origin/catalog-hdbits` after push.
+  - Branch `catalog-hdbits` was pushed at `42d7f02`.
+  - Branch scope remains limited to `README.md`, `catalog.json`, `docs/provider-notes/hdbits.md`, `providers/hdbits`, `tests/test_hdbits.py`, and HDBits fixtures.
+  - `python3 -B -m unittest discover -s tests -p 'test_hdbits.py'`: `11` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/hdbits/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `339` tests passed, `6` skipped.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/hdbits`, `tests/test_hdbits.py`, `docs/provider-notes/hdbits.md`, `README.md`, and `catalog.json` found no matches.
+  - No-credential `https://hdbits.org/api/torrents` probe returned `{"status":3,"message":"Json missing or malformed"}`.
+  - Test-server config check read only credential presence and length from `/home/lavx/bazarr-data/config/config.yaml`; `hdbits.username` and `hdbits.passkey` are empty.
 - Remaining gates:
   - Run SDK live smoke search and download with real HDBits credentials.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `hdbits` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
