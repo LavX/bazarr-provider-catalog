@@ -173,6 +173,22 @@ if cloudscraper is None:  # pragma: no cover, dependency is declared in provider
     cloudscraper = _MissingCloudscraper()
 
 
+def _create_cloudscraper_session():
+    kwargs = {
+        "browser": {"custom": USER_AGENT},
+        "interpreter": "native",
+        "enable_cookie_persistence": False,
+        "debug": False,
+    }
+    try:
+        return cloudscraper.create_scraper(**kwargs)
+    except TypeError as exc:
+        if "enable_cookie_persistence" not in str(exc):
+            raise
+        kwargs.pop("enable_cookie_persistence")
+        return cloudscraper.create_scraper(**kwargs)
+
+
 @dataclass(frozen=True)
 class LanguageInfo:
     alpha3: str
@@ -910,12 +926,7 @@ class OpenSubtitlesOrgProvider:
 
     def _get_session(self):
         if self._session is None:
-            self._session = cloudscraper.create_scraper(
-                browser={"custom": USER_AGENT},
-                interpreter="native",
-                enable_cookie_persistence=False,
-                debug=False,
-            )
+            self._session = _create_cloudscraper_session()
             self._session.headers.update({"User-Agent": USER_AGENT})
         return self._session
 

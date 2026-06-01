@@ -191,6 +191,31 @@ class AntibotSessionTests(unittest.TestCase):
         self.assertEqual(created[0]["interpreter"], "native")
         self.assertFalse(created[0]["enable_cookie_persistence"])
 
+    def test_get_session_retries_without_cookie_persistence_for_legacy_cloudscraper(self):
+        session = FakeSession([])
+        created = []
+
+        class FakeCloudscraper:
+            @staticmethod
+            def create_scraper(**kwargs):
+                created.append(dict(kwargs))
+                if "enable_cookie_persistence" in kwargs:
+                    raise TypeError(
+                        "Session.__init__() got an unexpected keyword argument 'enable_cookie_persistence'"
+                    )
+                return session
+
+        self.mod.cloudscraper = FakeCloudscraper
+
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        active_session = provider._get_session()
+
+        self.assertIs(active_session, session)
+        self.assertEqual(len(created), 2)
+        self.assertFalse(created[0]["enable_cookie_persistence"])
+        self.assertNotIn("enable_cookie_persistence", created[1])
+        self.assertEqual(created[1]["interpreter"], "native")
+
     def test_http_get_uses_flaresolverr_after_cloudflare_challenge(self):
         session = FakeSession(
             [
