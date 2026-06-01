@@ -18,7 +18,7 @@
 - Branch inventory: all 60 legacy provider-class modules have matching `catalog-*` branches.
 - Current checkout audit on 2026-06-01: `git worktree list --porcelain` shows all 60 provider-class modules linked under `/tmp/bazarr_catalog_provider_worktrees`, plus the planning worktree. The missing-provider check against `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/` returned no missing worktrees.
 - Helper coverage: `opensubtitles_scraper.py` is not a provider-class module. Its behavior is covered inside the `catalog-opensubtitles` / `opensubtitles_org` branch, but the current implementation no longer defaults to a sidecar helper.
-- OpenSubtitles.org current branch evidence: `catalog-opensubtitles` at `c8f013c` uses `ai-cloudscraper==3.8.4`, inline Anubis solving, request throttling, and optional FlareSolverr fallback for Cloudflare challenges.
+- OpenSubtitles.org current branch evidence: `catalog-opensubtitles` at `af065c7` uses `ai-cloudscraper==3.8.4`, inline Anubis solving, request throttling, optional FlareSolverr fallback for Cloudflare challenges, and a legacy `cloudscraper` argument retry for runtimes that reject `enable_cookie_persistence`.
 - Core replacement-policy evidence: Bazarr core branch `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`, contains a trusted replacement policy for 55 active migrated built-ins, the compat AniDB ID bridge needed by anime providers, and the compat NapiProjekt hash bridge. It excludes dead-origin providers `hosszupuska`, `podnapisi`, `subscenter`, and `xsubs`, and excludes legacy `opensubtitles` because the catalog rewrite ships as `opensubtitles_org`.
 - Test-server core evidence: `bazarr-ui-test` was updated on 2026-05-31 to image version `ui-test-20260531-provider-hub-replacements-f245ae096`, revision `f245ae096`, and returned healthy. The earlier test image based on old head `456071d10` failed because the image did not contain database migration `6c9f1b8d2e3a`; rebasing the core branch onto current `origin/development` fixed that mismatch.
 - License boundary: `/home/lavx/bazarr/LICENSE` is GPL-3.0. This catalog is MIT. Provider implementations in this repo must be clean-room MIT rewrites, not copied or mechanically translated GPL provider files.
@@ -35,7 +35,7 @@
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
 - Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subtitrarinoi`, `subtitriid`, `supersubtitles`, `titrari`, `yavkanet`, `yifysubtitles`, and `subs4free`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
 - Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead for Provider Hub migration on 2026-05-31 and re-confirmed on 2026-06-01. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof unless a verified upstream origin returns.
-- OpenSubtitles.org current state: branch `catalog-opensubtitles` is clean at `c8f013c` and PR `#16` is open. Local validation, direct native search, and direct native download passed, but Bazarr compat proof is still incomplete because the compat key cannot stage or enable Provider Hub bundles and the current compat search results do not include `opensubtitles_org`.
+- OpenSubtitles.org current state: branch `catalog-opensubtitles` is clean at `af065c7` and PR `#16` is open. Local validation, direct native search, and direct native download passed, but Bazarr compat proof is still incomplete because the compat key cannot stage or enable Provider Hub bundles and the current compat search results do not include `opensubtitles_org`.
 - Before editing any provider, run `git worktree list --porcelain` and `git status --short --branch` for that provider's exact worktree.
 - Existing provider worktrees:
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
@@ -61,7 +61,7 @@
   - `napiprojekt`: branch `catalog-napiprojekt`, worktree `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`, current head `5d9fb63`
   - `napisy24`: branch `catalog-napisy24`, worktree `/tmp/bazarr_catalog_provider_worktrees/napisy24`, current head `34a9720`
   - `nekur`: branch `catalog-nekur`, worktree `/tmp/bazarr_catalog_provider_worktrees/nekur`, current head `41e428e`
-  - `opensubtitles`: branch `catalog-opensubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitles`, current head `c8f013c`
+  - `opensubtitles`: branch `catalog-opensubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitles`, current head `af065c7`
   - `opensubtitlescom`: branch `catalog-opensubtitlescom`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitlescom`, current head `885985f`
   - `pipocas`: branch `catalog-pipocas`, worktree `/tmp/bazarr_catalog_provider_worktrees/pipocas`, current head `4fe281b`
   - `podnapisi`: branch `catalog-podnapisi`, worktree `/tmp/bazarr_catalog_provider_worktrees/podnapisi`, current head `8b3d09f`, dead origin
@@ -2831,7 +2831,7 @@ Search must fail with a clear provider error when Anubis solving fails, FlareSol
 
 - [ ] **Step 4: Finish live Provider Hub proof**
 
-PR `#16` and commit `c8f013c` have local validation and direct native search/download proof. The remaining gate is Bazarr compat proof after an admin-enabled Provider Hub install or update on `bazarr-ui-test`.
+PR `#16` and commit `af065c7` have local validation and direct native search/download proof. Fresh evidence on 2026-06-01: `test_opensubtitles_org.py` ran `9` tests passed, `test_catalog.py` ran `12` tests passed with `6` skipped, `sdk validate` returned `catalog ok`, `py_compile` passed, `git diff --check origin/main...HEAD` was clean, attribution and em-dash scan found no matches, and `sdk smoke-test --provider opensubtitles_org --language eng --video-fixture /tmp/opensubtitles_org_live_video.json --expect-min-results 1` returned `opensubtitles_org ok`. The remaining gate is Bazarr compat proof after an admin-enabled Provider Hub install or update on `bazarr-ui-test`.
 
 ## Provider Execution Queue
 
