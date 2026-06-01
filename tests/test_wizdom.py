@@ -30,6 +30,48 @@ def _zip_files(files):
     return stream.getvalue()
 
 
+class FakeCookieJar:
+    def __init__(self):
+        self._cookies = []
+
+    def set(self, name, value, domain=None, path="/"):
+        self._cookies.append(type("Cookie", (), {"name": name, "value": value})())
+
+    def update(self, cookies):
+        for cookie in cookies:
+            self.set(cookie.name, cookie.value)
+
+    def __iter__(self):
+        return iter(self._cookies)
+
+
+class FakeResponse:
+    def __init__(self, url, status_code=200, content=b"", text="", headers=None, cookies=None):
+        self.url = url
+        self.status_code = status_code
+        self.content = content
+        self.text = text
+        self.headers = headers or {}
+        self.cookies = cookies or FakeCookieJar()
+
+    def read(self):
+        return self.content
+
+
+class FakeSession:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+        self.headers = {}
+        self.cookies = FakeCookieJar()
+
+    def get(self, url, headers=None, timeout=None, allow_redirects=True):
+        self.calls.append(("GET", url, headers, timeout, allow_redirects))
+        if not self.responses:
+            raise AssertionError(f"unexpected GET: {url}")
+        return self.responses.pop(0)
+
+
 class WizdomParserTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
@@ -92,6 +134,156 @@ class WizdomParserTests(unittest.TestCase):
 class WizdomProviderTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
+
+    def test_http_get_uses_ai_cloudscraper_and_solves_anubis_inline(self):
+        session = FakeSession(
+            [
+                FakeResponse(
+                    "https://wizdom.xyz/.within.website/?redir=/api/releases/tt1375666",
+                    status_code=401,
+                    text='<script id="anubis_challenge">{}</script>',
+                ),
+                FakeResponse(
+                    "https://wizdom.xyz/api/releases/tt1375666",
+                    content=b'{"subs":[]}',
+                    text='{"subs":[]}',
+                ),
+            ]
+        )
+        created = []
+
+        class FakeCloudscraper:
+            @staticmethod
+            def create_scraper(**kwargs):
+                created.append(kwargs)
+                return session
+
+        solved_calls = []
+
+        def fake_solve(active_session, challenge_url, original_url, timeout):
+            solved_calls.append((active_session, challenge_url, original_url, timeout))
+            active_session.cookies.set("techaro.lol-anubis-auth", "ok", domain=".wizdom.xyz")
+            return {"techaro.lol-anubis-auth": "ok"}
+
+        self.mod.cloudscraper = FakeCloudscraper
+        self.mod.solve_anubis_challenge = fake_solve
+
+        provider = self.mod.WizdomProvider()
+        body = provider._http_get("https://wizdom.xyz/api/releases/tt1375666", {})
+
+        self.assertEqual(body, b'{"subs":[]}')
+        self.assertEqual(len(session.calls), 2)
+        self.assertEqual(session.calls[0][1], "https://wizdom.xyz/api/releases/tt1375666")
+        self.assertEqual(session.calls[1][1], "https://wizdom.xyz/api/releases/tt1375666")
+        self.assertIs(solved_calls[0][0], session)
+        self.assertEqual(
+            solved_calls[0][1],
+            "https://wizdom.xyz/.within.website/?redir=/api/releases/tt1375666",
+        )
+        self.assertEqual(solved_calls[0][2], "https://wizdom.xyz/api/releases/tt1375666")
+        self.assertEqual(created[0]["interpreter"], "native")
+        self.assertFalse(created[0]["enable_cookie_persistence"])
+
+    def test_get_session_retries_without_cookie_persistence_for_legacy_cloudscraper(self):
+        session = FakeSession([])
+        created = []
+
+        class FakeCloudscraper:
+            @staticmethod
+            def create_scraper(**kwargs):
+                created.append(dict(kwargs))
+                if "enable_cookie_persistence" in kwargs:
+                    raise TypeError(
+                        "Session.__init__() got an unexpected keyword argument 'enable_cookie_persistence'"
+                    )
+                return session
+
+        self.mod.cloudscraper = FakeCloudscraper
+
+        provider = self.mod.WizdomProvider()
+        active_session = provider._get_session()
+
+        self.assertIs(active_session, session)
+        self.assertEqual(len(created), 2)
+        self.assertFalse(created[0]["enable_cookie_persistence"])
+        self.assertNotIn("enable_cookie_persistence", created[1])
+        self.assertEqual(created[1]["interpreter"], "native")
+
+    def test_http_get_uses_flaresolverr_after_cloudflare_challenge(self):
+        session = FakeSession(
+            [
+                FakeResponse(
+                    "https://wizdom.xyz/api/releases/tt1375666",
+                    status_code=403,
+                    text="<html>Just a moment... challenge-platform</html>",
+                    headers={"cf-ray": "abc"},
+                ),
+                FakeResponse(
+                    "https://wizdom.xyz/api/releases/tt1375666",
+                    content=b'{"subs":[]}',
+                    text='{"subs":[]}',
+                ),
+            ]
+        )
+
+        class FakeCloudscraper:
+            @staticmethod
+            def create_scraper(**kwargs):
+                return session
+
+        flaresolverr_calls = []
+
+        def fake_post(url, payload, timeout):
+            flaresolverr_calls.append((url, payload, timeout))
+            return {
+                "solution": {
+                    "cookies": [{"name": "cf_clearance", "value": "clear", "domain": ".wizdom.xyz"}],
+                    "userAgent": "Solved UA",
+                }
+            }
+
+        self.mod.cloudscraper = FakeCloudscraper
+        provider = self.mod.WizdomProvider()
+        provider._post_flaresolverr = fake_post
+
+        body = provider._http_get(
+            "https://wizdom.xyz/api/releases/tt1375666",
+            {"flaresolverr_url": "http://127.0.0.1:8191/v1", "flaresolverr_timeout_ms": 45000},
+        )
+
+        self.assertEqual(body, b'{"subs":[]}')
+        self.assertEqual(len(session.calls), 2)
+        self.assertEqual(session.headers["User-Agent"], "Solved UA")
+        self.assertEqual(flaresolverr_calls[0][0], "http://127.0.0.1:8191/v1")
+        self.assertEqual(flaresolverr_calls[0][1]["cmd"], "request.get")
+        self.assertEqual(
+            flaresolverr_calls[0][1]["url"],
+            "https://wizdom.xyz/api/releases/tt1375666",
+        )
+        self.assertEqual(flaresolverr_calls[0][1]["maxTimeout"], 45000)
+
+    def test_cloudflare_without_flaresolverr_is_visible_error(self):
+        session = FakeSession(
+            [
+                FakeResponse(
+                    "https://wizdom.xyz/api/releases/tt1375666",
+                    status_code=403,
+                    text="<html>Just a moment... challenge-platform</html>",
+                    headers={"cf-ray": "abc"},
+                ),
+            ]
+        )
+
+        class FakeCloudscraper:
+            @staticmethod
+            def create_scraper(**kwargs):
+                return session
+
+        self.mod.cloudscraper = FakeCloudscraper
+        provider = self.mod.WizdomProvider()
+
+        with self.assertRaisesRegex(self.mod.ServiceUnavailable, "FlareSolverr"):
+            provider._http_get("https://wizdom.xyz/api/releases/tt1375666", {})
 
     def test_search_skips_non_hebrew_requests(self):
         provider = self.mod.WizdomProvider()

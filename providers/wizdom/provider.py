@@ -5,12 +5,17 @@ import hashlib
 import io
 import json
 import re
+import time
 import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
 
+try:
+    import cloudscraper
+except ImportError:  # pragma: no cover, dependency is declared in provider.json
+    cloudscraper = None
 
 PROVIDER_ID = "wizdom"
 BASE_URL = "https://wizdom.xyz"
@@ -18,6 +23,8 @@ TMDB_BASE_URL = "https://api.tmdb.org/3"
 TMDB_API_KEY = "a51ee051bcd762543373903de296e0a3"
 HTTP_TIMEOUT_SECONDS = 15
 DOWNLOAD_TIMEOUT_SECONDS = 10
+DEFAULT_FLARESOLVERR_TIMEOUT_MS = 45000
+MAX_FLARESOLVERR_TIMEOUT_MS = 45000
 SUPPORTED_EXTENSIONS = (".srt", ".sub")
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -51,6 +58,44 @@ _SRT_TIMECODE_RE = re.compile(
     rb"\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}\s*-->\s*\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}"
 )
 _MICRODVD_RE = re.compile(rb"\{\d+\}\{\d+\}")
+_META_REFRESH_RE = re.compile(
+    r"""<meta\s+http-equiv=["']refresh["']\s+content=["'](?P<delay>\d+);\s*url=(?P<url>[^"']+)["']""",
+    re.I,
+)
+_ANUBIS_CHALLENGE_RE = re.compile(
+    r"""<script\s+id=["']anubis_challenge["'][^>]*>\s*(?P<json>.*?)\s*</script>""",
+    re.I | re.S,
+)
+
+
+class ServiceUnavailable(RuntimeError):
+    """The upstream service is not currently usable."""
+
+
+class _MissingCloudscraper:
+    @staticmethod
+    def create_scraper(**kwargs):
+        raise ServiceUnavailable("Wizdom ai-cloudscraper dependency is not installed")
+
+
+if cloudscraper is None:  # pragma: no cover, dependency is declared in provider.json
+    cloudscraper = _MissingCloudscraper()
+
+
+def _create_cloudscraper_session():
+    kwargs = {
+        "browser": {"custom": USER_AGENT},
+        "interpreter": "native",
+        "enable_cookie_persistence": False,
+        "debug": False,
+    }
+    try:
+        return cloudscraper.create_scraper(**kwargs)
+    except TypeError as exc:
+        if "enable_cookie_persistence" not in str(exc):
+            raise
+        kwargs.pop("enable_cookie_persistence")
+        return cloudscraper.create_scraper(**kwargs)
 
 
 def parse_releases(data, media_type, imdb_id, title, season=None, episode=None):
@@ -94,65 +139,145 @@ def extract_download(body, payload=None):
 
 
 class WizdomProvider:
-    def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
-        headers = {
-            "User-Agent": USER_AGENT,
-            "Accept": "application/json,text/plain,*/*",
-            "Accept-Language": "en-US,en;q=0.9",
-        }
-        if referer:
-            headers["Referer"] = referer
-        request = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.read()
+    def __init__(self):
+        self._session = None
+        self._request_config = {}
+
+    def _get_session(self):
+        if self._session is None:
+            self._session = _create_cloudscraper_session()
+            self._session.headers.update({"User-Agent": USER_AGENT})
+        return self._session
+
+    def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None, config=None):
+        if isinstance(timeout, dict) and config is None:
+            config = timeout
+            timeout = HTTP_TIMEOUT_SECONDS
+        config = dict(config or self._request_config or {})
+        session = self._get_session()
+        headers = _headers(referer)
+        try:
+            response = session.get(url, headers=headers, timeout=timeout, allow_redirects=True)
+        except Exception as exc:
+            raise ServiceUnavailable(f"Wizdom request failed: {exc}") from exc
+        if is_anubis_challenge(getattr(response, "url", ""), getattr(response, "status_code", 0)):
+            solved = solve_anubis_challenge(session, response.url, url, timeout=timeout)
+            if not solved:
+                raise ServiceUnavailable("Wizdom Anubis challenge could not be solved")
+            response = session.get(url, headers=headers, timeout=timeout, allow_redirects=True)
+        if _is_cloudflare_challenge(response):
+            self._fallback_to_flaresolverr(url, config)
+            response = session.get(url, headers=headers, timeout=timeout, allow_redirects=True)
+            if _is_cloudflare_challenge(response):
+                raise ServiceUnavailable("Wizdom Cloudflare challenge remained after FlareSolverr fallback")
+        status = int(getattr(response, "status_code", 200) or 200)
+        body = _response_body(response)
+        if status >= 400:
+            raise urllib.error.HTTPError(url, status, f"HTTP {status}", getattr(response, "headers", {}), io.BytesIO(body))
+        return body
 
     def search(self, video, languages, config):
-        del config
+        self._request_config = dict(config or {})
         language = _requested_hebrew_language(languages)
         if language is None:
             return []
-        video = video or {}
-        media_type = video.get("kind")
-        if media_type not in {"movie", "episode"}:
-            return []
-        results = []
-        seen = set()
-        for title in _candidate_titles(video, media_type):
-            imdb_id = _video_imdb_id(video, media_type)
-            if not imdb_id:
-                imdb_id = self._resolve_imdb_id(title, video.get("year"), media_type == "movie")
-            if not imdb_id:
-                continue
-            releases = self._fetch_releases(imdb_id)
-            rows = parse_releases(
-                releases,
-                media_type=media_type,
-                imdb_id=imdb_id,
-                title=title,
-                season=video.get("season"),
-                episode=video.get("episode"),
-            )
-            for row in rows:
-                if row["subtitle_id"] in seen:
+        try:
+            video = video or {}
+            media_type = video.get("kind")
+            if media_type not in {"movie", "episode"}:
+                return []
+            results = []
+            seen = set()
+            for title in _candidate_titles(video, media_type):
+                imdb_id = _video_imdb_id(video, media_type)
+                if not imdb_id:
+                    imdb_id = self._resolve_imdb_id(title, video.get("year"), media_type == "movie")
+                if not imdb_id:
                     continue
-                seen.add(row["subtitle_id"])
-                results.append(_result(video, row, language))
-            if results:
-                return results
-        return results
+                releases = self._fetch_releases(imdb_id)
+                rows = parse_releases(
+                    releases,
+                    media_type=media_type,
+                    imdb_id=imdb_id,
+                    title=title,
+                    season=video.get("season"),
+                    episode=video.get("episode"),
+                )
+                for row in rows:
+                    if row["subtitle_id"] in seen:
+                        continue
+                    seen.add(row["subtitle_id"])
+                    results.append(_result(video, row, language))
+                if results:
+                    return results
+            return results
+        finally:
+            self._request_config = {}
 
     def download(self, provider_payload, language, config):
-        del language, config
+        del language
+        self._request_config = dict(config or {})
         payload = provider_payload or {}
         subtitle_id = payload.get("subtitle_id")
         if not subtitle_id:
             raise ValueError("wizdom download requires subtitle_id")
-        body = self._http_get(
-            f"{BASE_URL}/api/files/sub/{urllib.parse.quote(str(subtitle_id), safe='')}",
-            timeout=DOWNLOAD_TIMEOUT_SECONDS,
-            referer=payload.get("page_link"),
+        try:
+            body = self._http_get(
+                f"{BASE_URL}/api/files/sub/{urllib.parse.quote(str(subtitle_id), safe='')}",
+                timeout=DOWNLOAD_TIMEOUT_SECONDS,
+                referer=payload.get("page_link"),
+            )
+            return extract_download(body, payload)
+        finally:
+            self._request_config = {}
+
+    def _fallback_to_flaresolverr(self, url, config):
+        endpoint = _clean_text((config or {}).get("flaresolverr_url"))
+        if not endpoint:
+            raise ServiceUnavailable("Wizdom Cloudflare challenge requires optional FlareSolverr URL")
+        max_timeout = _flaresolverr_timeout_ms(config)
+        payload = {"cmd": "request.get", "url": url, "maxTimeout": max_timeout}
+        data = self._post_flaresolverr(endpoint, payload, timeout=max(max_timeout / 1000 + 10, 20))
+        solution = data.get("solution") or {}
+        self._inject_solution(solution)
+
+    def _post_flaresolverr(self, url, payload, timeout):
+        body = json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            url,
+            data=body,
+            headers={"Content-Type": "application/json", "User-Agent": USER_AGENT},
+            method="POST",
         )
-        return extract_download(body, payload)
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                response_body = response.read()
+        except urllib.error.URLError as exc:
+            raise ServiceUnavailable(f"FlareSolverr unavailable: {exc.reason}") from exc
+        try:
+            data = json.loads(response_body.decode("utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ServiceUnavailable("FlareSolverr returned invalid JSON") from exc
+        if data.get("status") == "error":
+            raise ServiceUnavailable(f"FlareSolverr error: {data.get('message') or 'unknown error'}")
+        return data
+
+    def _inject_solution(self, solution):
+        session = self._get_session()
+        user_agent = solution.get("userAgent")
+        if user_agent:
+            session.headers["User-Agent"] = user_agent
+        for cookie in solution.get("cookies") or []:
+            name = cookie.get("name")
+            value = cookie.get("value")
+            if not name or value is None:
+                continue
+            session.cookies.set(
+                name,
+                value,
+                domain=cookie.get("domain") or ".wizdom.xyz",
+                path=cookie.get("path") or "/",
+            )
 
     def _fetch_releases(self, imdb_id):
         url = f"{BASE_URL}/api/releases/{urllib.parse.quote(_normalize_imdb_id(imdb_id), safe='')}"
@@ -201,6 +326,189 @@ class WizdomProvider:
             return _normalize_imdb_id(detail_data.get("imdb_id"))
         except (ValueError, urllib.error.URLError):
             return None
+
+
+def _headers(referer=None):
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "application/json,text/plain,*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    if referer:
+        headers["Referer"] = referer
+    return headers
+
+
+def _as_int(value):
+    try:
+        if value is None or value == "":
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _clean_text(value):
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple)):
+        value = " ".join(str(item) for item in value if item not in (None, ""))
+    return " ".join(str(value).split())
+
+
+def _response_body(response):
+    body = getattr(response, "content", b"")
+    if isinstance(body, str):
+        return body.encode("utf-8")
+    if body:
+        return body
+    text = getattr(response, "text", "")
+    if isinstance(text, str) and text:
+        return text.encode("utf-8")
+    if hasattr(response, "read"):
+        return response.read()
+    return b""
+
+
+def _flaresolverr_timeout_ms(config):
+    configured = _as_int((config or {}).get("flaresolverr_timeout_ms")) or DEFAULT_FLARESOLVERR_TIMEOUT_MS
+    return max(1000, min(configured, MAX_FLARESOLVERR_TIMEOUT_MS))
+
+
+def is_anubis_challenge(url, status_code=0):
+    return "/.within.website/" in (url or "") or (
+        status_code in (307, 401, 403) and ".within.website" in (url or "")
+    )
+
+
+def _extract_anubis_challenge(html_text):
+    meta_match = _META_REFRESH_RE.search(html_text or "")
+    if meta_match and "/.within.website/" in meta_match.group("url"):
+        return {
+            "method": "metarefresh",
+            "redirect_url": meta_match.group("url"),
+            "delay": int(meta_match.group("delay")),
+            "difficulty": 0,
+        }
+    match = _ANUBIS_CHALLENGE_RE.search(html_text or "")
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group("json"))
+    except json.JSONDecodeError:
+        return None
+    challenge = data.get("challenge") or {}
+    if "randomData" not in challenge or "id" not in challenge:
+        return None
+    return {
+        "id": challenge["id"],
+        "randomData": challenge["randomData"],
+        "difficulty": int(challenge.get("difficulty", 4)),
+        "method": challenge.get("method", "fast"),
+    }
+
+
+def _solve_pow(random_data, difficulty):
+    prefix = "0" * difficulty
+    nonce = 0
+    while True:
+        digest = hashlib.sha256(f"{random_data}{nonce}".encode("utf-8")).hexdigest()
+        if digest.startswith(prefix):
+            return nonce, digest
+        nonce += 1
+
+
+def _solve_preact(random_data, difficulty):
+    return hashlib.sha256(random_data.encode("utf-8")).hexdigest(), difficulty * 0.125
+
+
+def solve_anubis_challenge(session, challenge_url, original_url, timeout=HTTP_TIMEOUT_SECONDS):
+    del original_url
+    parsed = urllib.parse.urlparse(challenge_url)
+    query = urllib.parse.parse_qs(parsed.query)
+    redir = query.get("redir", [parsed.path])[0]
+    base = f"{parsed.scheme}://{parsed.netloc}"
+    challenge_page_url = challenge_url if challenge_url.startswith("http") else base + challenge_url
+    started = time.monotonic()
+
+    response = session.get(challenge_page_url, timeout=(10, timeout), allow_redirects=True)
+    challenge = _extract_anubis_challenge(getattr(response, "text", ""))
+    if not challenge:
+        return None
+
+    method = challenge["method"]
+    if method == "metarefresh":
+        redirect_url = challenge["redirect_url"]
+        if not redirect_url.startswith("http"):
+            redirect_url = base + redirect_url
+        time.sleep(challenge.get("delay", 1))
+        solved = session.get(redirect_url, timeout=(10, timeout), allow_redirects=True)
+        if solved.cookies:
+            session.cookies.update(solved.cookies)
+    elif method == "preact":
+        result, delay = _solve_preact(challenge["randomData"], challenge["difficulty"])
+        time.sleep(delay)
+        params = {
+            "id": challenge["id"],
+            "result": result,
+            "redir": redir,
+            "elapsedTime": str(int((time.monotonic() - started) * 1000)),
+        }
+        solved = session.get(
+            f"{base}/.within.website/x/cmd/anubis/api/pass-challenge?{urllib.parse.urlencode(params)}",
+            timeout=(10, timeout),
+            allow_redirects=False,
+        )
+        if solved.cookies:
+            session.cookies.update(solved.cookies)
+    else:
+        nonce, digest = _solve_pow(challenge["randomData"], challenge["difficulty"])
+        params = {
+            "id": challenge["id"],
+            "response": digest,
+            "nonce": str(nonce),
+            "redir": redir,
+            "elapsedTime": str(int((time.monotonic() - started) * 1000)),
+        }
+        solved = session.get(
+            f"{base}/.within.website/x/cmd/anubis/api/pass-challenge?{urllib.parse.urlencode(params)}",
+            timeout=(10, timeout),
+            allow_redirects=False,
+        )
+        if solved.cookies:
+            session.cookies.update(solved.cookies)
+
+    cookies = {}
+    for cookie in session.cookies:
+        if "anubis" in cookie.name.lower() or cookie.name == "PHPSESSID":
+            cookies[cookie.name] = cookie.value
+    return cookies or None
+
+
+def _is_cloudflare_challenge(response):
+    headers = {str(key).lower(): str(value).lower() for key, value in (getattr(response, "headers", {}) or {}).items()}
+    text = (getattr(response, "text", "") or "").lower()
+    if not text:
+        text = _response_body(response).decode("utf-8", "ignore").lower()
+    status = int(getattr(response, "status_code", 0) or 0)
+    if headers.get("cf-ray") and status in {403, 503}:
+        return True
+    if status == 200:
+        title_match = re.search(r"<title[^>]*>\s*([^<]+)", text)
+        return bool(title_match and "just a moment" in title_match.group(1))
+    if status not in {403, 503}:
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "just a moment",
+            "challenge-platform",
+            "cf-turnstile",
+            "cf_chl",
+            "cf-spinner",
+            "challenges.cloudflare.com",
+        )
+    )
 
 
 def _release_items(data, media_type, season, episode):
