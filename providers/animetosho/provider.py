@@ -20,7 +20,13 @@ HTTP_RETRIES = 2
 DEFAULT_SEARCH_THRESHOLD = 5
 MAX_SEARCH_THRESHOLD = 50
 XZ_MAGIC = b"\xfd7zXZ\x00"
-SUBTITLE_FORMATS = {"srt", "ass", "ssa", "vtt"}
+SUBTITLE_CODEC_FORMATS = {
+    "ass": "ass",
+    "ssa": "ssa",
+    "srt": "srt",
+    "subrip": "srt",
+    "webvtt": "vtt",
+}
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
@@ -89,6 +95,8 @@ BIBLIOGRAPHIC_TO_CANONICAL = {
 }
 
 _NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
+_SXXEYY_RE = re.compile(r"\bs0*(?P<season>\d+)e0*(?P<episode>\d+)\b", re.IGNORECASE)
+_EXX_RE = re.compile(r"\be0*(?P<episode>\d+)\b", re.IGNORECASE)
 
 
 def series_feed_url(episode_id):
@@ -110,7 +118,7 @@ def parse_series_entries(body, search_threshold=DEFAULT_SEARCH_THRESHOLD):
     return entries
 
 
-def parse_torrent_subtitles(body, entry):
+def parse_torrent_subtitles(body, entry, video=None):
     data = _load_json(body)
     if not isinstance(data, dict):
         return []
@@ -120,6 +128,8 @@ def parse_torrent_subtitles(body, entry):
         if not isinstance(media_file, dict):
             continue
         filename = media_file.get("filename") or data.get("torrent_name") or entry.get("title") or ""
+        if not _media_file_matches_video(video, filename):
+            continue
         for attachment in media_file.get("attachments") or []:
             if not isinstance(attachment, dict) or attachment.get("type") != "subtitle":
                 continue
@@ -131,6 +141,8 @@ def parse_torrent_subtitles(body, entry):
             if subtitle_id is None:
                 continue
             fmt = _format_from_attachment(info)
+            if not fmt:
+                continue
             row = {
                 "subtitle_id": subtitle_id,
                 "entry_id": entry.get("id"),
@@ -220,8 +232,7 @@ class AnimeToshoProvider:
             return []
 
         config = dict(config or {})
-        requested = {_alpha3_for_language(language) for language in languages or []}
-        requested = {language for language in requested if language in SUPPORTED_LANGUAGES}
+        requested = _requested_languages(languages)
         if not requested:
             return []
 
@@ -234,10 +245,18 @@ class AnimeToshoProvider:
             if entry_id is None:
                 continue
             _sleep(config)
-            rows = parse_torrent_subtitles(self._http_get(torrent_feed_url(entry_id)), entry)
+            try:
+                rows = parse_torrent_subtitles(
+                    self._http_get(torrent_feed_url(entry_id)),
+                    entry,
+                    video,
+                )
+            except (TimeoutError, socket.timeout, urllib.error.HTTPError, urllib.error.URLError, ValueError):
+                continue
             for row in rows:
-                alpha3 = row["language"]["alpha3"]
-                if alpha3 not in requested:
+                language = row["language"]
+                alpha3 = language["alpha3"]
+                if not _language_matches_request(language, requested):
                     continue
                 key = (row["download_url"], alpha3, row["language"].get("country_alpha2"))
                 if key in seen:
@@ -313,7 +332,7 @@ def _language_payload(info):
     if alpha3 not in SUPPORTED_LANGUAGES:
         return None
     name = str(info.get("name") or "")
-    country_alpha2 = "BR" if alpha3 == "por" and _is_brazilian_portuguese(name) else None
+    country_alpha2 = _portuguese_country(name) if alpha3 == "por" else None
     return {
         "alpha3": alpha3,
         "alpha2": ALPHA3_TO_ALPHA2.get(alpha3),
@@ -323,9 +342,13 @@ def _language_payload(info):
     }
 
 
-def _is_brazilian_portuguese(name):
+def _portuguese_country(name):
     normalized = _normalize(name)
-    return "brazil" in normalized or "brasil" in normalized or "por br" in normalized or "pt br" in normalized
+    if "brazil" in normalized or "brasil" in normalized or "por br" in normalized or "pt br" in normalized:
+        return "BR"
+    if "portugal" in normalized or "por pt" in normalized or "pt pt" in normalized:
+        return "PT"
+    return None
 
 
 def _is_hearing_impaired(info):
@@ -340,11 +363,9 @@ def _is_forced(info):
 
 def _format_from_attachment(info):
     codec = str(info.get("codec") or "").lower()
-    if codec == "webvtt":
-        return "vtt"
-    if codec in SUBTITLE_FORMATS:
-        return codec
-    return "srt"
+    if not codec:
+        return "srt"
+    return SUBTITLE_CODEC_FORMATS.get(codec)
 
 
 def _storage_url(subtitle_id):
@@ -391,6 +412,51 @@ def _alpha3_for_language(language):
     if alpha3:
         return BIBLIOGRAPHIC_TO_CANONICAL.get(alpha3, alpha3)
     return ALPHA2_TO_ALPHA3.get((language.get("alpha2") or "").lower())
+
+
+def _requested_languages(languages):
+    requested = set()
+    for language in languages or []:
+        alpha3 = _alpha3_for_language(language)
+        if alpha3 not in SUPPORTED_LANGUAGES:
+            continue
+        country_alpha2 = str((language or {}).get("country_alpha2") or "").upper() or None
+        requested.add((alpha3, country_alpha2))
+    return requested
+
+
+def _language_matches_request(language, requested):
+    alpha3 = language.get("alpha3")
+    country_alpha2 = language.get("country_alpha2")
+    for requested_alpha3, requested_country in requested:
+        if alpha3 != requested_alpha3:
+            continue
+        if not requested_country or country_alpha2 == requested_country:
+            return True
+    return False
+
+
+def _media_file_matches_video(video, filename):
+    video = video or {}
+    if video.get("kind") != "episode":
+        return True
+    try:
+        season = int(video.get("season"))
+        episode = int(video.get("episode"))
+    except (TypeError, ValueError):
+        return True
+    markers = list(_episode_markers(filename))
+    if not markers:
+        return True
+    return (season, episode) in markers or (None, episode) in markers
+
+
+def _episode_markers(filename):
+    value = str(filename or "")
+    for match in _SXXEYY_RE.finditer(value):
+        yield int(match.group("season")), int(match.group("episode"))
+    for match in _EXX_RE.finditer(value):
+        yield None, int(match.group("episode"))
 
 
 def _coerce_search_threshold(value):

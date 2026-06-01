@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "4e2b32b39340a4250ae1c8177e5c4d829d5a9ea84b3666ec2f91d24dfcaf2945",
+  "bundle_sha256": "ee56c8ed929701512f3c8bab62c003881ca397cc0a0037ea2c2a8d0fcb206bdd",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -26,11 +26,11 @@
   "dependencies": {
     "requirements": []
   },
-  "description": "Uses AnimeTosho's JSON feed to find embedded subtitle attachments for anime episodes by AniDB episode id. No login or API key required.",
+  "description": "Archive-only provider for AnimeTosho's JSON feed, finding embedded subtitle attachments for older anime episodes by AniDB episode id. AnimeTosho stopped new torrent ingestion on May 9, 2026. No login or API key required.",
   "entry_class": "AnimeToshoProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "44500a92ca0607126559618c5989654641505e922d256a63d7adba08edca7bd4"
+    "provider.py": "5b53a65f8539463011122f8e7c6b4d13629a37be1b3ad1d9d865648b796ce255"
   },
   "languages": [
     "ara",
@@ -67,5 +67,5 @@
   "supported_media": [
     "episode"
   ],
-  "version": "0.1.1"
+  "version": "0.1.2"
 }

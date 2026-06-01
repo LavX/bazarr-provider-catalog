@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import json
 import lzma
+import urllib.error
 import unittest
 from pathlib import Path
 
@@ -136,6 +137,53 @@ class ParseTorrentSubtitlesTests(unittest.TestCase):
         self.assertEqual(rows[0]["language"]["alpha2"], "pt")
         self.assertEqual(rows[0]["language"]["country_alpha2"], "BR")
 
+    def test_unsupported_subtitle_codecs_are_dropped(self):
+        body = _torrent_body(
+            [
+                {
+                    "id": 13,
+                    "type": "subtitle",
+                    "info": {"lang": "eng", "name": "English PGS", "codec": "PGS"},
+                }
+            ]
+        )
+
+        rows = self.mod.parse_torrent_subtitles(body, {"id": 1, "title": "Release"})
+
+        self.assertEqual(rows, [])
+
+    def test_batch_torrent_filters_media_files_to_requested_episode(self):
+        body = json.dumps(
+            {
+                "files": [
+                    {
+                        "filename": "Solo.Leveling.S01E02.1080p.WEB-DL.mkv",
+                        "attachments": [
+                            {
+                                "id": 14,
+                                "type": "subtitle",
+                                "info": {"lang": "eng", "name": "English", "codec": "ASS"},
+                            }
+                        ],
+                    },
+                    {
+                        "filename": "Solo.Leveling.S01E12.1080p.WEB-DL.mkv",
+                        "attachments": [
+                            {
+                                "id": 15,
+                                "type": "subtitle",
+                                "info": {"lang": "eng", "name": "English", "codec": "ASS"},
+                            }
+                        ],
+                    },
+                ]
+            }
+        ).encode("utf-8")
+
+        rows = self.mod.parse_torrent_subtitles(body, {"id": 1, "title": "Release"}, VIDEO)
+
+        self.assertEqual([row["subtitle_id"] for row in rows], [15])
+
 
 class MatchingTests(unittest.TestCase):
     def setUp(self):
@@ -201,6 +249,75 @@ class AnimeToshoProviderSearchTests(unittest.TestCase):
 
         self.assertEqual(provider.search({"kind": "movie", "title": "Akira"}, [{"alpha3": "eng"}], {}), [])
         self.assertEqual(provider.search({"kind": "episode", "series": "Solo Leveling"}, [{"alpha3": "eng"}], {}), [])
+
+    def test_search_continues_after_one_torrent_detail_error(self):
+        provider = self.mod.AnimeToshoProvider()
+        called = []
+        series_entries = json.dumps(
+            [
+                {"id": 1, "status": "complete", "timestamp": 20, "title": "bad detail"},
+                {"id": 616869, "status": "complete", "timestamp": 10, "title": "[ToonsHub] Solo Leveling S01E12"},
+            ]
+        ).encode("utf-8")
+
+        def stub(url, timeout=15):
+            del timeout
+            called.append(url)
+            if url == "https://feed.animetosho.org/json?eid=277518":
+                return series_entries
+            if url == "https://feed.animetosho.org/json?show=torrent&id=1":
+                raise urllib.error.URLError("temporary detail failure")
+            if url == "https://feed.animetosho.org/json?show=torrent&id=616869":
+                return TORRENT_DETAIL
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        results = provider.search(
+            VIDEO,
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"search_threshold": 2, "request_delay_ms": 0},
+        )
+
+        self.assertIn("https://feed.animetosho.org/json?show=torrent&id=1", called)
+        self.assertTrue(results)
+        self.assertEqual(results[0]["provider_payload"]["subtitle_id"], 1979653)
+
+    def test_search_honors_requested_portuguese_country(self):
+        provider = self.mod.AnimeToshoProvider()
+        series_entries = json.dumps(
+            [{"id": 1, "status": "complete", "timestamp": 10, "title": "release"}]
+        ).encode("utf-8")
+        torrent_detail = _torrent_body(
+            [
+                {
+                    "id": 16,
+                    "type": "subtitle",
+                    "info": {"lang": "por", "name": "Portuguese (Brazil)", "codec": "ASS"},
+                },
+                {
+                    "id": 17,
+                    "type": "subtitle",
+                    "info": {"lang": "por", "name": "Portuguese (Portugal)", "codec": "ASS"},
+                },
+            ]
+        )
+
+        def stub(url, timeout=15):
+            del timeout
+            if url == "https://feed.animetosho.org/json?eid=277518":
+                return series_entries
+            if url == "https://feed.animetosho.org/json?show=torrent&id=1":
+                return torrent_detail
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        results = provider.search(
+            VIDEO,
+            [{"alpha3": "por", "alpha2": "pt", "country_alpha2": "PT"}],
+            {"search_threshold": 1, "request_delay_ms": 0},
+        )
+
+        self.assertEqual([result["provider_payload"]["subtitle_id"] for result in results], [17])
 
 
 class AnimeToshoProviderDownloadTests(unittest.TestCase):
