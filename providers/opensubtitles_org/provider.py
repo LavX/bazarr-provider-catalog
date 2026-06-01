@@ -216,7 +216,6 @@ class SearchContext:
     kind: str | None
     query: list[str]
     imdb_id: str | None
-    hash_value: str | None
     size: int | str | None
     season: int | None
     episode: int | None
@@ -427,12 +426,10 @@ def build_search_context(video, config):
     else:
         imdb_id = None
 
-    hashes = video.get("hashes") or {}
     return SearchContext(
         kind=kind,
         query=query,
         imdb_id=imdb_id,
-        hash_value=hashes.get(LEGACY_PROVIDER_ID) or hashes.get(PROVIDER_ID),
         size=video.get("size"),
         season=season,
         episode=episode,
@@ -449,7 +446,17 @@ def _wrong_fps(video, subtitle_fps):
     return abs(video_fps - sub_fps) > 0.02
 
 
-def _matches_for_video(video, movie_kind, movie_name, release_name, movie_year, movie_imdb_id, season, episode, hash_value):
+def _matches_for_video(
+    video,
+    movie_kind,
+    movie_name,
+    release_name,
+    movie_year,
+    movie_imdb_id,
+    season,
+    episode,
+    subtitle_hash,
+):
     matches = set()
     kind = (video or {}).get("kind")
     if kind == "episode" and movie_kind == "episode":
@@ -473,7 +480,7 @@ def _matches_for_video(video, movie_kind, movie_name, release_name, movie_year, 
             matches.add("year")
 
     hashes = (video or {}).get("hashes") or {}
-    if hash_value and hash_value in {hashes.get(LEGACY_PROVIDER_ID), hashes.get(PROVIDER_ID)}:
+    if subtitle_hash and subtitle_hash in {hashes.get(LEGACY_PROVIDER_ID), hashes.get(PROVIDER_ID)}:
         matches.add("hash")
 
     target_ids = [video.get("imdb_id")]
@@ -498,7 +505,7 @@ def _candidate(
     episode,
     filename,
     fps,
-    hash_value,
+    subtitle_hash,
     uploader,
     download_count,
     video,
@@ -514,7 +521,7 @@ def _candidate(
         movie_imdb_id,
         season,
         episode,
-        hash_value,
+        subtitle_hash,
     )
     if suppress_matches:
         matches = []
@@ -525,7 +532,7 @@ def _candidate(
         "provider": PROVIDER_ID,
         "language": language.payload(),
         "hearing_impaired": language.hi,
-        "hash_verifiable": bool(hash_value),
+        "hash_verifiable": bool(subtitle_hash),
         "hearing_impaired_verifiable": True,
         "page_link": page_link,
         "release_info": release_name,
@@ -1020,7 +1027,7 @@ class OpenSubtitlesOrgProvider:
                     episode=context.episode,
                     filename=item["filename"],
                     fps=item["fps"],
-                    hash_value=item.get("hash_value"),
+                    subtitle_hash=item.get("hash_value"),
                     uploader=item["uploader"],
                     download_count=item["download_count"],
                     video=video,
