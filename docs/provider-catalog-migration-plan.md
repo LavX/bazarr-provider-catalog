@@ -343,24 +343,26 @@
 - Branch: `catalog-legendasnet`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/legendasnet`
 - Current checkpoint: `983878f Add Legendas.net provider`
+- Pull request: [#60](https://github.com/LavX/bazarr-provider-catalog/pull/60), open draft, head `catalog-legendasnet`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
-- Local evidence on 2026-05-31:
+- Local evidence on 2026-06-01:
   - Legacy inspection confirmed movie and episode support, Brazilian Portuguese only, required `username` and `password`, login through `POST /api/v1/login`, bearer token auth, movie and TV JSON search payloads, forced/foreign comment detection, unsuccessful payload handling, direct downloads, ZIP download extraction, and daily download limit detection.
   - Bazarr UI/config inspection confirmed settings `username` and `password`, with both classified as secrets.
   - Red TDD gate `python3 -B -m unittest discover -s tests -p test_legendasnet.py`: failed because `providers/legendasnet/provider.py` did not exist.
   - `python3 -B -m unittest discover -s tests -p test_legendasnet.py`: `6` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/legendasnet/provider.py`: passed.
   - `python3 -B -m unittest discover -s tests`: `334` tests passed, `6` skipped.
-  - `git diff --check` and `git diff --cached --check`: clean.
+  - `git diff --check origin/main...HEAD`: clean.
   - Manifest language count matches the Bazarr Legendas.net UI language registry: `1` entry.
-  - Attribution and em-dash scan over touched Legendas.net files found no matches.
-- Live evidence on 2026-05-31:
-  - `curl -sS -I --max-time 20 -A BazarrProviderHub/1.0 https://legendas.net/`: returned HTTP `200`.
-  - `curl -sS -i --max-time 20 -A BazarrProviderHub/1.0 https://legendas.net/api/v1/login`: returned HTTP `405` with POST allowed.
-  - `curl -sS -i --max-time 20 -A BazarrProviderHub/1.0 https://legendas.net/api/v1/search/movie`: returned HTTP `401` JSON `Missing Authorization Header`.
+  - Attribution and AI-credit scan over touched Legendas.net files found no matches.
+- Live evidence on 2026-06-01:
+  - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://legendas.net/`: returned HTTP `200`.
+  - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://legendas.net/api/v1/login`: returned HTTP `405` with `POST` allowed.
+  - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' https://legendas.net/api/v1/search/movie`: returned HTTP `401` JSON `Missing Authorization Header`.
   - Real search and download require valid Legendas.net credentials.
 - Remaining gates:
   - Run SDK live smoke search and download with valid Legendas.net credentials.
