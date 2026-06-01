@@ -1,8 +1,10 @@
 import base64
 import hashlib
 import importlib.util
+import io
 import json
 import unittest
+import urllib.error
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -236,6 +238,70 @@ class GestdownProviderSearchTests(unittest.TestCase):
             ),
             [],
         )
+
+    def test_search_allows_season_zero_specials(self):
+        provider = self.mod.GestdownProvider()
+        calls = []
+
+        def get_json(url, timeout=30):
+            calls.append(url)
+            if url == "https://api.gestdown.info/shows/external/tvdb/81189":
+                return SHOW_LOOKUP
+            if url == (
+                "https://api.gestdown.info/subtitles/get/"
+                "31ffb6ce-c000-4079-8912-b3f72057baed/0/1/English"
+            ):
+                return SUBTITLES_ENGLISH
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = get_json
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "Breaking Bad",
+                "series_tvdb_id": 81189,
+                "season": 0,
+                "episode": 1,
+            },
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"locked_retry_delay_ms": 0},
+        )
+
+        self.assertIn(
+            "https://api.gestdown.info/subtitles/get/"
+            "31ffb6ce-c000-4079-8912-b3f72057baed/0/1/English",
+            calls,
+        )
+        self.assertGreaterEqual(len(results), 1)
+
+    def test_search_returns_no_results_after_repeated_423s(self):
+        provider = self.mod.GestdownProvider()
+        calls = []
+
+        def get_json(url, timeout=30):
+            calls.append(url)
+            if url == "https://api.gestdown.info/shows/external/tvdb/81189":
+                return SHOW_LOOKUP
+            raise urllib.error.HTTPError(url, 423, "Locked", hdrs=None, fp=io.BytesIO())
+
+        provider._http_get = get_json
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "Breaking Bad",
+                "series_tvdb_id": 81189,
+                "season": 1,
+                "episode": 1,
+            },
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"locked_retry_delay_ms": 0},
+        )
+
+        self.assertEqual(results, [])
+        self.assertEqual(calls.count(
+            "https://api.gestdown.info/subtitles/get/"
+            "31ffb6ce-c000-4079-8912-b3f72057baed/1/1/English"
+        ), 3)
 
 
 class GestdownProviderDownloadTests(unittest.TestCase):

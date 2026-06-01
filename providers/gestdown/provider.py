@@ -317,8 +317,11 @@ class GestdownProvider:
             try:
                 return self._http_get(url, timeout=timeout)
             except urllib.error.HTTPError as exc:
-                if exc.code != 423 or attempt == LOCKED_RETRY_ATTEMPTS - 1:
+                if exc.code != 423:
                     raise
+                exc.close()
+                if attempt == LOCKED_RETRY_ATTEMPTS - 1:
+                    return b""
                 if delay:
                     time.sleep(delay)
         return b""
@@ -330,7 +333,7 @@ class GestdownProvider:
         season = _int_or_none(video.get("season"))
         episode = _int_or_none(video.get("episode"))
         tvdb_id = _video_series_tvdb_id(video)
-        if not tvdb_id or not season or not episode:
+        if not tvdb_id or season is None or episode is None:
             return []
 
         try:
