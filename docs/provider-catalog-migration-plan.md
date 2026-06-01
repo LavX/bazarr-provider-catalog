@@ -713,6 +713,7 @@
 - Branch: `catalog-regielive`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/regielive`
 - Current checkpoint: `fb5a2ae Add RegieLive provider`
+- Pull request: [#70](https://github.com/LavX/bazarr-provider-catalog/pull/70), open draft, head `catalog-regielive`, base `main`, merge state `CLEAN`.
 - Local evidence on 2026-05-29:
   - `python3 -B -m unittest discover -s tests -p 'test_regielive.py'`: `11` tests passed.
   - `python3 -B -m sdk validate`: `catalog ok`.
@@ -723,14 +724,15 @@
   - Direct API probes from local network and `bazarr-ui-test` returned HTTP `403`.
 - Fresh local evidence on 2026-06-01:
   - `python3 -B -m unittest discover -s tests -p 'test_regielive.py'`: `11` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/regielive/provider.py`: passed.
-  - `git diff --check`: clean.
-  - Attribution and em-dash scan over `providers/regielive`, `tests/test_regielive.py`, `README.md`, `catalog.json`, and `docs/provider-notes/regielive.md` found no matches.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Attribution and AI-credit scan over `providers/regielive`, `tests/test_regielive.py`, `README.md`, `catalog.json`, and `docs/provider-notes/regielive.md` found no matches.
   - `python3 -B -m unittest discover -s tests`: `339` tests passed, `6` skipped.
 - Live evidence on 2026-06-01:
   - `python3 -B -m sdk smoke-test --provider regielive --language ron --video-fixture tests/fixtures/regielive_video_dune.json --expect-min-results 1 --skip-download`: failed with `regielive search failed: regielive rejected the request`.
-  - Local direct probe `GET https://api.regielive.ro/bazarr/search.php?nume=Dune&an=2021` with `RL-API: API-BAZARR-YTZ-SL` returned HTTP `403` JSON `{"eroare":"Cerere invalida","cod":403}` before later probes hit the access-restriction page.
+  - Local direct probe `GET https://api.regielive.ro/bazarr/search.php?nume=Dune&an=2021` with `RL-API: API-BAZARR-YTZ-SL` returned HTTP `403` JSON `{"eroare":"Cerere invalida","cod":403}`.
   - Browser-style User-Agent, GET-with-body, POST form, cookie-retention, and episode query probes did not produce a successful response; the endpoint returned the RegieLive access-restriction page or HTTP `429` after repeated attempts.
   - `bazarr-ui-test` runtime egress reached `https://api.regielive.ro/` with HTTP `200` and body `API<BR>Hi :)`, but the same runtime egress got HTTP `403` from the search endpoint and from `https://subtitrari.regielive.ro`.
 - Remaining gates:
