@@ -22,7 +22,7 @@ def _load_provider_module():
 
 SHREK_VIDEO = json.loads((FIXTURE_DIR / "napiprojekt_video_shrek.json").read_text())
 ATTACK_VIDEO = json.loads((FIXTURE_DIR / "napiprojekt_video_attack_on_titan_s02e01.json").read_text())
-SUBTITLE_BYTES = "00:00:48: Dawno, dawno temu...\r\n".encode("cp1250")
+SUBTITLE_BYTES = "00:00:48: Zażółć gęślą jaźń...\r\n".encode("cp1250")
 
 SEARCH_HTML = """
 <div class="greyBoxCatcher">
@@ -49,6 +49,23 @@ LIST_HTML = """
     </td>
   </tr>
 </table>
+""".encode("utf-8")
+
+BLANK_AUTHOR_HTML = """
+<table>
+  <tr title="<b>Video rozdzielczość:</b> 1080p< <b>Video FPS:</b> 23.976<">
+    <td><a class="tableA" href="napiprojekt:cccccccccccccccccccccccccccccccc">download</a></td>
+    <td>
+      <p>ignored</p><p>700 MB</p><p>ignored</p><p>01:30:00</p><p></p><p>2024-01-02</p>
+    </td>
+  </tr>
+</table>
+""".encode("utf-8")
+
+EPISODE_SEARCH_HTML = """
+<div class="greyBoxCatcher">
+  <a class="movieTitleCat" href="napisy-38715-Attack-on-Titan-(2013)">Attack on Titan (2013)</a>
+</div>
 """.encode("utf-8")
 
 
@@ -100,6 +117,15 @@ class CatalogParseTests(unittest.TestCase):
         )
 
         self.assertEqual([item["hash"] for item in rows], ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"])
+
+    def test_only_authors_rejects_blank_author_rows(self):
+        rows = self.mod.parse_subtitle_rows(
+            BLANK_AUTHOR_HTML,
+            ["title"],
+            only_authors=True,
+        )
+
+        self.assertEqual(rows, [])
 
 
 class NapiProjektProviderSearchTests(unittest.TestCase):
@@ -172,6 +198,36 @@ class NapiProjektProviderSearchTests(unittest.TestCase):
 
         self.assertEqual(url, "https://www.napiprojekt.pl/napisy1,7,0-dla-38715-Shingeki-no-kyojin-(2013)-s02e01")
 
+    def test_episode_catalog_search_adds_exact_episode_matches_without_imdb(self):
+        provider = self.mod.NapiProjektProvider()
+        video = dict(ATTACK_VIDEO)
+        video.pop("series_imdb_id", None)
+        video["hashes"] = {}
+        called = []
+
+        def get_stub(url, config=None, timeout=15, referer=None):
+            del config, timeout, referer
+            called.append(("GET", url))
+            if url == "https://www.napiprojekt.pl/napisy1,7,0-dla-38715-Attack-on-Titan-(2013)-s02e01":
+                return LIST_HTML
+            raise AssertionError(f"unexpected GET: {url}")
+
+        def post_stub(url, data, config=None, timeout=15, referer=None):
+            del config, timeout, referer
+            called.append(("POST", url, data))
+            return EPISODE_SEARCH_HTML
+
+        provider._http_get = get_stub
+        provider._http_post = post_stub
+        results = provider.search(video, [{"alpha3": "pol", "alpha2": "pl"}], {})
+
+        self.assertEqual(called[0][0], "POST")
+        self.assertEqual(called[1], ("GET", "https://www.napiprojekt.pl/napisy1,7,0-dla-38715-Attack-on-Titan-(2013)-s02e01"))
+        self.assertIn("series", results[0]["matches"])
+        self.assertIn("season", results[0]["matches"])
+        self.assertIn("episode", results[0]["matches"])
+        self.assertGreater(results[0]["score"], 88)
+
 
 class NapiProjektProviderDownloadTests(unittest.TestCase):
     def setUp(self):
@@ -197,6 +253,7 @@ class NapiProjektProviderDownloadTests(unittest.TestCase):
         self.assertEqual(result["content_sha256"], hashlib.sha256(SUBTITLE_BYTES).hexdigest())
         self.assertEqual(result["format"], "txt")
         self.assertEqual(result["content_type"], "text/plain")
+        self.assertEqual(result["encoding"], "cp1250")
 
     def test_download_reuses_hash_content_cached_during_search(self):
         provider = self.mod.NapiProjektProvider()
@@ -220,6 +277,26 @@ class NapiProjektProviderDownloadTests(unittest.TestCase):
         )
 
         self.assertEqual(base64.b64decode(result["content_b64"]), SUBTITLE_BYTES)
+
+    def test_download_reports_utf8_for_flaresolverr_text_bytes(self):
+        provider = self.mod.NapiProjektProvider()
+        body = "00:00:48: Zażółć gęślą jaźń...\r\n".encode("utf-8")
+        provider._content_cache["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"] = body
+
+        result = provider.download(
+            {
+                "provider": "napiprojekt",
+                "schema": 1,
+                "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "language": "pol",
+                "format": "txt",
+            },
+            {"alpha3": "pol", "alpha2": "pl"},
+            {},
+        )
+
+        self.assertEqual(base64.b64decode(result["content_b64"]), body)
+        self.assertEqual(result["encoding"], "utf-8")
 
     def test_download_rejects_not_found_marker(self):
         provider = self.mod.NapiProjektProvider()
@@ -330,6 +407,52 @@ class CloudflareTests(unittest.TestCase):
             25000,
         )
 
+    def test_flaresolverr_subtitle_download_reports_utf8_encoding(self):
+        text = "Zażółć gęślą jaźń"
+
+        def fake_urlopen(request, timeout):
+            del request, timeout
+            return _FakeUrlopenResponse(
+                json.dumps({"status": "ok", "solution": {"response": text}}).encode("utf-8")
+            )
+
+        with patch.object(self.mod.urllib.request, "urlopen", fake_urlopen):
+            body = self.mod._flaresolverr_request(
+                "GET",
+                self.mod.hash_download_url("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "pl"),
+                config={"flaresolverr_url": "http://127.0.0.1:8191/v1"},
+            )
+
+        payload = self.mod._content_payload(body, "txt")
+
+        self.assertEqual(payload["encoding"], "utf-8")
+        self.assertEqual(base64.b64decode(payload["content_b64"]).decode("utf-8"), text)
+
+    def test_flaresolverr_post_sends_form_content_type(self):
+        requests = []
+
+        def fake_urlopen(request, timeout):
+            requests.append((request, timeout))
+            response = {
+                "status": "ok",
+                "solution": {"response": "<html>ok</html>"},
+            }
+            return _FakeUrlOpenResponse(json.dumps(response).encode("utf-8"))
+
+        with patch.object(self.mod.urllib.request, "urlopen", fake_urlopen):
+            self.mod._flaresolverr_request(
+                "POST",
+                self.mod.CATALOG_SEARCH_URL,
+                data={"queryString": "Shrek", "queryKind": "2"},
+                config={"flaresolverr_url": "http://127.0.0.1:8191/v1"},
+                referer=self.mod.CATALOG_BASE_URL + "/",
+            )
+
+        payload = json.loads(requests[0][0].data.decode("utf-8"))
+        self.assertEqual(payload["postData"], "queryString=Shrek&queryKind=2")
+        self.assertEqual(payload["headers"]["Referer"], self.mod.CATALOG_BASE_URL + "/")
+        self.assertEqual(payload["headers"]["Content-Type"], "application/x-www-form-urlencoded")
+
 
 class _FakeResponse:
     def __init__(self, status_code, content, headers=None, url="https://www.napiprojekt.pl/ajax/search_catalog.php"):
@@ -356,3 +479,17 @@ class _FakeScraper:
     def post(self, url, *args, **kwargs):
         self.calls.append(("POST", url, args, kwargs))
         return self.responses.pop(0)
+
+
+class _FakeUrlOpenResponse:
+    def __init__(self, body):
+        self.body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def read(self):
+        return self.body

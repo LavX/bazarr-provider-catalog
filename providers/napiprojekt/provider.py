@@ -161,7 +161,7 @@ def parse_subtitle_rows(body, matches, only_authors=False, only_real_names=False
     for raw in parser.rows:
         author = raw.get("author") or _extract_label(raw.get("title_attr"), "Autor") or ""
         author = _clean_text(author)
-        if only_authors and _is_machine_author(author):
+        if only_authors and (not author or _is_machine_author(author)):
             continue
         if only_real_names and not _looks_like_real_name(author):
             continue
@@ -267,9 +267,10 @@ class NapiProjektProvider:
         if not selected:
             return []
         page_url = catalog_subtitles_url(selected["slug"], video)
+        matches = _catalog_page_matches(video, selected.get("matches"))
         rows = parse_subtitle_rows(
             self._http_get(page_url, config=config, referer=CATALOG_SEARCH_URL),
-            selected.get("matches"),
+            matches,
             only_authors=bool(config.get("only_authors")),
             only_real_names=bool(config.get("only_real_names")),
         )
@@ -533,10 +534,14 @@ def _flaresolverr_request(method, url, data=None, config=None, state=None, refer
         "url": url,
         "maxTimeout": _flaresolverr_timeout_ms(config),
     }
+    headers = {}
     if referer:
-        payload["headers"] = {"Referer": referer}
+        headers["Referer"] = referer
     if method == "POST":
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
         payload["postData"] = urllib.parse.urlencode(data or {})
+    if headers:
+        payload["headers"] = headers
     request = urllib.request.Request(
         _flaresolverr_url(config),
         data=json.dumps(payload).encode("utf-8"),
@@ -614,12 +619,13 @@ def _content_payload(body, fmt):
             "encoding": "cp1250",
             "empty": True,
         }
+    encoding = _detect_subtitle_encoding(body)
     return {
         "content_b64": _base64.b64encode(body).decode("ascii"),
         "content_sha256": _hashlib.sha256(body).hexdigest(),
         "content_type": "text/plain",
         "format": fmt,
-        "encoding": "cp1250",
+        "encoding": encoding,
         "empty": False,
     }
 
@@ -630,9 +636,35 @@ def _score_for_matches(matches):
         return 100
     if "imdb_id" in match_set or "series_imdb_id" in match_set:
         return 95
+    if {"season", "episode"}.issubset(match_set):
+        return 92
     if "title" in match_set or "series" in match_set:
         return 88
     return 70
+
+
+def _catalog_page_matches(video, matches):
+    match_list = list(matches or [])
+    if (video or {}).get("kind") != "episode":
+        return match_list
+    try:
+        int(video.get("season"))
+        int(video.get("episode"))
+    except (TypeError, ValueError):
+        return match_list
+    for item in ("season", "episode"):
+        if item not in match_list:
+            match_list.append(item)
+    return match_list
+
+
+def _detect_subtitle_encoding(body):
+    body = bytes(body or b"")
+    try:
+        body.decode("utf-8")
+    except UnicodeDecodeError:
+        return "cp1250"
+    return "utf-8"
 
 
 def _dedupe_results(results):
