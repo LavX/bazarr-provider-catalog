@@ -219,24 +219,25 @@
 - Branch: `catalog-addic7ed`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/addic7ed`
 - Current checkpoint: `9464c2a Add Addic7ed provider`
+- Pull request: [#56](https://github.com/LavX/bazarr-provider-catalog/pull/56), open draft, head `catalog-addic7ed`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
-- Local evidence on 2026-05-31:
+- Local evidence on 2026-06-01:
   - Legacy inspection confirmed username/password or cookie auth, optional User-Agent, VIP download cap, show-id lookup, movie-id lookup, episode and movie parsing, incomplete-subtitle filtering, hearing-impaired flags, rate-limit detection, and plain subtitle downloads.
   - Bazarr UI/config inspection confirmed settings `username`, `password`, `cookies`, `user_agent`, and `vip`, with `username`, `password`, and `cookies` classified as secrets.
   - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_addic7ed.py'`: failed because `providers/addic7ed/provider.py` did not exist.
   - `python3 -B -m unittest discover -s tests -p 'test_addic7ed.py'`: `5` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/addic7ed/provider.py`: passed.
   - `python3 -B -m unittest discover -s tests`: `333` tests passed, `6` skipped.
-  - `git diff --check` and `git diff --cached --check`: clean.
+  - `git diff --check origin/main...HEAD`: clean.
   - Manifest language count matches the Bazarr Addic7ed UI language registry: `44` entries, with hearing-impaired represented per result.
-  - Attribution and em-dash scan over touched Addic7ed files found no matches.
-- Live evidence on 2026-05-31:
+  - Attribution and AI-credit scan over touched Addic7ed files found no matches.
+- Live evidence on 2026-06-01:
   - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' https://www.addic7ed.com/`: returned HTTP `200`.
-  - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' https://www.addic7ed.com/shows.php`: returned HTTP `302` to `/login.php` without cookies.
-  - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' 'https://www.addic7ed.com/search.php?search=Dexter'`: returned HTTP `302` to a show page.
+  - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' 'https://www.addic7ed.com/search.php?search=Dexter'`: returned HTTP `302` to `/show/6`.
   - Real search and download require valid Addic7ed credentials or session cookies. If Addic7ed presents captcha during username/password login, the Provider Hub plugin requires cookies.
 - Remaining gates:
   - Run SDK live smoke search and download with valid Addic7ed cookies or credentials.
