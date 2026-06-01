@@ -1037,6 +1037,7 @@
 - Branch: `catalog-animetosho`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/animetosho`
 - Current checkpoint: `4a282a3 Add AnimeTosho provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/24` opened on 2026-06-01, head `catalog-animetosho`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1068,6 +1069,16 @@
   - Compat episode search for `query=Solo.Leveling.S01E12.2160p.WEB-ToonsHub.mkv`, `type=episode`, `season_number=1`, `episode_number=12`, `languages=en`, `series_anidb_id=17495`, and `series_anidb_episode_id=277518` returned HTTP `200`, `13` total results, including `5` AnimeTosho results.
   - Compat login returned HTTP `200`; compat download for AnimeTosho `file_id=9` returned HTTP `200` and a stream link.
   - Fetching the stream link returned HTTP `200` with `17895` bytes of SRT content.
+- Fresh PR evidence on 2026-06-01:
+  - `gh pr list --repo LavX/bazarr-provider-catalog --head catalog-animetosho --json number,state,isDraft,reviewDecision,mergeStateStatus,url,title`: no existing PR before creation.
+  - `python3 -B -m unittest discover -s tests -p 'test_animetosho.py'`: `11` tests passed.
+  - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/animetosho/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, provider code, tests, and fixtures: no matches.
+  - `python3 -B -m sdk smoke-test --provider animetosho --language eng --video-fixture tests/fixtures/animetosho_video_solo_leveling_s01e12.json --config-json '{"search_threshold":1,"request_delay_ms":0}' --expect-min-results 1`: `animetosho ok`.
+  - `gh pr view 24 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#24` is open, non-draft, head `catalog-animetosho`, base `main`, merge state `CLEAN`.
 - Remaining gates: none for the current AnimeTosho migration proof.
 
 ### `napiprojekt`
