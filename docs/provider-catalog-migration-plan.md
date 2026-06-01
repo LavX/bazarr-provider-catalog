@@ -281,24 +281,26 @@
 - Branch: `catalog-ktuvit`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/ktuvit`
 - Current checkpoint: `9d3162e Add Ktuvit provider`
+- Pull request: [#58](https://github.com/LavX/bazarr-provider-catalog/pull/58), open draft, head `catalog-ktuvit`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
-- Local evidence on 2026-05-31:
+- Local evidence on 2026-06-01:
   - Legacy inspection confirmed Hebrew-only movie and episode support, required `email` and `hashed_password`, login through `MembershipService.svc/Login`, service responses wrapped in `d`, Ktuvit search service requests, movie page parsing, episode AJAX subtitle list parsing, TMDB fallback when no IMDb id is present, and the download identifier flow.
   - Bazarr UI/config inspection confirmed settings `email` and `hashed_password`, with both classified as secrets.
   - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_ktuvit.py'`: failed because `providers/ktuvit/provider.py` did not exist.
   - `python3 -B -m unittest discover -s tests -p test_ktuvit.py`: `5` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/ktuvit/provider.py`: passed.
   - `python3 -B -m unittest discover -s tests`: `333` tests passed, `6` skipped.
-  - `git diff --check` and `git diff --cached --check`: clean.
+  - `git diff --check origin/main...HEAD`: clean.
   - Manifest language count matches the Bazarr Ktuvit UI language registry: `1` entry.
-  - Attribution and em-dash scan over touched Ktuvit files found no matches.
-- Live evidence on 2026-05-31:
-  - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' https://www.ktuvit.me/`: returned HTTP `200`.
-  - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' https://www.ktuvit.me/Services/MembershipService.svc/Login`: returned HTTP `405` with POST allowed.
-  - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' https://www.ktuvit.me/MovieInfo.aspx?ID=1`: returned HTTP `200` with an invalid-request page.
+  - Attribution and AI-credit scan over touched Ktuvit files found no matches.
+- Live evidence on 2026-06-01:
+  - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://www.ktuvit.me/`: returned HTTP `200`.
+  - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://www.ktuvit.me/Services/MembershipService.svc/Login`: returned HTTP `405` with `POST` allowed.
+  - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' 'https://www.ktuvit.me/MovieInfo.aspx?ID=1'`: returned HTTP `200`.
   - Real search and download require valid Ktuvit email and hashed password credentials.
 - Remaining gates:
   - Run SDK live smoke search and download with valid Ktuvit credentials.
