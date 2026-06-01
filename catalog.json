@@ -1181,14 +1181,14 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "55582f9776af6a824afd4657d5238abf80a34af5f2f660ca19723a5726287784",
+        "bundle_sha256": "51047c29247fb2b93e04b224d3129e642ffa974af42da23c85dff3e1bb8bfb71",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
             "flaresolverr_timeout_ms": {
-              "default": 25000,
+              "default": 10000,
               "description": "Maximum time FlareSolverr may spend solving a Cloudflare challenge. Capped below the Provider Hub worker deadline.",
-              "maximum": 25000,
+              "maximum": 10000,
               "minimum": 5000,
               "title": "FlareSolverr timeout (ms)",
               "type": "integer"
@@ -1498,7 +1498,7 @@
         "entry_class": "YavkaNetProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "8aa2460f28cf52789bf91e73f75257c7c25b208988d95113f1700cc393fc1f17"
+          "provider.py": "9ec41ddd25f6f447b4b411eb70df95243148051323db646b8d15566f7ea9e224"
         },
         "languages": [
           "bul",

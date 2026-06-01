@@ -196,7 +196,7 @@ class YavkaNetCloudflareTests(unittest.TestCase):
         request = urlopen.call_args.args[0]
         self.assertEqual(request.full_url, "http://flaresolverr:8191/v1")
         payload = json.loads(request.data.decode("utf-8"))
-        self.assertEqual(payload["maxTimeout"], 25000)
+        self.assertEqual(payload["maxTimeout"], 10000)
         self.assertEqual(state["flaresolverr_user_agent"], "Mozilla/5.0 solved")
         self.assertEqual(state["flaresolverr_cookies"], {"cf_clearance": "token"})
 
