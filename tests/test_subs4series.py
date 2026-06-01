@@ -257,6 +257,38 @@ class Subs4SeriesProviderTests(unittest.TestCase):
                 {"request_delay_ms": 0},
             )
 
+    def test_create_cloudscraper_uses_ai_cloudscraper_options(self):
+        scraper = object()
+
+        with patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper) as create_scraper:
+            result = self.mod._create_cloudscraper()
+
+        self.assertIs(result, scraper)
+        create_scraper.assert_called_once_with(
+            browser={"custom": self.mod.USER_AGENT},
+            interpreter="native",
+            enable_cookie_persistence=False,
+            debug=False,
+        )
+
+    def test_create_cloudscraper_retries_without_cookie_persistence_for_legacy_ai_cloudscraper(self):
+        scraper = object()
+
+        with patch.object(
+            self.mod.cloudscraper,
+            "create_scraper",
+            side_effect=[
+                TypeError("unexpected keyword argument 'enable_cookie_persistence'"),
+                scraper,
+            ],
+        ) as create_scraper:
+            result = self.mod._create_cloudscraper()
+
+        self.assertIs(result, scraper)
+        self.assertEqual(create_scraper.call_count, 2)
+        self.assertEqual(create_scraper.call_args_list[0].kwargs["enable_cookie_persistence"], False)
+        self.assertNotIn("enable_cookie_persistence", create_scraper.call_args_list[1].kwargs)
+
     def test_http_get_uses_flaresolverr_after_cloudflare_block(self):
         provider = self.mod.Subs4SeriesProvider()
         challenge_response = FakeScraperResponse(

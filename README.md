@@ -24,7 +24,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`moviesubtitles`](providers/moviesubtitles/) | 0.1.0 | Scrapes [Moviesubtitles.org](https://www.moviesubtitles.org) for movie subtitles, including multipart archives. No login or API key. |
 | [`my_subs`](providers/my_subs/) | 0.1.1 | Scrapes [My-Subs.co](https://my-subs.co) for movie and episode subtitles in many languages. No login or API key. |
 | [`subcentral`](providers/subcentral/) | 0.1.0 | Scrapes [SubCentral.de](https://www.subcentral.de) forum subtitle threads for German and English episode releases. No login or API key. |
-| [`subs4series`](providers/subs4series/) | 0.1.1 | Scrapes [Subs4Series](https://www.subs4series.com) for Greek and English episode subtitles. Uses cloudscraper with optional FlareSolverr fallback and optional captcha helper settings for download gates. |
+| [`subs4series`](providers/subs4series/) | 0.1.2 | Scrapes [Subs4Series](https://www.subs4series.com) for Greek and English episode subtitles. Uses ai-cloudscraper with optional FlareSolverr fallback and optional captcha helper settings for download gates. |
 | [`subhd`](providers/subhd/) | 0.1.3 | Scrapes [SubHD.tv](https://subhd.tv) for Chinese-first movie and episode subtitles with multilingual releases. No login or API key. |
 | [`subtitlestar`](providers/subtitlestar/) | 0.1.8 | Scrapes [subtitlestar.com](https://subtitlestar.com) for Persian/Farsi movie and episode subtitles. No login or API key. |
 | [`sub_scene`](providers/sub_scene/) | 0.1.9 | Scrapes [sub-scene.com](https://sub-scene.com) (Subscene clone) for movie and episode subtitles in 35+ languages including Vietnamese, Arabic, Bengali, Danish, Dutch. Uses cloudscraper with optional FlareSolverr fallback. |
@@ -56,7 +56,7 @@ Every provider here ships independently of Bazarr+ releases. [Contribute](#contr
 - `providers/my_subs/`: scrapes My-Subs.co movie and episode subtitle listings.
 - `providers/smoke/`: deterministic no-network smoke provider for install and worker checks.
 - `providers/subcentral/`: scrapes SubCentral.de forum threads for German and English episode subtitles.
-- `providers/subs4series/`: scrapes Subs4Series episode subtitles with cloudscraper, optional FlareSolverr fallback, anti-block requests, optional captcha helper settings, and archive extraction.
+- `providers/subs4series/`: scrapes Subs4Series episode subtitles with ai-cloudscraper, optional FlareSolverr fallback, anti-block requests, optional captcha helper settings, and archive extraction.
 - `providers/subhd/`: scrapes SubHD.tv Chinese-first movie and episode subtitle pages.
 - `providers/subtitlestar/`: scrapes subtitlestar.com for Persian/Farsi movie and episode subtitles.
 - `providers/sub_scene/`: scrapes sub-scene.com (Subscene clone) for movie and episode subtitles in 35+ languages including Vietnamese, Arabic, Bengali, Danish, Dutch.

@@ -17,12 +17,12 @@
 - Maps `el.gif` to Greek and `en.gif` to English.
 - Preserves uploader, download count, year, release info, and episode scoring signals.
 - Runs the same anti-block endpoints before posting the download request.
-- Uses cloudscraper first and optional FlareSolverr fallback when Cloudflare blocks the worker egress IP.
+- Uses ai-cloudscraper first and optional FlareSolverr fallback when Cloudflare blocks the worker egress IP.
 - Supports direct subtitle bodies, ZIP archives, and RAR archives through the bundled `py7zz` dependency.
 
 ## Cloudflare Handling
 
-Subs4Series can return a Cloudflare `403` block to the Bazarr test-server egress even when a local residential live smoke passes. The plugin keeps cloudscraper as the default request path and only calls FlareSolverr when a Cloudflare block is detected.
+Subs4Series can return a Cloudflare `403` block to the Bazarr test-server egress even when a local residential live smoke passes. The plugin keeps ai-cloudscraper as the default request path and only calls FlareSolverr when a Cloudflare block is detected.
 
 - `flaresolverr_url`: optional FlareSolverr `/v1` endpoint.
 - `flaresolverr_timeout_ms`: maximum FlareSolverr solve/fetch time.
