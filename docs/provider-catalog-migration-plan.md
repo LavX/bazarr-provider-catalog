@@ -1337,6 +1337,7 @@
 - Branch: `catalog-betaseries`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/betaseries`
 - Current checkpoint: `461ab52 Add BetaSeries provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/29` opened as draft on 2026-06-01, head `catalog-betaseries`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1364,6 +1365,16 @@
   - Attribution and em-dash scan over `providers/betaseries`, `tests/test_betaseries.py`, `README.md`, and `catalog.json` found no matches.
   - No-key `https://api.betaseries.com/episodes/display?id=1` probe returned API error code `1001`, `Please set an API key.`
   - Test-server config check read only token presence and length from `/home/lavx/bazarr-data/config/config.yaml`; `betaseries.token` is empty.
+- Fresh PR evidence on 2026-06-01:
+  - `gh pr list --repo LavX/bazarr-provider-catalog --head catalog-betaseries --json number,state,isDraft,reviewDecision,mergeStateStatus,url,title`: no existing PR before creation.
+  - `python3 -B -m unittest discover -s tests -p 'test_betaseries.py'`: `7` tests passed.
+  - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/betaseries/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, provider code, tests, and fixtures: no matches.
+  - No-key `https://api.betaseries.com/episodes/display?id=1` probe returned API error code `1001`, `Please set an API key.`
+  - `gh pr view 29 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#29` is open, draft, head `catalog-betaseries`, base `main`, merge state `CLEAN`.
 - Remaining gates:
   - Run SDK smoke search and download when a test BetaSeries API key is available.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `betaseries` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
