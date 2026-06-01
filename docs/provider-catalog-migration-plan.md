@@ -1636,6 +1636,7 @@
 - Branch: `catalog-subclub`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subclub`
 - Current checkpoint: `0849eae Add Subclub provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/34` opened on 2026-06-01, head `catalog-subclub`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1671,6 +1672,17 @@
   - Compat stream returned HTTP `200` and `108649` bytes. The payload starts with SRT cue `1` and timestamp `00:01:25,168 --> 00:01:26,690`.
 - Status:
   - Subclub is locally validated and proved through Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+- Fresh PR evidence on 2026-06-01:
+  - `gh pr list --repo LavX/bazarr-provider-catalog --head catalog-subclub --json number,state,isDraft,reviewDecision,mergeStateStatus,url,title`: no existing PR before creation.
+  - `python3 -B -m unittest discover -s tests -p 'test_subclub.py'`: `8` tests passed.
+  - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subclub/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, docs, provider code, tests, and fixtures: no matches.
+  - `python3 -B -m sdk smoke-test --provider subclub --language est --video-fixture tests/fixtures/subclub_video_inception.json --expect-min-results 1`: `subclub ok`.
+  - `python3 -B -m sdk smoke-test --provider subclub --language est --video-fixture tests/fixtures/subclub_video_game_of_thrones_s01e01.json --expect-min-results 1`: `subclub ok`.
+  - `gh pr view 34 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#34` is open, non-draft, head `catalog-subclub`, base `main`, merge state `CLEAN`.
 
 ### `subssabbz`
 
