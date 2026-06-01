@@ -2439,6 +2439,7 @@
 - Branch: `catalog-opensubtitlescom`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/opensubtitlescom`
 - Current checkpoint: `885985f Add OpenSubtitles.com provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/50` opened as draft on 2026-06-01, head `catalog-opensubtitlescom`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -2463,18 +2464,20 @@
   - Branch `catalog-opensubtitlescom` was pushed at `885985f`.
   - Branch scope remains limited to `README.md`, `catalog.json`, `docs/provider-notes/opensubtitlescom.md`, `providers/opensubtitlescom`, and `tests/test_opensubtitlescom.py`.
   - `python3 -B -m unittest discover -s tests -p 'test_opensubtitlescom.py'`: `12` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/opensubtitlescom/provider.py`: passed.
-  - `python3 -B -m unittest discover -s tests`: `340` tests passed, `6` skipped.
-  - `git diff --check`: clean.
+  - `git diff --check origin/main...HEAD`: clean.
   - Attribution and em-dash scan over `providers/opensubtitlescom`, `tests/test_opensubtitlescom.py`, `docs/provider-notes/opensubtitlescom.md`, `README.md`, and `catalog.json` found no matches.
   - Manifest and catalog language counts both remain `422`.
   - Live `https://api.opensubtitles.com/api/v1/infos/languages` probe returned HTTP `200`.
   - Invalid API key subtitle probe returned HTTP `403` with `You cannot consume this service`.
+  - `python3 -B -m sdk smoke-test --provider opensubtitlescom --language eng --expect-min-results 1 --skip-download`: failed at the expected credential gate with `OpenSubtitles.com username is required`.
+  - PR `#50` was verified open, draft, merge state `CLEAN`, head `885985f085e5becc45bab3dcf2f6006a3e6ce7be`.
   - Test-server config check read only credential presence and length from `/home/lavx/bazarr-data/config/config.yaml`; `opensubtitlescom.username`, `opensubtitlescom.password`, and `opensubtitlescom.api_key` are empty or absent.
 - Remaining gates:
   - Run SDK live smoke search and download with real OpenSubtitles.com credentials.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `opensubtitlescom` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `opensubtitlescom` in the trusted replacement policy.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured OpenSubtitles.com credentials.
 
 ### `avistaz`
