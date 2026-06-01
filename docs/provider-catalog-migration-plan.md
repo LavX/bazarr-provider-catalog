@@ -2575,6 +2575,7 @@
 - Branch: `catalog-turkcealtyaziorg`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/turkcealtyaziorg`
 - Current checkpoint: `6ec4f09 Add TurkceAltyazi.org provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/53` opened as draft on 2026-06-01, head `catalog-turkcealtyaziorg`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -2598,18 +2599,20 @@
   - Branch `catalog-turkcealtyaziorg` was pushed at `6ec4f09`.
   - Branch scope remains limited to `README.md`, `catalog.json`, `docs/provider-notes/turkcealtyaziorg.md`, `providers/turkcealtyaziorg`, and `tests/test_turkcealtyaziorg.py`.
   - `python3 -B -m unittest discover -s tests -p 'test_turkcealtyaziorg.py'`: `10` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/turkcealtyaziorg/provider.py`: passed.
-  - `python3 -B -m unittest discover -s tests`: `338` tests passed, `6` skipped.
-  - `git diff --check`: clean.
+  - `git diff --check origin/main...HEAD`: clean.
   - Attribution and em-dash scan over `providers/turkcealtyaziorg`, `tests/test_turkcealtyaziorg.py`, `docs/provider-notes/turkcealtyaziorg.md`, `README.md`, and `catalog.json` found no matches.
   - Manifest and catalog language counts both remain `2`.
   - Public `https://turkcealtyazi.org/` probe returned HTTP `403` with `cf-mitigated: challenge`.
   - Subtitle search probe for IMDb `tt1375666` returned HTTP `403` with `cf-mitigated: challenge`.
+  - `python3 -B -m sdk smoke-test --provider turkcealtyaziorg --language tur --video-fixture /tmp/turkcealtyaziorg_inception_video.json --expect-min-results 1 --skip-download`: failed at the expected Cloudflare gate with `TurkceAltyazi is presenting a Cloudflare challenge; configure matching cookies and User-Agent`.
+  - PR `#53` was verified open, draft, merge state `CLEAN`, head `6ec4f09d7fd0b5773ef57a7f7d54115335e46937`.
   - Test-server config check read only cookie and user-agent presence plus length from `/home/lavx/bazarr-data/config/config.yaml`; `turkcealtyaziorg.cookies` and `turkcealtyaziorg.user_agent` are empty.
 - Remaining gates:
   - Run SDK live smoke search and download with valid TurkceAltyazi.org cookies and User-Agent.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `turkcealtyaziorg` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `turkcealtyaziorg` in the trusted replacement policy.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured TurkceAltyazi.org cookies.
 
 ## Why OpenSubtitles.org Is Tricky
