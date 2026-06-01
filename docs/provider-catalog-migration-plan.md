@@ -2306,6 +2306,7 @@
 - Branch: `catalog-subsource`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subsource`
 - Current checkpoint: `d50b08f Add SubSource provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/47` opened as draft on 2026-06-01, head `catalog-subsource`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -2328,17 +2329,19 @@
   - Branch `catalog-subsource` was pushed at `d50b08f`.
   - Branch scope remains limited to `README.md`, `catalog.json`, `docs/provider-notes/subsource.md`, `providers/subsource`, and `tests/test_subsource.py`.
   - `python3 -B -m unittest discover -s tests -p 'test_subsource.py'`: `10` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/subsource/provider.py`: passed.
-  - `python3 -B -m unittest discover -s tests`: `338` tests passed, `6` skipped.
-  - `git diff --check`: clean.
+  - `git diff --check origin/main...HEAD`: clean.
   - Attribution and em-dash scan over `providers/subsource`, `tests/test_subsource.py`, `docs/provider-notes/subsource.md`, `README.md`, and `catalog.json` found no matches.
   - No-key `https://api.subsource.net/api/v1/movies/search` probe returned HTTP `401` with `API key required`.
   - Invalid-key probe returned HTTP `401` with `Invalid API key`.
+  - `python3 -B -m sdk smoke-test --provider subsource --language eng --expect-min-results 1 --skip-download`: failed at the expected credential gate with `SubSource api_key is required`.
+  - PR `#47` was verified open, draft, merge state `CLEAN`, head `d50b08fa0775b6313d5b8bd8f7ecd6c85d8aa447`.
   - Test-server config check read only API-key presence and length from `/home/lavx/bazarr-data/config/config.yaml`; `subsource.apikey` is empty.
 - Remaining gates:
   - Run SDK live smoke search and download with a real SubSource API key.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subsource` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `subsource` in the trusted replacement policy.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured SubSource API key.
 
 ### `subsro`
