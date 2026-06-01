@@ -177,17 +177,20 @@
 - Branch: `catalog-whisperai`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/whisperai`
 - Current checkpoint: `0eeb964 Add WhisperAI provider`
+- Pull request: [#55](https://github.com/LavX/bazarr-provider-catalog/pull/55), open draft, head `catalog-whisperai`, base `main`, merge state `CLEAN`.
 - Provider type: local/generated provider backed by a user-supplied Whisper web service.
-- Local evidence on 2026-05-31:
+- Local evidence on 2026-06-01:
   - Legacy inspection confirmed required endpoint, response timeout, transcription timeout, `ffmpeg_path`, and `pass_video_name` settings.
   - Catalog behavior extracts local audio with configured `ffmpeg`, detects language through `/detect-language` when no audio tags exist, and calls `/asr` for generated SRT content.
   - Translation remains limited to English when source audio language differs from the requested subtitle language.
   - `python3 -B -m unittest discover -s tests -p test_whisperai.py`: `8` tests passed.
+  - `python3 -B -m unittest discover -s tests -p test_catalog.py`: `12` tests passed, `6` skipped.
   - `python3 -B -m py_compile providers/whisperai/provider.py`: passed.
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `git diff --check`: clean.
   - `python3 -B -m unittest discover -s tests`: `336` tests passed, `6` skipped.
-  - Local fake Whisper service smoke with generated media fixture: `whisperai ok`.
+  - Attribution and AI-credit scan over touched files: no matches.
+  - Local fake Whisper service smoke with generated media fixture and endpoint `http://127.0.0.1:19191`: `whisperai ok`.
 - Remaining gates:
   - Run against a real Whisper web service endpoint with a real media fixture.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `whisperai` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
