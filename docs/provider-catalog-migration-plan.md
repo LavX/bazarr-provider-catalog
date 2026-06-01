@@ -1855,6 +1855,7 @@
 - Branch: `catalog-subtitrarinoi`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subtitrarinoi`
 - Current checkpoint: `8fc7785 Add Subtitrari Noi provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/38` opened on 2026-06-01, head `catalog-subtitrarinoi`, base `main`, merge state `CLEAN`.
 - Local evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1889,6 +1890,16 @@
   - Compat stream returned HTTP `200` and `39467` bytes. The payload starts with SRT cue `1` and timestamp `00:01:15,408 --> 00:01:17,619`.
 - Status:
   - Subtitrari Noi is locally validated and proved through Provider Hub compat search, download, and stream on `bazarr-ui-test` for the Romanian episode path.
+- Fresh PR evidence on 2026-06-01:
+  - `gh pr list --repo LavX/bazarr-provider-catalog --head catalog-subtitrarinoi --json number,state,isDraft,reviewDecision,mergeStateStatus,url,title`: no existing PR before creation.
+  - `python3 -B -m unittest discover -s tests -p 'test_subtitrarinoi.py'`: `11` tests passed.
+  - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subtitrarinoi/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, docs, provider code, tests, and fixtures: no matches.
+  - `python3 -B -m sdk smoke-test --provider subtitrarinoi --language ron --video-fixture tests/fixtures/subtitrarinoi_video_breaking_bad_s01e01.json --expect-min-results 1`: `subtitrarinoi ok`.
+  - `gh pr view 38 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#38` is open, non-draft, head `catalog-subtitrarinoi`, base `main`, merge state `CLEAN`.
 
 ### `subtitriid`
 
