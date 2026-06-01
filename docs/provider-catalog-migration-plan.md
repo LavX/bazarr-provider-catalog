@@ -733,10 +733,26 @@
 - Live Subtis API evidence on 2026-05-29:
   - `python3 -B -m sdk smoke-test --provider subtis --language spa --video-fixture tests/fixtures/subtis_video_man_of_steel.json --expect-min-results 1`: `subtis ok`.
   - Direct worker-shaped live byte check returned `1` result via `alternative` fallback and downloaded `100666` subtitle bytes.
-- Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `subtis` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
-  - Deploy a current test-server-compatible core branch to `bazarr-ui-test`.
-  - Prove Provider Hub compat search, download, and stream for the exact Subtis candidate.
+- Fresh local and live evidence on 2026-06-01:
+  - Recreated isolated worktree `/tmp/bazarr_catalog_provider_worktrees/subtis` from branch `catalog-subtis`.
+  - `python3 -B -m unittest discover -s tests -p 'test_subtis.py'`: `9` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subtis/provider.py`: passed.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/subtis`, `tests/test_subtis.py`, `README.md`, `catalog.json`, and `docs/provider-notes/subtis.md` found no matches.
+  - `python3 -B -m unittest discover -s tests`: `337` tests passed, `6` skipped.
+  - `python3 -B -m sdk smoke-test --provider subtis --language spa --video-fixture tests/fixtures/subtis_video_man_of_steel.json --expect-min-results 1`: `subtis ok`.
+- Provider Hub test-server evidence on 2026-06-01:
+  - Branch `catalog-subtis` was pushed at `10a7aa31a7353d5570d8f636c241690a56ed33f3`.
+  - Official catalog source dev ref was set to `catalog-subtis`; refresh returned `13` entries and resolved Subtis `0.1.0` at commit `10a7aa31a7353d5570d8f636c241690a56ed33f3`.
+  - Provider Hub staged Subtis `0.1.0` with no broken requirements, then `bazarr-ui-test` restarted healthy.
+  - Provider state after restart: active version `0.1.0`, `pending_restart=false`, `trusted=true`, `enabled=true`, `last_error=None`, manifest commit `10a7aa31a7353d5570d8f636c241690a56ed33f3`.
+  - Runtime replacement policy contains `55` trusted migrated built-in ids, includes `subtis`, and excludes `hosszupuska` and `podnapisi`.
+  - Compat search `GET /api/v1/subtitles?moviehash=5b8f8f4e41ccb21e&moviebytesize=7033732714&imdb_id=tt0770828&query=man.of.steel.2013.720p.bluray.x264-felony.mkv&type=movie&languages=es&per_page=100` returned HTTP `200`, `68` total results, and `1` Subtis row.
+  - Subtis result: `file_id=61`, release `Man of Steel [fuzzy match]`, subtitle id `subtis:subtis-f38417eceeb7f088`.
+  - Compat download `POST /api/v1/download` for `file_id=61` returned HTTP `200`, a stream link, `remaining=999`, and `remaining_downloads=999`.
+  - Compat stream returned HTTP `200` and `94820` bytes. The payload starts with SRT cue `1` and timestamp `00:00:00,000 --> 00:00:24,000`.
+- Remaining gates: none for the current Subtis migration proof.
 
 ### `wizdom`
 
