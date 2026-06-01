@@ -327,7 +327,7 @@ def _language_payload(info):
     if alpha3 not in SUPPORTED_LANGUAGES:
         return None
     name = str(info.get("name") or "")
-    country_alpha2 = _portuguese_country(name) if alpha3 == "por" else None
+    country_alpha2 = _language_country(alpha3, name)
     return {
         "alpha3": alpha3,
         "alpha2": ALPHA3_TO_ALPHA2.get(alpha3),
@@ -337,12 +337,29 @@ def _language_payload(info):
     }
 
 
+def _language_country(alpha3, name):
+    if alpha3 == "por":
+        return _portuguese_country(name)
+    if alpha3 == "spa":
+        return _spanish_country(name)
+    return None
+
+
 def _portuguese_country(name):
     normalized = _normalize(name)
     if "brazil" in normalized or "brasil" in normalized or "por br" in normalized or "pt br" in normalized:
         return "BR"
     if "portugal" in normalized or "por pt" in normalized or "pt pt" in normalized:
         return "PT"
+    return None
+
+
+def _spanish_country(name):
+    normalized = _normalize(name)
+    if "latin america" in normalized or "latin american" in normalized or "latam" in normalized or "spa la" in normalized:
+        return "MX"
+    if "spain" in normalized or "castilian" in normalized or "spa es" in normalized:
+        return "ES"
     return None
 
 
@@ -416,19 +433,52 @@ def _requested_languages(languages):
         if alpha3 not in SUPPORTED_LANGUAGES:
             continue
         country_alpha2 = str((language or {}).get("country_alpha2") or "").upper() or None
-        requested.add((alpha3, country_alpha2))
+        requested.add((
+            alpha3,
+            country_alpha2,
+            _optional_bool(language, "forced"),
+            _optional_bool(language, "hi", "hearing_impaired"),
+        ))
     return requested
 
 
 def _language_matches_request(language, requested):
     alpha3 = language.get("alpha3")
     country_alpha2 = language.get("country_alpha2")
-    for requested_alpha3, requested_country in requested:
+    for requested_alpha3, requested_country, requested_forced, requested_hi in requested:
         if alpha3 != requested_alpha3:
             continue
-        if not requested_country or country_alpha2 == requested_country:
-            return True
+        if requested_country and country_alpha2 != requested_country:
+            continue
+        if requested_forced is not None and bool(language.get("forced")) != requested_forced:
+            continue
+        if requested_hi is not None and bool(language.get("hi")) != requested_hi:
+            continue
+        return True
     return False
+
+
+def _optional_bool(mapping, key, fallback_key=None):
+    if not isinstance(mapping, dict):
+        return None
+    if key in mapping:
+        value = mapping.get(key)
+    elif fallback_key and fallback_key in mapping:
+        value = mapping.get(fallback_key)
+    else:
+        return None
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return bool(value)
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    return None
 
 
 def _media_file_matches_video(video, filename):
