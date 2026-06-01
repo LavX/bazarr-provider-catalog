@@ -1689,6 +1689,7 @@
 - Branch: `catalog-subssabbz`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subssabbz`
 - Current checkpoint: `3aa8f02 Add SubsSabBz provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/35` opened on 2026-06-01, head `catalog-subssabbz`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1729,6 +1730,17 @@
   - Compat stream returned HTTP `200` and `70434` bytes. The payload starts with SRT cue `1` and timestamp `00:01:24,597 --> 00:01:26,119`.
 - Status:
   - SubsSabBz is locally validated and proved through Provider Hub compat search, download, and stream on `bazarr-ui-test` for the English movie path.
+- Fresh PR evidence on 2026-06-01:
+  - `gh pr list --repo LavX/bazarr-provider-catalog --head catalog-subssabbz --json number,state,isDraft,reviewDecision,mergeStateStatus,url,title`: no existing PR before creation.
+  - `python3 -B -m unittest discover -s tests -p 'test_subssabbz.py'`: `9` tests passed.
+  - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subssabbz/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, docs, provider code, tests, and fixtures: no matches.
+  - `python3 -B -m sdk smoke-test --provider subssabbz --language bul --video-fixture tests/fixtures/subssabbz_video_inception.json --expect-min-results 1`: `subssabbz ok`.
+  - `python3 -B -m sdk smoke-test --provider subssabbz --language eng --video-fixture tests/fixtures/subssabbz_video_inception.json --expect-min-results 1`: `subssabbz ok`.
+  - `gh pr view 35 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#35` is open, non-draft, head `catalog-subssabbz`, base `main`, merge state `CLEAN`.
 
 ### `subsunacs`
 
