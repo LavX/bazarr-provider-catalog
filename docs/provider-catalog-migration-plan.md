@@ -55,7 +55,7 @@
   - `bsplayer`: branch `catalog-bsplayer`, worktree `/tmp/bazarr_catalog_provider_worktrees/bsplayer`, current head `c04f374`
   - `cinemaz`: branch `catalog-cinemaz`, worktree `/tmp/bazarr_catalog_provider_worktrees/cinemaz`, current head `df1b3bd`
   - `embeddedsubtitles`: branch `catalog-embeddedsubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/embeddedsubtitles`, current head `a8257a4`, local/generated provider
-  - `gestdown`: branch `catalog-gestdown`, worktree `/tmp/bazarr_catalog_provider_worktrees/gestdown`, current head `c74a706`
+  - `gestdown`: branch `catalog-gestdown`, worktree `/tmp/bazarr_catalog_provider_worktrees/gestdown`, current head `c6dfb77`
   - `greeksubs`: branch `catalog-greeksubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubs`, current head `1ec84fa`
   - `greeksubtitles`: branch `catalog-greeksubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles`, current head `da99eee`
   - `hdbits`: branch `catalog-hdbits`, worktree `/tmp/bazarr_catalog_provider_worktrees/hdbits`, current head `42d7f02`
@@ -223,7 +223,7 @@
 
 - Branch: `catalog-gestdown`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/gestdown`
-- Current checkpoint: `c74a706 Fix Gestdown language parity`
+- Current checkpoint: `c6dfb77 Handle Gestdown specials and locked retries`
 - Local evidence: provider tests, catalog validation, full tests, live smoke, and core manifest parse check passed on 2026-05-29.
 - Test-server evidence on 2026-05-31:
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` is deployed to `bazarr-ui-test`.
@@ -235,6 +235,16 @@
   - Compat search for `imdb_id=12637874`, `type=episode`, `season_number=1`, `episode_number=1`, and `languages=en` returned HTTP `200`, `40` total results, including `3` Gestdown results with correct Fallout S01E01 feature details.
   - Compat login returned HTTP `200`; compat download for Gestdown `file_id=2` returned HTTP `200` and a stream link.
   - Fetching the stream link returned HTTP `200` with `45751` bytes of SRT content.
+- Review-fix evidence on 2026-06-02:
+  - PR `#15` head `c6dfb77e165dc2fd7a040a96a724e2c3dfe1e06a` is open and merge state `CLEAN`.
+  - The search guard now treats only `None` season or episode values as missing, so TVDB specials with season `0` reach the Gestdown endpoint.
+  - Exhausted HTTP `423` retry loops now return no results instead of raising a provider error, and swallowed 423 responses are closed before retrying.
+  - `python3 -B -m unittest discover -s tests -p 'test_gestdown.py'`: `15` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m py_compile providers/gestdown/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `343` tests passed, `6` skipped.
+  - `git diff --check`: clean.
 - Remaining gates: none for the current Gestdown migration proof.
 
 ### `addic7ed`
