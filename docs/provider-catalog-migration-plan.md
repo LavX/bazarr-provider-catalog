@@ -95,7 +95,7 @@
   - `whisperai`: branch `catalog-whisperai`, worktree `/tmp/bazarr_catalog_provider_worktrees/whisperai`, current head `0eeb964`, local/generated provider
   - `wizdom`: branch `catalog-wizdom`, worktree `/tmp/bazarr_catalog_provider_worktrees/wizdom`, current head `2d5425c`
   - `xsubs`: branch `catalog-xsubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/xsubs`, current head `5a17922`, dead origin
-  - `yavkanet`: branch `catalog-yavkanet`, worktree `/tmp/bazarr_catalog_provider_worktrees/yavkanet`, current head `000921d`
+  - `yavkanet`: branch `catalog-yavkanet`, worktree `/tmp/bazarr_catalog_provider_worktrees/yavkanet`, current head `42487cd`
   - `yifysubtitles`: branch `catalog-yifysubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/yifysubtitles`, current head `6d4ecff`
   - `zimuku`: branch `catalog-zimuku`, worktree `/tmp/bazarr_catalog_provider_worktrees/zimuku`, current head `f9a9eff`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
@@ -2129,8 +2129,8 @@
 
 - Branch: `catalog-yavkanet`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/yavkanet`
-- Current checkpoint: `000921d Add YavkaNet provider`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/42` opened as draft on 2026-06-01, head `catalog-yavkanet`, base `main`, merge state `CLEAN`.
+- Current checkpoint: `42487cd Use ai-cloudscraper for YavkaNet`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/42` opened as draft on 2026-06-01, head `catalog-yavkanet`, base `main`, merge state `CLEAN`, head OID `42487cd027d75c1af49fad011b17489e56ce95a9`.
 - Local evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -2176,6 +2176,20 @@
   - `python3 -B -m sdk smoke-test --provider yavkanet --language bul --video-fixture tests/fixtures/yavkanet_video_dune_2021.json --expect-min-results 1 --skip-download`: failed with `yavkanet hit a Cloudflare challenge and no FlareSolverr URL is configured`.
   - `git branch --set-upstream-to=origin/catalog-yavkanet catalog-yavkanet`: local branch now tracks the provider branch instead of `origin/main`.
   - `gh pr view 42 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#42` is open, draft, head `catalog-yavkanet`, base `main`, merge state `CLEAN`.
+- Cloudflare retry evidence on 2026-06-01:
+  - `42487cd` switches YavkaNet from legacy `cloudscraper==1.2.71` to `ai-cloudscraper==3.8.4`, matching the OpenSubtitles.org native session shape: custom browser User-Agent, native interpreter, disabled cookie persistence, debug disabled, and a TypeError retry for runtimes that reject `enable_cookie_persistence`.
+  - `README.md`, `catalog.json`, `providers/yavkanet/provider.json`, `providers/yavkanet/provider.py`, `docs/provider-notes/yavkanet.md`, and `tests/test_yavkanet.py` were updated, and YavkaNet was bumped to `0.1.1`.
+  - `python3 -B -m unittest discover -s tests -p 'test_yavkanet.py'`: `13` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/yavkanet/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, YavkaNet notes, provider code, and tests found no matches.
+  - `python3 -B -m unittest discover -s tests`: `341` tests passed, `6` skipped.
+  - Temporary venv probe with `ai-cloudscraper==3.8.4` and `py7zz==1.1.4` still returned HTTP `403` for `https://yavka.net/imdb/tt1160419`, with `cf-mitigated: challenge`, `server: cloudflare`, and a `Just a moment...` challenge page.
+  - The same venv probe with OpenSubtitles.org-style headers, `compatibility_mode=True`, and explicit Cloudflare v2, v3, and Turnstile solving enabled still returned HTTP `403`.
+  - Local FlareSolverr probe `http://127.0.0.1:8191/v1` failed with connection refused in this environment.
+  - `gh pr view 42 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title,headRefOid`: PR `#42` is open, draft, head `catalog-yavkanet`, base `main`, merge state `CLEAN`, head `42487cd027d75c1af49fad011b17489e56ce95a9`.
 - Remaining gates:
   - Treat current YavkaNet proof as blocked by the origin Cloudflare challenge, not by Provider Hub config or branch deployment.
   - Re-run live smoke with a solver, cookie, or FlareSolverr environment that can actually solve `https://yavka.net/imdb/tt1160419`.
