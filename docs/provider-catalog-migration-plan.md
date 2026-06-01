@@ -2181,6 +2181,7 @@
 - Branch: `catalog-hdbits`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/hdbits`
 - Current checkpoint: `42d7f02 Add HDBits provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/44` opened as draft on 2026-06-01, head `catalog-hdbits`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -2202,16 +2203,18 @@
   - Branch `catalog-hdbits` was pushed at `42d7f02`.
   - Branch scope remains limited to `README.md`, `catalog.json`, `docs/provider-notes/hdbits.md`, `providers/hdbits`, `tests/test_hdbits.py`, and HDBits fixtures.
   - `python3 -B -m unittest discover -s tests -p 'test_hdbits.py'`: `11` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/hdbits/provider.py`: passed.
-  - `python3 -B -m unittest discover -s tests`: `339` tests passed, `6` skipped.
-  - `git diff --check`: clean.
-  - Attribution and em-dash scan over `providers/hdbits`, `tests/test_hdbits.py`, `docs/provider-notes/hdbits.md`, `README.md`, and `catalog.json` found no matches.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Attribution and em-dash scan over `README.md`, `catalog.json`, `docs/provider-notes/hdbits.md`, `providers/hdbits`, `tests/test_hdbits.py`, and HDBits fixtures found no matches.
+  - `python3 -B -m sdk smoke-test --provider hdbits --language eng --video-fixture tests/fixtures/hdbits_video_dune_2021.json --expect-min-results 1 --skip-download`: failed at the expected credential gate with `hdbits username is required`.
   - No-credential `https://hdbits.org/api/torrents` probe returned `{"status":3,"message":"Json missing or malformed"}`.
+  - PR `#44` was verified open, draft, merge state `CLEAN`, head `42d7f02be3308e59167f2056ef3485a9dd35e672`.
   - Test-server config check read only credential presence and length from `/home/lavx/bazarr-data/config/config.yaml`; `hdbits.username` and `hdbits.passkey` are empty.
 - Remaining gates:
   - Run SDK live smoke search and download with real HDBits credentials.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `hdbits` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `hdbits` in the trusted replacement policy.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured HDBits credentials.
 
 ### `jimaku`
