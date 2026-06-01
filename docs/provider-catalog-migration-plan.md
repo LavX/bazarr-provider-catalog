@@ -1936,6 +1936,19 @@
   - `curl -L --max-time 20 https://jimaku.cc/api/openapi.json`: returned OpenAPI `3.0.3` with API-key auth, `/api/entries/search`, `/api/entries/{id}/files`, AniList/TMDB entry backing, and rate-limit headers.
   - `curl -L --max-time 20 'https://jimaku.cc/api/entries/search?query=one%20piece'`: returned Jimaku JSON `{"error":"unauthorized","code":7}` without an API key.
   - Real live search and download require a Jimaku `api_key`.
+- Fresh local and credential evidence on 2026-06-01:
+  - Recreated `/tmp/bazarr_catalog_provider_worktrees/jimaku` as a linked git worktree on branch `catalog-jimaku`, clean, and tracking `origin/catalog-jimaku` after push.
+  - Branch `catalog-jimaku` was pushed at `112d345`.
+  - Branch scope remains limited to `README.md`, `catalog.json`, `docs/provider-notes/jimaku.md`, `providers/jimaku`, `tests/test_jimaku.py`, and Jimaku fixtures.
+  - `python3 -B -m unittest discover -s tests -p 'test_jimaku.py'`: `15` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/jimaku/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `343` tests passed, `6` skipped.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/jimaku`, `tests/test_jimaku.py`, `docs/provider-notes/jimaku.md`, `README.md`, and `catalog.json` found no matches.
+  - Live OpenAPI probe returned `3.0.3` and confirmed `/api/entries/search` plus file endpoints are present.
+  - No-key `https://jimaku.cc/api/entries/search?query=one%20piece` probe returned `{"error":"unauthorized","code":7}`.
+  - Test-server config check read only API-key presence and length from `/home/lavx/bazarr-data/config/config.yaml`; `jimaku.api_key` is empty.
 - Remaining gates:
   - Run SDK live smoke search and download with a real Jimaku API key.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `jimaku` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
