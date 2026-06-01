@@ -602,6 +602,7 @@
 - Branch: `catalog-subs4series`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subs4series`
 - Current checkpoint: `b91856e Add Subs4Series Cloudflare fallback`
+- Pull request: [#68](https://github.com/LavX/bazarr-provider-catalog/pull/68), open draft, head `catalog-subs4series`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -628,10 +629,11 @@
   - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_subs4series.py'`: failed with `TypeError: Subs4SeriesProvider._http_get() got an unexpected keyword argument 'config'` for the new FlareSolverr fallback test.
   - `b91856e` adds cloudscraper-first, optional FlareSolverr fallback for Cloudflare-blocked GET requests, stores returned cookies/User-Agent, exposes `flaresolverr_url` and `flaresolverr_timeout_ms`, and bumps Subs4Series to `0.1.1`.
   - `python3 -B -m unittest discover -s tests -p 'test_subs4series.py'`: `9` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/subs4series/provider.py`: passed.
-  - `git diff --check`: clean.
-  - Attribution and em-dash scan over touched Subs4Series files found no matches.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Attribution and AI-credit scan over touched Subs4Series files found no matches.
   - `python3 -B -m unittest discover -s tests`: `337` tests passed, `6` skipped.
   - `python3 -B -m sdk smoke-test --provider subs4series --language eng --video-fixture tests/fixtures/subs4series_video_game_of_thrones_s01e01.json --expect-min-results 1`: `subs4series ok`.
 - Provider Hub test-server evidence on 2026-06-01:
