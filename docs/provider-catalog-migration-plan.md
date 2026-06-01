@@ -1803,6 +1803,7 @@
 - Branch: `catalog-subsynchro`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subsynchro`
 - Current checkpoint: `20b207d Fix SubSynchro malformed release anchors`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/37` opened on 2026-06-01, head `catalog-subsynchro`, base `main`, merge state `CLEAN`.
 - Local evidence on 2026-05-29:
   - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_subsynchro.py'`: failed because `providers/subsynchro/provider.py` did not exist.
   - `python3 -B -m unittest discover -s tests -p 'test_subsynchro.py'`: `9` tests passed.
@@ -1838,6 +1839,16 @@
   - Compat stream returned HTTP `200` and `116017` bytes. The payload starts with SRT cue `1` and timestamp `00:00:06,006 --> 00:00:11,469`.
 - Status:
   - SubSynchro is locally validated and proved through Provider Hub compat search, download, and stream on `bazarr-ui-test` for the French movie path.
+- Fresh PR evidence on 2026-06-01:
+  - `gh pr list --repo LavX/bazarr-provider-catalog --head catalog-subsynchro --json number,state,isDraft,reviewDecision,mergeStateStatus,url,title`: no existing PR before creation.
+  - `python3 -B -m unittest discover -s tests -p 'test_subsynchro.py'`: `10` tests passed.
+  - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subsynchro/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, docs, provider code, tests, and fixtures: no matches.
+  - `python3 -B -m sdk smoke-test --provider subsynchro --language fra --video-fixture tests/fixtures/subsynchro_video_the_plastic_detox.json --expect-min-results 1`: `subsynchro ok`.
+  - `gh pr view 37 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#37` is open, non-draft, head `catalog-subsynchro`, base `main`, merge state `CLEAN`.
 
 ### `subtitrarinoi`
 
