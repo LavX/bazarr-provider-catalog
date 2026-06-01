@@ -698,10 +698,25 @@
 - Live Shooter API evidence on 2026-05-29:
   - `python3 -B -m sdk smoke-test --provider shooter --language eng --video-fixture /tmp/shooter_live_video_man_of_steel.json --expect-min-results 1`: `shooter ok`.
   - Direct worker-shaped live byte check returned `3` results and downloaded `110646` subtitle bytes.
+- Fresh local evidence on 2026-06-01:
+  - Recreated isolated worktree `/tmp/bazarr_catalog_provider_worktrees/shooter` from branch `catalog-shooter`.
+  - `python3 -B -m unittest discover -s tests -p 'test_shooter.py'`: `8` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/shooter/provider.py`: passed.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/shooter`, `tests/test_shooter.py`, `README.md`, `catalog.json`, and `docs/provider-notes/shooter.md` found no matches.
+  - `python3 -B -m unittest discover -s tests`: `336` tests passed, `6` skipped.
+- Live evidence on 2026-06-01:
+  - Direct provider search with the synthetic fixture hash reached the Shooter API and returned `0` results, proving the route still returns the expected no-results shape without disclosing real media metadata.
+  - `catalog-shooter` was pushed to GitHub at commit `3d794c2e1adeb6e08df841e71b8c87249b577c94`.
+  - Official Provider Hub catalog source was refreshed from `catalog-shooter`; the Shooter manifest resolved to version `0.1.0` at commit `3d794c2e1adeb6e08df841e71b8c87249b577c94`.
+  - Provider Hub staged Shooter with no broken requirements, then `bazarr-ui-test` restarted healthy.
+  - Provider state after restart: active version `0.1.0`, `pending_restart=false`, `trusted=true`, `enabled=true`, `last_error=None`, manifest commit `3d794c2e1adeb6e08df841e71b8c87249b577c94`.
+  - Runtime replacement policy contains `55` trusted migrated built-in ids, includes `shooter`, and excludes `hosszupuska` and `podnapisi`.
+  - Real-media Shooter compat proof was not run because it would send a test-server media path and derived Shooter hash to the public Shooter API; run only after explicit approval for that disclosure or with a user-provided non-sensitive fixture.
 - Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `shooter` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
-  - Deploy a current test-server-compatible core branch to `bazarr-ui-test`; the earlier core branch deployment attempt was based on an old Bazarr revision and hit a database migration mismatch.
-  - Prove Provider Hub compat using a library-backed video that lets Bazarr compute `video.hashes.shooter`, because Shooter does not support title-only searches.
+  - Prove Provider Hub compat search, download, and stream using a library-backed video that lets Bazarr compute `video.hashes.shooter`, because Shooter does not support title-only searches.
+  - Get explicit approval before using real test-server media paths and derived Shooter hashes against the public Shooter API, or use a non-sensitive fixture supplied for this purpose.
 
 ### `subtis`
 
