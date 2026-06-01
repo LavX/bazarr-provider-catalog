@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "51047c29247fb2b93e04b224d3129e642ffa974af42da23c85dff3e1bb8bfb71",
+  "bundle_sha256": "792287c25200bcc400f5b59fc1f69150b4690cfe78338cda9629b2799b94b8ec",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -313,11 +313,11 @@
       }
     ]
   },
-  "description": "Scrapes yavka.net for Bulgarian, English, Russian, Spanish, and Italian subtitles by IMDb id. Uses ai-cloudscraper by default with optional FlareSolverr fallback for Cloudflare challenges.",
+  "description": "Scrapes yavka.net for Bulgarian, English, Russian, Spanish, and Italian subtitles by IMDb id. Uses ai-cloudscraper by default with inline Anubis solving and optional FlareSolverr fallback for Cloudflare challenges.",
   "entry_class": "YavkaNetProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "9ec41ddd25f6f447b4b411eb70df95243148051323db646b8d15566f7ea9e224"
+    "provider.py": "966276df590188dee85752f7c53a3f840326cfb82dd310f2f287b1d082a3c5ef"
   },
   "languages": [
     "bul",
@@ -343,5 +343,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.1"
+  "version": "0.1.2"
 }

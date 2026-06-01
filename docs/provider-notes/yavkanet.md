@@ -14,7 +14,7 @@ Clean-room target for `yavkanet`.
 
 ## Compatibility quirks
 
-- The provider uses `ai-cloudscraper` by default with the same native interpreter session shape used by the OpenSubtitles.org plugin. `flaresolverr_url` is an optional fallback used only when ai-cloudscraper still receives a Cloudflare challenge.
+- The provider uses `ai-cloudscraper` by default with the same native interpreter session shape used by the OpenSubtitles.org plugin. It solves inline Anubis `/.within.website/` challenges before retrying the original URL. `flaresolverr_url` is an optional fallback used only when ai-cloudscraper still receives a Cloudflare challenge.
 - FlareSolverr solutions can supply a User-Agent and cookies, which must be reused for later requests in the same provider instance.
 - IMDb-specific movie pages are trusted even when the displayed row title is localized or does not contain the requested title.
 - Archive selection uses the requested video metadata. Episode archives with explicit episode markers must not return a wrong episode member.
