@@ -557,6 +557,10 @@ def _flaresolverr_timeout_ms(config):
     return max(5000, min(timeout, MAX_FLARESOLVERR_TIMEOUT_MS))
 
 
+def _flaresolverr_http_timeout_seconds(timeout, timeout_ms):
+    return min(timeout, timeout_ms / 1000)
+
+
 def _cookie_header(cookies):
     if not cookies:
         return ""
@@ -639,7 +643,7 @@ def _flaresolverr_get(url, timeout=30, config=None, state=None):
     try:
         with urllib.request.urlopen(
             request,
-            timeout=min(timeout, timeout_ms / 1000),
+            timeout=_flaresolverr_http_timeout_seconds(timeout, timeout_ms),
         ) as response:
             response_body = response.read()
     except Exception as exc:
