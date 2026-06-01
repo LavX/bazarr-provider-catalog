@@ -33,6 +33,12 @@ USER_AGENT = (
 _NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
 _SEASON_RE = re.compile(r"\b(\d{1,2})\s*sezon\b", re.I)
 _EPISODE_RE = re.compile(r"\b(\d{1,4})\s*bolum\b", re.I)
+_SXXEYY_RE = re.compile(r"\bs0*(\d{1,2})\s*e0*(\d{1,4})\b", re.I)
+_EXX_RE = re.compile(r"\be0*(\d{1,4})\b", re.I)
+_SRT_CUE_RE = re.compile(
+    r"(?m)^\s*\d+\s*\n\s*\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}\s*-->\s*"
+    r"\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}"
+)
 _TURKISH_TRANSLATION = str.maketrans(
     {
         "İ": "i",
@@ -86,8 +92,10 @@ def select_series(rows, series):
         if title == wanted:
             return row
         if title in wanted or wanted in title:
-            partial.append(row)
-    return partial[0] if partial else None
+            partial.append((len(title), row))
+    if not partial:
+        return None
+    return max(partial, key=lambda item: item[0])[1]
 
 
 def subtitle_listing_url(series_url):
@@ -312,7 +320,10 @@ def extract_download(body, payload=None):
         with zipfile.ZipFile(stream) as archive:
             selected = select_subtitle_file(archive.namelist(), payload)
             return _normalize_line_endings(archive.read(selected)), _subtitle_extension(selected) or "srt"
-    return _normalize_line_endings(body), _format_from_filename(payload.get("filename"))
+    subtitle_format = _format_from_filename(payload.get("filename"))
+    if not _is_supported_subtitle_body(body, subtitle_format):
+        raise ValueError("animekalesi direct download did not return a supported subtitle")
+    return _normalize_line_endings(body), subtitle_format
 
 
 def select_subtitle_file(names, payload):
@@ -327,20 +338,52 @@ def select_subtitle_file(names, payload):
         season = episode = None
     release_info = normalize_series_name(payload.get("release_info"))
 
-    def score(name):
+    def score_points(name):
         basename = normalize_series_name(os.path.basename(name))
         points = 0
         if release_info and release_info in basename:
             points = max(points, 120)
-        if season is not None and episode is not None and re.search(rf"\bs0*{season}\s*e0*{episode}\b", basename):
+        has_marker, marker_matches = _episode_marker_status(basename, season, episode)
+        if marker_matches:
             points = max(points, 110)
-        if episode is not None and re.search(rf"\be0*{episode}\b", basename):
-            points = max(points, 100)
-        if episode is not None and re.search(rf"(^|[^0-9])0*{episode}([^0-9]|$)", basename):
+        if not has_marker and episode is not None and re.search(rf"(^|[^0-9])0*{episode}([^0-9]|$)", basename):
             points = max(points, 90)
+        return points
+
+    def score(name):
+        points = score_points(name)
         return (points, -_extension_rank(name), -len(name), name.lower())
 
-    return max(candidates, key=score)
+    best = max(candidates, key=score)
+    if season is not None and episode is not None and score_points(best) <= 0:
+        if any(_episode_marker_status(normalize_series_name(os.path.basename(name)), season, episode)[0] for name in candidates):
+            raise ValueError("animekalesi archive contains no subtitle matching episode")
+    return best
+
+
+def _episode_marker_status(basename, season, episode):
+    for match in _SXXEYY_RE.finditer(basename or ""):
+        marker_season = int(match.group(1))
+        marker_episode = int(match.group(2))
+        return True, season is not None and episode is not None and marker_season == season and marker_episode == episode
+    for match in _EXX_RE.finditer(basename or ""):
+        marker_episode = int(match.group(1))
+        return True, episode is not None and marker_episode == episode
+    return False, False
+
+
+def _is_supported_subtitle_body(body, subtitle_format):
+    text = _decode_body(body).lstrip("\ufeff").strip()
+    if not text:
+        return False
+    lowered = text[:4096].lower()
+    if lowered.startswith("<!doctype") or lowered.startswith("<html") or "<body" in lowered:
+        return False
+    if subtitle_format == "vtt":
+        return text.startswith("WEBVTT") or "-->" in text
+    if subtitle_format in {"ass", "ssa"}:
+        return "[script info]" in lowered or "[events]" in lowered or "dialogue:" in lowered
+    return bool(_SRT_CUE_RE.search(text))
 
 
 def _links_inside(body, tag, element_id):
