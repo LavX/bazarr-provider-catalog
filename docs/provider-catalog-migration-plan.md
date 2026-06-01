@@ -29,7 +29,7 @@
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
-- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subtitrarinoi`, and `subtitriid`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
+- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subtitrarinoi`, `subtitriid`, and `supersubtitles`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
 - Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead for Provider Hub migration on 2026-05-31 and re-confirmed on 2026-06-01. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof unless a verified upstream origin returns.
 - Existing provider worktrees:
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
@@ -1557,9 +1557,31 @@
   - `python3 -B -m sdk smoke-test --provider supersubtitles --language eng --video-fixture tests/fixtures/supersubtitles_video_la_brea_s02e13.json --expect-min-results 1 --skip-download`: `supersubtitles ok`.
   - `python3 -B -m sdk smoke-test --provider supersubtitles --language hun --video-fixture tests/fixtures/supersubtitles_video_dune_2021.json --expect-min-results 1`: `supersubtitles ok`.
   - `python3 -B -m sdk smoke-test --provider supersubtitles --language eng --video-fixture tests/fixtures/supersubtitles_video_la_brea_s02e13.json --expect-min-results 1`: `supersubtitles ok`.
-- Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `supersubtitles` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+- Fresh local and live evidence on 2026-06-01:
+  - Branch `catalog-supersubtitles` was pushed at `3f96078`.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_supersubtitles.py'`: `13` tests passed.
+  - `python3 -B -m py_compile providers/supersubtitles/provider.py`: passed.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/supersubtitles`, `tests/test_supersubtitles.py`, `README.md`, `catalog.json`, and `docs/provider-notes/supersubtitles.md` found no matches.
+  - `python3 -B -m sdk smoke-test --provider supersubtitles --language hun --video-fixture tests/fixtures/supersubtitles_video_dune_2021.json --expect-min-results 1`: `supersubtitles ok`.
+  - `python3 -B -m sdk smoke-test --provider supersubtitles --language eng --video-fixture tests/fixtures/supersubtitles_video_la_brea_s02e13.json --expect-min-results 1`: `supersubtitles ok`.
+  - `python3 -B -m unittest discover -s tests`: `341` tests passed, `6` skipped.
+- Provider Hub test-server evidence on 2026-06-01:
+  - Official catalog source dev ref was set to `catalog-supersubtitles`; refresh returned `13` entries and resolved SuperSubtitles `0.1.0` at commit `3f960782f5641af2e23f85db31a90c1873827070`.
+  - `bazarr-ui-test` restarted healthy on image `ui-test-20260531-provider-hub-replacements-f245ae096`, revision `f245ae096`.
+  - Provider state after restart: active version `0.1.0`, `pending_restart=false`, `trusted=true`, `enabled=true`, `last_error=None`, manifest commit `3f960782f5641af2e23f85db31a90c1873827070`.
+  - Runtime replacement policy contains `55` trusted migrated built-in ids, includes `supersubtitles`, and excludes `hosszupuska` and `podnapisi`.
+  - Compat search `GET /api/v1/subtitles?query=Dune.2021.1080p.WEB-DL.HONE.mkv&type=movie&languages=hu&per_page=100` returned HTTP `200`, `24` total results, and `6` SuperSubtitles results.
+  - First SuperSubtitles movie result: `file_id=67`, release `Dune (2021) (WEBRip.1080p-HiDt, MA.WEB-DL.1080p-HONE, MA.WEB-DL.2160p-FLUX)`, subtitle id `supersubtitles:supersubtitles-1735404922-hun`.
+  - Compat download `POST /api/v1/download` for movie `file_id=67` returned HTTP `200`, a stream link, `remaining=999`, and `remaining_downloads=999`.
+  - Compat movie stream returned HTTP `200` and `69129` bytes. The payload starts with SRT cue `1` and timestamp `00:00:05,364 --> 00:00:10,497`.
+  - Compat search `GET /api/v1/subtitles?imdb_id=tt11640018&query=La.Brea.S02E13.720p.WEB.H264-CAKES.mkv&type=episode&season_number=2&episode_number=13&languages=en&per_page=100` returned HTTP `200`, `29` total results, and `1` SuperSubtitles result.
+  - SuperSubtitles episode result: `file_id=31`, release `La Brea (AMZN.WEB-DL.1080p-NTb, AMZN.WEB-DL.720p-NTb, WEB.1080p-CAKES, WEB.1080p-GLHF, WEB.1080p-GOSSIP, WEB.1080p-KOGi, WEB.1080p-PLZPROPER, WEB.720p-CAKES, WEB.720p-GLHF, WEB.720p-GOSSIP, WEB.720p-KOGi, WEB.720p-PLZPROPER, WEBRip-ION10, WEBRip-ION265, WEBRip.1080p-RARBG)`, subtitle id `supersubtitles:supersubtitles-1691315119-eng`.
+  - Compat download `POST /api/v1/download` for episode `file_id=31` returned HTTP `200`, a stream link, `remaining=999`, and `remaining_downloads=999`.
+  - Compat episode stream returned HTTP `200` and `41393` bytes. The payload starts with SRT cue `1` and timestamp `00:00:00,000 --> 00:00:04,448`.
+- Status:
+  - SuperSubtitles is locally validated and proved through Provider Hub compat search, download, and stream on `bazarr-ui-test` for Hungarian movie and English episode paths.
 
 ### `titrari`
 
