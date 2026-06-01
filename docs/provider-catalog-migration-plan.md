@@ -606,7 +606,7 @@
 
 - Branch: `catalog-zimuku`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/zimuku`
-- Current checkpoint: `7d5a056 Add Zimuku provider`
+- Current checkpoint: `f9a9eff Fix Zimuku dependency lock`
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -625,9 +625,34 @@
   - `curl -sS -I --max-time 20 -A 'Mozilla/5.0 BazarrProviderHub' https://srtku.com/`: returned HTTP `404` with `security_session_verify` cookie, matching the Yunsuo wall behavior.
   - `https://srtku.com/search?q=Dune%202021` returned the current Yunsuo image verification page with `data:image/bmp;base64,...` and a `security_verify_img` redirect.
   - `python3 -B -m sdk smoke-test --provider zimuku --language zho --video-fixture tests/fixtures/zimuku_video_game_of_thrones_s01e01.json --expect-min-results 1 --skip-download`: failed outside the sandbox network restriction with `zimuku search failed: zimuku yunsuo captcha response required`.
+- Local evidence on 2026-06-01:
+  - `python3 -B -m unittest discover -s tests -p 'test_zimuku.py'`: `6` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/zimuku/provider.py`: passed.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over touched Zimuku files found no matches.
+  - `python3 -B -m unittest discover -s tests`: `334` tests passed, `6` skipped before the dependency-lock fix.
+  - Live smoke `python3 -B -m sdk smoke-test --provider zimuku --language zho --video-fixture tests/fixtures/zimuku_video_game_of_thrones_s01e01.json --expect-min-results 1 --skip-download`: failed with `zimuku yunsuo captcha response required`.
+  - Provider Hub staging of Zimuku `0.1.0` failed before runtime because `py7zz` pulled unpinned `requests>=2.32.4` while pip was running with `--require-hashes`.
+  - Red catalog regression `python3 -B -m unittest discover -s tests -p 'test_catalog.py' -k py7zz`: failed because `providers/zimuku/provider.json` was missing `certifi`, `charset-normalizer`, `idna`, `requests`, and `urllib3` pins.
+  - `f9a9eff` adds the missing transitive pins, adds the catalog regression, and bumps Zimuku to `0.1.1`.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py' -k py7zz`: `1` test passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_zimuku.py'`: `6` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/zimuku/provider.py`: passed.
+  - `git diff --check`: clean.
+  - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
+  - Live smoke after the dependency-lock fix still failed with `zimuku yunsuo captcha response required`.
+- Provider Hub test-server evidence on 2026-06-01:
+  - Official catalog source dev ref was set to `catalog-zimuku`; refresh returned `13` entries and resolved Zimuku `0.1.1` at commit `f9a9eff1f8d0b76f9172381d879db31b68d57408`.
+  - Provider Hub staged Zimuku `0.1.1`, installed hash-locked requirements successfully, found no broken requirements, and saved config `request_delay_ms=0`.
+  - Provider state after restart: active version `0.1.1`, `pending_restart=false`, `trusted=true`, `enabled=true`, `last_error=None`, manifest commit `f9a9eff1f8d0b76f9172381d879db31b68d57408`.
+  - Replacement policy contained `55` trusted ids, included `zimuku`, and excluded `hosszupuska` and `podnapisi`.
+  - Compat search `GET /api/v1/subtitles?imdb_id=tt0944947&query=Game.of.Thrones.S01E01.HDTV.XviD-FEVER.mkv&type=episode&season_number=1&episode_number=1&languages=zh&per_page=100` returned HTTP `200`, `11` total results, and `0` Zimuku rows.
+  - Direct active-bundle search failed with `ValueError: zimuku yunsuo captcha response required`.
+  - Direct first search response from `https://srtku.com/search?q=Game+of+Thrones.S01` returned HTTP `404`, parsed as a Yunsuo challenge with `image_mime=image/bmp` and `10872` base64 characters.
 - Remaining gates:
   - Configure a working `captcha_solver_url` or one-use `captcha_response`, then rerun live Zimuku search and download smoke.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `zimuku` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with Yunsuo verification solved.
 
 ### `regielive`
