@@ -2262,7 +2262,7 @@
 
 - Branch: `catalog-yifysubtitles`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/yifysubtitles`
-- Current checkpoint: `6d4ecff Add YIFYSubtitles provider`
+- Current checkpoint: `acdc5af Clarify YIFYSubtitles Cloudflare proof`
 - PR: `https://github.com/LavX/bazarr-provider-catalog/pull/43` opened on 2026-06-01, marked ready for review, head `catalog-yifysubtitles`, base `main`, merge state `CLEAN`.
 - Local evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -2290,7 +2290,11 @@
   - Attribution and em-dash scan over `README.md`, `catalog.json`, `docs/provider-notes/yifysubtitles.md`, `providers/yifysubtitles`, `tests/test_yifysubtitles.py`, and `tests/fixtures/yifysubtitles_video_dune_2021.json` found no matches.
   - `python3 -B -m unittest discover -s tests`: `337` tests passed, `6` skipped.
   - `python3 -B -m sdk smoke-test --provider yifysubtitles --language eng --video-fixture tests/fixtures/yifysubtitles_video_dune_2021.json --expect-min-results 1`: `yifysubtitles ok`.
-  - PR `#43` was verified open, non-draft, merge state `CLEAN`, head `6d4ecffd73a0f47c30940ec7278c47dcc7f374fc`.
+  - PR `#43` was verified open, non-draft, merge state `CLEAN`, head `acdc5af5780d56cf5860d50c485e5b6525a463e9`.
+  - Follow-up `acdc5af` clarifies the stale Cloudflare `504` note. It is documentation-only, keeps the provider bundle unchanged, and records that current live smoke succeeds without adding `ai-cloudscraper` or FlareSolverr.
+  - Fresh post-note live smoke `python3 -B -m sdk smoke-test --provider yifysubtitles --language eng --video-fixture tests/fixtures/yifysubtitles_video_dune_2021.json --expect-min-results 1`: `yifysubtitles ok`.
+  - Focused post-note test `python3 -B -m unittest discover -s tests -p 'test_yifysubtitles.py'`: `9` tests passed.
+  - Branch `catalog-yifysubtitles` was pushed at `acdc5af5780d56cf5860d50c485e5b6525a463e9`.
 - Provider Hub test-server evidence on 2026-06-01:
   - Official catalog source dev ref was set to `catalog-yifysubtitles`; refresh returned `13` entries and resolved YIFYSubtitles `0.1.0` at commit `6d4ecffd73a0f47c30940ec7278c47dcc7f374fc`.
   - Provider Hub staged YIFYSubtitles `0.1.0`, found no broken requirements, and saved config `request_delay_ms=0`.
