@@ -81,7 +81,7 @@
   - `subssabbz`: branch `catalog-subssabbz`, worktree `/tmp/bazarr_catalog_provider_worktrees/subssabbz`, current head `3aa8f02`
   - `subsunacs`: branch `catalog-subsunacs`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsunacs`, current head `6394dff`
   - `subsynchro`: branch `catalog-subsynchro`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsynchro`, current head `20b207d`
-  - `subtis`: branch `catalog-subtis`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtis`, current head `10a7aa3`
+  - `subtis`: branch `catalog-subtis`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtis`, current head `4e7200d`
   - `subtitrarinoi`: branch `catalog-subtitrarinoi`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitrarinoi`, current head `8fc7785`
   - `subtitriid`: branch `catalog-subtitriid`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitriid`, current head `ba6e108`
   - `subtitulamostv`: branch `catalog-subtitulamostv`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitulamostv`, current head `f75eafd`
@@ -811,6 +811,8 @@
   - Compat download `POST /api/v1/download` for `file_id=61` returned HTTP `200`, a stream link, `remaining=999`, and `remaining_downloads=999`.
   - Compat stream returned HTTP `200` and `94820` bytes. The payload starts with SRT cue `1` and timestamp `00:00:00,000 --> 00:00:24,000`.
 - Fresh PR evidence on 2026-06-01:
+  - GitHub PR `#18` is open, non-draft, merge state `CLEAN`, and head `catalog-subtis` points to `4e7200dc4289207c533a90bf78cfa6b4d33cdd63`.
+  - Commit `4e7200d` only changes Subtis docs and test fixtures, not provider runtime or manifest files.
   - Branch diff against `origin/main` only touches `README.md`, `catalog.json`, `docs/provider-notes/subtis.md`, `providers/subtis/`, `tests/fixtures/subtis_search_response.json`, `tests/fixtures/subtis_video_man_of_steel.json`, and `tests/test_subtis.py`.
   - `python3 -B -m unittest discover -s tests -p 'test_subtis.py'`: `9` tests passed.
   - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
