@@ -88,7 +88,7 @@
   - `subssabbz`: branch `catalog-subssabbz`, worktree `/tmp/bazarr_catalog_provider_worktrees/subssabbz`, current head `3aa8f02`
   - `subsunacs`: branch `catalog-subsunacs`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsunacs`, current head `6394dff`
   - `subsynchro`: branch `catalog-subsynchro`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsynchro`, current head `20b207d`
-  - `subtis`: branch `catalog-subtis`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtis`, current head `4e7200d`
+  - `subtis`: branch `catalog-subtis`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtis`, current head `bad7110`
   - `subtitrarinoi`: branch `catalog-subtitrarinoi`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitrarinoi`, current head `8fc7785`
   - `subtitriid`: branch `catalog-subtitriid`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitriid`, current head `ba6e108`
   - `subtitulamostv`: branch `catalog-subtitulamostv`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitulamostv`, current head `9ac6f4d`
@@ -836,7 +836,7 @@
 
 - Branch: `catalog-subtis`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subtis`
-- Current checkpoint: `4e7200d Fix Subtis fixture trailing blanks`
+- Current checkpoint: `bad7110 Handle Subtis lookup failures and scores`
 - PR: `https://github.com/LavX/bazarr-provider-catalog/pull/18` opened on 2026-06-01, head `catalog-subtis`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -879,6 +879,17 @@
   - Attribution and em-dash scan over touched Subtis files found no matches.
   - Direct Subtis endpoint probes showed hash, byte, and filename lookups now return `404`, while the alternative endpoint still returns `200` with a subtitle candidate for the fixture.
   - `python3 -B -m sdk smoke-test --provider subtis --language spa --video-fixture tests/fixtures/subtis_video_man_of_steel.json --expect-min-results 1`: `subtis ok`.
+- Review-fix evidence on 2026-06-02:
+  - PR `#18` head `bad711068191a57d35a3a2e22ee16e4e24cca7aa` is open and merge state `CLEAN`.
+  - Subtis now only swallows `SubtisNotFound` during the search cascade, so transient authoritative lookup failures surface instead of falling through to weaker lookups.
+  - Spanish language payloads with only `alpha2: es` now return catalog language `alpha3: spa`.
+  - Byte-size, filename, and alternative lookup candidates now preserve their non-hash score in `score_without_hash`.
+  - `python3 -B -m unittest discover -s tests -p 'test_subtis.py'`: `11` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m py_compile providers/subtis/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `339` tests passed, `6` skipped.
+  - `git diff --check`: clean.
 - Remaining gates: none for the current Subtis migration proof.
 
 ### `wizdom`
