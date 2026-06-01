@@ -15,9 +15,10 @@
 - Source inventory: 60 provider modules with provider classes were found under `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/`.
 - Excluded helper modules: `__init__.py`, `_agent_list.py`, `avistaz_network.py`, `mixins.py`, `opensubtitles_scraper.py`, `utils.py`.
 - Main-branch catalog inventory: 12 bundles currently ship from `main`.
-- Migration branch inventory: all 60 legacy provider-class modules have matching `catalog-*` branches and checked-out provider worktrees as of 2026-05-31.
-- Checkpoint audit on 2026-05-31: every provider section with a `Current checkpoint` hash matches the actual checked-out provider worktree HEAD, and all provider worktrees were clean.
-- Helper coverage: `opensubtitles_scraper.py` is not a provider-class module. Its helper-service behavior is covered inside the `catalog-opensubtitles` / `opensubtitles_org` branch.
+- Historical branch inventory: all 60 legacy provider-class modules had matching `catalog-*` branches recorded as of 2026-05-31.
+- Current checkout audit on 2026-06-01: `git worktree list --porcelain` shows 30 linked provider worktrees under `/tmp/bazarr_catalog_provider_worktrees`, plus the planning worktree. Treat older per-provider checkpoint rows as ledger history until the specific worktree is rechecked.
+- Helper coverage: `opensubtitles_scraper.py` is not a provider-class module. Its behavior is covered inside the `catalog-opensubtitles` / `opensubtitles_org` branch, but the current implementation no longer defaults to a sidecar helper.
+- OpenSubtitles.org current branch evidence: `catalog-opensubtitles` at `c8f013c` uses `ai-cloudscraper==3.8.4`, inline Anubis solving, request throttling, and optional FlareSolverr fallback for Cloudflare challenges.
 - Core replacement-policy evidence: Bazarr core branch `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`, contains a trusted replacement policy for 55 active migrated built-ins, the compat AniDB ID bridge needed by anime providers, and the compat NapiProjekt hash bridge. It excludes dead-origin providers `hosszupuska`, `podnapisi`, `subscenter`, and `xsubs`, and excludes legacy `opensubtitles` because the catalog rewrite ships as `opensubtitles_org`.
 - Test-server core evidence: `bazarr-ui-test` was updated on 2026-05-31 to image version `ui-test-20260531-provider-hub-replacements-f245ae096`, revision `f245ae096`, and returned healthy. The earlier test image based on old head `456071d10` failed because the image did not contain database migration `6c9f1b8d2e3a`; rebasing the core branch onto current `origin/development` fixed that mismatch.
 - License boundary: `/home/lavx/bazarr/LICENSE` is GPL-3.0. This catalog is MIT. Provider implementations in this repo must be clean-room MIT rewrites, not copied or mechanically translated GPL provider files.
@@ -28,9 +29,14 @@
 - Planning branch: `provider-migration-inventory`
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
+- Source provider-class modules: 60 after excluding `__init__.py`, `_agent_list.py`, `avistaz_network.py`, `mixins.py`, `opensubtitles_scraper.py`, and `utils.py`.
+- Current linked provider worktrees: 30 provider worktrees were present on 2026-06-01: `assrt`, `avistaz`, `betaseries`, `cinemaz`, `gestdown`, `hdbits`, `jimaku`, `opensubtitles`, `opensubtitlescom`, `regielive`, `shooter`, `subdl`, `subs4free`, `subs4series`, `subsarr`, `subsource`, `subsro`, `subsunacs`, `subsynchro`, `subtis`, `subtitrarinoi`, `subtitriid`, `subx`, `supersubtitles`, `titrari`, `turkcealtyaziorg`, `wizdom`, `yavkanet`, `yifysubtitles`, and `zimuku`.
+- Current catalog checkout inventory: 12 Provider Hub bundles are present in this planning worktree: `bollynook`, `fansubs`, `isubtitles`, `kitsunekko`, `moviesubtitles`, `my_subs`, `smoke`, `sub_scene`, `subcentral`, `subhd`, `subtitlecat`, and `subtitlestar`.
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
 - Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subtitrarinoi`, `subtitriid`, `supersubtitles`, `titrari`, `yavkanet`, `yifysubtitles`, and `subs4free`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
 - Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead for Provider Hub migration on 2026-05-31 and re-confirmed on 2026-06-01. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof unless a verified upstream origin returns.
+- OpenSubtitles.org current state: branch `catalog-opensubtitles` is clean at `c8f013c` and PR `#16` is open. Local validation, direct native search, and direct native download passed, but Bazarr compat proof is still incomplete because the compat key cannot stage or enable Provider Hub bundles and the current compat search results do not include `opensubtitles_org`.
+- The historical provider worktree list below is a ledger. Before editing any provider, run `git worktree list --porcelain` and `git status --short --branch` for that provider's exact worktree.
 - Existing provider worktrees:
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
   - `animekalesi`: branch `catalog-animekalesi`, worktree `/tmp/bazarr_catalog_provider_worktrees/animekalesi`, current head `b5db085`
@@ -55,7 +61,7 @@
   - `napiprojekt`: branch `catalog-napiprojekt`, worktree `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`, current head `5d9fb63`
   - `napisy24`: branch `catalog-napisy24`, worktree `/tmp/bazarr_catalog_provider_worktrees/napisy24`, current head `34a9720`
   - `nekur`: branch `catalog-nekur`, worktree `/tmp/bazarr_catalog_provider_worktrees/nekur`, current head `41e428e`
-  - `opensubtitles`: branch `catalog-opensubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitles`, current head `2ec6c88`
+  - `opensubtitles`: branch `catalog-opensubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitles`, current head `c8f013c`
   - `opensubtitlescom`: branch `catalog-opensubtitlescom`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitlescom`, current head `885985f`
   - `pipocas`: branch `catalog-pipocas`, worktree `/tmp/bazarr_catalog_provider_worktrees/pipocas`, current head `4fe281b`
   - `podnapisi`: branch `catalog-podnapisi`, worktree `/tmp/bazarr_catalog_provider_worktrees/podnapisi`, current head `d04b05b`, dead origin
@@ -2289,9 +2295,11 @@
 ## Why OpenSubtitles.org Is Tricky
 
 - `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/opensubtitles.py` contains a self-contained legacy `.org` XML-RPC implementation, but the current Bazarr behavior also mixes in `OpenSubtitlesScraperMixin`.
-- `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/opensubtitles_scraper.py` calls a separate scraper service. That helper service exists at `/home/lavx/bazarr/opensubtitles-scraper/` and is MIT licensed.
-- The migration target must preserve current behavior by treating the scraper service as the default `.org` path. Do not rebuild browser scraping inside the Provider Hub worker.
-- Keep legacy XML-RPC login fields out of the default schema unless a current live XML-RPC search and download path is proven usable. Otherwise the provider would expose dead settings and still fail users.
+- `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/opensubtitles_scraper.py` and `/home/lavx/bazarr/opensubtitles-scraper/` remain behavior references, but the catalog branch now implements the live path natively instead of requiring a sidecar by default.
+- The current migration target is `opensubtitles_org`, not legacy `opensubtitles`, so it avoids shadowing the built-in id while still preserving `.org` search and download behavior.
+- The native path has three explicit upstream defenses: `ai-cloudscraper` as the default HTTP client, inline Anubis proof solving for `/.within.website/` challenges, and optional FlareSolverr fallback when Cloudflare still returns a browser challenge. Request delay and HTTP `429` handling stay visible as rate-limit controls.
+- Keep legacy XML-RPC login fields out of the schema unless a current live XML-RPC search and download path is proven usable. Otherwise the provider would expose dead settings and still fail users.
+- Do not claim completion until `opensubtitles_org` is installed and enabled on `bazarr-ui-test`, `/api/v1/subtitles` includes that provider, `/api/v1/download` returns a link for that candidate, and the stream URL returns non-empty subtitle bytes.
 
 ## Non-Negotiable Rules
 
@@ -2511,26 +2519,30 @@ The helper must detect ZIP, RAR, 7z, GZIP, and raw subtitle bytes by content byt
 
 Use hash-locked wheels in each provider manifest. Do not rely on system `7z`, `unrar`, `ffmpeg`, or app-environment packages unless the Provider Hub contract explicitly provides them.
 
-### Task P5: OpenSubtitles.org Helper-Service Boundary
+### Task P5: OpenSubtitles.org Native Antibot Boundary
 
 **Files:**
 - Provider branch: `catalog-opensubtitles`
 - Provider worktree: `/tmp/bazarr_catalog_provider_worktrees/opensubtitles`
 - Source behavior: `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/opensubtitles.py`
-- Helper behavior: `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/opensubtitles_scraper.py`
-- Helper project license: `/home/lavx/bazarr/opensubtitles-scraper/LICENSE`
+- Historical helper behavior: `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/opensubtitles_scraper.py`
+- Current native provider: `/tmp/bazarr_catalog_provider_worktrees/opensubtitles/providers/opensubtitles_org/provider.py`
 
-- [ ] **Step 1: Treat `.org` as helper-service first**
+- [x] **Step 1: Treat `.org` as native scraper first**
 
-Bazarr settings force `use_web_scraper` because OpenSubtitles.org login is no longer available. The catalog provider should default to `scraper_service_url`, not XML-RPC login.
+Bazarr settings forced `use_web_scraper` because OpenSubtitles.org login is no longer available. The catalog provider now defaults to native `ai-cloudscraper` with no XML-RPC login controls and no required sidecar URL.
 
-- [ ] **Step 2: Preserve legacy feature shape without making dead login the default**
+- [x] **Step 2: Preserve legacy feature shape without making dead login the default**
 
-Expose `use_tag_search`, `skip_wrong_fps`, `only_foreign`, and `also_foreign` settings if the helper API supports them. Keep username, password, VIP, SSL, and XML-RPC timeout out of the default schema unless a current live `.org` XML-RPC path is proven usable.
+Expose `use_tag_search`, `skip_wrong_fps`, `only_foreign`, `also_foreign`, `request_delay_ms`, `flaresolverr_url`, and `flaresolverr_timeout_ms`. Keep username, password, VIP, SSL, `use_web_scraper`, `scraper_service_url`, and XML-RPC timeout out of the schema unless a current live `.org` XML-RPC path is proven usable.
 
-- [ ] **Step 3: Keep helper-service failures explicit**
+- [x] **Step 3: Keep all antibot failures explicit**
 
-Search must fail with a clear provider error when the scraper service is unavailable, throttled, or returns malformed JSON. It must not silently fall back to browser automation inside the worker.
+Search must fail with a clear provider error when Anubis solving fails, FlareSolverr is needed but not configured, FlareSolverr returns invalid JSON, Cloudflare remains after fallback, or OpenSubtitles.org returns HTTP `429`.
+
+- [ ] **Step 4: Finish live Provider Hub proof**
+
+PR `#16` and commit `c8f013c` have local validation and direct native search/download proof. The remaining gate is Bazarr compat proof after an admin-enabled Provider Hub install or update on `bazarr-ui-test`.
 
 ## Provider Execution Queue
 
@@ -2594,7 +2606,7 @@ Each row is one branch, one worktree, one provider PR, and one independent valid
 | 54 | `subs4free` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/subs4free.py` | `catalog-subs4free` | `/tmp/bazarr_catalog_provider_worktrees/subs4free` | movie | none | archive, anti-bot |
 | 55 | `subs4series` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/subs4series.py` | `catalog-subs4series` | `/tmp/bazarr_catalog_provider_worktrees/subs4series` | episode | `captcha_response`, `captcha_solver_url`, `captcha_solver_token`, `captcha_solver_timeout_ms`, `request_delay_ms` | archive, anti-bot, captcha helper |
 | 56 | `zimuku` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/zimuku.py` | `catalog-zimuku` | `/tmp/bazarr_catalog_provider_worktrees/zimuku` | movie, episode | `captcha_response`, `captcha_solver_url`, `captcha_solver_token`, `captcha_solver_timeout_ms`, `request_delay_ms` | archive, Yunsuo captcha helper |
-| 57 | `opensubtitles` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/opensubtitles.py` | `catalog-opensubtitles` | `/tmp/bazarr_catalog_provider_worktrees/opensubtitles` | movie, episode | `scraper_service_url`, `use_tag_search`, `skip_wrong_fps`, `only_foreign`, `also_foreign` | OpenSubtitles.org helper service |
+| 57 | `opensubtitles` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/opensubtitles.py` | `catalog-opensubtitles` | `/tmp/bazarr_catalog_provider_worktrees/opensubtitles` | movie, episode | `use_tag_search`, `skip_wrong_fps`, `only_foreign`, `also_foreign`, `request_delay_ms`, `flaresolverr_url`, `flaresolverr_timeout_ms` | OpenSubtitles.org native scraper, ai-cloudscraper, Anubis, Cloudflare fallback |
 | 58 | `embeddedsubtitles` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/embeddedsubtitles.py` | `catalog-embeddedsubtitles` | `/tmp/bazarr_catalog_provider_worktrees/embeddedsubtitles` | movie, episode | `included_codecs`, `hi_fallback`, `timeout`, `unknown_as_fallback`, `fallback_lang` | local video path, ffprobe, ffmpeg |
 | 59 | `whisperai` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/whisperai.py` | `catalog-whisperai` | `/tmp/bazarr_catalog_provider_worktrees/whisperai` | movie, episode | `endpoint`, `response`, `timeout`, `loglevel`, `pass_video_name` | local video path, external AI service, ffmpeg |
 | 60 | `bsplayer` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/bsplayer.py` | `catalog-bsplayer` | `/tmp/bazarr_catalog_provider_worktrees/bsplayer` | movie, episode | none | SOAP API, hash behavior |
@@ -2621,5 +2633,5 @@ A provider is complete only when the provider branch has all of this evidence:
 - Spec coverage: every provider module with a provider class in `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/` is present in the execution queue.
 - Worktree coverage: every provider row has a unique branch and unique `/tmp/bazarr_catalog_provider_worktrees/<provider_id>` path.
 - License coverage: the plan blocks GPL source copying and requires clean-room MIT provider code.
-- Feature coverage: auth, API, archive, anti-bot, hash, FPS, helper service, and local-file behavior are identified before implementation begins.
-- OpenSubtitles.org coverage: the plan explains why `.org` is tricky and treats the current scraper-service mode as the default behavior.
+- Feature coverage: auth, API, archive, anti-bot, hash, FPS, helper-service history, native scraper behavior, and local-file behavior are identified before implementation begins.
+- OpenSubtitles.org coverage: the plan explains why `.org` is tricky and treats native `ai-cloudscraper`, inline Anubis solving, request throttling, and optional FlareSolverr fallback as the current target.
