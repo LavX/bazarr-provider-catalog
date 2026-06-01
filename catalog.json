@@ -647,7 +647,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "c2e2d71bb4e269ff3f25c0f20d922f4541f3bd5c22d865fd56bb8ff0aea3a696",
+        "bundle_sha256": "9858ca9782d29231f652a4829c082288be3ac2f5d07ef89b0daef91c377fb1d1",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -933,11 +933,11 @@
             }
           ]
         },
-        "description": "Scrapes sub-scene.com (Subscene clone) for movie and episode subtitles in many languages including Vietnamese, Arabic, Bengali, Danish, Dutch, and more. Uses ai-cloudscraper by default with optional FlareSolverr fallback for Cloudflare challenges.",
+        "description": "Scrapes sub-scene.com (Subscene clone) for movie and episode subtitles in many languages including Vietnamese, Arabic, Bengali, Danish, Dutch, and more. Uses ai-cloudscraper by default with inline Anubis solving and optional FlareSolverr fallback for Cloudflare challenges.",
         "entry_class": "SubSceneProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "c71ad3245c2442e82f97e86e20eaad87aa7f9824b2485211b2c87ef065e7b593"
+          "provider.py": "115861a6d593f90d4fe4afa18ca297d6eedb43f4fb6b5e42c9c9949e0f1eb62d"
         },
         "languages": [
           "ara",
@@ -994,7 +994,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.12"
+        "version": "0.1.13"
       }
     },
     {

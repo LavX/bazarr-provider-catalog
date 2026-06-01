@@ -636,6 +636,45 @@ class TestCloudflareHttp(unittest.TestCase):
         self.assertNotIn("enable_cookie_persistence", create_scraper.call_args_list[1].kwargs)
         scraper.get.assert_called_once()
 
+    def test_http_get_solves_anubis_inline_before_retrying_original_url(self):
+        challenge_response = MagicMock()
+        challenge_response.status_code = 401
+        challenge_response.headers = {}
+        challenge_response.content = b'<script id="anubis_challenge">{}</script>'
+        challenge_response.text = '<script id="anubis_challenge">{}</script>'
+        challenge_response.url = "https://sub-scene.com/.within.website/?redir=/search"
+        solved_response = MagicMock()
+        solved_response.status_code = 200
+        solved_response.headers = {}
+        solved_response.content = b"<html>ok</html>"
+        solved_response.text = "<html>ok</html>"
+        solved_response.url = "https://sub-scene.com/search?query=Dune"
+        scraper = MagicMock()
+        scraper.get.side_effect = [challenge_response, solved_response]
+        solved_calls = []
+
+        def fake_solve(active_scraper, challenge_url, original_url, timeout):
+            solved_calls.append((active_scraper, challenge_url, original_url, timeout))
+            return {"techaro.lol-anubis-auth": "ok"}
+
+        with patch("provider.cloudscraper.create_scraper", return_value=scraper), patch(
+            "provider.solve_anubis_challenge",
+            side_effect=fake_solve,
+        ):
+            body = subscene_module._http_get(
+                "https://sub-scene.com/search?query=Dune",
+                config={},
+                state={},
+            )
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(scraper.get.call_count, 2)
+        self.assertEqual(scraper.get.call_args_list[0].args[0], "https://sub-scene.com/search?query=Dune")
+        self.assertEqual(scraper.get.call_args_list[1].args[0], "https://sub-scene.com/search?query=Dune")
+        self.assertIs(solved_calls[0][0], scraper)
+        self.assertEqual(solved_calls[0][1], "https://sub-scene.com/.within.website/?redir=/search")
+        self.assertEqual(solved_calls[0][2], "https://sub-scene.com/search?query=Dune")
+
     def test_http_get_uses_flaresolverr_fallback_after_cloudflare_challenge(self):
         challenge_response = MagicMock()
         challenge_response.status_code = 403
