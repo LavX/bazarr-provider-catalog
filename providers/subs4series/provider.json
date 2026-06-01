@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "2f57be1b85dfae140432c3f755a9c8d1e04afba38e762ee896d6432a07a14f74",
+  "bundle_sha256": "20dae615863d56d2423eb69f22f736fcda307de523b0c66386421605ebe02eb9",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -30,6 +30,20 @@
         "default": "",
         "description": "Optional helper endpoint that accepts site_key and site_url JSON and returns a captcha response token.",
         "title": "Captcha solver URL",
+        "type": "string"
+      },
+      "flaresolverr_timeout_ms": {
+        "default": 60000,
+        "description": "Maximum time FlareSolverr may spend fetching a Subs4Series page after cloudscraper receives a Cloudflare block.",
+        "maximum": 180000,
+        "minimum": 5000,
+        "title": "FlareSolverr timeout (ms)",
+        "type": "integer"
+      },
+      "flaresolverr_url": {
+        "default": "",
+        "description": "Optional FlareSolverr /v1 endpoint used only when cloudscraper receives a Cloudflare block from Subs4Series.",
+        "title": "FlareSolverr URL",
         "type": "string"
       },
       "request_delay_ms": {
@@ -173,11 +187,11 @@
       }
     ]
   },
-  "description": "Scrapes Subs4Series for Greek and English episode subtitles. Supports Cloudflare-aware HTTP, anti-block requests, optional captcha helper responses, ZIP, RAR, and direct subtitle downloads.",
+  "description": "Scrapes Subs4Series for Greek and English episode subtitles. Uses cloudscraper by default with optional FlareSolverr fallback for Cloudflare blocks, anti-block requests, optional captcha helper responses, ZIP, RAR, and direct subtitle downloads.",
   "entry_class": "Subs4SeriesProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "6e048fb473be304105b2251ace61c81c9b0000f192dff1eaea020e44c0726a94"
+    "provider.py": "d6c11d3b79e2862e23b8a8dcc106b7ee75d36b0fc68bd4ef824d9ae56e04b0a4"
   },
   "languages": [
     "ell",
@@ -202,5 +216,5 @@
   "supported_media": [
     "episode"
   ],
-  "version": "0.1.0"
+  "version": "0.1.1"
 }

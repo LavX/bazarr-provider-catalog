@@ -2,9 +2,11 @@ import base64
 import hashlib
 import importlib.util
 import io
+import json
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "subs4series"
@@ -32,6 +34,40 @@ def _zip_body():
         archive.writestr(".hidden.srt", "ignore")
         archive.writestr("Game.of.Thrones.S01E01.HDTV.XviD-FEVER.srt", "1\r\nsubtitle\r\n")
     return stream.getvalue()
+
+
+class FakeScraperResponse:
+    def __init__(self, status_code, headers, content):
+        self.status_code = status_code
+        self.headers = headers
+        self.content = content
+
+    def raise_for_status(self):
+        raise AssertionError("Cloudflare response should be handled before raise_for_status")
+
+
+class FakeScraper:
+    def __init__(self, response):
+        self.response = response
+        self.calls = []
+
+    def get(self, url, headers=None, timeout=None):
+        self.calls.append((url, headers or {}, timeout))
+        return self.response
+
+
+class FakeUrlopenResponse:
+    def __init__(self, body):
+        self.body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self):
+        return self.body
 
 
 class Subs4SeriesParserTests(unittest.TestCase):
@@ -90,8 +126,8 @@ class Subs4SeriesProviderTests(unittest.TestCase):
             "https://www.subs4series.com/tv-series/game-of-thrones-2011/s1111111111/season-1/episode-1": EPISODE_HTML,
         }
 
-        def stub(url, timeout=15, referer=None):
-            del timeout, referer
+        def stub(url, timeout=15, referer=None, config=None):
+            del timeout, referer, config
             calls.append(url)
             if url not in responses:
                 raise AssertionError(f"unexpected URL: {url}")
@@ -138,8 +174,8 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         seen_gets = []
         posts = []
 
-        def get_stub(url, timeout=15, referer=None):
-            del timeout
+        def get_stub(url, timeout=15, referer=None, config=None):
+            del timeout, config
             seen_gets.append((url, referer))
             if url == "https://www.subs4series.com/english-subtitles/sb6a7a0c63b/game-of-thrones":
                 return DIRECT_DOWNLOAD_HTML
@@ -176,8 +212,8 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         provider = self.mod.Subs4SeriesProvider()
         posts = []
 
-        def get_stub(url, timeout=15, referer=None):
-            del timeout, referer
+        def get_stub(url, timeout=15, referer=None, config=None):
+            del timeout, referer, config
             if url == "https://www.subs4series.com/greek-subtitles/s277e869f4/game-of-thrones":
                 return CAPTCHA_DOWNLOAD_HTML
             if "anti-block" in url:
@@ -208,7 +244,7 @@ class Subs4SeriesProviderTests(unittest.TestCase):
 
     def test_download_requires_captcha_solution_when_page_has_recaptcha(self):
         provider = self.mod.Subs4SeriesProvider()
-        provider._http_get = lambda url, timeout=15, referer=None: CAPTCHA_DOWNLOAD_HTML
+        provider._http_get = lambda url, timeout=15, referer=None, config=None: CAPTCHA_DOWNLOAD_HTML
 
         with self.assertRaisesRegex(ValueError, "captcha"):
             provider.download(
@@ -220,6 +256,47 @@ class Subs4SeriesProviderTests(unittest.TestCase):
                 {"alpha3": "ell", "alpha2": "el"},
                 {"request_delay_ms": 0},
             )
+
+    def test_http_get_uses_flaresolverr_after_cloudflare_block(self):
+        provider = self.mod.Subs4SeriesProvider()
+        challenge_response = FakeScraperResponse(
+            403,
+            {"Server": "cloudflare"},
+            b"<html><title>Attention Required! | Cloudflare</title></html>",
+        )
+        scraper = FakeScraper(challenge_response)
+        flaresolverr_payload = {
+            "status": "ok",
+            "solution": {
+                "status": 200,
+                "response": "<option value='/tv-series/game-of-thrones/s8985ffc551'>Game of Thrones</option>",
+                "userAgent": "Mozilla/5.0 solved",
+                "cookies": [{"name": "cf_clearance", "value": "token"}],
+            },
+        }
+
+        with patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), patch.object(
+            self.mod.urllib.request,
+            "urlopen",
+            return_value=FakeUrlopenResponse(json.dumps(flaresolverr_payload).encode("utf-8")),
+        ) as urlopen:
+            body = provider._http_get(
+                "https://www.subs4series.com/search_report.php?search=Game+of+Thrones&searchType=1",
+                config={
+                    "flaresolverr_url": "http://flaresolverr:8191/v1",
+                    "flaresolverr_timeout_ms": 45000,
+                },
+                referer="https://www.subs4series.com",
+            )
+
+        self.assertIn(b"Game of Thrones", body)
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, "http://flaresolverr:8191/v1")
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(payload["cmd"], "request.get")
+        self.assertEqual(payload["maxTimeout"], 45000)
+        self.assertEqual(provider._flaresolverr_cookies["cf_clearance"], "token")
+        self.assertEqual(provider._flaresolverr_user_agent, "Mozilla/5.0 solved")
 
 
 if __name__ == "__main__":

@@ -38,6 +38,16 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
 )
 HTTP_TIMEOUT_SECONDS = 15
+DEFAULT_FLARESOLVERR_TIMEOUT_MS = 60000
+MIN_FLARESOLVERR_TIMEOUT_MS = 5000
+MAX_FLARESOLVERR_TIMEOUT_MS = 180000
+CLOUDFLARE_STATUS_CODES = {403, 429, 503}
+CLOUDFLARE_BODY_MARKERS = (
+    "attention required! | cloudflare",
+    "just a moment",
+    "cf-challenge",
+    "cf-error-details",
+)
 SUPPORTED_LANGUAGES = {
     "ell": "el",
     "eng": "en",
@@ -61,6 +71,10 @@ _NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
 _YEAR_RE = re.compile(r"(?<!\d)((?:19|20)\d{2})(?!\d)")
 _SXXEXX_RE = re.compile(r"\bs0*(?P<season>\d{1,2})e0*(?P<episode>\d{1,3})\b", re.I)
 _X_EPISODE_RE = re.compile(r"\b0*(?P<season>\d{1,2})x0*(?P<episode>\d{1,3})\b", re.I)
+
+
+class CloudflareBlockedError(RuntimeError):
+    """Raised when subs4series.com presents an unresolved Cloudflare block."""
 
 
 def parse_suggestions(body):
@@ -208,6 +222,8 @@ class Subs4SeriesProvider:
         self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cookie_jar))
         self._scraper = None
         self._scraper_initialized = False
+        self._flaresolverr_cookies = {}
+        self._flaresolverr_user_agent = ""
 
     def search(self, video, languages, config):
         video = video or {}
@@ -225,7 +241,7 @@ class Subs4SeriesProvider:
             if not episode_url:
                 continue
             _sleep(config)
-            for item in parse_episode_page(self._http_get(episode_url, referer=BASE_URL)):
+            for item in parse_episode_page(self._http_get(episode_url, referer=BASE_URL, config=config)):
                 if item["language"] not in requested:
                     continue
                 key = (item["detail_url"], item["language"])
@@ -243,7 +259,7 @@ class Subs4SeriesProvider:
         if not detail_url:
             raise ValueError("subs4series detail_url missing from provider payload")
         _sleep(config)
-        page_body = self._http_get(detail_url, referer=provider_payload.get("page_link"))
+        page_body = self._http_get(detail_url, referer=provider_payload.get("page_link"), config=config)
         target = parse_download_target(page_body)
         data = {"my_recaptcha_challenge_field": "manual_challenge"}
         if target["captcha_required"]:
@@ -269,7 +285,7 @@ class Subs4SeriesProvider:
             query = urllib.parse.urlencode({"search": title, "searchType": "1"})
             url = f"{SEARCH_URL}?{query}"
             _sleep(config)
-            for suggestion in parse_suggestions(self._http_get(url, referer=BASE_URL)):
+            for suggestion in parse_suggestions(self._http_get(url, referer=BASE_URL, config=config)):
                 if not _title_matches(suggestion["title"], title, video.get("year")):
                     continue
                 if suggestion["show_path"] in seen:
@@ -320,7 +336,7 @@ class Subs4SeriesProvider:
     def _apply_anti_block(self, referer, config):
         for url in ANTI_BLOCK_URLS:
             _sleep(config)
-            self._http_get(url, referer=referer)
+            self._http_get(url, referer=referer, config=config)
 
     def _captcha_response(self, site_key, page_url, config):
         if config.get("captcha_response"):
@@ -350,17 +366,37 @@ class Subs4SeriesProvider:
                 return str(response[key])
         return None
 
-    def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
-        headers = _browser_headers(referer)
+    def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None, config=None):
+        headers = _browser_headers(referer, self._flaresolverr_user_agent, self._flaresolverr_cookies)
         scraper = self._get_scraper()
         if scraper is not None:
-            response = scraper.get(url, headers=headers, timeout=timeout)
+            try:
+                response = scraper.get(url, headers=headers, timeout=timeout)
+            except Exception as error:
+                if _flaresolverr_url(config) and _is_cloudflare_exception(error):
+                    return self._flaresolverr_get(url, timeout, config)
+                raise
+            body = getattr(response, "content", None)
+            if body is None:
+                body = str(getattr(response, "text", "")).encode("utf-8")
+            if _is_cloudflare_challenge(getattr(response, "status_code", 0), getattr(response, "headers", {}) or {}, body):
+                if _flaresolverr_url(config):
+                    return self._flaresolverr_get(url, timeout, config)
+                raise CloudflareBlockedError(
+                    "subs4series hit a Cloudflare block and no FlareSolverr URL is configured"
+                )
             response.raise_for_status()
-            return response.content
-        return self._raw_request(url, method="GET", headers=headers, timeout=timeout)
+            return body
+        try:
+            return self._raw_request(url, method="GET", headers=headers, timeout=timeout)
+        except urllib.error.HTTPError as error:
+            body = error.read()
+            if _is_cloudflare_challenge(error.code, error.headers, body) and _flaresolverr_url(config):
+                return self._flaresolverr_get(url, timeout, config)
+            raise
 
     def _http_post(self, url, data, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
-        headers = _browser_headers(referer)
+        headers = _browser_headers(referer, self._flaresolverr_user_agent, self._flaresolverr_cookies)
         headers["Content-Type"] = "application/x-www-form-urlencoded"
         encoded = urllib.parse.urlencode(data or {}).encode("utf-8")
         scraper = self._get_scraper()
@@ -374,6 +410,69 @@ class Subs4SeriesProvider:
         request = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
         with self._opener.open(request, timeout=timeout) as response:
             return response.read()
+
+    def _flaresolverr_get(self, url, timeout, config):
+        endpoint = _flaresolverr_url(config)
+        if not endpoint:
+            raise CloudflareBlockedError(
+                "subs4series hit a Cloudflare block and no FlareSolverr URL is configured"
+            )
+        timeout_ms = _flaresolverr_timeout_ms(config, timeout)
+        payload = {
+            "cmd": "request.get",
+            "url": url,
+            "maxTimeout": timeout_ms,
+        }
+        if self._flaresolverr_cookies:
+            payload["cookies"] = [
+                {"name": name, "value": value}
+                for name, value in self._flaresolverr_cookies.items()
+            ]
+        request = urllib.request.Request(
+            endpoint,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_ms / 1000 + 2) as response:
+                response_body = response.read()
+        except Exception as error:
+            raise CloudflareBlockedError(f"subs4series FlareSolverr request failed: {error}") from error
+
+        try:
+            payload = json.loads(response_body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise CloudflareBlockedError("subs4series FlareSolverr returned invalid JSON") from error
+        if payload.get("status") not in (None, "ok"):
+            message = payload.get("message") or "FlareSolverr did not solve the challenge"
+            raise CloudflareBlockedError(f"subs4series {message}")
+
+        solution = payload.get("solution") or {}
+        response_text = solution.get("response")
+        if response_text is None:
+            raise CloudflareBlockedError("subs4series FlareSolverr response had no page body")
+        body = response_text if isinstance(response_text, bytes) else str(response_text).encode("utf-8")
+        if _is_cloudflare_challenge(solution.get("status") or 200, solution.get("headers") or {}, body):
+            raise CloudflareBlockedError("subs4series FlareSolverr response is still a Cloudflare block")
+        self._store_flaresolverr_solution(solution)
+        return body
+
+    def _store_flaresolverr_solution(self, solution):
+        user_agent = solution.get("userAgent")
+        if user_agent:
+            self._flaresolverr_user_agent = user_agent
+        for cookie in solution.get("cookies") or []:
+            name = cookie.get("name")
+            value = cookie.get("value")
+            if not name or value is None:
+                continue
+            self._flaresolverr_cookies[name] = value
+            if self._scraper is not None:
+                try:
+                    self._scraper.cookies.set(name, value, domain=".subs4series.com")
+                except Exception:
+                    pass
 
     def _get_scraper(self):
         if not self._scraper_initialized:
@@ -394,12 +493,64 @@ def _create_cloudscraper():
     )
 
 
-def _browser_headers(referer=None):
+def _normalize_headers(headers):
+    return {
+        str(key).lower(): str(value)
+        for key, value in (headers or {}).items()
+    }
+
+
+def _is_cloudflare_challenge(status_code, headers, body):
+    normalized_headers = _normalize_headers(headers)
+    if normalized_headers.get("cf-mitigated", "").lower() == "challenge":
+        return True
+    try:
+        status = int(status_code)
+    except (TypeError, ValueError):
+        status = 0
+    if status not in CLOUDFLARE_STATUS_CODES:
+        return False
+    body_text = (body or b"").decode("utf-8", errors="ignore").lower()
+    return any(marker in body_text for marker in CLOUDFLARE_BODY_MARKERS)
+
+
+def _is_cloudflare_exception(error):
+    text = f"{error.__class__.__name__} {error}".lower()
+    return "cloudflare" in text or "challenge" in text
+
+
+def _flaresolverr_url(config):
+    return str((config or {}).get("flaresolverr_url") or "").strip()
+
+
+def _flaresolverr_timeout_ms(config, request_timeout=None):
+    del request_timeout
+    try:
+        timeout = int((config or {}).get("flaresolverr_timeout_ms") or DEFAULT_FLARESOLVERR_TIMEOUT_MS)
+    except (TypeError, ValueError):
+        timeout = DEFAULT_FLARESOLVERR_TIMEOUT_MS
+    return max(MIN_FLARESOLVERR_TIMEOUT_MS, min(timeout, MAX_FLARESOLVERR_TIMEOUT_MS))
+
+
+def _cookie_header(cookies):
+    if not cookies:
+        return ""
+    return "; ".join(
+        f"{name}={value}"
+        for name, value in cookies.items()
+        if name and value is not None
+    )
+
+
+def _browser_headers(referer=None, user_agent=None, cookies=None):
     headers = {
-        "User-Agent": USER_AGENT,
+        "User-Agent": user_agent or USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "el,en-US;q=0.9,en;q=0.8",
     }
+    cookie = _cookie_header(cookies)
+    if cookie:
+        headers["Cookie"] = cookie
     if referer:
         headers["Referer"] = referer
     return headers
