@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "bddfba771631366a67ac6a979ff68a590922c1bbf90b2fda6d5820e730a39cde",
+  "bundle_sha256": "a0f6874b9e1a2605d4a7f548ce9c50946962f9c6ad0b068fffd387112598ed94",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -33,9 +33,9 @@
         "type": "string"
       },
       "flaresolverr_timeout_ms": {
-        "default": 60000,
+        "default": 25000,
         "description": "Maximum time FlareSolverr may spend fetching a Subs4Series page after ai-cloudscraper receives a Cloudflare block.",
-        "maximum": 180000,
+        "maximum": 25000,
         "minimum": 5000,
         "title": "FlareSolverr timeout (ms)",
         "type": "integer"
@@ -345,7 +345,7 @@
   "entry_class": "Subs4SeriesProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "41a45c9f684f06afbaf75e5facd7aba104b3da728bb0562888eb82e090fce796"
+    "provider.py": "c1de06983d005087e41d7914b4069dfbb80c2512bf7e769fbdee5ecc4a1410cf"
   },
   "languages": [
     "ell",

@@ -326,7 +326,7 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         self.assertEqual(request.full_url, "http://flaresolverr:8191/v1")
         payload = json.loads(request.data.decode("utf-8"))
         self.assertEqual(payload["cmd"], "request.get")
-        self.assertEqual(payload["maxTimeout"], 45000)
+        self.assertEqual(payload["maxTimeout"], 25000)
         self.assertEqual(provider._flaresolverr_cookies["cf_clearance"], "token")
         self.assertEqual(provider._flaresolverr_user_agent, "Mozilla/5.0 solved")
 
