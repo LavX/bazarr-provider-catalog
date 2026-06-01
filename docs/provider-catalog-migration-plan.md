@@ -29,7 +29,7 @@
 - Planning worktree: `/tmp/bazarr_catalog-provider-migration-inventory`
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
-- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subtitrarinoi`, `subtitriid`, `supersubtitles`, `titrari`, and `yavkanet`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
+- Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subtitrarinoi`, `subtitriid`, `supersubtitles`, `titrari`, `yavkanet`, and `yifysubtitles`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
 - Dead-origin providers: `hosszupuska`, `podnapisi`, `subscenter`, `xsubs`. Confirmed dead for Provider Hub migration on 2026-05-31 and re-confirmed on 2026-06-01. Their branch artifacts are historical notes only. Do not ship active catalog entries, promote them to the core replacement policy, open merge-ready provider PRs, or require Provider Hub compat proof unless a verified upstream origin returns.
 - Existing provider worktrees:
   - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
@@ -1692,10 +1692,27 @@
   - `curl -L --http1.1 --max-time 25 -A "Mozilla/5.0" -e "https://yifysubtitles.ch/movie-imdb/tt1160419" https://yifysubtitles.ch/subtitles/dune-part-one-2021-english-yify-364913`: HTTP `200`, detail page exposed `/subtitle/dune-2021-english-yify-364913.zip`.
   - `curl -L --http1.1 --max-time 25 -A "Mozilla/5.0" -e "https://yifysubtitles.ch/subtitles/dune-part-one-2021-english-yify-364913" https://yifysubtitles.ch/subtitle/dune-2021-english-yify-364913.zip`: HTTP `200`, `application/zip`, one SRT member.
   - `python3 -B -m sdk smoke-test --provider yifysubtitles --language eng --video-fixture tests/fixtures/yifysubtitles_video_dune_2021.json --expect-min-results 1 --skip-download`: could not be run with network because escalation approval review timed out; without escalation it failed DNS.
-- Remaining gates:
-  - Re-run Provider Hub SDK live smoke search and download when network approval is available.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `yifysubtitles` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+- Fresh local and live evidence on 2026-06-01:
+  - Branch `catalog-yifysubtitles` was pushed at `6d4ecff`.
+  - `python3 -B -m unittest discover -s tests -p 'test_yifysubtitles.py'`: `9` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/yifysubtitles/provider.py`: passed.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/yifysubtitles`, `tests/test_yifysubtitles.py`, `README.md`, `catalog.json`, and `docs/provider-notes/yifysubtitles.md` found no matches.
+  - `python3 -B -m unittest discover -s tests`: `337` tests passed, `6` skipped.
+  - `python3 -B -m sdk smoke-test --provider yifysubtitles --language eng --video-fixture tests/fixtures/yifysubtitles_video_dune_2021.json --expect-min-results 1`: `yifysubtitles ok`.
+- Provider Hub test-server evidence on 2026-06-01:
+  - Official catalog source dev ref was set to `catalog-yifysubtitles`; refresh returned `13` entries and resolved YIFYSubtitles `0.1.0` at commit `6d4ecffd73a0f47c30940ec7278c47dcc7f374fc`.
+  - Provider Hub staged YIFYSubtitles `0.1.0`, found no broken requirements, and saved config `request_delay_ms=0`.
+  - `bazarr-ui-test` restarted healthy on image `ui-test-20260531-provider-hub-replacements-f245ae096`.
+  - Provider state after restart: active version `0.1.0`, `pending_restart=false`, `trusted=true`, `enabled=true`, `last_error=None`, manifest commit `6d4ecffd73a0f47c30940ec7278c47dcc7f374fc`.
+  - Runtime replacement policy contains `55` trusted migrated built-in ids, includes `yifysubtitles`, and excludes `hosszupuska` and `podnapisi`.
+  - Compat search `GET /api/v1/subtitles?imdb_id=tt1160419&query=Dune.2021.1080p.HMAX.WEBRip.DDP5.1.Atmos.x264-CM.mkv&type=movie&languages=en&per_page=100` returned HTTP `200`, `115` total results, `100` page items, and `35` YIFYSubtitles rows.
+  - First YIFYSubtitles result: `file_id=17`, release `Dune.2021.1080p.HDRip.X264.AC3-EVO Dune.2021.1080p.WEBRip.DD5.1.x264-SHITBOX Dune.2021.1080p.WEBRip.x264-RARBG Dune.2021.1080p.WEBRip.DD5.1.x264-KOGI Dune (2021) [1080p] [WEBRip] [YTS.MX] Dune (2021) [720p] [WEBRip] [YTS.MX] Dune.2021.1080p.WEBRip.x264.AAC5.1-[YTS.MX] Dune.2021.1080p.HDRip.1600MB.DD5.1.x264-GalaxyRG Dune.2021.720p.HDRip.900MB.x264-GalaxyRG`, subtitle id `yifysubtitles:yifysubtitles-364092-eng`.
+  - Compat download `POST /api/v1/download` for `file_id=17` returned HTTP `200`, a stream link, `remaining=999`, and `remaining_downloads=999`.
+  - Compat stream returned HTTP `200` and `72273` bytes. The payload starts with an SRT BOM, cue `1`, and timestamp `00:00:04,120 --> 00:00:08,690`.
+- Status:
+  - YIFYSubtitles is locally validated and proved through Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
 ### `hdbits`
 
