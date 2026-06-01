@@ -1960,6 +1960,7 @@
 - Branch: `catalog-supersubtitles`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/supersubtitles`
 - Current checkpoint: `3f96078 Add SuperSubtitles provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/40` opened on 2026-06-01, head `catalog-supersubtitles`, base `main`, merge state `CLEAN`.
 - Local evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -2003,6 +2004,17 @@
   - Compat episode stream returned HTTP `200` and `41393` bytes. The payload starts with SRT cue `1` and timestamp `00:00:00,000 --> 00:00:04,448`.
 - Status:
   - SuperSubtitles is locally validated and proved through Provider Hub compat search, download, and stream on `bazarr-ui-test` for Hungarian movie and English episode paths.
+- Fresh PR evidence on 2026-06-01:
+  - `gh pr list --repo LavX/bazarr-provider-catalog --head catalog-supersubtitles --json number,state,isDraft,reviewDecision,mergeStateStatus,url,title`: no existing PR before creation.
+  - `python3 -B -m unittest discover -s tests -p 'test_supersubtitles.py'`: `13` tests passed.
+  - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/supersubtitles/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, docs, provider code, tests, and fixtures: no matches.
+  - `python3 -B -m sdk smoke-test --provider supersubtitles --language hun --video-fixture tests/fixtures/supersubtitles_video_dune_2021.json --expect-min-results 1`: `supersubtitles ok`.
+  - `python3 -B -m sdk smoke-test --provider supersubtitles --language eng --video-fixture tests/fixtures/supersubtitles_video_la_brea_s02e13.json --expect-min-results 1`: `supersubtitles ok`.
+  - `gh pr view 40 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#40` is open, non-draft, head `catalog-supersubtitles`, base `main`, merge state `CLEAN`.
 
 ### `titrari`
 
