@@ -1747,6 +1747,7 @@
 - Branch: `catalog-subsunacs`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subsunacs`
 - Current checkpoint: `6394dff Add SubsUnacs provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/36` opened on 2026-06-01, head `catalog-subsunacs`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1785,6 +1786,17 @@
   - Compat stream returned HTTP `200` and `51676` bytes. The payload starts with SRT cue `1` and timestamp `00:01:55,418 --> 00:01:58,420`.
 - Status:
   - SubsUnacs is locally validated and proved through Provider Hub compat search, download, and stream on `bazarr-ui-test` for the Bulgarian episode path.
+- Fresh PR evidence on 2026-06-01:
+  - `gh pr list --repo LavX/bazarr-provider-catalog --head catalog-subsunacs --json number,state,isDraft,reviewDecision,mergeStateStatus,url,title`: no existing PR before creation.
+  - `python3 -B -m unittest discover -s tests -p 'test_subsunacs.py'`: `9` tests passed.
+  - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subsunacs/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, docs, provider code, tests, and fixtures: no matches.
+  - `python3 -B -m sdk smoke-test --provider subsunacs --language eng --video-fixture tests/fixtures/subsunacs_video_dune.json --expect-min-results 1`: `subsunacs ok`.
+  - `python3 -B -m sdk smoke-test --provider subsunacs --language bul --video-fixture tests/fixtures/subsunacs_video_game_of_thrones_s01e01.json --expect-min-results 1`: `subsunacs ok`.
+  - `gh pr view 36 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#36` is open, non-draft, head `catalog-subsunacs`, base `main`, merge state `CLEAN`.
 
 ### `subsynchro`
 
