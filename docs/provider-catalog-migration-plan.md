@@ -1177,6 +1177,7 @@
 - Branch: `catalog-subf2m`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subf2m`
 - Current checkpoint: `35bb9c4 Add SubF2M provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/26` opened on 2026-06-01, head `catalog-subf2m`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1215,6 +1216,16 @@
   - Compat stream returned HTTP `200` and `126519` bytes. The payload starts with an SRT BOM, cue `1`, and timestamp `00:00:04,588 --> 00:00:05,839`.
 - Status:
   - SubF2M is locally validated and proved through Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+- Fresh PR evidence on 2026-06-01:
+  - `gh pr list --repo LavX/bazarr-provider-catalog --head catalog-subf2m --json number,state,isDraft,reviewDecision,mergeStateStatus,url,title`: no existing PR before creation.
+  - `python3 -B -m unittest discover -s tests -p 'test_subf2m.py'`: `11` tests passed.
+  - `python3 -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subf2m/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, provider code, tests, and fixtures: no matches.
+  - `python3 -B -m sdk smoke-test --provider subf2m --language eng --video-fixture tests/fixtures/subf2m_video_dune_2021.json --config-json '{"request_delay_ms":0}' --expect-min-results 1`: `subf2m ok`.
+  - `gh pr view 26 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#26` is open, non-draft, head `catalog-subf2m`, base `main`, merge state `CLEAN`.
 
 ### `subsarr`
 
