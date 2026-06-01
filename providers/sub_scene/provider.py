@@ -2,6 +2,7 @@
 
 import base64
 import hashlib
+import html
 import io
 import json
 import os
@@ -37,6 +38,10 @@ CLOUDFLARE_BODY_MARKERS = (
 )
 _META_REFRESH_RE = re.compile(
     r"""<meta\s+http-equiv=["']refresh["']\s+content=["'](?P<delay>\d+);\s*url=(?P<url>[^"']+)["']""",
+    re.I,
+)
+_REFRESH_VALUE_RE = re.compile(
+    r"""(?P<delay>\d+)\s*;\s*url=(?P<url>.+?)\s*$""",
     re.I,
 )
 _ANUBIS_CHALLENGE_RE = re.compile(
@@ -385,15 +390,46 @@ def is_anubis_challenge(url, status_code=0):
     )
 
 
-def _extract_anubis_challenge(html_text):
+def _has_anubis_challenge_body(body, headers=None):
+    text = (body or b"").decode("utf-8", errors="ignore")
+    if _ANUBIS_CHALLENGE_RE.search(text):
+        return True
+    meta_match = _META_REFRESH_RE.search(text)
+    if meta_match and "/.within.website/" in html.unescape(meta_match.group("url")):
+        return True
+    refresh_header = _normalize_headers(headers).get("refresh")
+    return bool(refresh_header and "/.within.website/" in html.unescape(refresh_header))
+
+
+def _refresh_challenge(delay, redirect_url):
+    redirect_url = html.unescape(str(redirect_url or "").strip())
+    if "/.within.website/" not in redirect_url:
+        return None
+    return {
+        "method": "metarefresh",
+        "redirect_url": redirect_url,
+        "delay": int(delay),
+        "difficulty": 0,
+    }
+
+
+def _extract_anubis_challenge(html_text, headers=None):
+    refresh_header = _normalize_headers(headers).get("refresh")
+    if refresh_header:
+        refresh_match = _REFRESH_VALUE_RE.search(refresh_header)
+        if refresh_match:
+            challenge = _refresh_challenge(
+                refresh_match.group("delay"),
+                refresh_match.group("url"),
+            )
+            if challenge:
+                return challenge
+
     meta_match = _META_REFRESH_RE.search(html_text or "")
-    if meta_match and "/.within.website/" in meta_match.group("url"):
-        return {
-            "method": "metarefresh",
-            "redirect_url": meta_match.group("url"),
-            "delay": int(meta_match.group("delay")),
-            "difficulty": 0,
-        }
+    if meta_match:
+        challenge = _refresh_challenge(meta_match.group("delay"), meta_match.group("url"))
+        if challenge:
+            return challenge
     match = _ANUBIS_CHALLENGE_RE.search(html_text or "")
     if not match:
         return None
@@ -412,12 +448,29 @@ def _extract_anubis_challenge(html_text):
     }
 
 
+def _leading_zero_bits(digest):
+    count = 0
+    for char in str(digest or ""):
+        value = int(char, 16)
+        if value == 0:
+            count += 4
+            continue
+        for bit in (3, 2, 1, 0):
+            if value & (1 << bit):
+                return count
+            count += 1
+    return count
+
+
 def _solve_pow(random_data, difficulty):
-    prefix = "0" * difficulty
+    try:
+        target_bits = max(0, min(int(difficulty), 64))
+    except (TypeError, ValueError):
+        target_bits = 4
     nonce = 0
     while True:
         digest = hashlib.sha256(f"{random_data}{nonce}".encode("utf-8")).hexdigest()
-        if digest.startswith(prefix):
+        if _leading_zero_bits(digest) >= target_bits:
             return nonce, digest
         nonce += 1
 
@@ -436,7 +489,10 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=30):
     started = time.monotonic()
 
     response = session.get(challenge_page_url, timeout=(10, timeout), allow_redirects=True)
-    challenge = _extract_anubis_challenge(getattr(response, "text", ""))
+    challenge = _extract_anubis_challenge(
+        getattr(response, "text", ""),
+        getattr(response, "headers", {}) or {},
+    )
     if not challenge:
         return None
 
@@ -636,8 +692,13 @@ def _http_get(url, timeout=30, config=None, state=None, referer=None):
     body = getattr(response, "content", None)
     if body is None:
         body = str(getattr(response, "text", "")).encode("utf-8")
-    if is_anubis_challenge(getattr(response, "url", ""), status_code):
-        solved = solve_anubis_challenge(_get_cloudscraper(state), response.url, url, timeout=timeout)
+    if is_anubis_challenge(getattr(response, "url", ""), status_code) or _has_anubis_challenge_body(body, headers):
+        solved = solve_anubis_challenge(
+            _get_cloudscraper(state),
+            getattr(response, "url", "") or url,
+            url,
+            timeout=timeout,
+        )
         if not solved:
             raise CloudflareBlockedError("sub_scene Anubis challenge could not be solved")
         response = _get_cloudscraper(state).get(

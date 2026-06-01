@@ -675,6 +675,108 @@ class TestCloudflareHttp(unittest.TestCase):
         self.assertEqual(solved_calls[0][1], "https://sub-scene.com/.within.website/?redir=/search")
         self.assertEqual(solved_calls[0][2], "https://sub-scene.com/search?query=Dune")
 
+    def test_http_get_detects_embedded_anubis_body_before_returning_html(self):
+        challenge_response = MagicMock()
+        challenge_response.status_code = 200
+        challenge_response.headers = {}
+        challenge_response.content = b'<script id="anubis_challenge">{}</script>'
+        challenge_response.text = '<script id="anubis_challenge">{}</script>'
+        challenge_response.url = "https://sub-scene.com/search?query=Dune"
+        solved_response = MagicMock()
+        solved_response.status_code = 200
+        solved_response.headers = {}
+        solved_response.content = b"<html>ok</html>"
+        solved_response.text = "<html>ok</html>"
+        solved_response.url = "https://sub-scene.com/search?query=Dune"
+        scraper = MagicMock()
+        scraper.get.side_effect = [challenge_response, solved_response]
+        solved_calls = []
+
+        def fake_solve(active_scraper, challenge_url, original_url, timeout):
+            solved_calls.append((active_scraper, challenge_url, original_url, timeout))
+            return {"techaro.lol-anubis-auth": "ok"}
+
+        with patch("provider.cloudscraper.create_scraper", return_value=scraper), patch(
+            "provider.solve_anubis_challenge",
+            side_effect=fake_solve,
+        ):
+            body = subscene_module._http_get(
+                "https://sub-scene.com/search?query=Dune",
+                config={},
+                state={},
+            )
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(scraper.get.call_count, 2)
+        self.assertEqual(solved_calls[0][1], "https://sub-scene.com/search?query=Dune")
+        self.assertEqual(solved_calls[0][2], "https://sub-scene.com/search?query=Dune")
+
+    def test_solve_pow_treats_difficulty_as_leading_zero_bits(self):
+        class FakeHash:
+            def __init__(self, digest):
+                self.digest = digest
+
+            def hexdigest(self):
+                return self.digest
+
+        digests = ["04" + "f" * 62, "00000" + "f" * 59]
+        calls = []
+
+        def fake_sha256(data):
+            calls.append(data)
+            return FakeHash(digests[len(calls) - 1])
+
+        with patch("provider.hashlib.sha256", side_effect=fake_sha256):
+            nonce, digest = subscene_module._solve_pow("random", 5)
+
+        self.assertEqual(nonce, 0)
+        self.assertEqual(digest, "04" + "f" * 62)
+
+    def test_extract_anubis_challenge_unescapes_meta_refresh_url(self):
+        challenge = subscene_module._extract_anubis_challenge(
+            '<meta http-equiv="refresh" content="0; url=/.within.website/x/cmd/anubis/api/pass-challenge?foo=1&amp;bar=2">'
+        )
+
+        self.assertEqual(
+            challenge["redirect_url"],
+            "/.within.website/x/cmd/anubis/api/pass-challenge?foo=1&bar=2",
+        )
+
+    def test_solve_anubis_challenge_honors_refresh_header(self):
+        class Cookie:
+            name = "techaro.lol-anubis-auth"
+            value = "ok"
+
+        class CookieJar(list):
+            def update(self, cookies):
+                self.extend(cookies)
+
+        first_response = MagicMock()
+        first_response.text = ""
+        first_response.headers = {
+            "Refresh": "0; url=/.within.website/x/cmd/anubis/api/pass-challenge?foo=1"
+        }
+        first_response.cookies = []
+        solved_response = MagicMock()
+        solved_response.cookies = [Cookie()]
+        session = MagicMock()
+        session.get.side_effect = [first_response, solved_response]
+        session.cookies = CookieJar()
+
+        with patch("provider.time.sleep"):
+            cookies = subscene_module.solve_anubis_challenge(
+                session,
+                "https://sub-scene.com/.within.website/?redir=/search",
+                "https://sub-scene.com/search?query=Dune",
+                timeout=30,
+            )
+
+        self.assertEqual(cookies, {"techaro.lol-anubis-auth": "ok"})
+        self.assertEqual(
+            session.get.call_args_list[1].args[0],
+            "https://sub-scene.com/.within.website/x/cmd/anubis/api/pass-challenge?foo=1",
+        )
+
     def test_http_get_uses_flaresolverr_fallback_after_cloudflare_challenge(self):
         challenge_response = MagicMock()
         challenge_response.status_code = 403
