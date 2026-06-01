@@ -124,12 +124,7 @@ def parse_torrent_subtitles(body, entry, video=None):
         return []
     entry = entry or {}
     rows = []
-    for media_file in data.get("files") or []:
-        if not isinstance(media_file, dict):
-            continue
-        filename = media_file.get("filename") or data.get("torrent_name") or entry.get("title") or ""
-        if not _media_file_matches_video(video, filename):
-            continue
+    for media_file, filename in _matching_media_files(data, entry, video):
         for attachment in media_file.get("attachments") or []:
             if not isinstance(attachment, dict) or attachment.get("type") != "subtitle":
                 continue
@@ -449,6 +444,15 @@ def _media_file_matches_video(video, filename):
     if not markers:
         return True
     return (season, episode) in markers or (None, episode) in markers
+
+
+def _matching_media_files(data, entry, video):
+    for media_file in data.get("files") or []:
+        if not isinstance(media_file, dict):
+            continue
+        filename = media_file.get("filename") or data.get("torrent_name") or entry.get("title") or ""
+        if _media_file_matches_video(video, filename):
+            yield media_file, filename
 
 
 def _episode_markers(filename):

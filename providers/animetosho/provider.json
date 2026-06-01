@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "ee56c8ed929701512f3c8bab62c003881ca397cc0a0037ea2c2a8d0fcb206bdd",
+  "bundle_sha256": "f1f687de54a9cd1890112d4c6ce464bec35de635970f00e3cffdb4f8a03888ce",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -30,7 +30,7 @@
   "entry_class": "AnimeToshoProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "5b53a65f8539463011122f8e7c6b4d13629a37be1b3ad1d9d865648b796ce255"
+    "provider.py": "9593b8958786c8da4885b0175abd8ec7a8f00b712e3a39a72766d7c7da3d450e"
   },
   "languages": [
     "ara",
