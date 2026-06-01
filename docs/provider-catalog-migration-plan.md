@@ -2225,6 +2225,20 @@
   - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' https://cinemaz.to/`: returned HTTP `200` with the public CinemaZ landing page.
   - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' https://cinemaz.to/rules`: returned HTTP `302` to `https://cinemaz.to/auth/login`.
   - Real release-page search and download require valid CinemaZ session cookies and a video refined with a CinemaZ `info_url`.
+- Fresh local and credential evidence on 2026-06-01:
+  - Recreated `/tmp/bazarr_catalog_provider_worktrees/cinemaz` as a linked git worktree on branch `catalog-cinemaz`, clean, and tracking `origin/catalog-cinemaz` after push.
+  - Branch `catalog-cinemaz` was pushed at `df1b3bd`.
+  - Branch scope remains limited to `README.md`, `catalog.json`, `docs/provider-notes/cinemaz.md`, `providers/cinemaz`, and `tests/test_cinemaz.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_cinemaz.py'`: `7` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/cinemaz/provider.py`: passed.
+  - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
+  - `git diff --check`: clean.
+  - Attribution and em-dash scan over `providers/cinemaz`, `tests/test_cinemaz.py`, `docs/provider-notes/cinemaz.md`, `README.md`, and `catalog.json` found no matches.
+  - Manifest and catalog language counts both remain `173`.
+  - Public `https://cinemaz.to/` probe returned HTTP `200`.
+  - Unauthenticated `https://cinemaz.to/rules` probe returned HTTP `302` to `https://cinemaz.to/auth/login`.
+  - Test-server config check read only cookie and user-agent presence plus length from `/home/lavx/bazarr-data/config/config.yaml`; `cinemaz.cookies` and `cinemaz.user_agent` are empty.
 - Remaining gates:
   - Run SDK live smoke search and download with valid CinemaZ cookies and a known CinemaZ release-page fixture or test-server media item.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `cinemaz` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
