@@ -2485,6 +2485,7 @@
 - Branch: `catalog-avistaz`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/avistaz`
 - Current checkpoint: `1b339e2 Add AvistaZ provider`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/51` opened as draft on 2026-06-01, head `catalog-avistaz`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -2508,18 +2509,20 @@
   - Branch `catalog-avistaz` was pushed at `1b339e2`.
   - Branch scope remains limited to `README.md`, `catalog.json`, `docs/provider-notes/avistaz.md`, `providers/avistaz`, and `tests/test_avistaz.py`.
   - `python3 -B -m unittest discover -s tests -p 'test_avistaz.py'`: `7` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed, `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/avistaz/provider.py`: passed.
-  - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
-  - `git diff --check`: clean.
+  - `git diff --check origin/main...HEAD`: clean.
   - Attribution and em-dash scan over `providers/avistaz`, `tests/test_avistaz.py`, `docs/provider-notes/avistaz.md`, `README.md`, and `catalog.json` found no matches.
   - Manifest and catalog language counts both remain `173`.
   - Public `https://avistaz.to/` probe returned HTTP `200`.
   - Unauthenticated `https://avistaz.to/rules` probe returned HTTP `302` to `https://avistaz.to/auth/login`.
+  - `python3 -B -m sdk smoke-test --provider avistaz --language eng --video-fixture /tmp/avistaz_release_video.json --expect-min-results 1 --skip-download`: failed at the expected credential gate with `AvistaZ cookies are required`.
+  - PR `#51` was verified open, draft, merge state `CLEAN`, head `1b339e2dfd93faed83ef5b6054196997c74be8f3`.
   - Test-server config check read only cookie and user-agent presence plus length from `/home/lavx/bazarr-data/config/config.yaml`; `avistaz.cookies` and `avistaz.user_agent` are empty.
 - Remaining gates:
   - Run SDK live smoke search and download with valid AvistaZ cookies and a known AvistaZ release-page fixture or test-server media item.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `avistaz` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `avistaz` in the trusted replacement policy.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured AvistaZ cookies.
 
 ### `cinemaz`
