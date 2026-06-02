@@ -1,6 +1,7 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "a7a8dc270cd8666ce33ea2c022623c9c04fb0485060c4913234daae0fdcef499",
+  "builtin_provider_replacement": true,
+  "bundle_sha256": "e8d5839c9f3df5f032d30bc9cb111613e139da2e64daad6e6b9c7352d49ad9c8",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -52,7 +53,7 @@
   "entry_class": "EmbeddedSubtitlesProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "02e5855787a5cc59812438ac8df34cd9b99b0c047eb26a03b8350a48bd06227f"
+    "provider.py": "44fdd44989621f7bf477e6aae63b43c49bfa65121e6f8348e1a35f2decfd889b"
   },
   "languages": [
     "afr",
@@ -155,6 +156,7 @@
     "yor",
     "zho"
   ],
+  "legacy_provider_id": "embeddedsubtitles",
   "name": "Embedded Subtitles",
   "provider_id": "embeddedsubtitles",
   "schema_version": 1,

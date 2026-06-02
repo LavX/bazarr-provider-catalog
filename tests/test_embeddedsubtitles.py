@@ -150,6 +150,27 @@ class EmbeddedSubtitlesParserTests(unittest.TestCase):
         finally:
             self.mod.subprocess.run = original_run
 
+    def test_probe_media_wraps_process_start_os_errors_as_embedded_error(self):
+        original_run = self.mod.subprocess.run
+
+        def raise_permission(command, **kwargs):
+            del command, kwargs
+            raise PermissionError("not executable")
+
+        self.mod.subprocess.run = raise_permission
+        try:
+            with self.assertRaises(self.mod.EmbeddedSubtitleError):
+                self.mod.probe_media("/media/Example.Show.S01E02.mkv", {})
+        finally:
+            self.mod.subprocess.run = original_run
+
+    def test_manifest_declares_trusted_builtin_replacement(self):
+        manifest = json.loads((PROVIDER_DIR / "provider.json").read_text())
+
+        self.assertEqual(manifest["provider_id"], "embeddedsubtitles")
+        self.assertEqual(manifest["legacy_provider_id"], "embeddedsubtitles")
+        self.assertTrue(manifest["builtin_provider_replacement"])
+
 
 class EmbeddedSubtitlesProviderSearchTests(unittest.TestCase):
     def setUp(self):
@@ -268,6 +289,33 @@ class EmbeddedSubtitlesProviderDownloadTests(unittest.TestCase):
 
         self.assertEqual(result, b"WEBVTT\n\n")
         self.assertEqual(calls[0][calls[0].index("-f") + 1], "webvtt")
+
+    def test_extract_stream_wraps_process_start_and_timeout_errors(self):
+        original_run = self.mod.subprocess.run
+
+        cases = [
+            FileNotFoundError("missing"),
+            PermissionError("not executable"),
+            self.mod.subprocess.TimeoutExpired(["ffmpeg"], timeout=600),
+        ]
+
+        try:
+            for error in cases:
+                with self.subTest(error=type(error).__name__):
+                    def raise_error(command, **kwargs):
+                        del command, kwargs
+                        raise error
+
+                    self.mod.subprocess.run = raise_error
+                    with self.assertRaises(self.mod.EmbeddedSubtitleError):
+                        self.mod.extract_subtitle_stream(
+                            "/media/Example.Show.S01E02.mkv",
+                            2,
+                            "srt",
+                            {},
+                        )
+        finally:
+            self.mod.subprocess.run = original_run
 
     def test_download_rejects_wrong_provider_payload(self):
         provider = self.mod.EmbeddedSubtitlesProvider(extract_runner=FakeExtractRunner())

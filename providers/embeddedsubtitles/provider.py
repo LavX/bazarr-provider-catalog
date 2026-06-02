@@ -206,10 +206,10 @@ def probe_media(path, config):
             check=False,
             timeout=timeout,
         )
-    except FileNotFoundError as exc:
-        raise EmbeddedSubtitleError(f"ffprobe executable not found: {ffprobe}") from exc
     except subprocess.TimeoutExpired as exc:
         raise EmbeddedSubtitleError("ffprobe timed out") from exc
+    except OSError as exc:
+        raise EmbeddedSubtitleError(f"ffprobe could not start: {ffprobe}") from exc
     if result.returncode != 0:
         message = result.stderr.decode("utf-8", errors="replace").strip()
         raise EmbeddedSubtitleError(message or "ffprobe failed")
@@ -241,13 +241,18 @@ def extract_subtitle_stream(path, stream_index, fmt, config):
         muxer,
         "-",
     ]
-    result = subprocess.run(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-        timeout=timeout,
-    )
+    try:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise EmbeddedSubtitleError("ffmpeg timed out") from exc
+    except OSError as exc:
+        raise EmbeddedSubtitleError(f"ffmpeg could not start: {ffmpeg}") from exc
     if result.returncode != 0:
         message = result.stderr.decode("utf-8", errors="replace").strip()
         raise EmbeddedSubtitleError(message or "ffmpeg failed")
