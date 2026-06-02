@@ -110,7 +110,7 @@
   - `xsubs`: branch `catalog-xsubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/xsubs`, current head `5a17922`, dead origin
   - `yavkanet`: branch `catalog-yavkanet`, worktree `/tmp/bazarr_catalog_provider_worktrees/yavkanet`, current head `0ac39be`
   - `yifysubtitles`: branch `catalog-yifysubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/yifysubtitles`, current head `024f996`
-  - `zimuku`: branch `catalog-zimuku`, worktree `/tmp/bazarr_catalog_provider_worktrees/zimuku`, current head `175ff72`
+  - `zimuku`: branch `catalog-zimuku`, worktree `/tmp/bazarr_catalog_provider_worktrees/zimuku`, current head `6fab891`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -923,7 +923,7 @@
 
 - Branch: `catalog-zimuku`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/zimuku`
-- Current checkpoint: `175ff72 Handle Zimuku challenge bodies`
+- Current checkpoint: `6fab891 Bundle Zimuku Yunsuo templates`
 - Pull request: [#69](https://github.com/LavX/bazarr-provider-catalog/pull/69), open draft, head `catalog-zimuku`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -1034,6 +1034,20 @@
   - `python3 -B -m unittest discover -s tests`: `741` tests passed with `6` skipped.
   - Live SDK search smoke `python3 -B -m sdk smoke-test --provider zimuku --language zho --video-fixture tests/fixtures/zimuku_video_game_of_thrones_s01e01.json --expect-min-results 1 --skip-download --config-json '{"request_delay_ms":0}'`: `zimuku ok`.
   - Pushed branch head `175ff72bf68fc86005cb949697673bb231e28f36`.
+- SubHD template packaging follow-up on 2026-06-02:
+  - Checked SubHD's shipped anti-captcha packaging again. SubHD keeps generated glyph rows in a sibling `captcha_templates.py` file, inserts the provider directory into `sys.path`, imports the rows, and declares the template file in `provider.json`.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_zimuku.py'`: failed because `providers/zimuku/yunsuo_templates.py` was missing.
+  - Added `providers/zimuku/yunsuo_templates.py`, moved Zimuku's Yunsuo BMP digit rows into it, mirrored SubHD's sibling-module import guard, cached parsed digit templates, refreshed Zimuku file and bundle hashes, and regenerated `catalog.json`.
+  - PR `#69` is open draft, head `catalog-zimuku` at `175ff72a96d12fbac506f8b21e2da3db1ceef7f9`, merge state `CLEAN`, has no review threads, no comments, no reviews, and no checks are reported before the fix.
+  - `python3 -B -m unittest discover -s tests -p 'test_zimuku.py'`: `14` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `15` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/zimuku/provider.py providers/zimuku/yunsuo_templates.py`: passed.
+  - `git diff --check`: clean.
+  - Touched-file attribution and em-dash scan across Zimuku files found no matches.
+  - `python3 -B -m unittest discover -s tests`: `742` tests passed with `6` skipped.
+  - Pushed branch head `6fab89144af39b6deda24c0921751500d354a0d6`.
+  - PR `#69` is open draft, head `catalog-zimuku` at `6fab89144af39b6deda24c0921751500d354a0d6`, merge state `CLEAN`, and no checks are reported.
 - Remaining gates:
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with Yunsuo verification solved.
 
