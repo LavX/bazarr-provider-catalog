@@ -45,6 +45,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`subs4free`](providers/subs4free/) | 0.1.2 | Scrapes [Subs4Free](https://www.subs4free.info) for Greek and English movie subtitles. No login or API key. |
 | [`subs4series`](providers/subs4series/) | 0.1.3 | Scrapes [Subs4Series](https://www.subs4series.com) for Greek and English episode subtitles. Uses ai-cloudscraper with inline Anubis solving, optional FlareSolverr fallback, and optional captcha helper settings for download gates. |
 | [`subhd`](providers/subhd/) | 0.1.3 | Scrapes [SubHD.tv](https://subhd.tv) for Chinese-first movie and episode subtitles with multilingual releases. No login or API key. |
+| [`subsource`](providers/subsource/) | 0.1.0 | Uses the official [SubSource](https://subsource.net) API for movie and episode subtitles. API key required. |
 | [`subsynchro`](providers/subsynchro/) | 0.1.2 | Scrapes [SubSynchro](https://www.subsynchro.com) for French movie release subtitle ZIP files. No login or API key. |
 | [`subtis`](providers/subtis/) | 0.1.0 | Queries [api.subt.is](https://api.subt.is) for Spanish movie subtitles using hash, size, filename, and alternative lookups. No login or API key. |
 | [`subtitrarinoi`](providers/subtitrarinoi/) | 0.1.1 | Scrapes [subtitrari-noi.ro](https://www.subtitrari-noi.ro) for Romanian movie and episode subtitles. No login or API key. |
@@ -107,6 +108,7 @@ Every provider here ships independently of Bazarr+ releases. [Contribute](#contr
 - `providers/subs4free/`: scrapes Subs4Free movie subtitle listings and anti-block downloads.
 - `providers/subs4series/`: scrapes Subs4Series episode subtitles with ai-cloudscraper, inline Anubis solving, optional FlareSolverr fallback, anti-block requests, optional captcha helper settings, and archive extraction.
 - `providers/subhd/`: scrapes SubHD.tv Chinese-first movie and episode subtitle pages.
+- `providers/subsource/`: uses the official SubSource API for movie and episode subtitles.
 - `providers/subsynchro/`: scrapes SubSynchro French movie release subtitle ZIP files.
 - `providers/subtis/`: queries api.subt.is for Spanish movie subtitles using hash, size, filename, and alternative lookups.
 - `providers/subtitrarinoi/`: scrapes subtitrari-noi.ro Romanian movie and episode subtitle downloads.
