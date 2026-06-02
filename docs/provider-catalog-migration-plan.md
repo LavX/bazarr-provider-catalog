@@ -586,9 +586,22 @@
   - Pushed `catalog-napisy24` at `4790b0f8a306319a864745688cee5496ee87ca5e`.
   - PR `#61` was verified open, draft, merge state `CLEAN`, head `4790b0f8a306319a864745688cee5496ee87ca5e`.
   - `gh pr checks 61 --repo LavX/bazarr-provider-catalog`: no checks reported on the branch.
+- Fresh route recheck on 2026-06-02:
+  - Live open PR list still shows PR `#61` open draft, head `4790b0f8a306319a864745688cee5496ee87ca5e`, merge state `CLEAN`.
+  - Worktree `/tmp/bazarr_catalog_provider_worktrees/napisy24` is clean on `catalog-napisy24` and tracks `origin/catalog-napisy24`.
+  - Effective branch scope against current `origin/main` remains limited to `README.md`, `catalog.json`, `docs/provider-notes/napisy24.md`, `providers/napisy24/provider.json`, `providers/napisy24/provider.py`, `tests/fixtures/napisy24_video_dune_2021.json`, and `tests/test_napisy24.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_napisy24.py'`: `6` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/napisy24/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across Napisy24 files found no matches.
+  - Live route probe against `http://napisy24.pl/run/CheckSubAgent.php` with the committed dummy hash returned HTTP `200` and `OK-0`, proving the API route is reachable but the fixture hash has no matching subtitle.
+  - Live SDK smoke with `tests/fixtures/napisy24_video_dune_2021.json` failed with `napisy24 returned 0 candidates, expected at least 1`, matching the dummy-hash route result.
+  - Current local machine cannot run Provider Hub compat proof: no Bazarr test container is running, `http://127.0.0.1:6767` is closed, `bazarr-ui-test` does not resolve over SSH, and no compat API key is present in `BAZARR_COMPAT_API_KEY`.
 - Remaining gates:
   - Run SDK live smoke search and download with a real video fixture that has a valid Napisy24/OpenSubtitles hash.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `napisy24` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
+  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `napisy24` in the trusted replacement policy; deploy or reach that test-server runtime before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with a library-backed video whose hash can be computed.
 
 ### `pipocas`
