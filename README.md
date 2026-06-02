@@ -55,6 +55,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`sub_scene`](providers/sub_scene/) | 0.1.14 | Scrapes [sub-scene.com](https://sub-scene.com) (Subscene clone) for movie and episode subtitles in 35+ languages including Vietnamese, Arabic, Bengali, Danish, Dutch. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback. |
 | [`subssabbz`](providers/subssabbz/) | 0.1.1 | Scrapes [subs.sab.bz](http://subs.sab.bz) for Bulgarian and English movie and episode subtitles. ZIP and RAR downloads are supported. |
 | [`subsunacs`](providers/subsunacs/) | 0.1.1 | Scrapes [subsunacs.net](https://subsunacs.net) for Bulgarian and English movie and episode subtitles. Direct entry pages plus ZIP, RAR, and 7Z downloads are supported. |
+| [`subx`](providers/subx/) | 0.1.0 | Uses the [SubX](https://subx-api.duckdns.org/docs/getting-started/quickstart/) API for Spanish movie and episode subtitles. Requires an API key. ZIP and RAR downloads are supported. |
 | [`subtitlecat`](providers/subtitlecat/) | 0.1.5 | Scrapes [subtitlecat.com](https://www.subtitlecat.com) (no login, no API key). Worked example for the [scraper authoring guide](docs/writing-a-scraper-provider.md). |
 | [`supersubtitles`](providers/supersubtitles/) | 0.1.1 | Scrapes [feliratok.eu](https://feliratok.eu) for Hungarian and English movie and episode subtitles. No login or API key. |
 | [`titrari`](providers/titrari/) | 0.1.1 | Scrapes [Titrari.ro](https://www.titrari.ro) for Romanian and English movie and episode subtitles. No login or API key. |
@@ -118,6 +119,7 @@ Every provider here ships independently of Bazarr+ releases. [Contribute](#contr
 - `providers/sub_scene/`: scrapes sub-scene.com (Subscene clone) for movie and episode subtitles in 35+ languages including Vietnamese, Arabic, Bengali, Danish, Dutch, using ai-cloudscraper, inline Anubis solving, and optional FlareSolverr fallback.
 - `providers/subssabbz/`: scrapes subs.sab.bz for Bulgarian and English movie and episode subtitles with ZIP and RAR downloads.
 - `providers/subsunacs/`: scrapes subsunacs.net for Bulgarian and English movie and episode subtitles with direct entry pages plus ZIP, RAR, and 7Z downloads.
+- `providers/subx/`: uses the SubX API for Spanish movie and episode subtitles with API-key authentication.
 - `providers/subtitlecat/`: first production community provider, scrapes subtitlecat.com using stdlib only. Worked example referenced by [docs/writing-a-scraper-provider.md](docs/writing-a-scraper-provider.md).
 - `providers/supersubtitles/`: scrapes feliratok.eu Hungarian and English movie and episode subtitle listings.
 - `providers/titrari/`: scrapes Titrari.ro movie and episode subtitle listings, including ZIP and RAR downloads.
