@@ -90,7 +90,7 @@ class LegendasNetSearchTests(unittest.TestCase):
         self.assertEqual(calls[0][0], "POST")
         self.assertEqual(len(results), 2)
         self.assertEqual(results[0]["provider"], "legendasnet")
-        self.assertEqual(results[0]["language"], {"alpha3": "por-BR", "alpha2": "pt", "country": "BR", "hi": False, "forced": False})
+        self.assertEqual(results[0]["language"], {"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR", "hi": False, "forced": False})
         self.assertEqual(results[0]["provider_payload"]["file_id"], 101)
         self.assertEqual(results[0]["page_link"], "https://legendas.net/legenda?movie_id=438631&legenda_id=101")
         self.assertIn("title", results[0]["matches"])
@@ -117,6 +117,32 @@ class LegendasNetSearchTests(unittest.TestCase):
             {"username": "user", "password": "pass"},
         )
 
+        self.assertEqual(len(results), 2)
+
+    def test_movie_search_falls_back_to_alternative_title_when_primary_is_empty(self):
+        provider = self.mod.LegendasNetProvider()
+        searched_names = []
+
+        def request(method, url, headers=None, json_body=None, timeout=30):
+            del method, headers, timeout
+            if url.endswith("/login"):
+                return self.mod.HttpResponse(200, _fixture("legendasnet_login.json"), {})
+            if url.endswith("/search/movie"):
+                searched_names.append(json_body["name"])
+                if json_body["name"] == "Dune: Part One":
+                    return self.mod.HttpResponse(200, b'{"success": true, "movies": []}', {})
+                if json_body["name"] == "Dune":
+                    return self.mod.HttpResponse(200, _fixture("legendasnet_search_dune.json"), {})
+            raise AssertionError(url)
+
+        provider._http_json = request
+        results = provider.search(
+            _json_fixture("legendasnet_video_dune_2021.json"),
+            [{"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR"}],
+            {"username": "user", "password": "pass"},
+        )
+
+        self.assertEqual(searched_names, ["Dune: Part One", "Dune"])
         self.assertEqual(len(results), 2)
 
     def test_episode_search_filters_requested_episode(self):

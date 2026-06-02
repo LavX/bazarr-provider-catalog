@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "26d5b6566741c69cdb5372cc52e35523d272d0ce51335a9fc8669b5397b0c5f6",
+  "bundle_sha256": "4db5605361d9bcf7331a4d0db1e6e4d28f2f85d46713b8857a13ed9af5d535ef",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -37,7 +37,7 @@
   "entry_class": "LegendasNetProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "e4a9021d849dd7f377fae08ef305977c8134e63f408531e8d9196f582d4002eb"
+    "provider.py": "9ff4f2f1bba18a0274a105578f167ccda79027672a2baf743d25385174f9336f"
   },
   "languages": [
     "por-BR"

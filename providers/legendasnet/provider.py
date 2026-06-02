@@ -22,7 +22,7 @@ USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
 )
-LANGUAGE = {"alpha3": "por-BR", "alpha2": "pt", "country": "BR"}
+LANGUAGE = {"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR"}
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt")
 _NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
 
@@ -46,15 +46,21 @@ class LegendasNetProvider:
             return []
         config = dict(config or {})
         self._ensure_authenticated(config)
-        response = self._search_response(video, config)
-        payload = _json_payload(response, "Legendas.net search")
-        if _api_reports_empty(payload):
-            return []
         if video.get("kind") == "episode":
+            response = self._search_response(video, config)
+            payload = _json_payload(response, "Legendas.net search")
+            if _api_reports_empty(payload):
+                return []
             items = _episode_items(payload, video)
             return [_candidate(video, item, "episode") for item in items]
-        items = payload.get("movies") or []
-        return [_candidate(video, item, "movie") for item in items]
+        for response in self._movie_search_responses(video, config):
+            payload = _json_payload(response, "Legendas.net search")
+            if _api_reports_empty(payload):
+                continue
+            items = payload.get("movies") or []
+            if items:
+                return [_candidate(video, item, "movie") for item in items]
+        return []
 
     def download(self, provider_payload, language, config):
         del language
@@ -85,14 +91,25 @@ class LegendasNetProvider:
                 "tv_season": _int_or_none(video.get("season")),
                 "imdb_id": _text(video.get("series_imdb_id")),
             }
-        else:
-            url = f"{API_URL}/search/movie"
-            body = {
-                "name": _text(video.get("title")),
-                "page": 1,
-                "per_page": 25,
-                "imdb_id": _text(video.get("imdb_id")),
-            }
+            return self._api_search_response(url, body, config)
+        name = next(iter(_movie_search_names(video)), _text(video.get("title")))
+        return self._movie_search_response(video, config, name)
+
+    def _movie_search_responses(self, video, config):
+        for name in _movie_search_names(video):
+            yield self._movie_search_response(video, config, name)
+
+    def _movie_search_response(self, video, config, name):
+        url = f"{API_URL}/search/movie"
+        body = {
+            "name": name,
+            "page": 1,
+            "per_page": 25,
+            "imdb_id": _text(video.get("imdb_id")),
+        }
+        return self._api_search_response(url, body, config)
+
+    def _api_search_response(self, url, body, config):
         _sleep(config)
         response = self._http_json("GET", url, headers=self._headers(config), json_body=body, timeout=HTTP_TIMEOUT_SECONDS)
         if response.status == 429:
@@ -262,6 +279,27 @@ def _language_requested(languages):
         if alpha3 == "por" and country == "BR":
             return True
     return False
+
+
+def _movie_search_names(video):
+    names = []
+
+    def add(value):
+        text = _text(value)
+        if text and text not in names:
+            names.append(text)
+
+    video = video or {}
+    add(video.get("title"))
+    add(video.get("original_title"))
+    for key in ("alternative_titles", "alternative_title"):
+        value = video.get(key)
+        if isinstance(value, (list, tuple, set)):
+            for item in value:
+                add(item)
+        else:
+            add(value)
+    return names
 
 
 def _is_forced(item):
