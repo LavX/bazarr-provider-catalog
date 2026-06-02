@@ -1,12 +1,40 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "ea337f8ef0c837dee1570ac9b375aee18c74de42f44c6ce2baa0c0d2ca1dcaa3",
+  "bundle_sha256": "804bbed0d49590cb0da8ed3e1e151e3e7ce1383817deae4ab144a894de449e2f",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
+      "captcha_response": {
+        "default": "",
+        "description": "Optional pre-solved reCAPTCHA response token used when Subs4Series asks for a download captcha.",
+        "secret": true,
+        "title": "Captcha response",
+        "type": "string"
+      },
+      "captcha_solver_timeout_ms": {
+        "default": 30000,
+        "description": "Maximum time an optional captcha solver endpoint may spend returning a response token.",
+        "maximum": 180000,
+        "minimum": 5000,
+        "title": "Captcha solver timeout (ms)",
+        "type": "integer"
+      },
+      "captcha_solver_token": {
+        "default": "",
+        "description": "Optional bearer token sent to the captcha solver endpoint.",
+        "secret": true,
+        "title": "Captcha solver token",
+        "type": "string"
+      },
+      "captcha_solver_url": {
+        "default": "",
+        "description": "Optional helper endpoint that accepts site_key and site_url JSON and returns a captcha response token.",
+        "title": "Captcha solver URL",
+        "type": "string"
+      },
       "flaresolverr_timeout_ms": {
         "default": 25000,
-        "description": "Maximum time FlareSolverr may spend solving a Cloudflare challenge. Capped below the Provider Hub worker deadline.",
+        "description": "Maximum time FlareSolverr may spend fetching a Subs4Series page after ai-cloudscraper receives a Cloudflare block.",
         "maximum": 25000,
         "minimum": 5000,
         "title": "FlareSolverr timeout (ms)",
@@ -14,21 +42,17 @@
       },
       "flaresolverr_url": {
         "default": "",
-        "description": "Optional FlareSolverr /v1 endpoint used when ai-cloudscraper receives a Cloudflare challenge during NapiProjekt catalog scraping.",
+        "description": "Optional FlareSolverr /v1 endpoint used only when ai-cloudscraper receives a Cloudflare block from Subs4Series.",
         "title": "FlareSolverr URL",
         "type": "string"
       },
-      "only_authors": {
-        "default": false,
-        "description": "Skip subtitles whose catalog author is missing or marked as automated.",
-        "title": "Only authored subtitles",
-        "type": "boolean"
-      },
-      "only_real_names": {
-        "default": false,
-        "description": "Keep only catalog subtitles whose author resembles a real name.",
-        "title": "Only real-name authors",
-        "type": "boolean"
+      "request_delay_ms": {
+        "default": 0,
+        "description": "Optional politeness delay between HTTP calls to subs4series.com.",
+        "maximum": 5000,
+        "minimum": 0,
+        "title": "Delay between requests (ms)",
+        "type": "integer"
       }
     },
     "type": "object"
@@ -69,6 +93,13 @@
         ],
         "name": "aiosignal",
         "version": "1.4.0"
+      },
+      {
+        "hashes": [
+          "sha256:571ac1dc6991c450b25a9c2d84a3705e2ae7a53467b5d111c24fa8baabbed320"
+        ],
+        "name": "annotated-doc",
+        "version": "0.0.4"
       },
       {
         "hashes": [
@@ -114,6 +145,13 @@
       },
       {
         "hashes": [
+          "sha256:482be17c6991b8c19c5429a1e995d9b0efdbb63172824c41f99965dc0ade8ec2"
+        ],
+        "name": "click",
+        "version": "8.4.1"
+      },
+      {
+        "hashes": [
           "sha256:bd72e68b06bb1e96913f97dd4901119bc17f39d4586a5adf2d3e47bc2b9d58b5"
         ],
         "name": "cryptography",
@@ -142,10 +180,31 @@
       },
       {
         "hashes": [
+          "sha256:9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a"
+        ],
+        "name": "markdown-it-py",
+        "version": "4.2.0"
+      },
+      {
+        "hashes": [
+          "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8"
+        ],
+        "name": "mdurl",
+        "version": "0.1.2"
+      },
+      {
+        "hashes": [
           "sha256:7eee46ccb30ff48a1e35bb818cc90846c6be2b68240e42a78599166722cea709"
         ],
         "name": "multidict",
         "version": "6.7.1"
+      },
+      {
+        "hashes": [
+          "sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e"
+        ],
+        "name": "packaging",
+        "version": "26.2"
       },
       {
         "hashes": [
@@ -163,6 +222,13 @@
       },
       {
         "hashes": [
+          "sha256:cd3d911976c184e61c641baf4e26a80f4ac474c830bf12cc8e541490c229bfd6"
+        ],
+        "name": "py7zz",
+        "version": "1.1.4"
+      },
+      {
+        "hashes": [
           "sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992"
         ],
         "name": "pycparser",
@@ -174,6 +240,13 @@
         ],
         "name": "pycryptodome",
         "version": "3.23.0"
+      },
+      {
+        "hashes": [
+          "sha256:81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176"
+        ],
+        "name": "pygments",
+        "version": "2.20.0"
       },
       {
         "hashes": [
@@ -212,10 +285,31 @@
       },
       {
         "hashes": [
+          "sha256:33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb"
+        ],
+        "name": "rich",
+        "version": "15.0.0"
+      },
+      {
+        "hashes": [
+          "sha256:7ecfff8f2fd72616f7481040475a65b2bf8af90a56c89140852d1120324e8686"
+        ],
+        "name": "shellingham",
+        "version": "1.5.4"
+      },
+      {
+        "hashes": [
           "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"
         ],
         "name": "six",
         "version": "1.17.0"
+      },
+      {
+        "hashes": [
+          "sha256:75caa44ed46a03fb2dab8808753ffacdbfea88495e74c85a28c5eefcf5f39c89"
+        ],
+        "name": "typer",
+        "version": "0.25.1"
       },
       {
         "hashes": [
@@ -247,30 +341,33 @@
       }
     ]
   },
-  "description": "Searches NapiProjekt for Polish subtitles using hash lookup and catalog scraping with optional author filters. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback for catalog Cloudflare challenges.",
-  "entry_class": "NapiProjektProvider",
+  "description": "Scrapes Subs4Series for Greek and English episode subtitles. Uses ai-cloudscraper by default with inline Anubis solving, optional FlareSolverr fallback for Cloudflare blocks, anti-block requests, optional captcha helper responses, ZIP, RAR, and direct subtitle downloads.",
+  "entry_class": "Subs4SeriesProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "e5fdac85356362a17ebbe329d74378a2e5bb33d634af7d91d3bb40e28bcc64bc"
+    "provider.py": "22a9d2b0430344815e7e9ee230991601f2b694505b2cb28a823d42c47bf70b9d"
   },
   "languages": [
-    "pol"
+    "ell",
+    "eng"
   ],
-  "name": "NapiProjekt",
-  "provider_id": "napiprojekt",
+  "name": "Subs4Series",
+  "provider_id": "subs4series",
   "schema_version": 1,
-  "secret_fields": [],
+  "secret_fields": [
+    "captcha_response",
+    "captcha_solver_token"
+  ],
   "source": {
     "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
     "commit": "0000000000000000000000000000000000000000",
-    "path": "providers/napiprojekt",
+    "path": "providers/subs4series",
     "ref": "main",
     "repo": "LavX/bazarr-provider-catalog",
     "trusted": true,
     "type": "github"
   },
   "supported_media": [
-    "movie",
     "episode"
   ],
   "version": "0.1.3"
