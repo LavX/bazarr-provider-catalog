@@ -102,7 +102,7 @@
   - `supersubtitles`: branch `catalog-supersubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/supersubtitles`, current head `402929e`
   - `titlovi`: branch `catalog-titlovi`, worktree `/tmp/bazarr_catalog_provider_worktrees/titlovi`, current head `79b9c8b`
   - `titrari`: branch `catalog-titrari`, worktree `/tmp/bazarr_catalog_provider_worktrees/titrari`, current head `13ef747`
-  - `titulky`: branch `catalog-titulky`, worktree `/tmp/bazarr_catalog_provider_worktrees/titulky`, current head `8394a28`
+  - `titulky`: branch `catalog-titulky`, worktree `/tmp/bazarr_catalog_provider_worktrees/titulky`, current head `71ffc9c`
   - `turkcealtyaziorg`: branch `catalog-turkcealtyaziorg`, worktree `/tmp/bazarr_catalog_provider_worktrees/turkcealtyaziorg`, current head `3901e9f`
   - `tvsubtitles`: branch `catalog-tvsubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/tvsubtitles`, current head `80a5c47`
   - `whisperai`: branch `catalog-whisperai`, worktree `/tmp/bazarr_catalog_provider_worktrees/whisperai`, current head `16647ef`, local/generated provider
@@ -722,7 +722,7 @@
 
 - Branch: `catalog-titulky`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/titulky`
-- Current checkpoint: `8394a28 Add Titulky provider`
+- Current checkpoint: `71ffc9c Refresh Titulky catalog metadata`
 - Pull request: [#65](https://github.com/LavX/bazarr-provider-catalog/pull/65), open draft, head `catalog-titulky`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -743,6 +743,20 @@
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://premium.titulky.com/`: returned HTTP `200`.
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' 'https://premium.titulky.com/?action=serial&step=0&id=1160419'`: returned HTTP `200`.
   - Real search and download require valid Titulky VIP credentials.
+- Fresh current-main merge evidence on 2026-06-02:
+  - Live thread-aware PR inspection found no conversation comments, reviews, or review threads on PR `#65`.
+  - Merged `origin/main` into `catalog-titulky`; README and catalog auto-merged cleanly, then `python3 -B -m sdk build-catalog` refreshed generated catalog metadata.
+  - Effective branch scope against current `origin/main` remains limited to `README.md`, `catalog.json`, `docs/provider-notes/titulky.md`, `providers/titulky/provider.json`, `providers/titulky/provider.py`, Titulky fixtures, and `tests/test_titulky.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_titulky.py'`: `9` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/titulky/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python runtime policy remains `>=3.12,<3.15`.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Touched-file attribution and em-dash scan across Titulky files found no matches.
+  - `python3 -B -m unittest discover -s tests`: `736` tests passed with `6` skipped.
+  - Pushed branch head `71ffc9c94778177de2ad093e79088252483c62db`.
+  - PR `#65` is open draft, head `catalog-titulky` at `71ffc9c94778177de2ad093e79088252483c62db`, merge state `CLEAN`, and no checks are reported.
 - Remaining gates:
   - Run SDK live smoke search and download with valid Titulky VIP credentials.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `titulky` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
