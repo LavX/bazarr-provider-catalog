@@ -29,6 +29,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`greeksubs`](providers/greeksubs/) | 0.1.0 | Scrapes [GreekSubs](https://greeksubs.net) for Greek movie and episode subtitles by IMDb id. No login or API key. |
 | [`greeksubtitles`](providers/greeksubtitles/) | 0.1.2 | Scrapes [GreekSubtitles](https://gr.greek-subtitles.com) for Greek and English movie and episode subtitles. ZIP and RAR downloads are supported. |
 | [`isubtitles`](providers/isubtitles/) | 0.1.1 | Scrapes [iSubtitles.org](https://isubtitles.org) for movie and episode subtitles in broad multilingual coverage. No login or API key. |
+| [`jimaku`](providers/jimaku/) | 0.1.0 | Uses the [Jimaku](https://jimaku.cc) API for Japanese movie and episode subtitles. Requires API key. |
 | [`kitsunekko`](providers/kitsunekko/) | 0.1.0 | Scrapes [Kitsunekko](https://kitsunekko.net) for anime subtitle directories and ZIP packs. No login or API key. |
 | [`moviesubtitles`](providers/moviesubtitles/) | 0.1.0 | Scrapes [Moviesubtitles.org](https://www.moviesubtitles.org) for movie subtitles, including multipart archives. No login or API key. |
 | [`my_subs`](providers/my_subs/) | 0.1.1 | Scrapes [My-Subs.co](https://my-subs.co) for movie and episode subtitles in many languages. No login or API key. |
@@ -88,6 +89,7 @@ Every provider here ships independently of Bazarr+ releases. [Contribute](#contr
 - `providers/greeksubs/`: scrapes GreekSubs movie and episode subtitle listings by IMDb id.
 - `providers/greeksubtitles/`: scrapes GreekSubtitles movie and episode search results.
 - `providers/isubtitles/`: scrapes iSubtitles movie and episode subtitle pages.
+- `providers/jimaku/`: uses the Jimaku API for Japanese movie and episode subtitles.
 - `providers/kitsunekko/`: scrapes Kitsunekko anime subtitle directories and ZIP packs.
 - `providers/moviesubtitles/`: scrapes Moviesubtitles.org movie subtitle listings and multipart downloads.
 - `providers/my_subs/`: scrapes My-Subs.co movie and episode subtitle listings.
