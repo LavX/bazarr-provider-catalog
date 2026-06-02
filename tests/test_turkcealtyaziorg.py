@@ -339,6 +339,50 @@ class TurkceAltyaziSearchTests(unittest.TestCase):
             "https://turkcealtyazi.org/find.php?cat=sub&find=1375666",
         )
 
+    def test_http_get_solves_anubis_body_before_retrying_original_url(self):
+        anubis_body = (
+            b'<html><head><meta http-equiv="refresh" '
+            b'content="0; url=/.within.website/?redir=/find.php"></head></html>'
+        )
+        session = FakeSession(
+            [
+                FakeResponse(
+                    200,
+                    anubis_body,
+                    url="https://turkcealtyazi.org/find.php?cat=sub&find=1375666",
+                ),
+                FakeResponse(200, b"<html>solved</html>", url="https://turkcealtyazi.org/find.php?cat=sub&find=1375666"),
+            ]
+        )
+
+        class FakeCloudscraper:
+            @staticmethod
+            def create_scraper(**kwargs):
+                return session
+
+        solved_calls = []
+
+        def fake_solve(active_session, challenge_url, original_url, timeout):
+            solved_calls.append((active_session, challenge_url, original_url, timeout))
+            return {"techaro.lol-anubis-auth": "ok"}
+
+        self.mod.cloudscraper = FakeCloudscraper
+        self.mod.solve_anubis_challenge = fake_solve
+        provider = self.mod.TurkceAltyaziOrgProvider()
+
+        response = provider._http_get(
+            "https://turkcealtyazi.org/find.php?cat=sub&find=1375666",
+            provider._headers({}),
+            {},
+            config={},
+        )
+
+        self.assertEqual(response.body, b"<html>solved</html>")
+        self.assertEqual(len(session.calls), 2)
+        self.assertIs(solved_calls[0][0], session)
+        self.assertEqual(solved_calls[0][1], "https://turkcealtyazi.org/find.php?cat=sub&find=1375666")
+        self.assertEqual(solved_calls[0][2], "https://turkcealtyazi.org/find.php?cat=sub&find=1375666")
+
     def test_http_get_uses_flaresolverr_after_cloudflare_challenge(self):
         session = FakeSession(
             [

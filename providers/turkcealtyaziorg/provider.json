@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "38829f32a1d0a856251e866f2215660df4880fb74f0dd5cb36a4de4fc5d8f681",
+  "bundle_sha256": "0537917e42cb44fe8dfd58c6814325056202854bac49f1c9feacce5c660cb73d",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -328,7 +328,7 @@
   "entry_class": "TurkceAltyaziOrgProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "21710d7f9acda5ea936fce44c1da1120b55c9d1cf1ea0762934bca1daf40f011"
+    "provider.py": "0b6eeb61722f48394acfc29a0bed6c2f21d2b7cb103be37c635485c3a16ec0ad"
   },
   "languages": [
     "tur",

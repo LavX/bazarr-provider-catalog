@@ -229,7 +229,7 @@ class TurkceAltyaziOrgProvider:
     ):
         self._apply_delay(config)
         response = self._send(method, url, headers, cookies, data, timeout, allow_redirects)
-        if is_anubis_challenge(response.url, response.status):
+        if is_anubis_challenge(response.url, response.status) or _has_anubis_challenge_body(response.body):
             solved = solve_anubis_challenge(self._get_session(), response.url, url, timeout=timeout)
             if not solved:
                 raise PermissionError("TurkceAltyazi Anubis challenge could not be solved")
@@ -339,6 +339,14 @@ def is_anubis_challenge(url, status_code=0):
     return "/.within.website/" in (url or "") or (
         status_code in (307, 401, 403) and ".within.website" in (url or "")
     )
+
+
+def _has_anubis_challenge_body(body):
+    if isinstance(body, bytes):
+        text = body.decode("utf-8", "ignore")
+    else:
+        text = str(body or "")
+    return _extract_anubis_challenge(text) is not None
 
 
 def _extract_anubis_challenge(html_text):
