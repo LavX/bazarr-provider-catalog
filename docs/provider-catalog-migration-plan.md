@@ -66,7 +66,7 @@
   - `greeksubtitles`: branch `catalog-greeksubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles`, current head `c0059c2`
   - `hdbits`: branch `catalog-hdbits`, worktree `/tmp/bazarr_catalog_provider_worktrees/hdbits`, current head `a6b35fd`
   - `hosszupuska`: branch `catalog-hosszupuska`, worktree `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`, current head `5ccb3a7`, dead origin
-  - `jimaku`: branch `catalog-jimaku`, worktree `/tmp/bazarr_catalog_provider_worktrees/jimaku`, current head `112d345`
+  - `jimaku`: branch `catalog-jimaku`, worktree `/tmp/bazarr_catalog_provider_worktrees/jimaku`, current head `d4a1600`
   - `karagarga`: branch `catalog-karagarga`, worktree `/tmp/bazarr_catalog_provider_worktrees/karagarga`, current head `0167ba8`
   - `ktuvit`: branch `catalog-ktuvit`, worktree `/tmp/bazarr_catalog_provider_worktrees/ktuvit`, current head `9d3162e`
   - `legendasdivx`: branch `catalog-legendasdivx`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasdivx`, current head `02bbb60`
@@ -3227,8 +3227,8 @@
 
 - Branch: `catalog-jimaku`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/jimaku`
-- Current checkpoint: `112d345 Add Jimaku provider`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/45` opened as draft on 2026-06-01, head `catalog-jimaku`, base `main`, merge state `CLEAN`.
+- Current checkpoint: `d4a1600 Merge current main into Jimaku branch`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/45` opened as draft on 2026-06-01, head `catalog-jimaku`, base `main`, current head `d4a1600baf1046e4238c1f85415fb4336acb0c38`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -3260,6 +3260,21 @@
   - `python3 -B -m sdk smoke-test --provider jimaku --language eng --video-fixture tests/fixtures/jimaku_video_frieren_s01e05.json --expect-min-results 1 --skip-download`: failed at the expected credential gate with `jimaku api_key is required`.
   - PR `#45` was verified open, draft, merge state `CLEAN`, head `112d3459da41be7661fa33df2aefe53a4575a406`.
   - Test-server config check read only API-key presence and length from `/home/lavx/bazarr-data/config/config.yaml`; `jimaku.api_key` is empty.
+- Current-main merge evidence on 2026-06-02:
+  - Live review-thread inspection found no review threads on PR `#45`.
+  - `d4a1600` merges current `origin/main` into `catalog-jimaku`; `python3 -B -m sdk build-catalog` made no additional file changes.
+  - Branch scope against `origin/main` remains limited to README, catalog, Jimaku notes, `providers/jimaku`, `tests/test_jimaku.py`, and Jimaku fixtures.
+  - `python3 -B -m unittest discover -s tests -p 'test_jimaku.py'`: `15` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`.
+  - `python3 -B -m py_compile providers/jimaku/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Attribution scan across Jimaku files found no matches.
+  - Local environment has no `JIMAKU_API_KEY` or `JIMAKU_TOKEN`.
+  - No-key SDK smoke `python3 -B -m sdk smoke-test --provider jimaku --language jpn --video-fixture tests/fixtures/jimaku_video_frieren_s01e05.json --expect-min-results 1 --skip-download` failed at the expected credential gate with `jimaku api_key is required`.
+  - `python3 -B -m unittest discover -s tests`: `742` tests passed with `6` skipped.
+  - PR `#45` is open draft, head `d4a1600baf1046e4238c1f85415fb4336acb0c38`, merge state `CLEAN`, has no review threads, and no checks are reported.
 - Remaining gates:
   - Run SDK live smoke search and download with a real Jimaku API key.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `jimaku` in the trusted replacement policy.
