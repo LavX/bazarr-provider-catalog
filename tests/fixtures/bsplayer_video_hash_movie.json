@@ -1,0 +1,10 @@
+{
+  "kind": "movie",
+  "title": "Example Movie",
+  "year": 2024,
+  "imdb_id": "tt1234567",
+  "size": 123456789,
+  "hashes": {
+    "bsplayer": "0000000000000000"
+  }
+}
