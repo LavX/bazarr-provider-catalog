@@ -14,7 +14,7 @@
 
 - Source inventory: 60 provider modules with provider classes were found under `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/`.
 - Excluded helper modules: `__init__.py`, `_agent_list.py`, `avistaz_network.py`, `mixins.py`, `opensubtitles_scraper.py`, `utils.py`.
-- Main-branch catalog inventory: 28 bundles currently ship from `main` after the Gestdown, BSPlayer, Subtis, SubtitulamosTV, TVSubtitles, GreekSubs, AnimeKalesi, AnimeSub.info, OpenSubtitles.org, AnimeTosho, NapiProjekt, SubF2M, Nekur, GreekSubtitles, PrijevodiOnline, and Soustitres.eu merges.
+- Main-branch catalog inventory: 29 bundles currently ship from `main` after the Gestdown, BSPlayer, Subtis, SubtitulamosTV, TVSubtitles, GreekSubs, AnimeKalesi, AnimeSub.info, OpenSubtitles.org, AnimeTosho, NapiProjekt, SubF2M, Nekur, GreekSubtitles, PrijevodiOnline, Soustitres.eu, and Subclub merges.
 - Branch inventory: all 60 legacy provider-class modules have matching `catalog-*` branches.
 - Current checkout audit on 2026-06-01: `git worktree list --porcelain` shows all 60 provider-class modules linked under `/tmp/bazarr_catalog_provider_worktrees`, plus the planning worktree. The missing-provider check against `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/` returned no missing worktrees.
 - Helper coverage: `opensubtitles_scraper.py` is not a provider-class module. Its behavior is covered inside the `catalog-opensubtitles` / `opensubtitles_org` branch, but the current implementation no longer defaults to a sidecar helper.
@@ -27,7 +27,7 @@
 - Prior SubScene test-server evidence on 2026-06-01: active Provider Hub state after restage was version `0.1.11`, commit `41b9fc0f460b228d4e8061aaa692233a629a7818`, enabled `true`, `pending_restart=false`, `last_error=null`. Final Dune compat search returned HTTP `200`, `79` total results, and `0` SubScene rows. Focused logs showed `sub_scene FlareSolverr request failed: HTTP Error 500: Internal Server Error` and final fanout marked `sub_scene=ok:15566ms`, not `worker exceeded 30s`. This needs restage before treating `0.1.14` as live test-server proof.
 - Provider Hub source-dependency evidence: `ai-cloudscraper==3.8.4` requires `Js2Py`, whose `pyjsparser==2.7.1` dependency is source-only. Bazarr core PR [#173](https://github.com/LavX/bazarr/pull/173), branch `fix/provider-hub-source-deps` at `b4e53d0ed`, changes the Provider Hub installer from `--only-binary=:all:` to `--prefer-binary` while keeping `--require-hashes`, allowing hash-checked source dependencies. `bazarr-ui-test` was hot-patched with that installer for the live staging evidence below.
 - Catalog runtime-matrix evidence: catalog PR [#75](https://github.com/LavX/bazarr-provider-catalog/pull/75), branch `fix/provider-runtime-matrix` at `b97435d`, defines Provider Hub Python support as `>=3.12,<3.15` with concrete targets `3.12`, `3.13`, and `3.14`, adds `sdk runtime-matrix`, and documents wheel hash coverage for pure, ABI-specific, and stable ABI wheels such as `cp311-abi3`. It was merged into `main` at `39565cbd349ec3809040ba3394d4c080c1870ed8`.
-- Merge progress through 2026-06-02 UTC: PR [#75](https://github.com/LavX/bazarr-provider-catalog/pull/75), PR [#15](https://github.com/LavX/bazarr-provider-catalog/pull/15), PR [#17](https://github.com/LavX/bazarr-provider-catalog/pull/17), PR [#18](https://github.com/LavX/bazarr-provider-catalog/pull/18), PR [#20](https://github.com/LavX/bazarr-provider-catalog/pull/20), PR [#19](https://github.com/LavX/bazarr-provider-catalog/pull/19), PR [#21](https://github.com/LavX/bazarr-provider-catalog/pull/21), PR [#22](https://github.com/LavX/bazarr-provider-catalog/pull/22), PR [#23](https://github.com/LavX/bazarr-provider-catalog/pull/23), PR [#14](https://github.com/LavX/bazarr-provider-catalog/pull/14), PR [#16](https://github.com/LavX/bazarr-provider-catalog/pull/16), PR [#24](https://github.com/LavX/bazarr-provider-catalog/pull/24), PR [#25](https://github.com/LavX/bazarr-provider-catalog/pull/25), PR [#26](https://github.com/LavX/bazarr-provider-catalog/pull/26), PR [#31](https://github.com/LavX/bazarr-provider-catalog/pull/31), PR [#30](https://github.com/LavX/bazarr-provider-catalog/pull/30), PR [#32](https://github.com/LavX/bazarr-provider-catalog/pull/32), and PR [#33](https://github.com/LavX/bazarr-provider-catalog/pull/33) were merged after local verification and live PR inspection.
+- Merge progress through 2026-06-02 UTC: PR [#75](https://github.com/LavX/bazarr-provider-catalog/pull/75), PR [#15](https://github.com/LavX/bazarr-provider-catalog/pull/15), PR [#17](https://github.com/LavX/bazarr-provider-catalog/pull/17), PR [#18](https://github.com/LavX/bazarr-provider-catalog/pull/18), PR [#20](https://github.com/LavX/bazarr-provider-catalog/pull/20), PR [#19](https://github.com/LavX/bazarr-provider-catalog/pull/19), PR [#21](https://github.com/LavX/bazarr-provider-catalog/pull/21), PR [#22](https://github.com/LavX/bazarr-provider-catalog/pull/22), PR [#23](https://github.com/LavX/bazarr-provider-catalog/pull/23), PR [#14](https://github.com/LavX/bazarr-provider-catalog/pull/14), PR [#16](https://github.com/LavX/bazarr-provider-catalog/pull/16), PR [#24](https://github.com/LavX/bazarr-provider-catalog/pull/24), PR [#25](https://github.com/LavX/bazarr-provider-catalog/pull/25), PR [#26](https://github.com/LavX/bazarr-provider-catalog/pull/26), PR [#31](https://github.com/LavX/bazarr-provider-catalog/pull/31), PR [#30](https://github.com/LavX/bazarr-provider-catalog/pull/30), PR [#32](https://github.com/LavX/bazarr-provider-catalog/pull/32), PR [#33](https://github.com/LavX/bazarr-provider-catalog/pull/33), and PR [#34](https://github.com/LavX/bazarr-provider-catalog/pull/34) were merged after local verification and live PR inspection.
 - Core replacement-policy evidence: Bazarr core branch `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`, contains a trusted replacement policy for 55 active migrated built-ins, the compat AniDB ID bridge needed by anime providers, and the compat NapiProjekt hash bridge. It excludes dead-origin providers `hosszupuska`, `podnapisi`, `subscenter`, and `xsubs`, and excludes legacy `opensubtitles` because the catalog rewrite ships as `opensubtitles_org`.
 - Test-server core evidence: `bazarr-ui-test` was updated on 2026-05-31 to image version `ui-test-20260531-provider-hub-replacements-f245ae096`, revision `f245ae096`, and returned healthy. The earlier test image based on old head `456071d10` failed because the image did not contain database migration `6c9f1b8d2e3a`; rebasing the core branch onto current `origin/development` fixed that mismatch.
 - License boundary: `/home/lavx/bazarr/LICENSE` is GPL-3.0. This catalog is MIT. Provider implementations in this repo must be clean-room MIT rewrites, not copied or mechanically translated GPL provider files.
@@ -40,7 +40,7 @@
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Source provider-class modules: 60 after excluding `__init__.py`, `_agent_list.py`, `avistaz_network.py`, `mixins.py`, `opensubtitles_scraper.py`, and `utils.py`.
 - Current linked provider worktrees: all 60 provider-class modules have dedicated worktrees under `/tmp/bazarr_catalog_provider_worktrees/<provider>`.
-- Current catalog checkout inventory: this planning worktree is intentionally not rebased onto `main`, but live `main` now ships 28 Provider Hub bundles, adding `gestdown`, `bsplayer`, `subtis`, `subtitulamostv`, `tvsubtitles`, `greeksubs`, `animekalesi`, `animesubinfo`, `opensubtitles_org`, `animetosho`, `napiprojekt`, `subf2m`, `nekur`, `greeksubtitles`, `prijevodionline`, and `soustitreseu` to the previous 12 bundle baseline.
+- Current catalog checkout inventory: this planning worktree is intentionally not rebased onto `main`, but live `main` now ships 29 Provider Hub bundles, adding `gestdown`, `bsplayer`, `subtis`, `subtitulamostv`, `tvsubtitles`, `greeksubs`, `animekalesi`, `animesubinfo`, `opensubtitles_org`, `animetosho`, `napiprojekt`, `subf2m`, `nekur`, `greeksubtitles`, `prijevodionline`, `soustitreseu`, and `subclub` to the previous 12 bundle baseline.
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
 - Core source-dependency branch: `fix/provider-hub-source-deps` in `/tmp/bazarr_provider_hub_source_deps`, current head `b4e53d0ed`, pushed and opened as Bazarr PR `#173`.
 - Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subtitrarinoi`, `subtitriid`, `supersubtitles`, `titrari`, `yavkanet`, `yifysubtitles`, and `subs4free`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
@@ -79,7 +79,7 @@
   - `regielive`: branch `catalog-regielive`, worktree `/tmp/bazarr_catalog_provider_worktrees/regielive`, current head `fb5a2ae`
   - `shooter`: branch `catalog-shooter`, worktree `/tmp/bazarr_catalog_provider_worktrees/shooter`, current head `103d8ee`
   - `soustitreseu`: branch `catalog-soustitreseu`, worktree `/tmp/bazarr_catalog_provider_worktrees/soustitreseu`, current head `09b1dc9`
-  - `subclub`: branch `catalog-subclub`, worktree `/tmp/bazarr_catalog_provider_worktrees/subclub`, current head `0849eae`
+  - `subclub`: branch `catalog-subclub`, worktree `/tmp/bazarr_catalog_provider_worktrees/subclub`, current head `e10187f`
   - `subdl`: branch `catalog-subdl`, worktree `/tmp/bazarr_catalog_provider_worktrees/subdl`, current head `7ff94cd`
   - `subf2m`: branch `catalog-subf2m`, worktree `/tmp/bazarr_catalog_provider_worktrees/subf2m`, current head `659910f`
   - `subs4free`: branch `catalog-subs4free`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4free`, current head `f7ca9ac`
@@ -2024,8 +2024,8 @@
 
 - Branch: `catalog-subclub`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subclub`
-- Current checkpoint: `0849eae Add Subclub provider`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/34` opened on 2026-06-01, head `catalog-subclub`, base `main`, merge state `CLEAN`.
+- Current checkpoint: `e10187f Merge origin/main into Subclub branch`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/34` opened on 2026-06-01, head `catalog-subclub`, base `main`, final head `e10187f111e9dcc034d7c88539680a398ec290a3`, and merged on 2026-06-02 UTC at `714e440dcd85339fdcb52bfd48a7e64ba9b626b1`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -2072,6 +2072,20 @@
   - `python3 -B -m sdk smoke-test --provider subclub --language est --video-fixture tests/fixtures/subclub_video_inception.json --expect-min-results 1`: `subclub ok`.
   - `python3 -B -m sdk smoke-test --provider subclub --language est --video-fixture tests/fixtures/subclub_video_game_of_thrones_s01e01.json --expect-min-results 1`: `subclub ok`.
   - `gh pr view 34 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#34` is open, non-draft, head `catalog-subclub`, base `main`, merge state `CLEAN`.
+- Final merge evidence on 2026-06-02:
+  - Live thread-aware check reported no review threads.
+  - `e10187f` merges current `origin/main` into `catalog-subclub` after the Soustitres.eu merge, resolving generated `README.md` and `catalog.json` while keeping the PR diff scoped to Subclub files plus README and catalog.
+  - `python3 -B -m unittest discover -s tests -p 'test_subclub.py'`: `8` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subclub/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan over the Subclub PR files found no matches.
+  - `python3 -B -m unittest discover -s tests`: `565` tests passed, `6` skipped.
+  - `python3 -B -m sdk smoke-test --provider subclub --language est --video-fixture tests/fixtures/subclub_video_inception.json --expect-min-results 1`: `subclub ok`.
+  - `gh pr view 34 --repo LavX/bazarr-provider-catalog --json number,state,mergedAt,mergeCommit,headRefName,headRefOid,url`: PR `#34` is `MERGED`, merge commit `714e440dcd85339fdcb52bfd48a7e64ba9b626b1`, head `e10187f111e9dcc034d7c88539680a398ec290a3`.
+- Remaining gates: none for PR `#34`.
 
 ### `subssabbz`
 
