@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import unittest
+import urllib.error
 import zipfile
 from pathlib import Path
 
@@ -180,6 +181,43 @@ class SubsynchroProviderTests(unittest.TestCase):
         self.assertEqual(calls[0], (self.mod.SEARCH_URL, b"q=The+Plastic+Detox"))
         self.assertTrue(calls[1][0].startswith(self.mod.LEGACY_AJAX_URL))
         self.assertEqual(results[0]["provider_payload"]["url"], "https://www.subsynchro.com/download.php?id=986")
+
+    def test_search_uses_legacy_ajax_fallback_when_current_site_request_fails(self):
+        provider = self.mod.SubsynchroProvider()
+        calls = []
+
+        def stub(url, data=None, timeout=15, referer=None):
+            del timeout, referer
+            calls.append((url, data))
+            if url == self.mod.SEARCH_URL:
+                raise urllib.error.URLError("timeout")
+            if url.startswith(self.mod.LEGACY_AJAX_URL):
+                return LEGACY_JSON
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_request = stub
+        results = provider.search(
+            VIDEO,
+            [{"alpha3": "fra", "alpha2": "fr"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(calls[0], (self.mod.SEARCH_URL, b"q=The+Plastic+Detox"))
+        self.assertTrue(calls[1][0].startswith(self.mod.LEGACY_AJAX_URL))
+        self.assertEqual(results[0]["provider_payload"]["url"], "https://www.subsynchro.com/download.php?id=986")
+
+    def test_rank_film_pages_rejects_same_title_wrong_year(self):
+        pages = [
+            {
+                "title": "Dune",
+                "year": 2021,
+                "url": "https://www.subsynchro.com/2021/20176-dune.html",
+            }
+        ]
+
+        ranked = self.mod._rank_film_pages({"kind": "movie", "title": "Dune", "year": 1984}, pages)
+
+        self.assertEqual(ranked, [])
 
     def test_search_rejects_unsupported_media_or_language(self):
         provider = self.mod.SubsynchroProvider()

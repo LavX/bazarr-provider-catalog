@@ -219,7 +219,10 @@ class SubsynchroProvider:
         if not title:
             return []
         config = dict(config or {})
-        results = self._search_current_site(video, title, config)
+        try:
+            results = self._search_current_site(video, title, config)
+        except Exception:
+            results = []
         if not results:
             results = self._search_legacy_ajax(video, title, config)
         return sorted(results, key=lambda item: item["score"], reverse=True)
@@ -447,12 +450,15 @@ def _rank_film_pages(video, pages):
     for index, page in enumerate(pages):
         title_norm = _normalize(page.get("title"))
         title_tokens = set(_tokens(page.get("title")))
+        page_year = _safe_int(page.get("year"))
+        if wanted_year is not None and page_year is not None and page_year != wanted_year:
+            continue
         score = 0
         if wanted_tokens and all(token in title_tokens for token in wanted_tokens):
             score = 80
         if wanted_norm and title_norm == wanted_norm:
             score = 110
-        if wanted_year is not None and page.get("year") == wanted_year:
+        if wanted_year is not None and page_year == wanted_year:
             score += 20
         if score:
             ranked.append((page, score, index))
