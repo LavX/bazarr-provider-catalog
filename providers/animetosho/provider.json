@@ -1,0 +1,71 @@
+{
+  "api_version": "bazarr.provider-hub.v1",
+  "bundle_sha256": "ccd4d9ef6ce5ed90510b753d9f6bad4d642497fe25258b9be18154a1178c5dae",
+  "config_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "request_delay_ms": {
+        "default": 0,
+        "description": "Optional politeness delay between AnimeTosho HTTP calls.",
+        "maximum": 5000,
+        "minimum": 0,
+        "title": "Delay between requests (ms)",
+        "type": "integer"
+      },
+      "search_threshold": {
+        "default": 5,
+        "description": "Maximum number of complete AnimeTosho torrent entries to inspect per episode.",
+        "maximum": 50,
+        "minimum": 1,
+        "title": "Search threshold",
+        "type": "integer"
+      }
+    },
+    "type": "object"
+  },
+  "dependencies": {
+    "requirements": []
+  },
+  "description": "Archive-only provider for AnimeTosho's JSON feed, finding embedded subtitle attachments for older anime episodes by AniDB episode id. AnimeTosho stopped new torrent ingestion on May 9, 2026. No login or API key required.",
+  "entry_class": "AnimeToshoProvider",
+  "entry_module": "provider",
+  "files": {
+    "provider.py": "ab9efe017b6d97df1aa19ddd8704df5a43c4bd0436c2592ef1e80da1aaa870fc"
+  },
+  "languages": [
+    "ara",
+    "eng",
+    "fin",
+    "fra",
+    "deu",
+    "heb",
+    "ind",
+    "ita",
+    "jpn",
+    "por",
+    "pol",
+    "rus",
+    "spa",
+    "swe",
+    "tha",
+    "tur",
+    "vie"
+  ],
+  "name": "AnimeTosho",
+  "provider_id": "animetosho",
+  "schema_version": 1,
+  "secret_fields": [],
+  "source": {
+    "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+    "commit": "0000000000000000000000000000000000000000",
+    "path": "providers/animetosho",
+    "ref": "main",
+    "repo": "LavX/bazarr-provider-catalog",
+    "trusted": true,
+    "type": "github"
+  },
+  "supported_media": [
+    "episode"
+  ],
+  "version": "0.1.3"
+}

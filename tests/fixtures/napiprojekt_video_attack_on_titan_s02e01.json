@@ -1,0 +1,11 @@
+{
+  "kind": "episode",
+  "series": "Attack on Titan",
+  "season": 2,
+  "episode": 1,
+  "source": "Web",
+  "series_imdb_id": "tt2560140",
+  "hashes": {
+    "napiprojekt": "fe93bb3a7743c39e12c8d7c4a864dff1"
+  }
+}
