@@ -3042,6 +3042,56 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "caff6d88208bb2b5ad77f8b52b2662df0592f8e069771d13674f771e5b425268",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between HTTP calls to RegieLive.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Searches the RegieLive Bazarr API for Romanian movie and episode subtitles, falls back to the public HTML pages when the API rejects the request, and downloads subtitle ZIP files.",
+        "entry_class": "RegieLiveProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "81770379c497df89f9390a24f4e20aa22b66cc3a399e06e30c5782c6d0811dcc"
+        },
+        "languages": [
+          "ron"
+        ],
+        "name": "RegieLive",
+        "provider_id": "regielive",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/regielive",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.1"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "be88b89891125d78f99daebcf884062aabf7ee43c490bcf1f5951ce61dd920f0",
         "config_schema": {
           "additionalProperties": false,
