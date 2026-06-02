@@ -1118,6 +1118,21 @@
   - `python3 -B -m unittest discover -s tests`: `742` tests passed with `6` skipped.
   - Pushed branch head `6fab89144af39b6deda24c0921751500d354a0d6`.
   - PR `#69` is open draft, head `catalog-zimuku` at `6fab89144af39b6deda24c0921751500d354a0d6`, merge state `CLEAN`, and no checks are reported.
+- Current SubHD anti-captcha comparison and live recheck on 2026-06-02:
+  - Rechecked SubHD's anti-captcha path against Zimuku. SubHD detects an SVG captcha response from the download API, rasterizes four SVG path glyphs, template-matches them from `captcha_templates.py`, and retries the API. Zimuku uses the same native offline-template principle, but the correct provider-specific target is the Yunsuo BMP page gate: parse the body, segment five digit glyphs from the BMP, template-match them from `yunsuo_templates.py`, submit the verify URL, and retry the original URL.
+  - Fetched current `origin/main`; effective branch scope remains limited to README, catalog, Zimuku notes, `providers/zimuku`, Zimuku fixtures, `tests/test_catalog.py`, and `tests/test_zimuku.py`.
+  - Thread-aware GitHub review inspection found no review threads, comments, or reviews on PR `#69`.
+  - `gh pr view 69 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,headRefName,headRefOid,mergeStateStatus,title,updatedAt,reviewDecision`: PR `#69` is open draft, head `6fab89144af39b6deda24c0921751500d354a0d6`, merge state `CLEAN`.
+  - `gh pr checks 69 --repo LavX/bazarr-provider-catalog`: no checks reported on branch `catalog-zimuku`.
+  - `python3 -B -m unittest discover -s tests -p 'test_zimuku.py'`: `14` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_subhd.py'`: `16` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `15` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/zimuku/provider.py providers/zimuku/yunsuo_templates.py providers/subhd/provider.py providers/subhd/captcha_templates.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python policy `>=3.12,<3.15`, versions `3.12`, `3.13`, and `3.14`.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, Zimuku notes, provider code, tests, and fixtures found no matches.
+  - Escalated live SDK smoke `python3 -B -m sdk smoke-test --provider zimuku --language zho --video-fixture tests/fixtures/zimuku_video_game_of_thrones_s01e01.json --config-json '{"request_delay_ms":0}' --expect-min-results 1`: `zimuku ok`.
 - Remaining gates:
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with Yunsuo verification solved.
 
