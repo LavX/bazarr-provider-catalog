@@ -109,6 +109,32 @@ class NekurProviderTests(unittest.TestCase):
         self.assertEqual(queries, ["Missing Title", "Dune"])
         self.assertEqual(len(results), 1)
 
+    def test_search_matches_alternative_title_without_imdb_id(self):
+        provider = self.mod.NekurProvider()
+        queries = []
+
+        def stub(title, timeout=10):
+            del timeout
+            queries.append(title)
+            return SEARCH_HTML
+
+        provider._http_post_search = stub
+        results = provider.search(
+            {
+                "kind": "movie",
+                "title": "Missing Title",
+                "alternative_titles": ["Dune: Part One"],
+                "year": 2021,
+            },
+            [{"alpha3": "lav", "alpha2": "lv"}],
+            {},
+        )
+
+        self.assertEqual(queries, ["Missing Title", "Dune: Part One"])
+        self.assertEqual(len(results), 1)
+        self.assertIn("title", results[0]["matches"])
+        self.assertIn("year", results[0]["matches"])
+
     def test_search_ignores_episodes_and_unrequested_languages(self):
         provider = self.mod.NekurProvider()
 
@@ -149,6 +175,33 @@ class NekurProviderTests(unittest.TestCase):
         self.assertEqual(content["format"], "srt")
         self.assertEqual(content["content_sha256"], hashlib.sha256(data).hexdigest())
         self.assertFalse(content["empty"])
+
+    def test_download_merges_multipart_zip_subtitles(self):
+        body = _zip_body(
+            {
+                "Dune.Part.One.2021.CD1.lv.srt": b"1\n00:00:01,000 --> 00:00:02,000\nPart one\n",
+                "Dune.Part.One.2021.CD2.lv.srt": b"1\n00:10:01,000 --> 00:10:02,000\nPart two\n",
+            }
+        )
+
+        content = self.mod.extract_download(
+            body,
+            "nekur.dune-part-one.2021.zip",
+            {"title": "Dune: Part One", "year": 2021},
+        )
+        data = base64.b64decode(content["content_b64"])
+
+        self.assertIn(b"Part one", data)
+        self.assertIn(b"Part two", data)
+        self.assertEqual(content["format"], "srt")
+
+    def test_download_rejects_html_error_response(self):
+        with self.assertRaises(ValueError):
+            self.mod.extract_download(
+                b"<html><title>Error</title><body>Download unavailable</body></html>",
+                "nekur.dune-part-one.2021.zip",
+                {},
+            )
 
     def test_extract_download_accepts_direct_subtitle_file(self):
         content = self.mod.extract_download(b"1\n00:00:01,000 --> 00:00:02,000\nSveiki\n", "direct.srt", {})

@@ -77,9 +77,13 @@ def parse_search_results(body):
     return rows
 
 
-def derive_matches(video, item):
+def derive_matches(video, item, searched_title=None):
     matches = []
-    if _title_matches((video or {}).get("title"), item.get("title")):
+    title_candidates = _search_titles(video or {})
+    searched_title = str(searched_title or "").strip()
+    if searched_title and searched_title not in title_candidates:
+        title_candidates.append(searched_title)
+    if any(_title_matches(title, item.get("title")) for title in title_candidates):
         matches.append("title")
     try:
         if (video or {}).get("year") and int(video.get("year")) == int(item.get("year")):
@@ -150,7 +154,7 @@ class NekurProvider:
             _sleep(config)
             rows = parse_search_results(self._http_post_search(title))
             for row in rows:
-                matches = derive_matches(video, row)
+                matches = derive_matches(video, row, searched_title=title)
                 if not _has_required_match(video, matches):
                     continue
                 key = row["download_url"]
@@ -222,43 +226,94 @@ def extract_download(body, filename="", payload=None):
         return _content_payload(b"", _format_from_filename(filename), empty=True)
     if _is_rar_archive(body):
         files = _extract_rar_files(body)
-        selected = select_subtitle_file([name for name, _data in files], payload)
-        return _content_payload(dict(files)[selected], _subtitle_extension(selected) or "srt")
+        selected = select_subtitle_files([name for name, _data in files], payload)
+        file_map = dict(files)
+        content = b"\n\n".join(file_map[name] for name in selected)
+        return _content_payload(content, _subtitle_extension(selected[0]) or "srt")
     stream = io.BytesIO(body)
     if zipfile.is_zipfile(stream):
         with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist(), payload)
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
-    return _content_payload(body, _format_from_filename(filename))
+            selected = select_subtitle_files(archive.namelist(), payload)
+            content = b"\n\n".join(archive.read(name) for name in selected)
+            return _content_payload(content, _subtitle_extension(selected[0]) or "srt")
+    subtitle_format = _subtitle_extension(filename or "")
+    if not subtitle_format or _looks_like_html(body):
+        raise ValueError("nekur download did not return a supported subtitle file")
+    return _content_payload(body, subtitle_format)
 
 
 def select_subtitle_file(names, payload):
+    return select_subtitle_files(names, payload)[0]
+
+
+def select_subtitle_files(names, payload):
     candidates = [name for name in names if _subtitle_extension(name)]
     if not candidates:
         raise ValueError("nekur archive contains no supported subtitle files")
+    multipart = _multipart_subset(candidates, payload)
+    if multipart:
+        return multipart
+
+    return [max(enumerate(candidates), key=lambda index_name: _subtitle_file_score(index_name, payload))[1]]
+
+
+def _subtitle_file_score(index_name, payload):
+    index, name = index_name
+    del index
     title_tokens = _tokens((payload or {}).get("title"))
     year = str((payload or {}).get("year") or "")
     note_tokens = _tokens((payload or {}).get("notes"))
     wants_forced = bool((payload or {}).get("forced"))
+    normalized = _normalize(os.path.basename(name))
+    tokens = set(normalized.split())
+    value = 0
+    if title_tokens and all(token in tokens for token in title_tokens):
+        value += 80
+    if year and year in normalized:
+        value += 50
+    for token in note_tokens:
+        if token in tokens:
+            value += 5
+    if not wants_forced and "forced" in tokens:
+        value -= 25
+    return value
 
-    def score(index_name):
-        index, name = index_name
-        del index
-        normalized = _normalize(os.path.basename(name))
-        tokens = set(normalized.split())
-        value = 0
-        if title_tokens and all(token in tokens for token in title_tokens):
-            value += 80
-        if year and year in normalized:
-            value += 50
-        for token in note_tokens:
-            if token in tokens:
-                value += 5
-        if not wants_forced and "forced" in tokens:
-            value -= 25
-        return value
 
-    return max(enumerate(candidates), key=score)[1]
+def _multipart_subset(names, payload):
+    groups = {}
+    for name in names:
+        part_index = _part_index(name)
+        if part_index <= 0:
+            continue
+        groups.setdefault((_multipart_key(name), _subtitle_extension(name)), []).append(name)
+    valid_groups = []
+    for group in groups.values():
+        part_numbers = [_part_index(name) for name in group]
+        if len(group) > 1 and len(set(part_numbers)) == len(part_numbers):
+            valid_groups.append(group)
+    if not valid_groups:
+        return []
+    best_group = max(
+        valid_groups,
+        key=lambda group: (
+            sum(_subtitle_file_score((index, name), payload) for index, name in enumerate(group)),
+            len(group),
+            -min(_part_index(name) for name in group),
+        ),
+    )
+    return sorted(best_group, key=lambda name: (_part_index(name), name.lower()))
+
+
+def _part_index(name):
+    normalized = _normalize(os.path.basename(name))
+    match = re.search(r"\b(?:cd|part|disc|disk)\s*0*(\d+)\b", normalized)
+    return int(match.group(1)) if match else 0
+
+
+def _multipart_key(name):
+    stem = os.path.splitext(os.path.basename(name))[0]
+    normalized = _normalize(stem)
+    return re.sub(r"\b(?:cd|part|disc|disk)\s*0*\d+\b", "", normalized).strip()
 
 
 def _extract_rar_files(body):
@@ -465,6 +520,11 @@ def _content_type(subtitle_format):
     if subtitle_format == "sub":
         return "text/plain"
     return "application/x-subrip"
+
+
+def _looks_like_html(body):
+    sample = (body or b"").lstrip()[:512].lower()
+    return sample.startswith((b"<!doctype html", b"<html")) or b"<title" in sample
 
 
 def _alpha3_for_language(language):
