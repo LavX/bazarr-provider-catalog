@@ -3321,8 +3321,8 @@
 
 - Branch: `catalog-yavkanet`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/yavkanet`
-- Current checkpoint: `62ba3dc Merge remote-tracking branch 'origin/main' into catalog-yavkanet`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/42` opened as draft on 2026-06-01, head `catalog-yavkanet`, base `main`, head OID `62ba3dc4b07d599b9bb3bfb211f44252dfc0e9a7`, latest checked merge state `CLEAN`.
+- Current checkpoint: `87b0e54 Refresh YavkaNet Cloudflare fallback`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/42` opened as draft on 2026-06-01, head `catalog-yavkanet`, base `main`, head OID `87b0e54c8a60509685cfb3badbd60d6dde401c8a`, latest checked merge state `CLEAN`.
 - Local evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -3449,11 +3449,26 @@
   - Prohibited punctuation and attribution scan across README, catalog, YavkaNet notes, provider code, tests, and fixtures found no matches.
   - `python3 -B -m unittest discover -s tests`: `742` tests passed with `6` skipped.
   - Escalated live SDK smoke `python3 -B -m sdk smoke-test --provider yavkanet --language bul --video-fixture tests/fixtures/yavkanet_video_dune_2021.json --config-json '{"request_delay_ms":0}' --expect-min-results 1 --skip-download` failed with `yavkanet hit a Cloudflare challenge and no FlareSolverr URL is configured`.
+- Local FlareSolverr and current-markup refresh on 2026-06-02:
+  - Official `ghcr.io/flaresolverr/flaresolverr:v3.5.0` started locally on `127.0.0.1:8191` with Chromium `148`; root probe returned ready.
+  - Direct official FlareSolverr probe for `https://yavka.net/imdb/tt1160419` succeeded when `maxTimeout=30000`, returned status `ok`, solution status `200`, response length `80784`, and elapsed `13236` ms.
+  - Fork `alexfozor/flaresolverr:pr-1300-experimental-v2` started but did not finish browser readiness; fork `alexfozor/flaresolverr:pr-1300` started with Chromium `126` but timed out solving the same challenge at `25000` ms.
+  - Red TDD gates covered raising the FlareSolverr max timeout to `30000` ms while keeping the HTTP client wait capped at `30` seconds, parsing current `imdb-subtitle-item` list-group rows, capturing current direct `/download?q=...` links, and using GET for direct downloads.
+  - YavkaNet was bumped to `0.1.3`, README and catalog metadata were refreshed, and provider notes now describe both legacy POST forms and current direct download links.
+  - `python3 -B -m unittest discover -s tests -p 'test_yavkanet.py'`: `19` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/yavkanet/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python policy `>=3.12,<3.15`, versions `3.12`, `3.13`, and `3.14`.
+  - `git diff --check`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, YavkaNet notes, provider code, and tests found no matches.
+  - `python3 -B -m unittest discover -s tests`: `746` tests passed with `6` skipped.
+  - Live SDK search smoke with official FlareSolverr `v3.5.0`, `flaresolverr_url=http://127.0.0.1:8191/v1`, and `flaresolverr_timeout_ms=30000` returned `yavkanet ok`.
+  - Live SDK download-enabled smoke with the same setup reached the current direct `/download?q=...` URL, then failed with YavkaNet's own HTTP `403` page body `<?= $SLANG['combomsg104'] ?>`.
+  - Pushed branch head `87b0e54c8a60509685cfb3badbd60d6dde401c8a`; PR `#42` remains open draft, merge state `CLEAN`, and no checks are reported.
 - Remaining gates:
-  - Treat current YavkaNet proof as blocked by the origin Cloudflare challenge and the configured FlareSolverr endpoint returning HTTP `500`, not by Provider Hub config, dependency installation, branch deployment, or worker deadline.
-  - Current local environment also has no reachable FlareSolverr at `http://127.0.0.1:8191/v1`.
-  - Re-run live smoke with a solver, cookie, or FlareSolverr environment that can actually solve `https://yavka.net/imdb/tt1160419`.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
+  - Treat current YavkaNet proof as search-cleared with official FlareSolverr `v3.5.0`, but still blocked for download and stream by YavkaNet's own HTTP `403` response from the current direct `/download?q=...` link after Cloudflare clearance.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` only after a title or session is found where YavkaNet currently permits subtitle downloads, or after matching browser cookies and User-Agent prove the direct download gate is session dependent.
 
 ### `yifysubtitles`
 
