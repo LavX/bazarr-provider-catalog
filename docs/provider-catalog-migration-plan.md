@@ -79,7 +79,7 @@
   - `pipocas`: branch `catalog-pipocas`, worktree `/tmp/bazarr_catalog_provider_worktrees/pipocas`, current head `263e652`
   - `podnapisi`: branch `catalog-podnapisi`, worktree `/tmp/bazarr_catalog_provider_worktrees/podnapisi`, current head `8b3d09f`, dead origin
   - `prijevodionline`: branch `catalog-prijevodionline`, worktree `/tmp/bazarr_catalog_provider_worktrees/prijevodionline`, current head `109ed16`
-  - `regielive`: branch `catalog-regielive`, worktree `/tmp/bazarr_catalog_provider_worktrees/regielive`, current head `fb5a2ae`
+  - `regielive`: branch `catalog-regielive`, worktree `/tmp/bazarr_catalog_provider_worktrees/regielive`, current head `77e8624`
   - `shooter`: branch `catalog-shooter`, worktree `/tmp/bazarr_catalog_provider_worktrees/shooter`, current head `103d8ee`
   - `soustitreseu`: branch `catalog-soustitreseu`, worktree `/tmp/bazarr_catalog_provider_worktrees/soustitreseu`, current head `09b1dc9`
   - `subclub`: branch `catalog-subclub`, worktree `/tmp/bazarr_catalog_provider_worktrees/subclub`, current head `e10187f`
@@ -982,7 +982,7 @@
 
 - Branch: `catalog-regielive`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/regielive`
-- Current checkpoint: `fb5a2ae Add RegieLive provider`
+- Current checkpoint: `77e8624 Merge current main into RegieLive branch`
 - Pull request: [#70](https://github.com/LavX/bazarr-provider-catalog/pull/70), open draft, head `catalog-regielive`, base `main`, merge state `CLEAN`.
 - Local evidence on 2026-05-29:
   - `python3 -B -m unittest discover -s tests -p 'test_regielive.py'`: `11` tests passed.
@@ -1005,6 +1005,20 @@
   - Local direct probe `GET https://api.regielive.ro/bazarr/search.php?nume=Dune&an=2021` with `RL-API: API-BAZARR-YTZ-SL` returned HTTP `403` JSON `{"eroare":"Cerere invalida","cod":403}`.
   - Browser-style User-Agent, GET-with-body, POST form, cookie-retention, and episode query probes did not produce a successful response; the endpoint returned the RegieLive access-restriction page or HTTP `429` after repeated attempts.
   - `bazarr-ui-test` runtime egress reached `https://api.regielive.ro/` with HTTP `200` and body `API<BR>Hi :)`, but the same runtime egress got HTTP `403` from the search endpoint and from `https://subtitrari.regielive.ro`.
+- Fresh current-main merge evidence on 2026-06-02:
+  - Live PR review-thread inspection found no conversation comments, no reviews, and no review threads.
+  - Merged `origin/main` into `catalog-regielive`, resolved generated README and `catalog.json` conflicts by placing RegieLive after PrijevodiOnline, then regenerated `catalog.json`.
+  - Effective branch scope against `origin/main`: `README.md`, `catalog.json`, `docs/provider-notes/regielive.md`, `providers/regielive/provider.json`, `providers/regielive/provider.py`, RegieLive fixtures, and `tests/test_regielive.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_regielive.py'`: `11` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/regielive/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`.
+  - `git diff --cached --check`: clean.
+  - Touched-file attribution and conflict-marker scan across RegieLive files found no matches.
+  - `python3 -B -m unittest discover -s tests`: `738` tests passed with `6` skipped.
+  - Pushed branch head `77e8624c536a14f82a776d89bec81804729cc698`.
+  - PR `#70` is open draft, head `catalog-regielive` at `77e8624c536a14f82a776d89bec81804729cc698`, merge state `CLEAN`, and no checks are reported.
 - Remaining gates:
   - Treat current RegieLive proof as blocked by the live API/search-host access restriction, not by parser behavior or catalog validation.
   - Determine whether RegieLive currently requires a different public request shape, allows only specific egress IPs, or has retired the Bazarr API key.
