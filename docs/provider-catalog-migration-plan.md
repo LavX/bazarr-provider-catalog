@@ -272,6 +272,17 @@
   - Pushed `catalog-whisperai` at `16647ef93fea7f2a47b5f6dba2d4bae11522d2aa`.
   - PR `#55` was verified open, draft, merge state `CLEAN`, head `16647ef93fea7f2a47b5f6dba2d4bae11522d2aa`.
   - `gh pr checks 55 --repo LavX/bazarr-provider-catalog`: no checks reported on the branch.
+  - Fresh recheck on 2026-06-02 confirmed PR `#55` is still open draft, head `16647ef93fea7f2a47b5f6dba2d4bae11522d2aa`, merge state `CLEAN`, has no review threads, no comments, no reviews, and no checks reported.
+  - Effective branch scope against current `origin/main` remains limited to `README.md`, `catalog.json`, `docs/provider-notes/whisperai.md`, `providers/whisperai/provider.json`, `providers/whisperai/provider.py`, `tests/fixtures/whisperai_video_japanese_audio.json`, and `tests/test_whisperai.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_whisperai.py'`: `8` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/whisperai/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Touched-file attribution and prohibited punctuation scan across WhisperAI files found no matches.
+  - `python3 -B -m unittest discover -s tests`: `735` tests passed with `6` skipped.
+  - Local worker-shaped smoke with a temporary localhost Whisper stub, temporary `/tmp/whisperai_media.mkv`, and temporary `/tmp/whisperai_fake_ffmpeg.sh`: `python3 -B -m sdk smoke-test --provider whisperai --language eng --video-fixture /tmp/whisperai_smoke_video.json --expect-min-results 1 --config-json '{"endpoint":"http://127.0.0.1:19191","response_timeout_seconds":5,"transcription_timeout_seconds":30,"ffmpeg_path":"/tmp/whisperai_fake_ffmpeg.sh","pass_video_name":true}'` returned `whisperai ok`.
 - Remaining gates:
   - Run against a real Whisper web service endpoint with a real media fixture.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `whisperai` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
