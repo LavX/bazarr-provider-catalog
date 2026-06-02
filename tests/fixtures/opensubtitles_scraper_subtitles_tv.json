@@ -1,0 +1,40 @@
+{
+  "subtitles": [
+    {
+      "subtitle_id": "1952619105",
+      "language": "en",
+      "filename": "Game.of.Thrones.S01E01.WEB-DL.srt",
+      "release_name": "Game.of.Thrones.S01E01.WEB-DL",
+      "fps": "23.976",
+      "download_url": "https://www.opensubtitles.org/en/subtitles/1952619105",
+      "uploader": "syncmaster",
+      "download_count": 4312,
+      "hearing_impaired": false,
+      "forced": false
+    },
+    {
+      "subtitle_id": "1952619106",
+      "language": "en",
+      "filename": "Game.of.Thrones.S01E01.Forced.srt",
+      "release_name": "Game.of.Thrones.S01E01.Forced",
+      "fps": "23.976",
+      "download_url": "https://www.opensubtitles.org/en/subtitles/1952619106",
+      "uploader": "forced",
+      "download_count": 125,
+      "hearing_impaired": false,
+      "forced": true
+    },
+    {
+      "subtitle_id": "1952619107",
+      "language": "hu",
+      "filename": "Game.of.Thrones.S01E01.HI.srt",
+      "release_name": "Game.of.Thrones.S01E01.HI",
+      "fps": "23.976",
+      "download_url": "https://www.opensubtitles.org/en/subtitles/1952619107",
+      "uploader": "hungarian",
+      "download_count": 372,
+      "hearing_impaired": true,
+      "forced": false
+    }
+  ]
+}
