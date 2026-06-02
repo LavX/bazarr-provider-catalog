@@ -89,7 +89,7 @@
   - `subs4series`: branch `catalog-subs4series`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4series`, current head `15dd455`
   - `subsarr`: branch `catalog-subsarr`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsarr`, current head `8f3bdf7`
   - `subscenter`: branch `catalog-subscenter`, worktree `/tmp/bazarr_catalog_provider_worktrees/subscenter`, current head `57de626`, dead origin
-  - `subsource`: branch `catalog-subsource`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsource`, current head `d50b08f`
+  - `subsource`: branch `catalog-subsource`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsource`, current head `34b3b19`
   - `subsro`: branch `catalog-subsro`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsro`, current head `4e63940`
   - `subssabbz`: branch `catalog-subssabbz`, worktree `/tmp/bazarr_catalog_provider_worktrees/subssabbz`, current head `801c768`
   - `subsunacs`: branch `catalog-subsunacs`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsunacs`, current head `e0b1e00`
@@ -3391,6 +3391,9 @@
   - `python3 -B -m unittest discover -s tests`: `737` tests passed with `6` skipped.
   - `gh pr view 47 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,mergeStateStatus,reviewDecision,headRefName,headRefOid,url,title`: PR `#47` is open, draft, head `34b3b1978ef322d6e279424697fba700b2627267`, merge state `CLEAN`.
   - `gh pr checks 47 --repo LavX/bazarr-provider-catalog`: no checks reported on the branch.
+  - Fresh recheck after fetching `origin/main` confirmed no review threads, PR merge state `CLEAN`, and no checks reported.
+  - Local environment has no `SUBSOURCE_API_KEY` or `SUBSOURCE_TOKEN`, so live SDK smoke remains credential-gated.
+  - No-key SDK smoke `python3 -B -m sdk smoke-test --provider subsource --language eng --video-fixture tests/fixtures/yifysubtitles_video_dune_2021.json --expect-min-results 1 --skip-download` failed at the expected credential gate with `SubSource api_key is required`.
 - Remaining gates:
   - Run SDK live smoke search and download with a real SubSource API key.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `subsource` in the trusted replacement policy.
