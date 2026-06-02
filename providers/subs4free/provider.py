@@ -128,11 +128,9 @@ def parse_search_results(body):
 def parse_suggestions(body):
     rows = []
     for match in _OPTION_RE.finditer(_decode(body)):
-        value = html.unescape(match.group("value"))
-        title = _strip_tags(match.group("title"))
-        if not value or not title:
-            continue
-        rows.append({"title": title, "url": _absolute_url(value)})
+        row = _suggestion_from_option(match)
+        if row:
+            rows.append(row)
     return rows
 
 
@@ -241,20 +239,10 @@ class Subs4FreeProvider:
             body = self._http_get(search_url, referer=BASE_URL)
             candidates = parse_search_results(body)
             candidates.extend(self._candidates_from_suggestions(video, body, config, search_url))
-            accepted = 0
-            for item in candidates:
-                if item["language"] not in requested:
-                    continue
-                if not _candidate_matches_video(video, item):
-                    continue
-                key = (item["detail_url"], item["language"])
-                if key in seen:
-                    continue
-                seen.add(key)
-                results.append(self._result(video, item))
-                accepted += 1
-                if accepted >= MAX_CANDIDATES_PER_QUERY:
-                    break
+            results.extend(
+                self._result(video, item)
+                for item in _accepted_candidates(video, candidates, requested, seen)
+            )
             if results:
                 break
         return sorted(results, key=lambda item: item["score"], reverse=True)
@@ -424,6 +412,31 @@ def _suggestion_matches(video, suggestion):
     return not year or str(year) in suggestion_tokens
 
 
+def _suggestion_from_option(match):
+    value = html.unescape(match.group("value"))
+    title = _strip_tags(match.group("title"))
+    if not value or not title:
+        return None
+    return {"title": title, "url": _absolute_url(value)}
+
+
+def _accepted_candidates(video, candidates, requested, seen):
+    accepted = []
+    for item in candidates:
+        if item["language"] not in requested:
+            continue
+        if not _candidate_matches_video(video, item):
+            continue
+        key = (item["detail_url"], item["language"])
+        if key in seen:
+            continue
+        seen.add(key)
+        accepted.append(item)
+        if len(accepted) >= MAX_CANDIDATES_PER_QUERY:
+            break
+    return accepted
+
+
 def _candidate_matches_video(video, item):
     matches = set(derive_matches(video, item))
     if "title" not in matches:
@@ -583,24 +596,29 @@ def _collect_extracted_subtitle_files(output_dir):
 
 def _content_payload(content, subtitle_format="srt", empty=False):
     content = _normalize_line_endings(content or b"")
-    encoding = "utf-8"
-    if content:
-        try:
-            content.decode("utf-8")
-        except UnicodeDecodeError:
-            encoding = "latin-1"
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": "text/plain",
         "format": subtitle_format or "srt",
-        "encoding": encoding,
+        "encoding": _detect_subtitle_encoding(content),
         "empty": bool(empty),
     }
 
 
 def _normalize_line_endings(content):
-    return content.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    normalized = content.replace(b"\r\n", b"\n")
+    return normalized.replace(b"\r", b"\n")
+
+
+def _detect_subtitle_encoding(content):
+    if not content:
+        return "utf-8"
+    try:
+        content.decode("utf-8")
+    except UnicodeDecodeError:
+        return "latin-1"
+    return "utf-8"
 
 
 def _decode_payload_text(payload):
