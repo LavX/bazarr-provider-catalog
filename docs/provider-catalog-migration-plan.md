@@ -48,9 +48,9 @@
 - Open PR gate classification on 2026-06-02 continuation: live GitHub state still shows `28` open provider PRs, all draft, all merge state `CLEAN`.
   - Credential, session, or API-key gated: `addic7ed`, `assrt`, `avistaz`, `betaseries`, `cinemaz`, `hdbits`, `jimaku`, `karagarga`, `ktuvit`, `legendasdivx`, `legendasnet`, `opensubtitlescom`, `pipocas`, `subdl`, `subsource`, `subsro`, `subx`, `titlovi`, and `titulky`.
   - User service or base URL gated: `subsarr` needs a reachable self-hosted Subsarr `base_url`; `whisperai` needs a real Whisper web-service endpoint for non-stub proof.
-  - Origin access or anti-bot gated: `regielive`, `turkcealtyaziorg`, `yavkanet`, and `wizdom`.
+  - Origin access or anti-bot gated: `turkcealtyaziorg`, `yavkanet`, and `wizdom`.
   - Real media hash or disclosure gated: `napisy24` needs a library-backed video with a valid Napisy24/OpenSubtitles hash; `shooter` needs explicit approval or a non-sensitive fixture before sending derived Shooter hashes to the public API.
-  - Compat-only gated: `zimuku` has current SDK search and download proof, but still needs Provider Hub compat search, download, and stream proof.
+  - Compat-only gated: `regielive` and `zimuku` have current SDK search and download proof, but still need Provider Hub compat search, download, and stream proof.
   - Current local compat reachability evidence: no Bazarr test container is running, `http://127.0.0.1:6767` is closed, `bazarr-ui-test` does not resolve over SSH, and `BAZARR_COMPAT_API_KEY` is unset in this shell.
 - Current catalog checkout inventory: this planning worktree is intentionally not rebased onto `main`, but live `main` now ships 40 Provider Hub bundles, adding `gestdown`, `bsplayer`, `subtis`, `subtitulamostv`, `tvsubtitles`, `greeksubs`, `animekalesi`, `animesubinfo`, `opensubtitles_org`, `animetosho`, `napiprojekt`, `subf2m`, `nekur`, `greeksubtitles`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subs4free`, `subs4series`, `embedded_subtitles`, `subtitrarinoi`, `yifysubtitles`, `subtitriid`, `titrari`, and `supersubtitles` to the previous 12 bundle baseline.
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
@@ -1162,7 +1162,7 @@
 
 - Branch: `catalog-regielive`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/regielive`
-- Current checkpoint: `77e8624 Merge current main into RegieLive branch`
+- Current checkpoint: `fb894d9 Add RegieLive HTML fallback`
 - Pull request: [#70](https://github.com/LavX/bazarr-provider-catalog/pull/70), open draft, head `catalog-regielive`, base `main`, merge state `CLEAN`.
 - Local evidence on 2026-05-29:
   - `python3 -B -m unittest discover -s tests -p 'test_regielive.py'`: `11` tests passed.
@@ -1213,9 +1213,26 @@
   - Live API root `GET https://api.regielive.ro/` returned HTTP `200` with body `API<BR>Hi :)`, proving origin reachability.
   - Live search `GET https://api.regielive.ro/bazarr/search.php?nume=Dune&an=2021` with `RL-API: API-BAZARR-YTZ-SL` and the provider User-Agent returned HTTP `403` JSON `{"eroare":"Cerere invalida","cod":403}`.
   - Retrying the same search after priming a cookie jar from the API root still returned HTTP `403` with the same JSON error shape.
+- API fallback fix on 2026-06-02:
+  - Root-cause probes confirmed the legacy GET-with-body shape, POST form shape, browser User-Agent, requests-style User-Agent, API-host cookie warm-up, and subtitle-host cookie warm-up all still returned HTTP `403` JSON `{"eroare":"Cerere invalida","cod":403}` from the API search endpoint.
+  - The public HTML search page `GET https://subtitrari.regielive.ro/cauta.html?s=Dune` returned HTTP `200` and exposed exact movie or series result pages.
+  - The matched Dune detail page `GET https://subtitrari.regielive.ro/dune-39590/` returned HTTP `200` and exposed `sub_<id>` subtitle rows plus `/descarca-<movie>-<subtitle>.zip` links.
+  - Direct download `GET https://subtitrari.regielive.ro/descarca-39590-503896.zip` returned HTTP `200`, `application/octet-stream`, and a ZIP archive with an SRT file.
+  - Added API-first, HTML-search fallback behavior only for the rejected-request API case, strict movie or series page matching, detail-row parsing, episode subtitle row filtering, focused HTML fixtures, and bumped RegieLive to `0.1.1`.
+  - `python3 -B -m unittest discover -s tests -p 'test_regielive.py'`: red gate failed before implementation with missing HTML parser functions and no fallback after `regielive rejected the request`, then final run passed `14` tests.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/regielive/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Touched-file attribution and prohibited punctuation scan across RegieLive files found no matches.
+  - `python3 -B -m unittest discover -s tests`: `741` tests passed with `6` skipped.
+  - Live SDK search smoke `python3 -B -m sdk smoke-test --provider regielive --language ron --video-fixture tests/fixtures/regielive_video_dune.json --expect-min-results 1 --skip-download`: `regielive ok`.
+  - Live SDK search and download smoke `python3 -B -m sdk smoke-test --provider regielive --language ron --video-fixture tests/fixtures/regielive_video_dune.json --expect-min-results 1`: `regielive ok`.
+  - Pushed branch head `fb894d9a56fc27faa520cf383b6f38e53825c099`.
+  - PR `#70` is open draft, head `catalog-regielive` at `fb894d9a56fc27faa520cf383b6f38e53825c099`, merge state `CLEAN`, has no comments, no reviews, and no checks reported.
 - Remaining gates:
-  - Treat current RegieLive proof as blocked by the live API/search-host access restriction, not by parser behavior or catalog validation.
-  - Determine whether RegieLive currently requires a different public request shape, allows only specific egress IPs, or has retired the Bazarr API key.
+  - Provider Hub compat search, download, and stream proof.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `regielive` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
 
 ### `shooter`
