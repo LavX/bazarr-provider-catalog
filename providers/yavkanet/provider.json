@@ -1,13 +1,13 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "43f2513ac0851bab4b656babcf77fe20e949fbccf8cccc54a216f4d0c267df43",
+  "bundle_sha256": "47d0bce0cf45d07c0954def807d296727f2beb7d67706dd17b89a4b5a5cbcbd5",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
       "flaresolverr_timeout_ms": {
         "default": 10000,
-        "description": "Maximum time FlareSolverr may spend solving a Cloudflare challenge. Capped below the Provider Hub worker deadline.",
-        "maximum": 10000,
+        "description": "Maximum time FlareSolverr may spend solving a Cloudflare challenge. Capped at the Provider Hub worker deadline.",
+        "maximum": 30000,
         "minimum": 5000,
         "title": "FlareSolverr timeout (ms)",
         "type": "integer"
@@ -317,7 +317,7 @@
   "entry_class": "YavkaNetProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "9a010f7fe35dd83ce25e69e848303ece2e9c281dff277a295c5e9bf5c42a99f6"
+    "provider.py": "392a94bd30a59c44bcbd185da5419b697fc536301562b90df664a6c66d341c52"
   },
   "languages": [
     "bul",
@@ -343,5 +343,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.2"
+  "version": "0.1.3"
 }

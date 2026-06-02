@@ -39,6 +39,32 @@ DETAIL_HTML = b"""
   <input type="hidden" name="token" value="abc">
 </form>
 """
+CURRENT_IMDB_HTML = b"""
+<div class="list-group" id="imdbSubtitleList">
+  <a class="list-group-item list-group-item-action imdb-subtitle-item" data-season="0" data-lang="BG" href="/subs/11894/BG">
+    <div class="d-flex justify-content-between gap-3 flex-wrap">
+      <div class="min-w-0">
+        <strong>Dune</strong>
+        <span class="text-muted">(2021)</span>
+        <div class="text-muted small">Dyuna</div>
+      </div>
+      <div class="d-flex align-items-center gap-2 flex-wrap small text-muted">
+        <span><i class="bi bi-download"></i> 11535</span>
+        <span>WEB</span>
+        <span class="fw-semibold"><i class="bi bi-person"></i> WebRip</span>
+      </div>
+    </div>
+  </a>
+</div>
+"""
+CURRENT_DETAIL_HTML = b"""
+<form id="search" name="search" action="/search" method="post">
+  <input type="text" name="sea" value="">
+</form>
+<a href="https://yavka.net/download?q=token" id="down" class="btn btn-info">
+  <b>DOWNLOAD</b>
+</a>
+"""
 SRT_BODY = b"1\n00:00:01,000 --> 00:00:02,000\nYavkaNet subtitle.\n"
 CLOUDFLARE_BODY = b"<html><title>Just a moment...</title><script src='/cdn-cgi/challenge-platform/x'></script></html>"
 
@@ -90,12 +116,30 @@ class YavkaNetParserTests(unittest.TestCase):
         self.assertEqual(row["fps"], 23.976)
         self.assertEqual(row["uploader"], "uploader")
 
+    def test_parse_imdb_results_extracts_current_list_items(self):
+        rows = self.mod.parse_imdb_results(CURRENT_IMDB_HTML)
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["page_url"], "https://yavka.net/subs/11894/BG/")
+        self.assertEqual(row["title"], "Dune")
+        self.assertIn("WEB", row["release"])
+        self.assertEqual(row["year"], 2021)
+        self.assertEqual(row["uploader"], "WebRip")
+
     def test_parse_download_form_extracts_post_fields(self):
         form = self.mod.parse_download_form(DETAIL_HTML)
 
         self.assertEqual(form["method"], "POST")
         self.assertEqual(form["action_url"], "https://yavka.net/subtitle/dune-2021/")
         self.assertEqual(form["data"], {"subtitle_id": "123", "token": "abc"})
+
+    def test_parse_download_form_extracts_current_direct_link(self):
+        form = self.mod.parse_download_form(CURRENT_DETAIL_HTML)
+
+        self.assertEqual(form["method"], "GET")
+        self.assertEqual(form["action_url"], "https://yavka.net/download?q=token")
+        self.assertEqual(form["data"], {})
 
     def test_derive_matches_movie_release_tokens(self):
         row = self.mod.parse_imdb_results(IMDB_HTML)[0]
@@ -257,7 +301,8 @@ class YavkaNetCloudflareTests(unittest.TestCase):
         request = urlopen.call_args.args[0]
         self.assertEqual(request.full_url, "http://flaresolverr:8191/v1")
         payload = json.loads(request.data.decode("utf-8"))
-        self.assertEqual(payload["maxTimeout"], 10000)
+        self.assertEqual(payload["maxTimeout"], 30000)
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], 30)
         self.assertEqual(state["flaresolverr_user_agent"], "Mozilla/5.0 solved")
         self.assertEqual(state["flaresolverr_cookies"], {"cf_clearance": "token"})
 
@@ -310,6 +355,36 @@ class YavkaNetProviderTests(unittest.TestCase):
         self.assertEqual(result["language"], {"alpha3": "bul", "alpha2": "bg", "hi": True, "forced": False})
         self.assertEqual(result["provider_payload"]["form_data"], {"subtitle_id": "123", "token": "abc"})
         self.assertIn("release_group", result["matches"])
+
+    def test_search_supports_current_imdb_cards_and_direct_download_link(self):
+        provider = self.mod.YavkaNetProvider()
+
+        def stub(url, timeout=15, config=None, state=None, referer=None):
+            del timeout, config, state, referer
+            if url == "https://yavka.net/imdb/tt1160419":
+                return CURRENT_IMDB_HTML
+            if url == "https://yavka.net/subs/11894/BG/":
+                return CURRENT_DETAIL_HTML
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        results = provider.search(
+            {
+                "kind": "movie",
+                "title": "Dune",
+                "year": 2021,
+                "imdb_id": "tt1160419",
+                "source": "Web",
+            },
+            [{"alpha3": "bul", "alpha2": "bg"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(len(results), 1)
+        payload = results[0]["provider_payload"]
+        self.assertEqual(payload["method"], "GET")
+        self.assertEqual(payload["download_url"], "https://yavka.net/download?q=token")
+        self.assertEqual(payload["form_data"], {})
 
     def test_movie_search_keeps_imdb_row_with_localized_title(self):
         provider = self.mod.YavkaNetProvider()
@@ -377,6 +452,28 @@ class YavkaNetProviderTests(unittest.TestCase):
         self.assertEqual(data, SRT_BODY)
         self.assertEqual(result["content_sha256"], hashlib.sha256(SRT_BODY).hexdigest())
         self.assertEqual(result["format"], "srt")
+
+    def test_download_uses_get_for_direct_download_links(self):
+        body = _zip_with({"Dune.2021.WEB.srt": SRT_BODY})
+        provider = self.mod.YavkaNetProvider()
+        provider._http_get = lambda url, timeout=30, config=None, state=None, referer=None: body
+        provider._http_post = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unexpected POST"))
+
+        result = provider.download(
+            {
+                "method": "GET",
+                "download_url": "https://yavka.net/download?q=token",
+                "form_data": {},
+                "filename": "Dune.2021.WEB.zip",
+                "release": "Dune.2021.WEB",
+                "video": {"kind": "movie", "title": "Dune", "year": 2021, "source": "Web"},
+            },
+            {"alpha3": "bul"},
+            {},
+        )
+
+        data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
+        self.assertEqual(data, SRT_BODY)
 
     def test_download_rejects_episode_archive_without_requested_member(self):
         body = _zip_with({"Example.S01E03.srt": b"wrong episode"})

@@ -31,7 +31,9 @@ BASE_URL = "https://yavka.net"
 HOME_URL = f"{BASE_URL}/"
 HTTP_TIMEOUT_SECONDS = 15
 DEFAULT_FLARESOLVERR_TIMEOUT_MS = 10000
-MAX_FLARESOLVERR_TIMEOUT_MS = 10000
+MAX_FLARESOLVERR_TIMEOUT_MS = 30000
+FLARESOLVERR_HTTP_TIMEOUT_BUFFER_SECONDS = 5
+MAX_FLARESOLVERR_HTTP_TIMEOUT_SECONDS = 30
 SUPPORTED_LANGUAGES = {
     "bul": "bg",
     "eng": "en",
@@ -60,6 +62,16 @@ _BR_RE = re.compile(r"<br\s*/?>", re.I)
 _WS_RE = re.compile(r"\s+")
 _TR_RE = re.compile(r"<tr\b[^>]*>(?P<body>.*?)</tr>", re.I | re.S)
 _ANCHOR_RE = re.compile(r"<a\b(?P<attrs>[^>]*\bclass\s*=\s*['\"][^'\"]*(?:balon|selector)[^'\"]*['\"][^>]*)>(?P<title>.*?)</a>", re.I | re.S)
+_A_RE = re.compile(r"<a\b(?P<attrs>[^>]*)>(?P<body>.*?)</a>", re.I | re.S)
+_IMDB_ITEM_RE = re.compile(
+    r"<a\b(?P<attrs>[^>]*\bclass\s*=\s*['\"][^'\"]*\bimdb-subtitle-item\b[^'\"]*['\"][^>]*)>(?P<body>.*?)</a>",
+    re.I | re.S,
+)
+_STRONG_RE = re.compile(r"<strong\b[^>]*>(?P<text>.*?)</strong>", re.I | re.S)
+_FW_SPAN_RE = re.compile(
+    r"<span\b(?P<attrs>[^>]*\bclass\s*=\s*['\"][^'\"]*\bfw-semibold\b[^'\"]*['\"][^>]*)>(?P<text>.*?)</span>",
+    re.I | re.S,
+)
 _CLICK_RE = re.compile(r"<a\b[^>]*\bclass\s*=\s*['\"][^'\"]*click[^'\"]*['\"][^>]*>(?P<text>.*?)</a>", re.I | re.S)
 _SPAN_RE = re.compile(r"<span\b(?P<attrs>[^>]*)>(?P<text>.*?)</span>", re.I | re.S)
 _FORM_RE = re.compile(r"<form\b(?P<attrs>[^>]*)>(?P<body>.*?)</form>", re.I | re.S)
@@ -140,11 +152,38 @@ def parse_imdb_results(body):
                 "uploader": _uploader_from_row(row_html),
             }
         )
+    for item_match in _IMDB_ITEM_RE.finditer(text):
+        attrs = _attrs(item_match.group("attrs"))
+        href = attrs.get("href") or ""
+        if not href:
+            continue
+        page_url = _absolute_url(href).rstrip("/") + "/"
+        if page_url in seen:
+            continue
+        seen.add(page_url)
+        row_html = item_match.group("body")
+        strong = _STRONG_RE.search(row_html)
+        title = _strip_tags(strong.group("text")) if strong else _strip_tags(row_html)
+        release = _strip_tags(row_html)
+        rows.append(
+            {
+                "page_url": page_url,
+                "title": title,
+                "release": release,
+                "notes": release,
+                "year": _year_from_row(row_html),
+                "fps": _fps_from_row(row_html),
+                "uploader": _current_uploader_from_row(row_html),
+            }
+        )
     return rows[-50:]
 
 
 def parse_download_form(body, page_url=None):
     text = _decode(body)
+    direct_url = _direct_download_url(text)
+    if direct_url:
+        return {"method": "GET", "action_url": direct_url, "data": {}}
     match = _FORM_RE.search(text)
     if not match:
         raise ValueError("yavkanet detail page did not expose a download form")
@@ -318,14 +357,24 @@ class YavkaNetProvider:
         form_data = payload.get("form_data") or {}
         if not download_url:
             raise ValueError("yavkanet download requires download_url")
-        body = self._http_post(
-            download_url,
-            form_data,
-            timeout=30,
-            config=config,
-            state=self._http_state,
-            referer=download_url,
-        )
+        method = str(payload.get("method") or ("POST" if form_data else "GET")).upper()
+        if method == "GET":
+            body = self._http_get(
+                download_url,
+                timeout=30,
+                config=config,
+                state=self._http_state,
+                referer=payload.get("page_url") or download_url,
+            )
+        else:
+            body = self._http_post(
+                download_url,
+                form_data,
+                timeout=30,
+                config=config,
+                state=self._http_state,
+                referer=payload.get("page_url") or download_url,
+            )
         return extract_download(body, payload)
 
 
@@ -358,6 +407,7 @@ def _result_from_row(video, row, form, language):
         "provider_payload": {
             "provider": PROVIDER_ID,
             "schema": 1,
+            "method": form["method"],
             "download_url": form["action_url"],
             "form_data": form["data"],
             "filename": filename,
@@ -564,7 +614,11 @@ def _flaresolverr_request(method, url, data=None, timeout=HTTP_TIMEOUT_SECONDS, 
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=max(timeout, timeout_ms / 1000)) as response:
+        solver_timeout = min(
+            MAX_FLARESOLVERR_HTTP_TIMEOUT_SECONDS,
+            timeout_ms / 1000 + FLARESOLVERR_HTTP_TIMEOUT_BUFFER_SECONDS,
+        )
+        with urllib.request.urlopen(request, timeout=max(timeout, solver_timeout)) as response:
             body = response.read()
     except Exception as exc:
         raise CloudflareBlockedError(f"yavkanet FlareSolverr request failed: {exc}") from exc
@@ -664,6 +718,20 @@ def _fps_from_row(row_html):
 def _uploader_from_row(row_html):
     match = _CLICK_RE.search(row_html)
     return _strip_tags(match.group("text")) if match else ""
+
+
+def _current_uploader_from_row(row_html):
+    match = _FW_SPAN_RE.search(row_html)
+    return _strip_tags(match.group("text")) if match else ""
+
+
+def _direct_download_url(text):
+    for match in _A_RE.finditer(text):
+        attrs = _attrs(match.group("attrs"))
+        href = attrs.get("href") or ""
+        if attrs.get("id") == "down" or "/download" in href:
+            return _absolute_url(href)
+    return ""
 
 
 def _row_matches_video(video, row):
