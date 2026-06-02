@@ -387,7 +387,7 @@ class Subs4SeriesProvider:
             body = getattr(response, "content", None)
             if body is None:
                 body = str(getattr(response, "text", "")).encode("utf-8")
-            if is_anubis_challenge(getattr(response, "url", ""), getattr(response, "status_code", 0)):
+            if is_anubis_challenge(getattr(response, "url", ""), getattr(response, "status_code", 0)) or _has_anubis_challenge_body(body):
                 solved = solve_anubis_challenge(scraper, response.url, url, timeout=timeout)
                 if not solved:
                     raise CloudflareBlockedError("subs4series Anubis challenge could not be solved")
@@ -527,6 +527,14 @@ def is_anubis_challenge(url, status_code=0):
     return "/.within.website/" in (url or "") or (
         status_code in (307, 401, 403) and ".within.website" in (url or "")
     )
+
+
+def _has_anubis_challenge_body(body):
+    if isinstance(body, bytes):
+        text = body.decode("utf-8", "ignore")
+    else:
+        text = str(body or "")
+    return _extract_anubis_challenge(text) is not None
 
 
 def _extract_anubis_challenge(html_text):

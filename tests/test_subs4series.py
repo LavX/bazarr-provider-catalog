@@ -339,6 +339,48 @@ class Subs4SeriesProviderTests(unittest.TestCase):
             "https://www.subs4series.com/search_report.php?search=Game+of+Thrones&searchType=1",
         )
 
+    def test_http_get_solves_anubis_body_before_retrying_original_url(self):
+        provider = self.mod.Subs4SeriesProvider()
+        anubis_body = (
+            b'<html><head><meta http-equiv="refresh" '
+            b'content="0; url=/.within.website/?redir=/search_report.php"></head></html>'
+        )
+        scraper = FakeScraper(
+            [
+                FakeScraperResponse(
+                    200,
+                    {},
+                    anubis_body,
+                    url="https://www.subs4series.com/search_report.php?search=Game+of+Thrones&searchType=1",
+                ),
+                FakeScraperResponse(200, {}, b"<option>Game of Thrones</option>"),
+            ]
+        )
+        solved_calls = []
+
+        def fake_solve(active_scraper, challenge_url, original_url, timeout):
+            solved_calls.append((active_scraper, challenge_url, original_url, timeout))
+            return {"techaro.lol-anubis-auth": "ok"}
+
+        with patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), patch.object(
+            self.mod,
+            "solve_anubis_challenge",
+            side_effect=fake_solve,
+        ):
+            body = provider._http_get("https://www.subs4series.com/search_report.php?search=Game+of+Thrones&searchType=1")
+
+        self.assertIn(b"Game of Thrones", body)
+        self.assertEqual(len(scraper.calls), 2)
+        self.assertIs(solved_calls[0][0], scraper)
+        self.assertEqual(
+            solved_calls[0][1],
+            "https://www.subs4series.com/search_report.php?search=Game+of+Thrones&searchType=1",
+        )
+        self.assertEqual(
+            solved_calls[0][2],
+            "https://www.subs4series.com/search_report.php?search=Game+of+Thrones&searchType=1",
+        )
+
     def test_http_get_uses_flaresolverr_after_cloudflare_block(self):
         provider = self.mod.Subs4SeriesProvider()
         challenge_response = FakeScraperResponse(

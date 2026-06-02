@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "3c2c73565584731f27604fba28e5b288f69498cf9afa047df12a15fffbd58173",
+  "bundle_sha256": "9db9d1362efdba36d8a4f218bcbcc1d54b70dd61e9aae162d0355332b0f6b77e",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -345,7 +345,7 @@
   "entry_class": "Subs4SeriesProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "124de410cb1a686cbba00b0c851ca1c6cc271c7379caeab8a55ba939e5b18a6d"
+    "provider.py": "95d48f728defc51aaa8293f81e82e6ddfb5cec61d65ef541711981fac4909e99"
   },
   "languages": [
     "ell",
