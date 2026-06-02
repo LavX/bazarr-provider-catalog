@@ -1683,8 +1683,8 @@
 
 - Branch: `catalog-greeksubtitles`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles`
-- Current checkpoint: `da99eee Add GreekSubtitles provider`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/30` opened on 2026-06-01, head `catalog-greeksubtitles`, base `main`, merge state `CLEAN`.
+- Current checkpoint: `4d804d0 Fix GreekSubtitles raw download validation`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/30` opened on 2026-06-01, head `catalog-greeksubtitles`, base `main`, merge state `CLEAN`, current head `4d804d02511b5700118187a6faf0906838ccd825`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1727,6 +1727,23 @@
   - Prohibited punctuation and attribution scan across README, catalog, docs, provider code, tests, and fixtures: no matches.
   - `python3 -B -m sdk smoke-test --provider greeksubtitles --language ell --video-fixture tests/fixtures/greeksubtitles_video_dune.json --config-json '{"request_delay_ms":0}' --expect-min-results 1`: `greeksubtitles ok`.
   - `gh pr view 30 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#30` is open, non-draft, head `catalog-greeksubtitles`, base `main`, merge state `CLEAN`.
+- Review-fix evidence on 2026-06-02:
+  - Initial live `reviewThreads` check found three active reviewer concerns: reject HTML download responses before returning raw bytes, require episode years to appear before granting a year match, and compare normalized title tokens as whole tokens.
+  - `b411aa6` fixes year and whole-token matching, rejects HTML raw-download responses, adds focused regression tests, bumps GreekSubtitles to `0.1.1`, and rebuilds `catalog.json`.
+  - `c9e63f6` merges current `main` into `catalog-greeksubtitles`, resolving `README.md` and `catalog.json` without broadening the PR scope.
+  - A second live `reviewThreads` check left only the raw-download thread active, because GitHub still anchored it to the raw return line.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_greeksubtitles.py'`: failed because unsupported raw bytes with the generated `.zip` payload name were still treated as SRT.
+  - `4d804d0` moves the raw fallback into `_extract_raw_subtitle_download`, rejects HTML before raw fallback, rejects unsupported raw content unless the filename has a supported subtitle extension or the body looks like subtitle text, bumps GreekSubtitles to `0.1.2`, and rebuilds `catalog.json`.
+  - `python3 -B -m unittest discover -s tests -p 'test_greeksubtitles.py'`: `13` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed, `6` skipped.
+  - `python3 -B -m py_compile providers/greeksubtitles/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`.
+  - `git diff --check origin/main...HEAD` and `git diff --check`: clean.
+  - Prohibited punctuation and attribution scan over `README.md`, `catalog.json`, `providers/greeksubtitles`, `tests/test_greeksubtitles.py`, and `docs/provider-notes/greeksubtitles.md` found no matches.
+  - `python3 -B -m unittest discover -s tests`: `529` tests passed, `6` skipped.
+  - Live GraphQL `reviewThreads` recheck after pushing head `4d804d02511b5700118187a6faf0906838ccd825`: PR `#30` is open, non-draft, merge state `CLEAN`, and all three review threads are outdated with no active non-outdated unresolved threads.
+- Remaining gates: wait for approval and merge PR `#30`; restage on `bazarr-ui-test` if runtime proof is required for the `0.1.2` review-fix bundle.
 
 ### `hosszupuska`
 
