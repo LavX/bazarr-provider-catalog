@@ -381,6 +381,23 @@ class Subs4SeriesProviderTests(unittest.TestCase):
             "https://www.subs4series.com/search_report.php?search=Game+of+Thrones&searchType=1",
         )
 
+    def test_extract_anubis_challenge_accepts_string_challenge(self):
+        challenge = self.mod._extract_anubis_challenge(
+            '<script id="anubis_challenge">'
+            + json.dumps(
+                {
+                    "rules": {"algorithm": "slow", "difficulty": 7},
+                    "challenge": "random-string",
+                }
+            )
+            + "</script>"
+        )
+
+        self.assertEqual(challenge["id"], "random-string")
+        self.assertEqual(challenge["randomData"], "random-string")
+        self.assertEqual(challenge["difficulty"], 7)
+        self.assertEqual(challenge["method"], "slow")
+
     def test_http_get_uses_flaresolverr_after_cloudflare_block(self):
         provider = self.mod.Subs4SeriesProvider()
         challenge_response = FakeScraperResponse(
