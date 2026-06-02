@@ -3198,8 +3198,8 @@
 
 - Branch: `catalog-subsro`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subsro`
-- Current checkpoint: `4e63940 Add Subs.ro provider`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/48` opened as draft on 2026-06-01, head `catalog-subsro`, base `main`, merge state `CLEAN`.
+- Current checkpoint: `b1f6fe6 Merge current main into Subs.ro branch`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/48` opened as draft on 2026-06-01, head `catalog-subsro`, base `main`, current head `b1f6fe6150c429f509cc1fb875611b8d605f857d`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -3233,6 +3233,20 @@
   - `python3 -B -m sdk smoke-test --provider subsro --language ron --expect-min-results 1 --skip-download`: failed at the expected credential gate with `Subs.ro api_key is required`.
   - PR `#48` was verified open, draft, merge state `CLEAN`, head `4e639403e4f31466430947f823d64d9a041e121d`.
   - Test-server config check read only API-key presence and length from `/home/lavx/bazarr-data/config/config.yaml`; `subsro.api_key` is empty.
+- Current-main merge evidence on 2026-06-02:
+  - Live PR diff scope remains limited to `README.md`, `catalog.json`, `docs/provider-notes/subsro.md`, `providers/subsro`, and `tests/test_subsro.py`.
+  - Live review-thread inspection found no review threads on PR `#48`.
+  - `b1f6fe6` merges current `origin/main` into `catalog-subsro`, resolving generated `README.md` and `catalog.json` while preserving the Subs.ro provider scope.
+  - `python3 -B -m unittest discover -s tests -p 'test_subsro.py'`: `15` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`, ABI tags `cp312`, `cp313`, `cp314`, and `abi3`.
+  - `python3 -B -m py_compile providers/subsro/provider.py`: passed.
+  - `git diff --cached --check` and `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, Subs.ro notes, provider code, and tests found no matches.
+  - `python3 -B -m unittest discover -s tests`: `742` tests passed with `6` skipped.
+  - `gh pr view 48 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,mergeStateStatus,reviewDecision,headRefName,headRefOid,url,title`: PR `#48` is open, draft, head `b1f6fe6150c429f509cc1fb875611b8d605f857d`, merge state `CLEAN`.
+  - `gh pr checks 48 --repo LavX/bazarr-provider-catalog`: no checks reported on the branch.
 - Remaining gates:
   - Run SDK live smoke search and download with a real Subs.ro API key.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `subsro` in the trusted replacement policy.
