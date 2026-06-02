@@ -2,6 +2,7 @@
 
 import base64
 import hashlib
+import html
 import io
 import json
 import os
@@ -24,7 +25,8 @@ USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
-DEFAULT_FLARESOLVERR_TIMEOUT_MS = 60000
+DEFAULT_FLARESOLVERR_TIMEOUT_MS = 10000
+MAX_FLARESOLVERR_TIMEOUT_MS = 10000
 CLOUDFLARE_STATUS_CODES = {403, 429, 503}
 CLOUDFLARE_BODY_MARKERS = (
     "just a moment",
@@ -34,7 +36,19 @@ CLOUDFLARE_BODY_MARKERS = (
     "cf-chl",
     "turnstile",
 )
-SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt")
+_META_REFRESH_RE = re.compile(
+    r"""<meta\s+http-equiv=["']refresh["']\s+content=["'](?P<delay>\d+);\s*url=(?P<url>[^"']+)["']""",
+    re.I,
+)
+_REFRESH_VALUE_RE = re.compile(
+    r"""(?P<delay>\d+)\s*;\s*url=(?P<url>.+?)\s*$""",
+    re.I,
+)
+_ANUBIS_CHALLENGE_RE = re.compile(
+    r"""<script\s+id=["']anubis_challenge["'][^>]*>\s*(?P<json>.*?)\s*</script>""",
+    re.I | re.S,
+)
+SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt", ".smi")
 
 LANGUAGE_MAP = {
     "Arabic": "ara",
@@ -124,11 +138,28 @@ class CloudflareBlockedError(RuntimeError):
 
 class _MissingCloudscraper:
     def create_scraper(self, *args, **kwargs):
-        raise CloudflareBlockedError("sub_scene cloudscraper dependency is not installed")
+        raise CloudflareBlockedError("sub_scene ai-cloudscraper dependency is not installed")
 
 
 if cloudscraper is None:  # pragma: no cover, dependency is declared in provider.json
     cloudscraper = _MissingCloudscraper()
+
+
+def _create_cloudscraper_session():
+    options = {
+        "browser": {"custom": USER_AGENT},
+        "interpreter": "native",
+        "enable_cookie_persistence": False,
+        "debug": False,
+    }
+    try:
+        return cloudscraper.create_scraper(**options)
+    except TypeError as exc:
+        if "enable_cookie_persistence" not in str(exc):
+            raise
+        fallback_options = dict(options)
+        fallback_options.pop("enable_cookie_persistence", None)
+        return cloudscraper.create_scraper(**fallback_options)
 
 
 class SubsceneSearchParser(HTMLParser):
@@ -353,6 +384,181 @@ def _is_cloudflare_exception(exc):
     return "cloudflare" in text or "challenge" in text
 
 
+def is_anubis_challenge(url, status_code=0):
+    return "/.within.website/" in (url or "") or (
+        status_code in (307, 401, 403) and ".within.website" in (url or "")
+    )
+
+
+def _has_anubis_challenge_body(body, headers=None):
+    text = (body or b"").decode("utf-8", errors="ignore")
+    if _ANUBIS_CHALLENGE_RE.search(text):
+        return True
+    meta_match = _META_REFRESH_RE.search(text)
+    if meta_match and "/.within.website/" in html.unescape(meta_match.group("url")):
+        return True
+    refresh_header = _normalize_headers(headers).get("refresh")
+    return bool(refresh_header and "/.within.website/" in html.unescape(refresh_header))
+
+
+def _refresh_challenge(delay, redirect_url):
+    redirect_url = html.unescape(str(redirect_url or "").strip())
+    if "/.within.website/" not in redirect_url:
+        return None
+    return {
+        "method": "metarefresh",
+        "redirect_url": redirect_url,
+        "delay": int(delay),
+        "difficulty": 0,
+    }
+
+
+def _extract_anubis_challenge(html_text, headers=None):
+    refresh_header = _normalize_headers(headers).get("refresh")
+    if refresh_header:
+        refresh_match = _REFRESH_VALUE_RE.search(refresh_header)
+        if refresh_match:
+            challenge = _refresh_challenge(
+                refresh_match.group("delay"),
+                refresh_match.group("url"),
+            )
+            if challenge:
+                return challenge
+
+    meta_match = _META_REFRESH_RE.search(html_text or "")
+    if meta_match:
+        challenge = _refresh_challenge(meta_match.group("delay"), meta_match.group("url"))
+        if challenge:
+            return challenge
+    match = _ANUBIS_CHALLENGE_RE.search(html_text or "")
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group("json"))
+    except json.JSONDecodeError:
+        return None
+    rules = data.get("rules") or {}
+    if not isinstance(rules, dict):
+        rules = {}
+    challenge = data.get("challenge") or {}
+    if isinstance(challenge, str):
+        challenge = {
+            "id": data.get("id") or challenge,
+            "randomData": challenge,
+        }
+    if not isinstance(challenge, dict) or "randomData" not in challenge or "id" not in challenge:
+        return None
+    return {
+        "id": challenge["id"],
+        "randomData": challenge["randomData"],
+        "difficulty": int(challenge.get("difficulty", rules.get("difficulty", 4))),
+        "method": challenge.get(
+            "method",
+            challenge.get(
+                "algorithm",
+                rules.get("method", rules.get("algorithm", "fast")),
+            ),
+        ),
+    }
+
+
+def _leading_zero_bits(digest):
+    count = 0
+    for char in str(digest or ""):
+        value = int(char, 16)
+        if value == 0:
+            count += 4
+            continue
+        for bit in (3, 2, 1, 0):
+            if value & (1 << bit):
+                return count
+            count += 1
+    return count
+
+
+def _solve_pow(random_data, difficulty):
+    try:
+        target_bits = max(0, min(int(difficulty), 64))
+    except (TypeError, ValueError):
+        target_bits = 4
+    nonce = 0
+    while True:
+        digest = hashlib.sha256(f"{random_data}{nonce}".encode("utf-8")).hexdigest()
+        if _leading_zero_bits(digest) >= target_bits:
+            return nonce, digest
+        nonce += 1
+
+
+def _solve_preact(random_data, difficulty):
+    return hashlib.sha256(random_data.encode("utf-8")).hexdigest(), difficulty * 0.125
+
+
+def solve_anubis_challenge(session, challenge_url, original_url, timeout=30):
+    del original_url
+    parsed = urllib.parse.urlparse(challenge_url)
+    query = urllib.parse.parse_qs(parsed.query)
+    redir = query.get("redir", [parsed.path])[0]
+    base = f"{parsed.scheme}://{parsed.netloc}"
+    challenge_page_url = challenge_url if challenge_url.startswith("http") else base + challenge_url
+    started = time.monotonic()
+
+    response = session.get(challenge_page_url, timeout=(10, timeout), allow_redirects=True)
+    challenge = _extract_anubis_challenge(
+        getattr(response, "text", ""),
+        getattr(response, "headers", {}) or {},
+    )
+    if not challenge:
+        return None
+
+    method = challenge["method"]
+    if method == "metarefresh":
+        redirect_url = challenge["redirect_url"]
+        if not redirect_url.startswith("http"):
+            redirect_url = base + redirect_url
+        time.sleep(challenge.get("delay", 1))
+        solved = session.get(redirect_url, timeout=(10, timeout), allow_redirects=True)
+        if getattr(solved, "cookies", None):
+            session.cookies.update(solved.cookies)
+    elif method == "preact":
+        result, delay = _solve_preact(challenge["randomData"], challenge["difficulty"])
+        time.sleep(delay)
+        params = {
+            "id": challenge["id"],
+            "result": result,
+            "redir": redir,
+            "elapsedTime": str(int((time.monotonic() - started) * 1000)),
+        }
+        solved = session.get(
+            f"{base}/.within.website/x/cmd/anubis/api/pass-challenge?{urllib.parse.urlencode(params)}",
+            timeout=(10, timeout),
+            allow_redirects=False,
+        )
+        if getattr(solved, "cookies", None):
+            session.cookies.update(solved.cookies)
+    else:
+        nonce, digest = _solve_pow(challenge["randomData"], challenge["difficulty"])
+        params = {
+            "id": challenge["id"],
+            "response": digest,
+            "nonce": str(nonce),
+            "redir": redir,
+            "elapsedTime": str(int((time.monotonic() - started) * 1000)),
+        }
+        solved = session.get(
+            f"{base}/.within.website/x/cmd/anubis/api/pass-challenge?{urllib.parse.urlencode(params)}",
+            timeout=(10, timeout),
+            allow_redirects=False,
+        )
+        if getattr(solved, "cookies", None):
+            session.cookies.update(solved.cookies)
+
+    cookies = {}
+    for cookie in getattr(session, "cookies", []) or []:
+        if "anubis" in cookie.name.lower() or cookie.name == "PHPSESSID":
+            cookies[cookie.name] = cookie.value
+    return cookies or None
+
+
 def _flaresolverr_url(config):
     return str((config or {}).get("flaresolverr_url") or "").strip()
 
@@ -362,7 +568,12 @@ def _flaresolverr_timeout_ms(config):
         timeout = int((config or {}).get("flaresolverr_timeout_ms") or DEFAULT_FLARESOLVERR_TIMEOUT_MS)
     except (TypeError, ValueError):
         return DEFAULT_FLARESOLVERR_TIMEOUT_MS
-    return max(5000, min(timeout, 180000))
+    bounded_timeout = min(timeout, MAX_FLARESOLVERR_TIMEOUT_MS)
+    return max(5000, bounded_timeout)
+
+
+def _flaresolverr_http_timeout_seconds(timeout, timeout_ms):
+    return min(timeout, timeout_ms / 1000)
 
 
 def _cookie_header(cookies):
@@ -395,9 +606,7 @@ def _get_cloudscraper(state):
         state = {}
     scraper = state.get("cloudscraper")
     if scraper is None:
-        scraper = cloudscraper.create_scraper(
-            browser={"custom": USER_AGENT},
-        )
+        scraper = _create_cloudscraper_session()
         state["cloudscraper"] = scraper
     return scraper
 
@@ -449,7 +658,7 @@ def _flaresolverr_get(url, timeout=30, config=None, state=None):
     try:
         with urllib.request.urlopen(
             request,
-            timeout=max(timeout, timeout_ms / 1000),
+            timeout=_flaresolverr_http_timeout_seconds(timeout, timeout_ms),
         ) as response:
             response_body = response.read()
     except Exception as exc:
@@ -483,7 +692,7 @@ def _flaresolverr_get(url, timeout=30, config=None, state=None):
 
 
 def _http_get(url, timeout=30, config=None, state=None, referer=None):
-    """Make HTTP GET request with cloudscraper and optional FlareSolverr fallback."""
+    """Make HTTP GET request with ai-cloudscraper and optional FlareSolverr fallback."""
     state = state if state is not None else {}
     config = config or {}
     try:
@@ -502,6 +711,25 @@ def _http_get(url, timeout=30, config=None, state=None, referer=None):
     body = getattr(response, "content", None)
     if body is None:
         body = str(getattr(response, "text", "")).encode("utf-8")
+    if is_anubis_challenge(getattr(response, "url", ""), status_code) or _has_anubis_challenge_body(body, headers):
+        solved = solve_anubis_challenge(
+            _get_cloudscraper(state),
+            getattr(response, "url", "") or url,
+            url,
+            timeout=timeout,
+        )
+        if not solved:
+            raise CloudflareBlockedError("sub_scene Anubis challenge could not be solved")
+        response = _get_cloudscraper(state).get(
+            url,
+            timeout=timeout,
+            headers=_request_headers(state, referer),
+        )
+        status_code = getattr(response, "status_code", 0)
+        headers = getattr(response, "headers", {}) or {}
+        body = getattr(response, "content", None)
+        if body is None:
+            body = str(getattr(response, "text", "")).encode("utf-8")
 
     if _is_cloudflare_challenge(status_code, headers, body):
         if _flaresolverr_url(config):
