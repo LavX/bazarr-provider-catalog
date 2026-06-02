@@ -190,6 +190,8 @@ def rank_episode_paths(video, rows):
     wanted_tokens = set(_tokens(wanted_series))
     ranked = []
     for row in rows or []:
+        if wanted_year is not None and row.get("year") is not None and row["year"] != wanted_year:
+            continue
         title = _series_title_without_season(row.get("title"))
         tokens = set(_tokens(title))
         score = _similarity_score(wanted_series, title)
@@ -250,6 +252,8 @@ class SubF2MProvider:
                             continue
                         raise
                     for row in parse_subtitle_page(page_body, language["alpha3"], video):
+                        if not _row_matches_language(row, language):
+                            continue
                         key = (row["subtitle_id"], row["language"])
                         if key in seen:
                             continue
@@ -309,14 +313,16 @@ class SubF2MProvider:
         matches = derive_matches(video, candidate, imdb_matched=row.get("imdb_matched"), season_pack=row.get("season_pack"))
         score = 95 if "episode" in matches or "year" in matches else 85
         filename = f"subf2m.{_slug(row['release_info'])}.{language['alpha2']}.{row['subtitle_id']}.zip"
+        hearing_impaired = bool(row.get("hearing_impaired"))
+        forced = bool(row.get("forced"))
         return {
             "provider": PROVIDER_ID,
             "id": f"subf2m-{row['subtitle_id']}-{row['language']}",
             "language": {
                 "alpha3": row["language"],
                 "alpha2": language["alpha2"],
-                "hi": False,
-                "forced": False,
+                "hi": hearing_impaired,
+                "forced": forced,
             },
             "release_info": row["release_info"],
             "filename": filename,
@@ -325,8 +331,8 @@ class SubF2MProvider:
             "score_without_hash": score,
             "score_out_of": 100,
             "hash_verifiable": False,
-            "hearing_impaired_verifiable": False,
-            "hearing_impaired": False,
+            "hearing_impaired_verifiable": True,
+            "hearing_impaired": hearing_impaired,
             "page_link": row["page_url"],
             "display": {
                 "source": "subf2m",
@@ -342,6 +348,8 @@ class SubF2MProvider:
                 "filename": filename,
                 "language": row["language"],
                 "language_path": language["path"],
+                "hi": hearing_impaired,
+                "forced": forced,
                 "season": _safe_int(video.get("season")),
                 "episode": _safe_int(video.get("episode")),
             },
@@ -448,6 +456,8 @@ def _parse_item(item, alpha3, video):
         "release_info": release_info,
         "comment": comment,
         "page_url": page_url,
+        "forced": _looks_forced(release_info),
+        "hearing_impaired": _looks_hearing_impaired(release_info),
         "imdb_matched": _expected_imdb(video) is not None,
         "season_pack": _release_is_season_pack(release_text, _safe_int((video or {}).get("season"))),
     }
@@ -479,7 +489,7 @@ def _release_is_season_pack(text, season):
         return True
     for match in _COMPLETE_SEASON_RE.finditer(normalized):
         value = match.group("season") or match.group("s_only")
-        if _safe_int(value) == season and "complete" in normalized:
+        if _safe_int(value) == season:
             return True
     return False
 
@@ -521,6 +531,9 @@ def _requested_languages(languages):
         if alpha3 == "por" and _is_brazilian_portuguese(language):
             meta["path"] = "brazillian-portuguese"
         meta["alpha3"] = alpha3
+        if isinstance(language, dict):
+            meta["hi"] = _optional_bool(language.get("hi"))
+            meta["forced"] = _optional_bool(language.get("forced"))
         key = (alpha3, meta["path"])
         if key in seen:
             continue
@@ -549,6 +562,49 @@ def _is_brazilian_portuguese(language):
         return False
     value = language.get("country") or language.get("region") or language.get("alpha2")
     return str(value or "").upper() in {"BR", "PT-BR"}
+
+
+def _row_matches_language(row, language):
+    requested_hi = language.get("hi")
+    requested_forced = language.get("forced")
+    if requested_hi is not None and bool(row.get("hearing_impaired")) != requested_hi:
+        return False
+    if requested_forced is not None and bool(row.get("forced")) != requested_forced:
+        return False
+    return True
+
+
+def _looks_forced(value):
+    normalized = _normalize(value)
+    if re.search(r"\bforced\b", normalized):
+        return True
+    return bool(
+        re.search(r"\bforeign(?:[\W_]+parts)?[\W_]+only\b", normalized)
+        or re.search(r"\b(?:sign|signs|songs)[\W_]+(?:and[\W_]+songs[\W_]+)?(?:only|parts)\b", normalized)
+    )
+
+
+def _looks_hearing_impaired(value):
+    tokens = set(_tokens(value))
+    if tokens & {"hi", "sdh"}:
+        return True
+    normalized = _normalize(value)
+    return bool(re.search(r"\bhearing[\W_]+impaired\b", normalized))
+
+
+def _optional_bool(value):
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    return None
 
 
 def _user_agent(config):

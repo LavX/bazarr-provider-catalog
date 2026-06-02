@@ -63,6 +63,17 @@ class SubF2MParserTests(unittest.TestCase):
 
         self.assertEqual(paths[0]["path"], "/subtitles/chernobyl")
 
+    def test_rank_episode_paths_rejects_conflicting_year(self):
+        paths = self.mod.rank_episode_paths(
+            {"kind": "episode", "series": "The Office", "season": 1, "year": 2005},
+            [
+                {"path": "/subtitles/the-office-uk", "title": "The Office - First Season (2001)", "year": 2001, "season": 1, "index": 0},
+                {"path": "/subtitles/the-office-us", "title": "The Office - First Season (2005)", "year": 2005, "season": 1, "index": 1},
+            ],
+        )
+
+        self.assertEqual([path["path"] for path in paths], ["/subtitles/the-office-us"])
+
     def test_parse_subtitle_page_filters_episode_rows(self):
         rows = self.mod.parse_subtitle_page(
             DETAIL_CHERNOBYL_EN,
@@ -73,6 +84,38 @@ class SubF2MParserTests(unittest.TestCase):
         self.assertEqual([row["subtitle_id"] for row in rows], ["2647618", "2956831"])
         self.assertIn("S01E01", rows[0]["release_info"])
         self.assertIn("COMPLETE.SEASON.01", rows[1]["release_info"])
+
+    def test_parse_subtitle_page_marks_forced_and_hi_rows(self):
+        forced_rows = self.mod.parse_subtitle_page(
+            DETAIL_CHERNOBYL_EN,
+            "eng",
+            {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1},
+        )
+        hi_rows = self.mod.parse_subtitle_page(
+            DETAIL_DUNE_EN,
+            "eng",
+            {"kind": "movie", "title": "Dune: Part One", "year": 2021, "imdb_id": "tt1160419"},
+        )
+
+        self.assertTrue(forced_rows[0]["forced"])
+        self.assertFalse(forced_rows[0]["hearing_impaired"])
+        self.assertTrue(hi_rows[0]["hearing_impaired"])
+        self.assertFalse(hi_rows[0]["forced"])
+        self.assertTrue(self.mod._looks_hearing_impaired("HI only"))
+
+    def test_parse_subtitle_page_accepts_plain_season_pack(self):
+        body = DETAIL_CHERNOBYL_EN.replace(
+            b"Chernobyl.2019.COMPLETE.SEASON.01.1080p.Blu-ray.x265.10bit.AC3",
+            b"Chernobyl.S01.1080p.Blu-ray.x265.10bit.AC3",
+        ).replace(b"Complete season pack", b"Season pack")
+
+        rows = self.mod.parse_subtitle_page(
+            body,
+            "eng",
+            {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1},
+        )
+
+        self.assertIn("2956831", [row["subtitle_id"] for row in rows])
 
     def test_parse_subtitle_page_rejects_wrong_imdb_id(self):
         rows = self.mod.parse_subtitle_page(
@@ -124,8 +167,43 @@ class SubF2MProviderTests(unittest.TestCase):
         self.assertEqual(calls, list(responses))
         self.assertEqual(results[0]["provider"], "subf2m")
         self.assertEqual(results[0]["language"]["alpha3"], "eng")
+        self.assertTrue(results[0]["language"]["hi"])
+        self.assertTrue(results[0]["hearing_impaired"])
         self.assertIn("imdb_id", results[0]["matches"])
         self.assertEqual(results[0]["provider_payload"]["subtitle_id"], "3331049")
+
+    def test_search_filters_rows_by_requested_forced_flag(self):
+        provider = self.mod.SubF2MProvider()
+        responses = {
+            "https://subf2m.co/subtitles/searchbytitle?query=Chernobyl&l=": SEARCH_CHERNOBYL,
+            "https://subf2m.co/subtitles/chernobyl/english": DETAIL_CHERNOBYL_EN,
+        }
+
+        provider._http_get = lambda url, timeout=15, referer=None, config=None: responses[url]
+        results = provider.search(
+            {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1, "year": 2019, "series_imdb_id": "tt7366338"},
+            [{"alpha3": "eng", "alpha2": "en", "forced": False}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["2956831"])
+
+    def test_search_filters_rows_by_requested_hi_flag(self):
+        provider = self.mod.SubF2MProvider()
+        responses = {
+            "https://subf2m.co/subtitles/searchbytitle?query=Dune%3A%20Part%20One&l=": SEARCH_DUNE,
+            "https://subf2m.co/subtitles/searchbytitle?query=Dune&l=": SEARCH_DUNE,
+            "https://subf2m.co/subtitles/dune-2021/english": DETAIL_DUNE_EN,
+        }
+
+        provider._http_get = lambda url, timeout=15, referer=None, config=None: responses[url]
+        results = provider.search(
+            {"kind": "movie", "title": "Dune: Part One", "year": 2021, "imdb_id": "tt1160419"},
+            [{"alpha3": "eng", "alpha2": "en", "hi": False, "forced": False}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(results, [])
 
     def test_search_episode_returns_episode_and_season_pack(self):
         provider = self.mod.SubF2MProvider()
@@ -144,6 +222,8 @@ class SubF2MProviderTests(unittest.TestCase):
         self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["2647618", "2956831"])
         self.assertIn("episode", results[0]["matches"])
         self.assertIn("season", results[1]["matches"])
+        self.assertTrue(results[0]["language"]["forced"])
+        self.assertFalse(results[1]["language"]["forced"])
 
     def test_search_maps_brazilian_portuguese_country_variant(self):
         provider = self.mod.SubF2MProvider()
