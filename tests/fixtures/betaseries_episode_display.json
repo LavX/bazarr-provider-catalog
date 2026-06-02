@@ -1,0 +1,21 @@
+{
+  "errors": [],
+  "episode": {
+    "subtitles": [
+      {
+        "id": 101,
+        "language": "vo",
+        "file": "Blue.Lights.S01E01.1080p.WEB.h264-ETHEL",
+        "url": "https://betaseries.test/download/blue-lights-ethel.zip",
+        "source": "betaseries"
+      },
+      {
+        "id": 102,
+        "language": "vf",
+        "file": "Blue.Lights.S01E01.FRENCH.720p.WEB.x264",
+        "url": "https://betaseries.test/download/blue-lights-fr.srt",
+        "source": "seriessub"
+      }
+    ]
+  }
+}
