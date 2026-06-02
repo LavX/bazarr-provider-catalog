@@ -33,6 +33,15 @@ _ENTRY_MODULE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 ALLOWED_MEDIA = {"movie", "episode"}
 SUPPORTED_CONFIG_TYPES = {"string", "boolean", "number", "integer"}
 DISALLOWED_SCHEMA_KEYS = {"$ref", "oneOf", "anyOf", "allOf", "not", "items"}
+SUPPORTED_PYTHON_REQUIRES = ">=3.12,<3.15"
+SUPPORTED_PYTHON_VERSIONS = ("3.12", "3.13", "3.14")
+SUPPORTED_PYTHON_ABI_TAGS = ("cp312", "cp313", "cp314", "abi3")
+SUPPORTED_WHEEL_PLATFORM_TAGS = ("manylinux2014_x86_64", "manylinux2014_aarch64")
+WHEEL_COVERAGE_POLICY = (
+    "Use a py3-none-any wheel when available. ABI-specific wheels must include "
+    "hashes for cp312, cp313, cp314, or a compatible stable-ABI wheel such as "
+    "cp311-abi3, on every Bazarr+ platform you support."
+)
 
 
 class CatalogError(Exception):
@@ -460,6 +469,18 @@ def command_smoke_test(args):
     return 0
 
 
+def command_runtime_matrix(args):
+    matrix = {
+        "python_requires": SUPPORTED_PYTHON_REQUIRES,
+        "python_versions": list(SUPPORTED_PYTHON_VERSIONS),
+        "abi_tags": list(SUPPORTED_PYTHON_ABI_TAGS),
+        "platform_tags": list(SUPPORTED_WHEEL_PLATFORM_TAGS),
+        "wheel_coverage": WHEEL_COVERAGE_POLICY,
+    }
+    print(dump_json(matrix), end="")
+    return 0
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="sdk", description="Provider Hub catalog SDK tooling")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -510,6 +531,12 @@ def build_parser():
     )
     smoke.add_argument("--skip-download", action="store_true", help="only run search")
     smoke.set_defaults(func=command_smoke_test)
+
+    runtime_matrix = subparsers.add_parser(
+        "runtime-matrix",
+        help="print the Bazarr+ Provider Hub Python runtime matrix",
+    )
+    runtime_matrix.set_defaults(func=command_runtime_matrix)
     return parser
 
 
