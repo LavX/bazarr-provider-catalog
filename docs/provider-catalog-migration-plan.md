@@ -1067,6 +1067,20 @@
   - `python3 -B -m unittest discover -s tests`: `738` tests passed with `6` skipped.
   - Pushed branch head `77e8624c536a14f82a776d89bec81804729cc698`.
   - PR `#70` is open draft, head `catalog-regielive` at `77e8624c536a14f82a776d89bec81804729cc698`, merge state `CLEAN`, and no checks are reported.
+  - Fresh recheck on 2026-06-02 confirmed PR `#70` is still open draft, head `77e8624c536a14f82a776d89bec81804729cc698`, merge state `CLEAN`, has no review threads, no comments, no reviews, and no checks reported.
+  - Effective branch scope against current `origin/main` remains limited to `README.md`, `catalog.json`, `docs/provider-notes/regielive.md`, `providers/regielive/provider.json`, `providers/regielive/provider.py`, RegieLive fixtures, and `tests/test_regielive.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_regielive.py'`: `11` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/regielive/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Touched-file attribution and prohibited punctuation scan across RegieLive files found no matches.
+  - `python3 -B -m unittest discover -s tests`: `738` tests passed with `6` skipped.
+  - Live SDK search smoke `python3 -B -m sdk smoke-test --provider regielive --language ron --video-fixture tests/fixtures/regielive_video_dune.json --expect-min-results 1 --skip-download`: failed with `regielive search failed: regielive rejected the request`.
+  - Live API root `GET https://api.regielive.ro/` returned HTTP `200` with body `API<BR>Hi :)`, proving origin reachability.
+  - Live search `GET https://api.regielive.ro/bazarr/search.php?nume=Dune&an=2021` with `RL-API: API-BAZARR-YTZ-SL` and the provider User-Agent returned HTTP `403` JSON `{"eroare":"Cerere invalida","cod":403}`.
+  - Retrying the same search after priming a cookie jar from the API root still returned HTTP `403` with the same JSON error shape.
 - Remaining gates:
   - Treat current RegieLive proof as blocked by the live API/search-host access restriction, not by parser behavior or catalog validation.
   - Determine whether RegieLive currently requires a different public request shape, allows only specific egress IPs, or has retired the Bazarr API key.
