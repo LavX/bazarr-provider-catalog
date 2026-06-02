@@ -72,7 +72,7 @@
   - `legendasdivx`: branch `catalog-legendasdivx`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasdivx`, current head `02bbb60`
   - `legendasnet`: branch `catalog-legendasnet`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasnet`, current head `983878f`
   - `napiprojekt`: branch `catalog-napiprojekt`, worktree `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`, current head `af6ff27`
-  - `napisy24`: branch `catalog-napisy24`, worktree `/tmp/bazarr_catalog_provider_worktrees/napisy24`, current head `34a9720`
+  - `napisy24`: branch `catalog-napisy24`, worktree `/tmp/bazarr_catalog_provider_worktrees/napisy24`, current head `4790b0f`
   - `nekur`: branch `catalog-nekur`, worktree `/tmp/bazarr_catalog_provider_worktrees/nekur`, current head `d549ad9`
   - `opensubtitles`: branch `catalog-opensubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitles`, current head `cc19c5d`
   - `opensubtitlescom`: branch `catalog-opensubtitlescom`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitlescom`, current head `8d014b0`
@@ -482,7 +482,7 @@
 
 - Branch: `catalog-napisy24`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/napisy24`
-- Current checkpoint: `34a9720 Add Napisy24 provider`
+- Current checkpoint: `4790b0f Merge current main into Napisy24 branch`
 - Pull request: [#61](https://github.com/LavX/bazarr-provider-catalog/pull/61), open draft, head `catalog-napisy24`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -502,6 +502,21 @@
 - Live evidence on 2026-06-01:
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' http://napisy24.pl/`: returned HTTP `301` to `https://napisy24.pl/`.
   - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' -d 'postAction=CheckSub&ua=subliminal&ap=lanimilbus&fs=1&fh=0000000000000000&fn=probe.mkv&n24pref=1' http://napisy24.pl/run/CheckSubAgent.php`: returned HTTP `200` with `OK-0||` for a dummy hash.
+- Fresh current-main merge evidence on 2026-06-02:
+  - Live thread-aware PR inspection found no conversation comments, reviews, or review threads on PR `#61`.
+  - Merged `origin/main` into `catalog-napisy24`, auto-merged `README.md`, and resolved the generated `catalog.json` conflict.
+  - Effective branch scope against `origin/main` remains limited to `README.md`, `catalog.json`, `docs/provider-notes/napisy24.md`, `providers/napisy24/provider.json`, `providers/napisy24/provider.py`, `tests/fixtures/napisy24_video_dune_2021.json`, and `tests/test_napisy24.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_napisy24.py'`: `6` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/napisy24/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python runtime policy remains `>=3.12,<3.15`.
+  - `git diff --cached --check` and `git diff --check origin/main...HEAD`: clean.
+  - Attribution and em-dash scan over `providers/napisy24`, `tests/test_napisy24.py`, `tests/fixtures/napisy24_video_dune_2021.json`, `docs/provider-notes/napisy24.md`, `README.md`, and `catalog.json` found no matches.
+  - `python3 -B -m unittest discover -s tests`: `733` tests passed, `6` skipped.
+  - Pushed `catalog-napisy24` at `4790b0f8a306319a864745688cee5496ee87ca5e`.
+  - PR `#61` was verified open, draft, merge state `CLEAN`, head `4790b0f8a306319a864745688cee5496ee87ca5e`.
+  - `gh pr checks 61 --repo LavX/bazarr-provider-catalog`: no checks reported on the branch.
 - Remaining gates:
   - Run SDK live smoke search and download with a real video fixture that has a valid Napisy24/OpenSubtitles hash.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `napisy24` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
