@@ -70,7 +70,7 @@
   - `karagarga`: branch `catalog-karagarga`, worktree `/tmp/bazarr_catalog_provider_worktrees/karagarga`, current head `b394520`
   - `ktuvit`: branch `catalog-ktuvit`, worktree `/tmp/bazarr_catalog_provider_worktrees/ktuvit`, current head `e706af3`
   - `legendasdivx`: branch `catalog-legendasdivx`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasdivx`, current head `3f59e45`
-  - `legendasnet`: branch `catalog-legendasnet`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasnet`, current head `983878f`
+  - `legendasnet`: branch `catalog-legendasnet`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasnet`, current head `7dc630d`
   - `napiprojekt`: branch `catalog-napiprojekt`, worktree `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`, current head `af6ff27`
   - `napisy24`: branch `catalog-napisy24`, worktree `/tmp/bazarr_catalog_provider_worktrees/napisy24`, current head `4790b0f`
   - `nekur`: branch `catalog-nekur`, worktree `/tmp/bazarr_catalog_provider_worktrees/nekur`, current head `d549ad9`
@@ -504,7 +504,7 @@
 
 - Branch: `catalog-legendasnet`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/legendasnet`
-- Current checkpoint: `983878f Add Legendas.net provider`
+- Current checkpoint: `7dc630d Merge remote-tracking branch 'origin/main' into catalog-legendasnet`
 - Pull request: [#60](https://github.com/LavX/bazarr-provider-catalog/pull/60), open draft, head `catalog-legendasnet`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -526,6 +526,20 @@
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://legendas.net/api/v1/login`: returned HTTP `405` with `POST` allowed.
   - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' https://legendas.net/api/v1/search/movie`: returned HTTP `401` JSON `Missing Authorization Header`.
   - Real search and download require valid Legendas.net credentials.
+- Fresh current-main merge evidence on 2026-06-02:
+  - Live thread-aware PR inspection found no conversation comments, reviews, or review threads on PR `#60`.
+  - Merged `origin/main` into `catalog-legendasnet`; README and catalog auto-merged cleanly, then `python3 -B -m sdk build-catalog` refreshed generated catalog metadata.
+  - Effective branch scope against current `origin/main` remains limited to `README.md`, `catalog.json`, `docs/provider-notes/legendasnet.md`, `providers/legendasnet/provider.json`, `providers/legendasnet/provider.py`, Legendas.net fixtures, and `tests/test_legendasnet.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_legendasnet.py'`: `6` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/legendasnet/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python runtime policy remains `>=3.12,<3.15`.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Touched-file attribution and em-dash scan across Legendas.net files found no matches.
+  - `python3 -B -m unittest discover -s tests`: `733` tests passed with `6` skipped.
+  - Pushed branch head `7dc630d6f7bed364f19d53a72dbc74aa7091aecf`.
+  - PR `#60` is open draft, head `catalog-legendasnet` at `7dc630d6f7bed364f19d53a72dbc74aa7091aecf`, merge state `CLEAN`, and no checks are reported.
 - Remaining gates:
   - Run SDK live smoke search and download with valid Legendas.net credentials.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `legendasnet` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
