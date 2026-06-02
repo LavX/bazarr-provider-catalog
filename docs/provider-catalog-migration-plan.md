@@ -75,7 +75,7 @@
   - `napisy24`: branch `catalog-napisy24`, worktree `/tmp/bazarr_catalog_provider_worktrees/napisy24`, current head `34a9720`
   - `nekur`: branch `catalog-nekur`, worktree `/tmp/bazarr_catalog_provider_worktrees/nekur`, current head `d549ad9`
   - `opensubtitles`: branch `catalog-opensubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitles`, current head `cc19c5d`
-  - `opensubtitlescom`: branch `catalog-opensubtitlescom`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitlescom`, current head `885985f`
+  - `opensubtitlescom`: branch `catalog-opensubtitlescom`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitlescom`, current head `8d014b0`
   - `pipocas`: branch `catalog-pipocas`, worktree `/tmp/bazarr_catalog_provider_worktrees/pipocas`, current head `4fe281b`
   - `podnapisi`: branch `catalog-podnapisi`, worktree `/tmp/bazarr_catalog_provider_worktrees/podnapisi`, current head `8b3d09f`, dead origin
   - `prijevodionline`: branch `catalog-prijevodionline`, worktree `/tmp/bazarr_catalog_provider_worktrees/prijevodionline`, current head `109ed16`
@@ -3318,7 +3318,7 @@
 
 - Branch: `catalog-opensubtitlescom`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/opensubtitlescom`
-- Current checkpoint: `885985f Add OpenSubtitles.com provider`
+- Current checkpoint: `8d014b0 Merge current main into OpenSubtitles.com branch`
 - PR: `https://github.com/LavX/bazarr-provider-catalog/pull/50` opened as draft on 2026-06-01, head `catalog-opensubtitlescom`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -3355,6 +3355,21 @@
   - `python3 -B -m sdk smoke-test --provider opensubtitlescom --language eng --expect-min-results 1 --skip-download`: failed at the expected credential gate with `OpenSubtitles.com username is required`.
   - PR `#50` was verified open, draft, merge state `CLEAN`, head `885985f085e5becc45bab3dcf2f6006a3e6ce7be`.
   - Test-server config check read only credential presence and length from `/home/lavx/bazarr-data/config/config.yaml`; `opensubtitlescom.username`, `opensubtitlescom.password`, and `opensubtitlescom.api_key` are empty or absent.
+- Fresh current-main merge evidence on 2026-06-02:
+  - Live thread-aware PR inspection found no conversation comments, reviews, or review threads on PR `#50`.
+  - Merged `origin/main` into `catalog-opensubtitlescom` and resolved the generated `README.md` and `catalog.json` conflicts while keeping `opensubtitles_org` and `opensubtitlescom` separate.
+  - Effective branch scope against `origin/main` remains limited to `README.md`, `catalog.json`, `docs/provider-notes/opensubtitlescom.md`, `providers/opensubtitlescom/provider.json`, `providers/opensubtitlescom/provider.py`, and `tests/test_opensubtitlescom.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_opensubtitlescom.py'`: `12` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/opensubtitlescom/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python runtime policy remains `>=3.12,<3.15`.
+  - `git diff --cached --check` and `git diff --check origin/main...HEAD`: clean.
+  - Attribution and em-dash scan over `providers/opensubtitlescom`, `tests/test_opensubtitlescom.py`, `docs/provider-notes/opensubtitlescom.md`, `README.md`, and `catalog.json` found no matches.
+  - `python3 -B -m unittest discover -s tests`: `739` tests passed, `6` skipped.
+  - Pushed `catalog-opensubtitlescom` at `8d014b0423d7260d17611f23265e84b914b82597`.
+  - PR `#50` was verified open, draft, merge state `CLEAN`, head `8d014b0423d7260d17611f23265e84b914b82597`.
+  - `gh pr checks 50 --repo LavX/bazarr-provider-catalog`: no checks reported on the branch.
 - Remaining gates:
   - Run SDK live smoke search and download with real OpenSubtitles.com credentials.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `opensubtitlescom` in the trusted replacement policy.
