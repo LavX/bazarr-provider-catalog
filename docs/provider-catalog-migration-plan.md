@@ -24,7 +24,7 @@
 - Cloudflare parity sweep on 2026-06-01: pushed the OpenSubtitles.org three-layer anti-bot path, `ai-cloudscraper==3.8.4`, inline Anubis `/.within.website/` solving, and optional FlareSolverr fallback, to `wizdom` at `4164e52`, `turkcealtyaziorg` at `8c184b2`, `yavkanet` at `5b35d11`, `napiprojekt` at `24eea15`, `subs4series` at `7dd5e86`, and `sub_scene` at `33c714a`. Local provider tests, `py_compile`, `sdk validate`, `test_catalog.py`, `git diff --check`, and attribution or prohibited punctuation scans passed for each touched branch.
 - Cloudflare live recheck on 2026-06-02: escalated SDK smoke with the current anti-bot branches returned `subs4series ok` and `napiprojekt ok`; YavkaNet still returned `yavkanet hit a Cloudflare challenge and no FlareSolverr URL is configured`; TurkceAltyazi.org still required FlareSolverr or matching cookies and User-Agent; Wizdom still timed out against `wizdom.xyz`; SubScene's anti-bot unit suite passed `70` tests.
 - Embedded Anubis body parity on 2026-06-02: pushed the OpenSubtitles.org in-place Anubis body detection path to `wizdom` at `93ef015`, `yavkanet` at `0ac39be`, `turkcealtyaziorg` at `c986310`, `napiprojekt` at `e78c47b`, and `subs4series` at `d390f8d`. Local provider tests, `py_compile`, `sdk validate`, `test_catalog.py`, `git diff --check`, and touched-file attribution or prohibited punctuation scans passed for each branch. Follow-up PR `#76` merged at `f941c6b972c0cff11cdb0a03f00197f28ac5ff00`, and follow-up PR `#77` merged at `03a5a4af6126ede49f7e8325100f1b895742c77a`. PR `#72`, PR `#42`, and PR `#53` have no active review threads; no checks are reported on those branches.
-- Current-main refresh on 2026-06-02: merged `origin/main` into `catalog-wizdom` at `1ea63e7` and `catalog-turkcealtyaziorg` at `3901e9f`, resolved generated README/catalog conflicts, rebuilt catalog hashes, reran focused provider tests, `test_catalog.py`, `sdk validate`, `py_compile`, `git diff --check`, and touched-file attribution or prohibited punctuation scans. PR `#72` and PR `#53` are open draft PRs with no review threads and merge state `CLEAN`.
+- Current-main refresh on 2026-06-02: merged `origin/main` into `catalog-wizdom` at `1ea63e7` and `catalog-turkcealtyaziorg` at `fa5e7f8`, resolved generated README/catalog conflicts, rebuilt catalog hashes, reran focused provider tests, `test_catalog.py`, `sdk validate`, `py_compile`, `git diff --check`, and touched-file attribution or prohibited punctuation scans. PR `#72` and PR `#53` are open draft PRs with no review threads and merge state `CLEAN`.
 - SubScene local evidence on 2026-06-02 after review fixes, Anubis parity, and current-main merge: `test_sub_scene.py` ran `72` tests passed, `test_catalog.py` ran `14` tests passed with `6` skipped, `sdk validate` returned `catalog ok`, `sdk runtime-matrix` returned Python `3.12`, `3.13`, and `3.14`, `py_compile` passed, full `unittest discover -s tests` ran `427` tests passed with `6` skipped, `git diff --check --cached` was clean, the staged SubScene diff scan found no attribution or prohibited punctuation matches, the live PR diff was scoped to `README.md`, `catalog.json`, `providers/sub_scene/provider.json`, `providers/sub_scene/provider.py`, and `tests/test_sub_scene.py`, and PR `#14` current non-outdated review-thread count is `0`.
 - Prior SubScene test-server evidence on 2026-06-01: active Provider Hub state after restage was version `0.1.11`, commit `41b9fc0f460b228d4e8061aaa692233a629a7818`, enabled `true`, `pending_restart=false`, `last_error=null`. Final Dune compat search returned HTTP `200`, `79` total results, and `0` SubScene rows. Focused logs showed `sub_scene FlareSolverr request failed: HTTP Error 500: Internal Server Error` and final fanout marked `sub_scene=ok:15566ms`, not `worker exceeded 30s`. This needs restage before treating `0.1.14` as live test-server proof.
 - Provider Hub source-dependency evidence: `ai-cloudscraper==3.8.4` requires `Js2Py`, whose `pyjsparser==2.7.1` dependency is source-only. Bazarr core PR [#173](https://github.com/LavX/bazarr/pull/173), branch `fix/provider-hub-source-deps` at `b4e53d0ed`, changes the Provider Hub installer from `--only-binary=:all:` to `--prefer-binary` while keeping `--require-hashes`, allowing hash-checked source dependencies. `bazarr-ui-test` was hot-patched with that installer for the live staging evidence below.
@@ -103,7 +103,7 @@
   - `titlovi`: branch `catalog-titlovi`, worktree `/tmp/bazarr_catalog_provider_worktrees/titlovi`, current head `79b9c8b`
   - `titrari`: branch `catalog-titrari`, worktree `/tmp/bazarr_catalog_provider_worktrees/titrari`, current head `13ef747`
   - `titulky`: branch `catalog-titulky`, worktree `/tmp/bazarr_catalog_provider_worktrees/titulky`, current head `71ffc9c`
-  - `turkcealtyaziorg`: branch `catalog-turkcealtyaziorg`, worktree `/tmp/bazarr_catalog_provider_worktrees/turkcealtyaziorg`, current head `3901e9f`
+  - `turkcealtyaziorg`: branch `catalog-turkcealtyaziorg`, worktree `/tmp/bazarr_catalog_provider_worktrees/turkcealtyaziorg`, current head `fa5e7f8`
   - `tvsubtitles`: branch `catalog-tvsubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/tvsubtitles`, current head `80a5c47`
   - `whisperai`: branch `catalog-whisperai`, worktree `/tmp/bazarr_catalog_provider_worktrees/whisperai`, current head `16647ef`, local/generated provider
   - `wizdom`: branch `catalog-wizdom`, worktree `/tmp/bazarr_catalog_provider_worktrees/wizdom`, current head `1ea63e7`
@@ -3865,8 +3865,8 @@
 
 - Branch: `catalog-turkcealtyaziorg`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/turkcealtyaziorg`
-- Current checkpoint: `3901e9f Merge remote-tracking branch 'origin/main' into catalog-turkcealtyaziorg`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/53` opened as draft on 2026-06-01, head `catalog-turkcealtyaziorg`, base `main`, head `3901e9f00903cdf54ef28b39ae65a2f944515e3e`, latest checked merge state `CLEAN`.
+- Current checkpoint: `fa5e7f8 Merge remote-tracking branch 'origin/main' into catalog-turkcealtyaziorg`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/53` opened as draft on 2026-06-01, head `catalog-turkcealtyaziorg`, base `main`, head `fa5e7f84b5903594be0b225dc07e720bdbbd89af`, latest checked merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -3936,6 +3936,21 @@
   - `git diff --check --cached`: clean.
   - Touched-file prohibited punctuation and attribution scan across `README.md`, `catalog.json`, `providers/turkcealtyaziorg/provider.json`, `providers/turkcealtyaziorg/provider.py`, and `tests/test_turkcealtyaziorg.py` found no matches.
   - Live PR review-thread inspection found no review threads on PR `#53`; `gh pr view 53 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,mergeStateStatus,headRefOid,url` reported PR `#53` open, draft, merge state `CLEAN`, and head `3901e9f00903cdf54ef28b39ae65a2f944515e3e`.
+- Second current-main refresh on 2026-06-02:
+  - Live thread-aware PR inspection found no conversation comments, reviews, or review threads on PR `#53`.
+  - Merged `origin/main` into `catalog-turkcealtyaziorg`; catalog auto-merged cleanly, then `python3 -B -m sdk build-catalog` refreshed generated catalog metadata.
+  - Effective branch scope against current `origin/main` remains limited to `README.md`, `catalog.json`, `docs/provider-notes/turkcealtyaziorg.md`, `providers/turkcealtyaziorg/provider.json`, `providers/turkcealtyaziorg/provider.py`, and `tests/test_turkcealtyaziorg.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_turkcealtyaziorg.py'`: `15` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/turkcealtyaziorg/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python runtime policy remains `>=3.12,<3.15`.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Touched-file attribution and em-dash scan across TurkceAltyazi.org files found no matches.
+  - `python3 -B -m unittest discover -s tests`: `742` tests passed with `6` skipped.
+  - Live SDK search smoke `python3 -B -m sdk smoke-test --provider turkcealtyaziorg --language tur --video-fixture /tmp/turkcealtyaziorg_inception_video.json --config-json '{"request_delay_ms":0}' --expect-min-results 1 --skip-download`: failed with `TurkceAltyazi is presenting a Cloudflare challenge; configure FlareSolverr URL or matching cookies and User-Agent`.
+  - Pushed branch head `fa5e7f84b5903594be0b225dc07e720bdbbd89af`.
+  - PR `#53` is open draft, head `catalog-turkcealtyaziorg` at `fa5e7f84b5903594be0b225dc07e720bdbbd89af`, merge state `CLEAN`, and no checks are reported.
 - Remaining gates:
   - Run SDK live smoke search and download with valid TurkceAltyazi.org cookies and User-Agent, or a FlareSolverr environment that can solve this origin.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `turkcealtyaziorg` in the trusted replacement policy.
