@@ -5310,7 +5310,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "f836a897ddda1686beeac2e7168d8d5ecfa4d5be0f9d59427a3fbb9b1dbf9425",
+        "bundle_sha256": "5d290c9ef6e7254fd1ab468219c18426cf060c7a5549fa5dfccab22d8a0dbfe6",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -5452,7 +5452,7 @@
         "entry_class": "TitloviProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "6a2e8e27c9bc6350860644b4de283ea8cb45900d50acae9c6be8b7595010f568"
+          "provider.py": "89a24fbbb3fcc296dbb414e5a69680074c9d680ef42406dde35e2acf7bede24e"
         },
         "languages": [
           "bos",
@@ -5482,7 +5482,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.0"
+        "version": "0.1.1"
       }
     },
     {

@@ -90,6 +90,27 @@ class TitloviProviderTests(unittest.TestCase):
         self.assertIn("year", results[0]["matches"])
         self.assertIn("release_group", results[0]["matches"])
 
+    def test_search_filters_api_rows_to_requested_languages(self):
+        provider = self.mod.TitloviProvider()
+        provider._http_post = lambda url, params=None, headers=None, timeout=10: self.mod.HttpResponse(200, _fixture("titlovi_login.json"), {})
+
+        def get(url, params=None, headers=None, timeout=10):
+            del url, headers, timeout
+            self.assertEqual(params["lang"], "English")
+            if params.get("pg") == 2:
+                return self.mod.HttpResponse(200, _fixture("titlovi_search_dune_page2.json"), {})
+            return self.mod.HttpResponse(200, _fixture("titlovi_search_dune_page1.json"), {})
+
+        provider._http_get = get
+        results = provider.search(
+            _video("titlovi_video_dune_2021.json"),
+            [{"alpha3": "eng"}],
+            {"username": "user", "password": "pass"},
+        )
+
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["1001"])
+        self.assertEqual({item["language"]["alpha3"] for item in results}, {"eng"})
+
     def test_episode_search_filters_episode_and_allows_episode_zero_pack(self):
         provider = self.mod.TitloviProvider()
         provider._http_post = lambda url, params=None, headers=None, timeout=10: self.mod.HttpResponse(200, _fixture("titlovi_login.json"), {})

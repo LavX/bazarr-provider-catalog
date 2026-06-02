@@ -109,7 +109,7 @@ class TitloviProvider:
             pass
         except (ValueError, urllib.error.URLError):
             pass
-        return _sort_results(_results_from_api(video, results))
+        return _sort_results(_filter_requested_results(_results_from_api(video, results), requested))
 
     def download(self, provider_payload, language, config):
         del language
@@ -249,6 +249,15 @@ def _results_from_api(video, api_results):
             }
         )
     return results
+
+
+def _filter_requested_results(results, requested):
+    requested_keys = {(item["alpha3"], item.get("script")) for item in requested}
+    return [
+        item
+        for item in results
+        if (item["language"]["alpha3"], item["language"].get("script")) in requested_keys
+    ]
 
 
 def extract_download(body, payload=None):
