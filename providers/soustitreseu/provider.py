@@ -46,7 +46,7 @@ _SPAN_RE = re.compile(
 )
 _ANY_SPAN_RE = re.compile(r"<span\b[^>]*>(?P<body>.*?)</span>", re.I | re.S)
 _ARCHIVE_RE = re.compile(
-    r"<a\b[^>]*href=['\"](?P<href>[^'\"]+)['\"][^>]*class=['\"][^'\"]*\bsubList\b[^'\"]*['\"][^>]*>(?P<body>.*?)</a>",
+    r"<a\b(?=[^>]*href=['\"](?P<href>[^'\"]+)['\"])(?=[^>]*class=['\"][^'\"]*\bsubList\b[^'\"]*['\"])[^>]*>(?P<body>.*?)</a>",
     re.I | re.S,
 )
 _IMG_LANG_RE = re.compile(r"<img\b[^>]*(?:alt|title)=['\"](?P<lang>[a-z]{2})['\"][^>]*>", re.I)
@@ -340,6 +340,16 @@ def select_subtitle_file(names, payload, language=None):
     except (TypeError, ValueError):
         season = episode = None
     release_info = _normalize_release((payload or {}).get("release_info"))
+    if season is not None and episode is not None:
+        episode_candidates = [
+            name
+            for name in candidates
+            if _file_matches_episode(_normalize_release(os.path.basename(name)), season, episode)
+        ]
+        if episode_candidates:
+            candidates = episode_candidates
+        elif any(_file_has_episode_marker(_normalize_release(os.path.basename(name))) for name in candidates):
+            raise ValueError("soustitreseu archive contains no subtitle for requested episode")
 
     def score(index_name):
         index, name = index_name
@@ -460,8 +470,6 @@ def _collect_extracted_subtitle_files(output_dir):
 
 def _rank_search_rows(rows, title, media_type, year=None):
     filtered = [row for row in rows if row.get("media_type") == media_type and _row_matches_title(row, title)]
-    if not filtered:
-        filtered = [row for row in rows if row.get("media_type") == media_type]
 
     def score(row):
         value = 0
@@ -558,6 +566,11 @@ def _file_matches_episode(normalized_name, season, episode):
         return True
     episode_code = f"{season}{episode:02d}"
     return bool(re.search(rf"(?<!\d){re.escape(episode_code)}(?!\d)", compact))
+
+
+def _file_has_episode_marker(normalized_name):
+    compact = normalized_name.lower()
+    return bool(_SXXEXX_RE.search(compact) or _X_EP_RE.search(compact) or re.search(r"(?<!\d)\d{3}(?!\d)", compact))
 
 
 def _release_tokens(value):

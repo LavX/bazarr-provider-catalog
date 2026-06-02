@@ -78,6 +78,25 @@ class SoustitreseuParserTests(unittest.TestCase):
             "https://www.sous-titres.eu/films/download/krbse0p1duwc8oi/Dune.Part.One.%282021%29.Z2.WEB.zip",
         )
 
+    def test_parse_archive_rows_accepts_sublist_before_href(self):
+        rows = self.mod.parse_archive_rows(
+            """
+            <a class="subList download" href="download/abc/Game.Of.Thrones.1x01.ENFR.zip">
+              <span class="filenameSerie">Game.Of.Thrones.1x01.ENFR.zip</span>
+              <span class="episodeNum">1 x 01</span>
+              <img title="en" />
+            </a>
+            """,
+            "https://www.sous-titres.eu/series/game_of_thrones.html",
+            "series",
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(
+            rows[0]["url"],
+            "https://www.sous-titres.eu/series/download/abc/Game.Of.Thrones.1x01.ENFR.zip",
+        )
+
 
 class SoustitreseuProviderTests(unittest.TestCase):
     def setUp(self):
@@ -137,6 +156,27 @@ class SoustitreseuProviderTests(unittest.TestCase):
         self.assertEqual(results[0]["provider_payload"]["media_type"], "film")
         self.assertIn("title", results[0]["matches"])
 
+    def test_search_movie_drops_unrelated_fallback_rows(self):
+        provider = self.mod.SoustitreseuProvider()
+        calls = []
+
+        def get_stub(url, timeout=15, referer=None):
+            del timeout, referer
+            calls.append(url)
+            if "search.html" in url:
+                return SEARCH_DUNE_HTML
+            raise AssertionError(f"unexpected detail request: {url}")
+
+        provider._http_get = get_stub
+        results = provider.search(
+            {"kind": "movie", "title": "Interstellar", "year": 2014},
+            [{"alpha3": "fra", "alpha2": "fr"}],
+            {},
+        )
+
+        self.assertEqual(results, [])
+        self.assertEqual(calls, ["https://www.sous-titres.eu/search.html?q=Interstellar"])
+
     def test_search_ignores_unsupported_or_incomplete_requests(self):
         provider = self.mod.SoustitreseuProvider()
 
@@ -171,6 +211,31 @@ class SoustitreseuProviderTests(unittest.TestCase):
         self.assertEqual(data, b"english subtitle")
         self.assertEqual(content["content_sha256"], hashlib.sha256(data).hexdigest())
         self.assertEqual(content["format"], "srt")
+
+    def test_download_prioritizes_episode_over_language_from_zip_archive(self):
+        provider = self.mod.SoustitreseuProvider()
+        body = _zip_body(
+            {
+                "Game.Of.Thrones.S01E01.VF.srt": "requested episode",
+                "Game.Of.Thrones.S01E02.VO.srt": "wrong episode",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        content = provider.download(
+            {
+                "url": "https://www.sous-titres.eu/series/download/1f7d3i5ypv2bv0m/Game.Of.Thrones.S01.ENFR.zip",
+                "filename": "Game.Of.Thrones.S01.ENFR.zip",
+                "media_type": "series",
+                "season": 1,
+                "episode": 1,
+                "release_info": "Game.Of.Thrones.S01.ENFR.zip",
+            },
+            {"alpha3": "eng", "alpha2": "en"},
+            {},
+        )
+
+        self.assertEqual(base64.b64decode(content["content_b64"]), b"requested episode")
 
 
 if __name__ == "__main__":
