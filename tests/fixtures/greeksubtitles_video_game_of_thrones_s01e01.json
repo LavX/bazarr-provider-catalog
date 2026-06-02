@@ -1,0 +1,11 @@
+{
+  "kind": "episode",
+  "series": "Game of Thrones",
+  "alternative_series": ["GoT"],
+  "season": 1,
+  "episode": 1,
+  "year": 2011,
+  "source": "HDTV",
+  "video_codec": "x264",
+  "release_group": "CTU"
+}
