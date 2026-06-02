@@ -4003,6 +4003,8 @@
   - `python3 -B -m sdk validate`: `catalog ok`.
   - SDK live smoke against the Dune 2021 movie fixture with username, password, and the saved bearer-shaped token passed as `api_key` failed with `OpenSubtitles.com request failed with status 403: You cannot consume this service`.
   - Direct API probes confirmed the saved token still fails as `Api-Key` on `/login` and `/subtitles` with HTTP `403`. Retrying with the JWT issuer as `Api-Key` also failed `/login` with HTTP `403`.
+  - Direct bearer probes against `/subtitles?imdb_id=1160419&languages=en` also returned HTTP `403` both with the JWT alone and with the JWT plus issuer-derived `Api-Key`.
+  - PR `#50` body was updated to record that the saved JWT is not accepted as an API key, issuer-derived API key, or bearer search token.
   - Conclusion: the supplied username and password are now available for testing, but a valid OpenSubtitles.com API key is still missing.
 - Remaining gates:
   - Run SDK live smoke search and download with a real OpenSubtitles.com API key plus the saved username and password.
