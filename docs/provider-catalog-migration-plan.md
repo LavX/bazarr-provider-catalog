@@ -23,11 +23,12 @@
 - Existing SubScene maintenance PR evidence: `fix/sub-scene-smi-download` at `ca8aef8` switches SubScene to `ai-cloudscraper==3.8.4` with the same native session shape and legacy argument retry, adds inline Anubis challenge solving, treats Anubis difficulty as bits, detects embedded Anubis pages by body, honors Anubis `Refresh` headers, unescapes meta-refresh URLs, reads Anubis difficulty and method from top-level `rules`, accepts string-form Anubis challenges, bumps SubScene to `0.1.14`, caps multi-page FlareSolverr fallback at `10000` ms, caps the outer FlareSolverr HTTP call to the same deadline, expands ABI-specific dependency hashes across Bazarr+ Python `3.12`, `3.13`, and `3.14` on linux/amd64 and linux/arm64, and PR `#14` merged on 2026-06-01 UTC at `91db075dda9ade6f8e5b609155a9c06b9974e079`.
 - Cloudflare parity sweep on 2026-06-01: pushed the OpenSubtitles.org three-layer anti-bot path, `ai-cloudscraper==3.8.4`, inline Anubis `/.within.website/` solving, and optional FlareSolverr fallback, to `wizdom` at `4164e52`, `turkcealtyaziorg` at `8c184b2`, `yavkanet` at `5b35d11`, `napiprojekt` at `24eea15`, `subs4series` at `7dd5e86`, and `sub_scene` at `33c714a`. Local provider tests, `py_compile`, `sdk validate`, `test_catalog.py`, `git diff --check`, and attribution or prohibited punctuation scans passed for each touched branch.
 - Cloudflare live recheck on 2026-06-02: escalated SDK smoke with the current anti-bot branches returned `subs4series ok` and `napiprojekt ok`; YavkaNet still returned `yavkanet hit a Cloudflare challenge and no FlareSolverr URL is configured`; TurkceAltyazi.org still required FlareSolverr or matching cookies and User-Agent; Wizdom still timed out against `wizdom.xyz`; SubScene's anti-bot unit suite passed `70` tests.
+- Embedded Anubis body parity on 2026-06-02: pushed the OpenSubtitles.org in-place Anubis body detection path to `wizdom` at `93ef015`, `yavkanet` at `0ac39be`, `turkcealtyaziorg` at `c986310`, `napiprojekt` at `af6ff27`, and `subs4series` at `15dd455`. Local provider tests, `py_compile`, `sdk validate`, `test_catalog.py`, `git diff --check`, and touched-file attribution or prohibited punctuation scans passed for each branch. PR `#72`, PR `#42`, PR `#53`, PR `#76`, and PR `#77` have no review threads; no checks are reported on those branches.
 - SubScene local evidence on 2026-06-02 after review fixes, Anubis parity, and current-main merge: `test_sub_scene.py` ran `72` tests passed, `test_catalog.py` ran `14` tests passed with `6` skipped, `sdk validate` returned `catalog ok`, `sdk runtime-matrix` returned Python `3.12`, `3.13`, and `3.14`, `py_compile` passed, full `unittest discover -s tests` ran `427` tests passed with `6` skipped, `git diff --check --cached` was clean, the staged SubScene diff scan found no attribution or prohibited punctuation matches, the live PR diff was scoped to `README.md`, `catalog.json`, `providers/sub_scene/provider.json`, `providers/sub_scene/provider.py`, and `tests/test_sub_scene.py`, and PR `#14` current non-outdated review-thread count is `0`.
 - Prior SubScene test-server evidence on 2026-06-01: active Provider Hub state after restage was version `0.1.11`, commit `41b9fc0f460b228d4e8061aaa692233a629a7818`, enabled `true`, `pending_restart=false`, `last_error=null`. Final Dune compat search returned HTTP `200`, `79` total results, and `0` SubScene rows. Focused logs showed `sub_scene FlareSolverr request failed: HTTP Error 500: Internal Server Error` and final fanout marked `sub_scene=ok:15566ms`, not `worker exceeded 30s`. This needs restage before treating `0.1.14` as live test-server proof.
 - Provider Hub source-dependency evidence: `ai-cloudscraper==3.8.4` requires `Js2Py`, whose `pyjsparser==2.7.1` dependency is source-only. Bazarr core PR [#173](https://github.com/LavX/bazarr/pull/173), branch `fix/provider-hub-source-deps` at `b4e53d0ed`, changes the Provider Hub installer from `--only-binary=:all:` to `--prefer-binary` while keeping `--require-hashes`, allowing hash-checked source dependencies. `bazarr-ui-test` was hot-patched with that installer for the live staging evidence below.
 - Catalog runtime-matrix evidence: catalog PR [#75](https://github.com/LavX/bazarr-provider-catalog/pull/75), branch `fix/provider-runtime-matrix` at `b97435d`, defines Provider Hub Python support as `>=3.12,<3.15` with concrete targets `3.12`, `3.13`, and `3.14`, adds `sdk runtime-matrix`, and documents wheel hash coverage for pure, ABI-specific, and stable ABI wheels such as `cp311-abi3`. It was merged into `main` at `39565cbd349ec3809040ba3394d4c080c1870ed8`.
-- Merge progress through 2026-06-02 UTC: PR [#75](https://github.com/LavX/bazarr-provider-catalog/pull/75), PR [#15](https://github.com/LavX/bazarr-provider-catalog/pull/15), PR [#17](https://github.com/LavX/bazarr-provider-catalog/pull/17), PR [#18](https://github.com/LavX/bazarr-provider-catalog/pull/18), PR [#20](https://github.com/LavX/bazarr-provider-catalog/pull/20), PR [#19](https://github.com/LavX/bazarr-provider-catalog/pull/19), PR [#21](https://github.com/LavX/bazarr-provider-catalog/pull/21), PR [#22](https://github.com/LavX/bazarr-provider-catalog/pull/22), PR [#23](https://github.com/LavX/bazarr-provider-catalog/pull/23), PR [#14](https://github.com/LavX/bazarr-provider-catalog/pull/14), PR [#16](https://github.com/LavX/bazarr-provider-catalog/pull/16), PR [#24](https://github.com/LavX/bazarr-provider-catalog/pull/24), PR [#25](https://github.com/LavX/bazarr-provider-catalog/pull/25), PR [#26](https://github.com/LavX/bazarr-provider-catalog/pull/26), PR [#31](https://github.com/LavX/bazarr-provider-catalog/pull/31), PR [#30](https://github.com/LavX/bazarr-provider-catalog/pull/30), PR [#32](https://github.com/LavX/bazarr-provider-catalog/pull/32), PR [#33](https://github.com/LavX/bazarr-provider-catalog/pull/33), PR [#34](https://github.com/LavX/bazarr-provider-catalog/pull/34), PR [#35](https://github.com/LavX/bazarr-provider-catalog/pull/35), PR [#36](https://github.com/LavX/bazarr-provider-catalog/pull/36), PR [#37](https://github.com/LavX/bazarr-provider-catalog/pull/37), PR [#67](https://github.com/LavX/bazarr-provider-catalog/pull/67), PR [#54](https://github.com/LavX/bazarr-provider-catalog/pull/54), PR [#38](https://github.com/LavX/bazarr-provider-catalog/pull/38), PR [#43](https://github.com/LavX/bazarr-provider-catalog/pull/43), PR [#39](https://github.com/LavX/bazarr-provider-catalog/pull/39), PR [#41](https://github.com/LavX/bazarr-provider-catalog/pull/41), PR [#40](https://github.com/LavX/bazarr-provider-catalog/pull/40), PR [#13](https://github.com/LavX/bazarr-provider-catalog/pull/13), PR [#68](https://github.com/LavX/bazarr-provider-catalog/pull/68), notes-only PR [#63](https://github.com/LavX/bazarr-provider-catalog/pull/63), and notes-only PR [#66](https://github.com/LavX/bazarr-provider-catalog/pull/66) were merged after local verification and live PR inspection.
+- Merge progress through 2026-06-02 UTC: PR [#75](https://github.com/LavX/bazarr-provider-catalog/pull/75), PR [#15](https://github.com/LavX/bazarr-provider-catalog/pull/15), PR [#17](https://github.com/LavX/bazarr-provider-catalog/pull/17), PR [#18](https://github.com/LavX/bazarr-provider-catalog/pull/18), PR [#20](https://github.com/LavX/bazarr-provider-catalog/pull/20), PR [#19](https://github.com/LavX/bazarr-provider-catalog/pull/19), PR [#21](https://github.com/LavX/bazarr-provider-catalog/pull/21), PR [#22](https://github.com/LavX/bazarr-provider-catalog/pull/22), PR [#23](https://github.com/LavX/bazarr-provider-catalog/pull/23), PR [#14](https://github.com/LavX/bazarr-provider-catalog/pull/14), PR [#16](https://github.com/LavX/bazarr-provider-catalog/pull/16), PR [#24](https://github.com/LavX/bazarr-provider-catalog/pull/24), PR [#25](https://github.com/LavX/bazarr-provider-catalog/pull/25), PR [#26](https://github.com/LavX/bazarr-provider-catalog/pull/26), PR [#31](https://github.com/LavX/bazarr-provider-catalog/pull/31), PR [#30](https://github.com/LavX/bazarr-provider-catalog/pull/30), PR [#32](https://github.com/LavX/bazarr-provider-catalog/pull/32), PR [#33](https://github.com/LavX/bazarr-provider-catalog/pull/33), PR [#34](https://github.com/LavX/bazarr-provider-catalog/pull/34), PR [#35](https://github.com/LavX/bazarr-provider-catalog/pull/35), PR [#36](https://github.com/LavX/bazarr-provider-catalog/pull/36), PR [#37](https://github.com/LavX/bazarr-provider-catalog/pull/37), PR [#67](https://github.com/LavX/bazarr-provider-catalog/pull/67), PR [#54](https://github.com/LavX/bazarr-provider-catalog/pull/54), PR [#38](https://github.com/LavX/bazarr-provider-catalog/pull/38), PR [#43](https://github.com/LavX/bazarr-provider-catalog/pull/43), PR [#39](https://github.com/LavX/bazarr-provider-catalog/pull/39), PR [#41](https://github.com/LavX/bazarr-provider-catalog/pull/41), PR [#40](https://github.com/LavX/bazarr-provider-catalog/pull/40), PR [#13](https://github.com/LavX/bazarr-provider-catalog/pull/13), PR [#68](https://github.com/LavX/bazarr-provider-catalog/pull/68), notes-only PR [#63](https://github.com/LavX/bazarr-provider-catalog/pull/63), notes-only PR [#66](https://github.com/LavX/bazarr-provider-catalog/pull/66), notes-only PR [#73](https://github.com/LavX/bazarr-provider-catalog/pull/73), and notes-only PR [#74](https://github.com/LavX/bazarr-provider-catalog/pull/74) were merged after local verification and live PR inspection.
 - Baseline provider maintenance on 2026-06-02: PR [#13](https://github.com/LavX/bazarr-provider-catalog/pull/13) updated the already-shipped `subtitlestar` bundle to `0.1.9` for IMDb title alias handling. This did not change the shipped bundle count. The PR had no live review threads, was updated from `/tmp/bazarr_catalog_provider_worktrees/subtitlestar_fix` by merging current `origin/main`, and merged at `504b39757bb3ec7f392bb148abec58eb917814b9` with final head `df8df0dbcef84779d1db4411a63f9ba60834dd59`. Verification before merge: `test_subtitlestar.py` ran `66` tests passed, `test_catalog.py` ran `14` tests passed with `6` skipped, `sdk validate` returned `catalog ok`, `py_compile` passed, `sdk runtime-matrix` returned Python `3.12`, `3.13`, and `3.14`, `git diff --cached --check` was clean, and full `unittest discover -s tests` ran `712` tests passed with `6` skipped.
 - Core replacement-policy evidence: Bazarr core branch `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`, contains a trusted replacement policy for 55 active migrated built-ins, the compat AniDB ID bridge needed by anime providers, and the compat NapiProjekt hash bridge. It excludes dead-origin providers `hosszupuska`, `podnapisi`, `subscenter`, and `xsubs`, and excludes legacy `opensubtitles` because the catalog rewrite ships as `opensubtitles_org`.
 - Test-server core evidence: `bazarr-ui-test` was updated on 2026-05-31 to image version `ui-test-20260531-provider-hub-replacements-f245ae096`, revision `f245ae096`, and returned healthy. The earlier test image based on old head `456071d10` failed because the image did not contain database migration `6c9f1b8d2e3a`; rebasing the core branch onto current `origin/development` fixed that mismatch.
@@ -69,7 +70,7 @@
   - `ktuvit`: branch `catalog-ktuvit`, worktree `/tmp/bazarr_catalog_provider_worktrees/ktuvit`, current head `9d3162e`
   - `legendasdivx`: branch `catalog-legendasdivx`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasdivx`, current head `02bbb60`
   - `legendasnet`: branch `catalog-legendasnet`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasnet`, current head `983878f`
-  - `napiprojekt`: branch `catalog-napiprojekt`, worktree `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`, current head `5666c03`
+  - `napiprojekt`: branch `catalog-napiprojekt`, worktree `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`, current head `af6ff27`
   - `napisy24`: branch `catalog-napisy24`, worktree `/tmp/bazarr_catalog_provider_worktrees/napisy24`, current head `34a9720`
   - `nekur`: branch `catalog-nekur`, worktree `/tmp/bazarr_catalog_provider_worktrees/nekur`, current head `d549ad9`
   - `opensubtitles`: branch `catalog-opensubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitles`, current head `cc19c5d`
@@ -84,7 +85,7 @@
   - `subdl`: branch `catalog-subdl`, worktree `/tmp/bazarr_catalog_provider_worktrees/subdl`, current head `7ff94cd`
   - `subf2m`: branch `catalog-subf2m`, worktree `/tmp/bazarr_catalog_provider_worktrees/subf2m`, current head `659910f`
   - `subs4free`: branch `catalog-subs4free`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4free`, current head `6eca4fc`
-  - `subs4series`: branch `catalog-subs4series`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4series`, current head `4f47192`
+  - `subs4series`: branch `catalog-subs4series`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4series`, current head `15dd455`
   - `subsarr`: branch `catalog-subsarr`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsarr`, current head `cd0547b`
   - `subscenter`: branch `catalog-subscenter`, worktree `/tmp/bazarr_catalog_provider_worktrees/subscenter`, current head `57de626`, dead origin
   - `subsource`: branch `catalog-subsource`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsource`, current head `d50b08f`
@@ -101,12 +102,12 @@
   - `titlovi`: branch `catalog-titlovi`, worktree `/tmp/bazarr_catalog_provider_worktrees/titlovi`, current head `933fb47`
   - `titrari`: branch `catalog-titrari`, worktree `/tmp/bazarr_catalog_provider_worktrees/titrari`, current head `13ef747`
   - `titulky`: branch `catalog-titulky`, worktree `/tmp/bazarr_catalog_provider_worktrees/titulky`, current head `8394a28`
-  - `turkcealtyaziorg`: branch `catalog-turkcealtyaziorg`, worktree `/tmp/bazarr_catalog_provider_worktrees/turkcealtyaziorg`, current head `6ec4f09`
+  - `turkcealtyaziorg`: branch `catalog-turkcealtyaziorg`, worktree `/tmp/bazarr_catalog_provider_worktrees/turkcealtyaziorg`, current head `c986310`
   - `tvsubtitles`: branch `catalog-tvsubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/tvsubtitles`, current head `80a5c47`
   - `whisperai`: branch `catalog-whisperai`, worktree `/tmp/bazarr_catalog_provider_worktrees/whisperai`, current head `0eeb964`, local/generated provider
-  - `wizdom`: branch `catalog-wizdom`, worktree `/tmp/bazarr_catalog_provider_worktrees/wizdom`, current head `2d5425c`
+  - `wizdom`: branch `catalog-wizdom`, worktree `/tmp/bazarr_catalog_provider_worktrees/wizdom`, current head `93ef015`
   - `xsubs`: branch `catalog-xsubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/xsubs`, current head `5a17922`, dead origin
-  - `yavkanet`: branch `catalog-yavkanet`, worktree `/tmp/bazarr_catalog_provider_worktrees/yavkanet`, current head `a9111db`
+  - `yavkanet`: branch `catalog-yavkanet`, worktree `/tmp/bazarr_catalog_provider_worktrees/yavkanet`, current head `0ac39be`
   - `yifysubtitles`: branch `catalog-yifysubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/yifysubtitles`, current head `024f996`
   - `zimuku`: branch `catalog-zimuku`, worktree `/tmp/bazarr_catalog_provider_worktrees/zimuku`, current head `f9a9eff`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
@@ -718,8 +719,8 @@
 
 - Branch: `catalog-subs4series`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subs4series`
-- Current checkpoint: `4f47192 Merge remote-tracking branch 'origin/main' into catalog-subs4series`
-- Pull request: [#68](https://github.com/LavX/bazarr-provider-catalog/pull/68), merged on 2026-06-02 UTC at merge commit `afc5e88693bfde65dead520ae15c78fbbcb3a513`, final head `4f47192e29e02bc4893c3c0dd93cf08dd461626d`.
+- Current checkpoint: `15dd455 Handle embedded Subs4Series Anubis challenges`
+- Pull request: [#68](https://github.com/LavX/bazarr-provider-catalog/pull/68), merged on 2026-06-02 UTC at merge commit `afc5e88693bfde65dead520ae15c78fbbcb3a513`, final head `4f47192e29e02bc4893c3c0dd93cf08dd461626d`. Follow-up PR [#77](https://github.com/LavX/bazarr-provider-catalog/pull/77) is open, non-draft, head `15dd4557ad8a23fbb67a02c1b6e6e3a27ccfd217`, and merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -807,6 +808,16 @@
   - Live PR diff was scoped to `README.md`, `catalog.json`, `docs/provider-notes/subs4series.md`, `providers/subs4series/provider.json`, `providers/subs4series/provider.py`, Subs4Series fixtures, and `tests/test_subs4series.py`.
   - `gh pr ready 68 --repo LavX/bazarr-provider-catalog`: PR `#68` was marked ready for review.
   - `gh pr view 68 --repo LavX/bazarr-provider-catalog --json number,state,mergedAt,mergeCommit,headRefOid,url`: PR `#68` is `MERGED`, merge commit `afc5e88693bfde65dead520ae15c78fbbcb3a513`, final head `4f47192e29e02bc4893c3c0dd93cf08dd461626d`.
+- Embedded Anubis body follow-up on 2026-06-02:
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_subs4series.py' -k anubis_body`: failed because the provider returned the embedded Anubis challenge body instead of retrying the original URL after solving.
+  - `15dd455` detects embedded Anubis challenge bodies before Cloudflare fallback, reuses the existing Anubis solver, retries the original request, refreshes bundle hashes, and opens follow-up PR `#77`.
+  - `python3 -B -m unittest discover -s tests -p 'test_subs4series.py'`: `13` tests passed.
+  - `python3 -B -m py_compile providers/subs4series/provider.py`: passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Touched-file prohibited punctuation and attribution scan across `catalog.json`, `providers/subs4series/provider.json`, `providers/subs4series/provider.py`, and `tests/test_subs4series.py` found no matches.
+  - Live PR review-thread inspection found no review threads on PR `#77`; `gh pr checks 77` reported no checks on branch `catalog-subs4series`.
 - Remaining gates: none for the current Subs4Series migration proof.
 
 ### `zimuku`
@@ -997,8 +1008,8 @@
 
 - Branch: `catalog-wizdom`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/wizdom`
-- Current checkpoint: `4164e52 Add OpenSubtitles antibot path to Wizdom`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/72` opened as draft on 2026-06-01, head `catalog-wizdom`, base `main`, merge state `CLEAN`.
+- Current checkpoint: `93ef015 Handle embedded Wizdom Anubis challenges`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/72` opened as draft on 2026-06-01, head `catalog-wizdom`, base `main`, head `93ef015d409c2fe7749a8e9cd83e6375756beb2e`, latest checked merge state `UNKNOWN`.
 - Local evidence on 2026-05-29:
   - `python3 -B -m unittest discover -s tests -p 'test_wizdom.py'`: `11` tests passed.
   - `python3 -B -m sdk validate`: `catalog ok`.
@@ -1041,6 +1052,16 @@
   - Attribution and prohibited punctuation scan over README, catalog, Wizdom notes, provider code, and tests found no matches.
 - Live anti-bot recheck on 2026-06-02:
   - Escalated live smoke `python3 -B -m sdk smoke-test --provider wizdom --language heb --video-fixture tests/fixtures/wizdom_video_inception.json --config-json '{"request_delay_ms":0}' --expect-min-results 1 --skip-download` failed with `Wizdom request failed: HTTPSConnectionPool(host='wizdom.xyz', port=443): Read timed out. (read timeout=15)`.
+- Embedded Anubis body update on 2026-06-02:
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_wizdom.py' -k anubis_body`: failed because the provider returned the embedded Anubis challenge body instead of retrying the original URL after solving.
+  - `93ef015` detects embedded Anubis challenge bodies before Cloudflare fallback, reuses the existing Anubis solver, retries the original request, refreshes bundle hashes, and pushes PR `#72`.
+  - `python3 -B -m unittest discover -s tests -p 'test_wizdom.py'`: `17` tests passed.
+  - `python3 -B -m py_compile providers/wizdom/provider.py`: passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed with `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Touched-file prohibited punctuation and attribution scan across `catalog.json`, `providers/wizdom/provider.json`, `providers/wizdom/provider.py`, and `tests/test_wizdom.py` found no matches.
+  - Live PR review-thread inspection found no review threads on PR `#72`; `gh pr checks 72` reported no checks on branch `catalog-wizdom`.
 - Remaining gates:
   - Keep PR `#72` draft until Wizdom live search and download proof can be captured.
   - Treat current Wizdom proof as blocked by `wizdom.xyz` origin timeout or Cloudflare `522`, not by TMDB, local parser behavior, branch deployment, or Provider Hub loading.
@@ -1411,8 +1432,8 @@
 
 - Branch: `catalog-napiprojekt`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`
-- Current checkpoint: `5666c03 Merge remote-tracking branch 'origin/main' into catalog-napiprojekt`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/25` opened on 2026-06-01, head `catalog-napiprojekt`, base `main`, final head `5666c03`, merged on 2026-06-02 UTC at `36af7f4777c64a68c1d1da44b97cd42b6befe8a2`.
+- Current checkpoint: `af6ff27 Handle embedded NapiProjekt Anubis challenges`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/25` opened on 2026-06-01, head `catalog-napiprojekt`, base `main`, final head `5666c03`, merged on 2026-06-02 UTC at `36af7f4777c64a68c1d1da44b97cd42b6befe8a2`. Follow-up PR `#76` is open, non-draft, head `af6ff27e8a3466731247383dd31b3c4edcf7c530`, and merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1497,6 +1518,16 @@
   - `python3 -B -m sdk smoke-test --provider napiprojekt --language pol --video-fixture tests/fixtures/napiprojekt_video_shrek.json --expect-min-results 1`: `napiprojekt ok`.
   - Live PR review threads were resolved or outdated, and `gh pr view 25` reported head `5666c038882c5f312ce9270b8ecd4bec3741c46c`, non-draft, merge state `CLEAN`.
   - PR `#25` merged on 2026-06-02 UTC at merge commit `36af7f4777c64a68c1d1da44b97cd42b6befe8a2`.
+- Embedded Anubis body follow-up on 2026-06-02:
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_napiprojekt.py' -k anubis_body`: failed because the provider returned the embedded Anubis challenge body instead of retrying the original URL after solving.
+  - `af6ff27` detects embedded Anubis challenge bodies before Cloudflare fallback, reuses the existing Anubis solver, retries the original request, refreshes bundle hashes, and opens follow-up PR `#76`.
+  - `python3 -B -m unittest discover -s tests -p 'test_napiprojekt.py'`: `23` tests passed.
+  - `python3 -B -m py_compile providers/napiprojekt/provider.py`: passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Touched-file prohibited punctuation and attribution scan across `catalog.json`, `providers/napiprojekt/provider.json`, `providers/napiprojekt/provider.py`, and `tests/test_napiprojekt.py` found no matches.
+  - Live PR review-thread inspection found no review threads on PR `#76`; `gh pr checks 76` reported no checks on branch `catalog-napiprojekt`.
 - Remaining gates: none for the current NapiProjekt hash-path migration proof. Author-filtered catalog scraping still depends on a reachable FlareSolverr `/v1` endpoint when NapiProjekt serves a Cloudflare challenge.
 
 ### `podnapisi`
@@ -1504,7 +1535,7 @@
 - Branch: `catalog-podnapisi`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/podnapisi`
 - Current checkpoint: `8b3d09f Record Podnapisi test-host dead-origin check`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/73` opened as draft notes-only PR on 2026-06-01, head `catalog-podnapisi`, base `main`, merge state `CLEAN`.
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/73` notes-only PR merged on 2026-06-02 UTC at merge commit `c10ed05be0c05e8583364bf39aad2737da2816df`, final head `8b3d09f8531defa81cc2f1a085d2885d20522c95`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1537,6 +1568,7 @@
   - Bazarr test host recheck on 2026-06-01: `ssh lavx@192.168.100.6 curl -I --max-time 15 https://www.podnapisi.net/subtitles` fails DNS with `curl: (6) Could not resolve host`.
 - Dead-origin decision:
   - Fresh notes-only PR validation on 2026-06-01: `python3 -B -m sdk validate` returned `catalog ok`; `python3 -B -m unittest discover -s tests -p 'test_catalog.py'` ran `12` tests passed with `6` skipped; `git diff --check origin/main...HEAD` was clean; attribution and em-dash scan over `docs/provider-notes/podnapisi.md` found no matches.
+  - Notes-only merge evidence on 2026-06-02: live review-thread inspection found no review threads on PR `#73`; the live PR diff was scoped to `docs/provider-notes/podnapisi.md`; `python3 -B -m sdk validate` returned `catalog ok`; `python3 -B -m unittest discover -s tests -p 'test_catalog.py'` ran `12` tests passed with `6` skipped; `rg -n "podnapisi|Podnapisi" README.md catalog.json providers tests -S` found no matches; `git diff --check origin/main...HEAD` was clean; prohibited punctuation and attribution scan over `docs/provider-notes/podnapisi.md` found no matches; `gh pr view 73 --repo LavX/bazarr-provider-catalog --json number,state,mergedAt,mergeCommit,headRefOid,url` reported PR `#73` as `MERGED`, merge commit `c10ed05be0c05e8583364bf39aad2737da2816df`, final head `8b3d09f8531defa81cc2f1a085d2885d20522c95`.
   - Treat Podnapisi as dead for Provider Hub migration unless `www.podnapisi.net` resolves and serves the original subtitle API again, or a verified replacement origin is found.
   - Do not add `podnapisi` to the core replacement policy while the origin is dead.
   - Do not open or merge Podnapisi as an active catalog provider while the origin is dead.
@@ -1890,7 +1922,7 @@
 - Branch: `catalog-hosszupuska`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`
 - Current checkpoint: `5ccb3a7 Record Hosszupuska test-host dead-origin check`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/74` opened as draft notes-only PR on 2026-06-01, head `catalog-hosszupuska`, base `main`, merge state `CLEAN`.
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/74` notes-only PR merged on 2026-06-02 UTC at merge commit `2c24a2e280166ae93fe2d8265ed7cc4118ac9b06`, final head `5ccb3a7c1eba75828bf2ebb481c7f071e7529473`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1929,6 +1961,7 @@
   - Bazarr test host recheck on 2026-06-01: `ssh lavx@192.168.100.6 curl -I --max-time 15 http://hosszupuskasub.com/` returns HTTP `308` to `https://hosszupuskasub.com/`, but `curl -I --max-time 15 https://hosszupuskasub.com/` fails with `curl: (35) TLS connect error`, and the legacy `sorozatok.php?sid=17617` path fails the same way after redirect.
 - Dead-origin decision:
   - Fresh notes-only PR validation on 2026-06-01: `python3 -B -m sdk validate` returned `catalog ok`; `python3 -B -m unittest discover -s tests -p 'test_catalog.py'` ran `12` tests passed with `6` skipped; `git diff --check origin/main...HEAD` was clean; attribution and em-dash scan over `docs/provider-notes/hosszupuska.md` found no matches.
+  - Notes-only merge evidence on 2026-06-02: live review-thread inspection found no review threads on PR `#74`; the live PR diff was scoped to `docs/provider-notes/hosszupuska.md`; `python3 -B -m sdk validate` returned `catalog ok`; `python3 -B -m unittest discover -s tests -p 'test_catalog.py'` ran `12` tests passed with `6` skipped; `rg -n "hosszupuska|Hosszupuska" README.md catalog.json providers tests -S` found no matches; `git diff --check origin/main...HEAD` was clean; prohibited punctuation and attribution scan over `docs/provider-notes/hosszupuska.md` found no matches; `gh pr view 74 --repo LavX/bazarr-provider-catalog --json number,state,mergedAt,mergeCommit,headRefOid,url` reported PR `#74` as `MERGED`, merge commit `2c24a2e280166ae93fe2d8265ed7cc4118ac9b06`, final head `5ccb3a7c1eba75828bf2ebb481c7f071e7529473`.
   - Treat Hosszupuska as dead for Provider Hub migration unless the original site returns or a verified replacement origin is found.
   - Re-run live Hosszupuska smoke only after the domain stops serving ParkLogic parking responses.
   - Do not add `hosszupuska` to the core replacement policy while the origin is dead.
@@ -2732,8 +2765,8 @@
 
 - Branch: `catalog-yavkanet`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/yavkanet`
-- Current checkpoint: `a9111db Merge origin/main into YavkaNet branch`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/42` opened as draft on 2026-06-01, head `catalog-yavkanet`, base `main`, merge state `CLEAN`, head OID `a9111db6008728d6de98173366d5dc8fa1a71c98`.
+- Current checkpoint: `0ac39be Handle embedded YavkaNet Anubis challenges`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/42` opened as draft on 2026-06-01, head `catalog-yavkanet`, base `main`, head OID `0ac39be3653b7de1afbfa517a4b8ee5ee74056e7`, latest checked merge state `UNKNOWN`.
 - Local evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -2814,6 +2847,16 @@
   - Escalated live smoke without solver still failed at the known Cloudflare boundary with `yavkanet hit a Cloudflare challenge and no FlareSolverr URL is configured`.
   - Escalated live smoke configured with `http://127.0.0.1:8191/v1` failed with connection refused, and an explicit local FlareSolverr probe to the same endpoint also returned connection refused.
   - `gh pr view 42 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,mergeStateStatus,headRefOid,url`: PR `#42` is open, draft, head `a9111db6008728d6de98173366d5dc8fa1a71c98`, latest checked merge state `CLEAN`.
+- Embedded Anubis body update on 2026-06-02:
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_yavkanet.py' -k anubis_body`: failed because the provider returned the embedded Anubis challenge body instead of retrying the original URL after solving.
+  - `0ac39be` detects embedded Anubis challenge bodies before Cloudflare fallback, reuses the existing Anubis solver, retries the original request, refreshes bundle hashes, and pushes PR `#42`.
+  - `python3 -B -m unittest discover -s tests -p 'test_yavkanet.py'`: `15` tests passed.
+  - `python3 -B -m py_compile providers/yavkanet/provider.py`: passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Touched-file prohibited punctuation and attribution scan across `catalog.json`, `providers/yavkanet/provider.json`, `providers/yavkanet/provider.py`, and `tests/test_yavkanet.py` found no matches.
+  - Live PR review-thread inspection found no review threads on PR `#42`; `gh pr checks 42` reported no checks on branch `catalog-yavkanet`.
 - Remaining gates:
   - Treat current YavkaNet proof as blocked by the origin Cloudflare challenge and the configured FlareSolverr endpoint returning HTTP `500`, not by Provider Hub config, dependency installation, branch deployment, or worker deadline.
   - Current local environment also has no reachable FlareSolverr at `http://127.0.0.1:8191/v1`.
@@ -3284,8 +3327,8 @@
 
 - Branch: `catalog-turkcealtyaziorg`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/turkcealtyaziorg`
-- Current checkpoint: `8c184b2 Add inline Anubis retry to TurkceAltyazi`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/53` opened as draft on 2026-06-01, head `catalog-turkcealtyaziorg`, base `main`, latest checked merge state `UNKNOWN`.
+- Current checkpoint: `c986310 Handle embedded TurkceAltyazi Anubis challenges`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/53` opened as draft on 2026-06-01, head `catalog-turkcealtyaziorg`, base `main`, head `c9863100a6897294c43be9a961eac16eec34e095`, latest checked merge state `UNKNOWN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -3336,6 +3379,16 @@
   - `gh pr view 53 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,headRefOid,title`: PR `#53` is open, draft, head `catalog-turkcealtyaziorg`, base `main`, merge state `UNKNOWN`, head `54522cdb628c207c6a448ac33a33f640f0aad78c`.
 - Live anti-bot recheck on 2026-06-02:
   - Escalated live smoke `python3 -B -m sdk smoke-test --provider turkcealtyaziorg --language tur --video-fixture /tmp/turkcealtyaziorg_inception_video.json --config-json '{"request_delay_ms":0}' --expect-min-results 1 --skip-download` failed with `TurkceAltyazi is presenting a Cloudflare challenge; configure FlareSolverr URL or matching cookies and User-Agent`.
+- Embedded Anubis body update on 2026-06-02:
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_turkcealtyaziorg.py' -k anubis_body`: failed because the provider returned the embedded Anubis challenge body instead of retrying the original URL after solving.
+  - `c986310` detects embedded Anubis challenge bodies before Cloudflare fallback, reuses the existing Anubis solver, retries the original request, refreshes bundle hashes, and pushes PR `#53`.
+  - `python3 -B -m unittest discover -s tests -p 'test_turkcealtyaziorg.py'`: `15` tests passed.
+  - `python3 -B -m py_compile providers/turkcealtyaziorg/provider.py`: passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `12` tests passed with `6` skipped.
+  - `git diff --check` and `git diff --cached --check`: clean.
+  - Touched-file prohibited punctuation and attribution scan across `catalog.json`, `providers/turkcealtyaziorg/provider.json`, `providers/turkcealtyaziorg/provider.py`, and `tests/test_turkcealtyaziorg.py` found no matches.
+  - Live PR review-thread inspection found no review threads on PR `#53`; `gh pr checks 53` reported no checks on branch `catalog-turkcealtyaziorg`.
 - Remaining gates:
   - Run SDK live smoke search and download with valid TurkceAltyazi.org cookies and User-Agent, or a FlareSolverr environment that can solve this origin.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `turkcealtyaziorg` in the trusted replacement policy.
