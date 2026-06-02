@@ -1322,7 +1322,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "ee432e77ec2b3302026515cddd7975ba929f56c7fcdcb6a4019fc4697908e299",
+        "bundle_sha256": "ea337f8ef0c837dee1570ac9b375aee18c74de42f44c6ce2baa0c0d2ca1dcaa3",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1573,7 +1573,7 @@
         "entry_class": "NapiProjektProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "ee83001e80797ba00cb3f1a08aa6fddee383c30b326cdf6e021690093f88a3f9"
+          "provider.py": "e5fdac85356362a17ebbe329d74378a2e5bb33d634af7d91d3bb40e28bcc64bc"
         },
         "languages": [
           "pol"

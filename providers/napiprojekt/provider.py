@@ -391,8 +391,9 @@ def _cloudflare_request(method, url, data=None, config=None, state=None, timeout
     else:
         response = scraper.get(url, headers=headers, timeout=timeout)
     body = response.content
-    if is_anubis_challenge(getattr(response, "url", ""), getattr(response, "status_code", 0)):
-        solved = solve_anubis_challenge(scraper, response.url, url, timeout=timeout)
+    challenge_url = _anubis_challenge_url(getattr(response, "url", ""), body, getattr(response, "status_code", 0))
+    if challenge_url:
+        solved = solve_anubis_challenge(scraper, challenge_url, url, timeout=timeout)
         if not solved:
             raise CloudflareBlockedError("napiprojekt Anubis challenge could not be solved")
         if method == "POST":
@@ -421,6 +422,28 @@ def is_anubis_challenge(url, status_code=0):
     return "/.within.website/" in (url or "") or (
         status_code in (307, 401, 403) and ".within.website" in (url or "")
     )
+
+
+def _body_text(body):
+    if isinstance(body, bytes):
+        return body.decode("utf-8", "ignore")
+    return str(body or "")
+
+
+def _has_anubis_challenge_body(body):
+    return _extract_anubis_challenge(_body_text(body)) is not None
+
+
+def _anubis_challenge_url(response_url, body, status_code):
+    if is_anubis_challenge(response_url, status_code):
+        return response_url
+    challenge = _extract_anubis_challenge(_body_text(body))
+    if not challenge:
+        return ""
+    redirect_url = html.unescape(str(challenge.get("redirect_url") or "").strip())
+    if redirect_url:
+        return urllib.parse.urljoin(response_url or CATALOG_BASE_URL, redirect_url)
+    return response_url or CATALOG_BASE_URL
 
 
 def _extract_anubis_challenge(html_text):
