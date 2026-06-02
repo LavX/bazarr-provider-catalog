@@ -50,7 +50,7 @@
   - User service or base URL gated: `subsarr` needs a reachable self-hosted Subsarr `base_url`; `whisperai` needs a real Whisper web-service endpoint for non-stub proof.
   - Origin access or anti-bot gated: `turkcealtyaziorg`, `yavkanet`, and `wizdom`.
   - Real media hash or disclosure gated: `napisy24` needs a library-backed video with a valid Napisy24/OpenSubtitles hash; `shooter` needs explicit approval or a non-sensitive fixture before sending derived Shooter hashes to the public API.
-  - Compat-only gated: `zimuku` has current SDK search and download proof, but still needs Provider Hub compat search, download, and stream proof.
+  - Compat-only gated: none after local disposable Provider Hub compat proof for the previously gated providers.
   - Local disposable compat evidence on 2026-06-02 cleared SubDL's compat gate using container `bazarr-compat-subdl` on `127.0.0.1:6769`; the official catalog source was pointed at `catalog-subdl`, Provider Hub activated SubDL `0.1.0` at commit `0f47d3789db3178d8341cd69c33b3ae543712dd0`, and compat search/download/stream all returned HTTP `200`.
   - The same local disposable compat run cleared SubSource's compat gate after switching the official source to `catalog-subsource`, activating SubSource `0.1.0` at commit `34b3b1978ef322d6e279424697fba700b2627267`, disabling SubDL for an isolated fanout, and proving compat search/download/stream with HTTP `200`.
   - The same local disposable compat run cleared Subs.ro's compat gate after switching the official source to `catalog-subsro`, activating Subs.ro `0.1.0` at commit `b1f6fe6150c429f509cc1fb875611b8d605f857d`, disabling SubSource for an isolated fanout, installing all hash-checked dependencies including `py7zz==1.1.4`, and proving compat search/download/stream with HTTP `200`.
@@ -60,7 +60,8 @@
   - The same `bazarr-compat-remaining` disposable compat run cleared BetaSeries' compat gate after switching the official source to `catalog-betaseries`, activating BetaSeries `0.1.1` at commit `8e228c910cebcd074150696bbc02f5abc9c76b21`, installing hash-checked dependencies including `py7zz==1.1.4`, and proving compat search/download/stream with HTTP `200`.
   - The same `bazarr-compat-remaining` disposable compat run cleared Titlovi's compat gate after switching the official source to `catalog-titlovi`, activating Titlovi `0.1.1` at commit `9afb8e2d847588559b6884b7b2858c9f4adcdb1f`, installing hash-checked dependencies including `py7zz==1.1.4`, and proving compat search/download/stream with HTTP `200`.
   - The same `bazarr-compat-remaining` disposable compat run cleared RegieLive's compat gate after switching the official source to `catalog-regielive`, activating RegieLive `0.1.1` at commit `fb894d9a56fc27faa520cf383b6f38e53825c099`, and proving compat search/download/stream with HTTP `200`.
-  - Current remote compat reachability evidence still needs refresh for the remaining queue: `bazarr-ui-test` does not resolve over SSH, and `BAZARR_COMPAT_API_KEY` is unset in this shell.
+  - The same `bazarr-compat-remaining` disposable compat run cleared Zimuku's compat gate after switching the official source to `catalog-zimuku`, activating Zimuku `0.1.3` at commit `6fab89144af39b6deda24c0921751500d354a0d6`, installing hash-checked dependencies including `py7zz==1.1.4`, and proving compat search/download/stream with HTTP `200`.
+  - Current remote compat reachability evidence still needs refresh if `bazarr-ui-test` proof is required instead of local disposable proof: `bazarr-ui-test` does not resolve over SSH, and `BAZARR_COMPAT_API_KEY` is unset in this shell.
 - Invite-only or community-validation PR body refresh on 2026-06-02: PR `#44` HDBits, PR `#51` AvistaZ, PR `#52` CinemaZ, PR `#57` Karagarga, PR `#59` LegendasDivx, and PR `#62` Pipocas.tv now explicitly request community validation from users with the required account, cookies, or tracker access. Live GitHub verification showed all six PRs remain draft and merge state `CLEAN`.
 - Current catalog checkout inventory: this planning worktree is intentionally not rebased onto `main`, but live `main` now ships 40 Provider Hub bundles, adding `gestdown`, `bsplayer`, `subtis`, `subtitulamostv`, `tvsubtitles`, `greeksubs`, `animekalesi`, `animesubinfo`, `opensubtitles_org`, `animetosho`, `napiprojekt`, `subf2m`, `nekur`, `greeksubtitles`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subs4free`, `subs4series`, `embedded_subtitles`, `subtitrarinoi`, `yifysubtitles`, `subtitriid`, `titrari`, and `supersubtitles` to the previous 12 bundle baseline.
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
@@ -1231,8 +1232,12 @@
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `git diff --check origin/main...HEAD`: clean.
   - Escalated live SDK smoke with download enabled `python3 -B -m sdk smoke-test --provider zimuku --language zho --video-fixture tests/fixtures/zimuku_video_game_of_thrones_s01e01.json --config-json '{"request_delay_ms":0}' --expect-min-results 1`: `zimuku ok`.
-- Remaining gates:
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with Yunsuo verification solved.
+- Provider Hub compat proof on 2026-06-02:
+  - Local disposable Provider Hub proof used `ghcr.io/lavx/bazarr:ui-test` container `bazarr-compat-remaining` on `127.0.0.1:6770`; Provider Hub reported `state=active`, `pending_restart=false`, and active commit `6fab89144af39b6deda24c0921751500d354a0d6`.
+  - Compat search `GET /api/v1/subtitles?imdb_id=0944947&query=Game.of.Thrones.S01E01.HDTV.XviD-FEVER&type=episode&season_number=1&episode_number=1&languages=zh&per_page=100` returned HTTP `200`, `5` total results, and `5` Zimuku rows.
+  - Compat download `POST /api/v1/download` for first Zimuku `file_id=1` returned HTTP `200`.
+  - Compat stream returned HTTP `200`, `407536` bytes, and content type `application/x-subrip`.
+- Remaining gates: none for local disposable Provider Hub compat proof.
 
 ### `regielive`
 
