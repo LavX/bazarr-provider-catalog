@@ -50,8 +50,12 @@
   - User service or base URL gated: `subsarr` needs a reachable self-hosted Subsarr `base_url`; `whisperai` needs a real Whisper web-service endpoint for non-stub proof.
   - Origin access or anti-bot gated: `turkcealtyaziorg`, `yavkanet`, and `wizdom`.
   - Real media hash or disclosure gated: `napisy24` needs a library-backed video with a valid Napisy24/OpenSubtitles hash; `shooter` needs explicit approval or a non-sensitive fixture before sending derived Shooter hashes to the public API.
-  - Compat-only gated: `betaseries`, `jimaku`, `legendasnet`, `regielive`, `subdl`, `subsource`, `subsro`, `subx`, `titlovi`, and `zimuku` have current SDK search and download proof, but still need Provider Hub compat search, download, and stream proof.
-  - Current local compat reachability evidence: no Bazarr test container is running, `http://127.0.0.1:6767` is closed, `bazarr-ui-test` does not resolve over SSH, and `BAZARR_COMPAT_API_KEY` is unset in this shell.
+  - Compat-only gated: `betaseries`, `jimaku`, `legendasnet`, `regielive`, `titlovi`, and `zimuku` have current SDK search and download proof, but still need Provider Hub compat search, download, and stream proof.
+  - Local disposable compat evidence on 2026-06-02 cleared SubDL's compat gate using container `bazarr-compat-subdl` on `127.0.0.1:6769`; the official catalog source was pointed at `catalog-subdl`, Provider Hub activated SubDL `0.1.0` at commit `0f47d3789db3178d8341cd69c33b3ae543712dd0`, and compat search/download/stream all returned HTTP `200`.
+  - The same local disposable compat run cleared SubSource's compat gate after switching the official source to `catalog-subsource`, activating SubSource `0.1.0` at commit `34b3b1978ef322d6e279424697fba700b2627267`, disabling SubDL for an isolated fanout, and proving compat search/download/stream with HTTP `200`.
+  - The same local disposable compat run cleared Subs.ro's compat gate after switching the official source to `catalog-subsro`, activating Subs.ro `0.1.0` at commit `b1f6fe6150c429f509cc1fb875611b8d605f857d`, disabling SubSource for an isolated fanout, installing all hash-checked dependencies including `py7zz==1.1.4`, and proving compat search/download/stream with HTTP `200`.
+  - The same local disposable compat run cleared SubX's compat gate after switching the official source to `catalog-subx`, activating SubX `0.1.0` at commit `d19cdd7731828fce91aec124d6f9c4693e656e19`, disabling Subs.ro for an isolated fanout, installing all hash-checked dependencies including `py7zz==1.1.4`, and proving compat search/download/stream with HTTP `200`.
+  - Current remote compat reachability evidence still needs refresh for the remaining queue: `bazarr-ui-test` does not resolve over SSH, and `BAZARR_COMPAT_API_KEY` is unset in this shell.
 - Invite-only or community-validation PR body refresh on 2026-06-02: PR `#44` HDBits, PR `#51` AvistaZ, PR `#52` CinemaZ, PR `#57` Karagarga, PR `#59` LegendasDivx, and PR `#62` Pipocas.tv now explicitly request community validation from users with the required account, cookies, or tracker access. Live GitHub verification showed all six PRs remain draft and merge state `CLEAN`.
 - Current catalog checkout inventory: this planning worktree is intentionally not rebased onto `main`, but live `main` now ships 40 Provider Hub bundles, adding `gestdown`, `bsplayer`, `subtis`, `subtitulamostv`, `tvsubtitles`, `greeksubs`, `animekalesi`, `animesubinfo`, `opensubtitles_org`, `animetosho`, `napiprojekt`, `subf2m`, `nekur`, `greeksubtitles`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subs4free`, `subs4series`, `embedded_subtitles`, `subtitrarinoi`, `yifysubtitles`, `subtitriid`, `titrari`, and `supersubtitles` to the previous 12 bundle baseline.
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
@@ -3643,9 +3647,13 @@
   - `python3 -B -m sdk smoke-test --provider subdl --language eng --video-fixture tests/fixtures/subclub_video_inception.json --config-json '{"request_delay_ms":0,"anime_mode":false}' --secret api_key=SUBDL_API_KEY --expect-min-results 1 --skip-download`: `subdl ok`.
   - `python3 -B -m sdk smoke-test --provider subdl --language eng --video-fixture tests/fixtures/subclub_video_inception.json --config-json '{"request_delay_ms":0,"anime_mode":false}' --secret api_key=SUBDL_API_KEY --expect-min-results 1`: `subdl ok`.
   - `gh pr view 46 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,mergeStateStatus,reviewDecision,headRefOid,url`: PR `#46` is open, draft, head `0f47d3789db3178d8341cd69c33b3ae543712dd0`, merge state `CLEAN`.
-- Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `subdl` in the trusted replacement policy.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured SubDL API key.
+  - Local disposable Bazarr compat proof on 2026-06-02 used `ghcr.io/lavx/bazarr:ui-test` with temp config under `/tmp/bazarr-compat-subdl-config`; compat admin health returned HTTP `200`, compat login returned HTTP `200`, Provider Hub catalog source `official` resolved `catalog-subdl` to commit `0f47d3789db3178d8341cd69c33b3ae543712dd0`, stage install returned HTTP `200`, startup activated and registered `subdl`, and Provider Hub reported `state=active`, `enabled=true`, `active_version=0.1.0`, `pending_restart=false`, `last_error=null`.
+  - Provider Hub config patch stored the temporary SubDL API key as a redacted secret with `anime_mode=false` and `request_delay_ms=0`.
+  - Compat search `GET /api/v1/subtitles?imdb_id=1160419&query=Dune.2021.1080p.BluRay.x264&languages=en&type=movie&per_page=100` returned HTTP `200`, `23` total results, and `file_id=1` for `SUBDL::dune-2021-english-3331048.zip`.
+  - Compat download `POST /api/v1/download` for `file_id=1` returned HTTP `200`, a stream link, `remaining=999`, and `remaining_downloads=999`.
+  - Compat stream fetch returned HTTP `200`, `application/x-subrip`, `82098` bytes, and SRT cue text beginning with `00:00:56,306 --> 00:00:58,433`.
+  - Container logs showed `Activated staged Provider Hub installations on startup: ['subdl']`, `Registered Provider Hub plugins into provider registry: ['subdl']`, and `compat fanout complete: subdl=ok:1125ms`.
+- Remaining gates: none for the current SubDL migration proof.
 
 ### `subsource`
 
@@ -3706,9 +3714,13 @@
   - `python3 -B -m sdk smoke-test --provider subsource --language eng --video-fixture tests/fixtures/subclub_video_inception.json --config-json '{"request_delay_ms":0}' --secret api_key=SUBSOURCE_API_KEY --expect-min-results 1 --skip-download`: `subsource ok`.
   - `python3 -B -m sdk smoke-test --provider subsource --language eng --video-fixture tests/fixtures/subclub_video_inception.json --config-json '{"request_delay_ms":0}' --secret api_key=SUBSOURCE_API_KEY --expect-min-results 1`: `subsource ok`.
   - `gh pr view 47 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,mergeStateStatus,reviewDecision,headRefOid,url`: PR `#47` is open, draft, head `34b3b1978ef322d6e279424697fba700b2627267`, merge state `CLEAN`.
-- Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `subsource` in the trusted replacement policy.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured SubSource API key.
+  - Local disposable Bazarr compat proof on 2026-06-02 reused `ghcr.io/lavx/bazarr:ui-test` on `127.0.0.1:6769`; SubDL was disabled for an isolated fanout, Provider Hub catalog source `official` resolved `catalog-subsource` to commit `34b3b1978ef322d6e279424697fba700b2627267`, stage install returned HTTP `200`, startup activated `subsource`, and Provider Hub reported `state=active`, `enabled=true`, `active_version=0.1.0`, `pending_restart=false`, `last_error=null`.
+  - Provider Hub config patch stored the temporary SubSource API key as a redacted secret with `request_delay_ms=0`.
+  - Compat search `GET /api/v1/subtitles?imdb_id=1375666&query=Inception.2010.1080p.BluRay.x264&languages=en&type=movie&per_page=100` returned HTTP `200`, `99` total results, and `file_id=1` for `subsource-10215904.zip`.
+  - Compat download `POST /api/v1/download` for `file_id=1` returned HTTP `200`, a stream link, `remaining=999`, and `remaining_downloads=999`.
+  - Compat stream fetch returned HTTP `200`, `application/x-subrip`, `136375` bytes, and SRT cue text beginning with `00:02:09,828 --> 00:02:11,538`.
+  - Container logs showed `Activated staged Provider Hub installations on startup: ['subsource']`, `Registered Provider Hub plugins into provider registry: ['subdl', 'subsource']`, and `compat fanout complete: subsource=ok:1857ms`.
+- Remaining gates: none for the current SubSource migration proof.
 
 ### `subsro`
 
@@ -3767,9 +3779,13 @@
   - `python3 -B -m sdk smoke-test --provider subsro --language eng --video-fixture tests/fixtures/subclub_video_inception.json --config-json '{"request_delay_ms":0}' --secret api_key=SUBSRO_API_KEY --expect-min-results 1 --skip-download`: `subsro ok`.
   - `python3 -B -m sdk smoke-test --provider subsro --language eng --video-fixture tests/fixtures/subclub_video_inception.json --config-json '{"request_delay_ms":0}' --secret api_key=SUBSRO_API_KEY --expect-min-results 1`: `subsro ok`.
   - `gh pr view 48 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,mergeStateStatus,reviewDecision,headRefOid,url`: PR `#48` is open, draft, head `b1f6fe6150c429f509cc1fb875611b8d605f857d`, merge state `CLEAN`.
-- Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `subsro` in the trusted replacement policy.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Subs.ro API key.
+  - Local disposable Bazarr compat proof on 2026-06-02 reused `ghcr.io/lavx/bazarr:ui-test` on `127.0.0.1:6769`; SubSource was disabled for an isolated fanout, Provider Hub catalog source `official` resolved `catalog-subsro` to commit `b1f6fe6150c429f509cc1fb875611b8d605f857d`, stage install returned HTTP `200`, dependency installation succeeded for all hash-checked requirements including `py7zz==1.1.4`, startup activated `subsro`, and Provider Hub reported `state=active`, `enabled=true`, `active_version=0.1.0`, `pending_restart=false`, `last_error=null`.
+  - Provider Hub config patch stored the temporary Subs.ro API key as a redacted secret with `request_delay_ms=0`.
+  - Compat search `GET /api/v1/subtitles?imdb_id=1375666&query=Inception.2010.1080p.BluRay.x264&languages=en&type=movie&per_page=100` returned HTTP `200`, `1` total result, and `file_id=1` for `subsro.50829.en.zip`.
+  - Compat download `POST /api/v1/download` for `file_id=1` returned HTTP `200`, a stream link, `remaining=999`, and `remaining_downloads=999`.
+  - Compat stream fetch returned HTTP `200`, `application/x-subrip`, `118536` bytes, and SRT cue text beginning with `00:02:09,809 --> 00:02:12,561`.
+  - Container logs showed `Activated staged Provider Hub installations on startup: ['subsro']`, `Registered Provider Hub plugins into provider registry: ['subdl', 'subsource', 'subsro']`, and `compat fanout complete: subsro=ok:784ms`.
+- Remaining gates: none for the current Subs.ro migration proof.
 
 ### `subx`
 
@@ -3832,10 +3848,13 @@
   - `python3 -B -m sdk smoke-test --provider subx --language spa --video-fixture tests/fixtures/subclub_video_inception.json --config-json '{"request_delay_ms":0}' --secret api_key=SUBX_API_KEY --expect-min-results 1`: `subx ok`.
   - `gh pr view 49 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,mergeStateStatus,reviewDecision,headRefName,headRefOid,url,title`: PR `#49` is open, draft, head `d19cdd7731828fce91aec124d6f9c4693e656e19`, merge state `CLEAN`.
   - `gh pr checks 49 --repo LavX/bazarr-provider-catalog`: no checks reported on the branch.
-  - Provider Hub compat proof could not run from this environment: `ssh bazarr-ui-test hostname` and `ssh -F /dev/null bazarr-ui-test hostname` both failed to resolve the host, `curl http://127.0.0.1:6767/api/system/status` could not connect, and no local Bazarr test container was running.
-- Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `subx` in the trusted replacement policy.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured SubX API key.
+  - Local disposable Bazarr compat proof on 2026-06-02 reused `ghcr.io/lavx/bazarr:ui-test` on `127.0.0.1:6769`; Subs.ro was disabled for an isolated fanout, Provider Hub catalog source `official` resolved `catalog-subx` to commit `d19cdd7731828fce91aec124d6f9c4693e656e19`, stage install returned HTTP `200`, dependency installation succeeded for all hash-checked requirements including `py7zz==1.1.4`, startup activated `subx`, and Provider Hub reported `state=active`, `enabled=true`, `active_version=0.1.0`, `pending_restart=false`, `last_error=null`.
+  - Provider Hub config patch stored the temporary SubX API key as a redacted secret with `request_delay_ms=0`.
+  - Compat search `GET /api/v1/subtitles?imdb_id=1375666&query=Inception.2010.1080p.BluRay.x264&languages=es&type=movie&per_page=100` returned HTTP `200`, `84` total results, and `file_id=1` for `subx.5bd14610-cfce-4075-a93a-5295b3ea21d1.es.zip`.
+  - Compat download `POST /api/v1/download` for `file_id=1` returned HTTP `200`, a stream link, `remaining=999`, and `remaining_downloads=999`.
+  - Compat stream fetch returned HTTP `200`, `application/x-subrip`, `111793` bytes, and SRT cue text beginning with `00:01:33,593 --> 00:01:38,758`.
+  - Container logs showed `Activated staged Provider Hub installations on startup: ['subx']`, `Registered Provider Hub plugins into provider registry: ['subdl', 'subsource', 'subsro', 'subx']`, and `compat fanout complete: subx=ok:2057ms`.
+- Remaining gates: none for the current SubX migration proof.
 
 ### `opensubtitlescom`
 
