@@ -49,6 +49,7 @@ _YEAR_RE = re.compile(r"\((?P<year>\d{4})\)")
 _EPISODE_RE = re.compile(r"\b(?:episodul|episode|ep\.?)\s*0*(?P<episode>\d{1,3})\b", re.I)
 _SXXEXX_RE = re.compile(r"\bs(?P<season>\d{1,2})\s*[._ -]?e(?P<episode>\d{1,3})\b", re.I)
 _XX_RE = re.compile(r"\b(?P<season>\d{1,2})x(?P<episode>\d{1,3})\b", re.I)
+_S_SEPARATED_EPISODE_RE = re.compile(r"\bs(?P<season>\d{1,2})[._ -]+(?P<episode>\d{1,3})\b", re.I)
 _EPISODE_RANGE_RE = re.compile(r"\b(?:episoadele|episodes?)\s+(?P<start>\d{1,3})\s*-\s*(?P<end>\d{1,3})\b", re.I)
 _SIMPLE_RANGE_RE = re.compile(r"\b(?P<start>\d{1,3})\s*-\s*(?P<end>\d{1,3})\b")
 _PACK_RE = re.compile(r"\b(?:complet|episoade|episodes|season\s+pack|sezonul\s+\d+\s+complet)\b", re.I)
@@ -214,6 +215,12 @@ def select_subtitle_file(names, payload=None):
         if _release_group_matches(payload.get("release_group"), normalized):
             value += 6
         return value
+
+    if len(candidates) == 1:
+        only = candidates[0]
+        value = score(only)
+        if value > 0 or not _archive_has_episode_hint(only):
+            return only
 
     selected = max(candidates, key=score)
     if score(selected) <= 0:
@@ -513,20 +520,23 @@ def _episode_matches(video, row):
     if not row.get("is_pack"):
         return False
     comments = row.get("comments") or ""
+    found_range = False
     for match in _EPISODE_RANGE_RE.finditer(comments):
+        found_range = True
         if int(match.group("start")) <= episode <= int(match.group("end")):
             return True
     for match in _SIMPLE_RANGE_RE.finditer(comments):
+        found_range = True
         if int(match.group("start")) <= episode <= int(match.group("end")):
             return True
-    return True
+    return not found_range
 
 
 def _archive_episode_score(name, season, episode):
     basename = os.path.basename(name or "").lower()
     has_structured_episode = False
     best = 0
-    for pattern in (_SXXEXX_RE, _XX_RE):
+    for pattern in (_SXXEXX_RE, _XX_RE, _S_SEPARATED_EPISODE_RE):
         for match in pattern.finditer(basename):
             has_structured_episode = True
             if int(match.group("episode")) != episode:
@@ -542,6 +552,13 @@ def _archive_episode_score(name, season, episode):
     if not has_structured_episode and re.search(rf"(?<!\d)0*{episode}(?!\d)", _normalize(basename)):
         return 70
     return 0
+
+
+def _archive_has_episode_hint(name):
+    basename = os.path.basename(name or "").lower()
+    if any(pattern.search(basename) for pattern in (_SXXEXX_RE, _XX_RE, _S_SEPARATED_EPISODE_RE, _EPISODE_RE)):
+        return True
+    return bool(re.search(r"(?<!\d)\d{1,3}(?!\d)", _normalize(basename)))
 
 
 def _release_group_matches(release_group, text):

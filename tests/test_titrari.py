@@ -142,6 +142,20 @@ class TitrariParserTests(unittest.TestCase):
             {"series", "season", "episode", "series_imdb_id", "resolution", "source"},
         )
 
+    def test_derive_matches_rejects_pack_ranges_outside_requested_episode(self):
+        matches = self.mod.derive_matches(
+            {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1},
+            {
+                "title": "Chernobyl",
+                "season": 1,
+                "episode": None,
+                "is_pack": True,
+                "comments": "Episoadele 3-5",
+            },
+        )
+
+        self.assertEqual(set(matches), {"series", "season"})
+
 
 class TitrariProviderSearchTests(unittest.TestCase):
     def setUp(self):
@@ -243,6 +257,13 @@ class TitrariDownloadTests(unittest.TestCase):
         self.assertEqual(data, SRT_BODY)
         self.assertEqual(result["format"], "srt")
 
+    def test_download_accepts_single_untagged_episode_member(self):
+        body = _zip_with({"subtitrare.srt": SRT_BODY})
+        result = self.mod.extract_download(body, {"season": 1, "episode": 1, "filename": "chernobyl.zip"})
+
+        data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
+        self.assertEqual(data, SRT_BODY)
+
     def test_download_rejects_episode_archive_without_requested_member(self):
         body = _zip_with({"Chernobyl.S01E02.srt": b"wrong episode"})
 
@@ -251,6 +272,12 @@ class TitrariDownloadTests(unittest.TestCase):
 
     def test_download_rejects_episode_archive_with_wrong_season_member(self):
         body = _zip_with({"Chernobyl.S02E01.srt": b"wrong season"})
+
+        with self.assertRaisesRegex(ValueError, "requested episode"):
+            self.mod.extract_download(body, {"season": 1, "episode": 1, "filename": "chernobyl.zip"})
+
+    def test_download_rejects_numeric_fallback_from_wrong_season_member(self):
+        body = _zip_with({"Chernobyl.S02.01.srt": b"wrong season"})
 
         with self.assertRaisesRegex(ValueError, "requested episode"):
             self.mod.extract_download(body, {"season": 1, "episode": 1, "filename": "chernobyl.zip"})

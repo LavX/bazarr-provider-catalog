@@ -16,8 +16,8 @@ Clean-room target for `titrari`.
 
 - The site throttles by IP and user-agent, so the provider uses the legacy desktop Chrome-style user-agent.
 - Episode searches prefer IMDb ids. When no IMDb id is available, the query falls back to the series title.
-- Episode rows can describe a full season pack. Pack matching accepts explicit episode ranges and otherwise treats a season pack as covering the requested episode.
-- Episode archives must contain the requested season and episode when structured `SxxEyy` or `SSxEE` names are present. Wrong-season or wrong-episode archive members are rejected instead of returning unrelated subtitle content.
+- Episode rows can describe a full season pack. Pack matching accepts explicit episode ranges only when the requested episode is inside the range, and otherwise treats a range-free season pack as covering the requested episode.
+- Episode archives must contain the requested season and episode when structured `SxxEyy`, `SSxEE`, or `Sxx.Eyy` names are present. Single-file archives without episode markers are accepted because the listing identifies the episode. Wrong-season or wrong-episode archive members are rejected instead of returning unrelated subtitle content.
 - RAR extraction uses bundled `py7zz` first, with `unar` or `7z` as local fallbacks.
 
 ## License notes
