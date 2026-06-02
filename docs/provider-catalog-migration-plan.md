@@ -64,7 +64,7 @@
   - `gestdown`: branch `catalog-gestdown`, worktree `/tmp/bazarr_catalog_provider_worktrees/gestdown`, current head `c6dfb77`
   - `greeksubs`: branch `catalog-greeksubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubs`, current head `1ec84fa`
   - `greeksubtitles`: branch `catalog-greeksubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles`, current head `c0059c2`
-  - `hdbits`: branch `catalog-hdbits`, worktree `/tmp/bazarr_catalog_provider_worktrees/hdbits`, current head `42d7f02`
+  - `hdbits`: branch `catalog-hdbits`, worktree `/tmp/bazarr_catalog_provider_worktrees/hdbits`, current head `a6b35fd`
   - `hosszupuska`: branch `catalog-hosszupuska`, worktree `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`, current head `5ccb3a7`, dead origin
   - `jimaku`: branch `catalog-jimaku`, worktree `/tmp/bazarr_catalog_provider_worktrees/jimaku`, current head `112d345`
   - `karagarga`: branch `catalog-karagarga`, worktree `/tmp/bazarr_catalog_provider_worktrees/karagarga`, current head `0167ba8`
@@ -3215,6 +3215,9 @@
   - `python3 -B -m unittest discover -s tests`: `738` tests passed with `6` skipped.
   - `gh pr view 44 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,mergeStateStatus,reviewDecision,headRefName,headRefOid,url,title`: PR `#44` is open, draft, head `a6b35fd173728d25a3d8123f210867a1d364c384`, merge state `CLEAN`.
   - `gh pr checks 44 --repo LavX/bazarr-provider-catalog`: no checks reported on the branch.
+  - Fresh recheck after fetching `origin/main` confirmed no review threads, PR merge state `CLEAN`, and no checks reported.
+  - Local environment has no `HDBITS_USERNAME` or `HDBITS_PASSKEY`, so live SDK smoke remains credential-gated.
+  - No-credential `curl -sS --max-time 20 -H 'Content-Type: application/json' --data '{}' https://hdbits.org/api/torrents` returned `{"status":3,"message":"Json missing or malformed"}`.
 - Remaining gates:
   - Run SDK live smoke search and download with real HDBits credentials.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `hdbits` in the trusted replacement policy.
