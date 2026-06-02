@@ -1275,6 +1275,19 @@
   - `git diff --check --cached`: clean.
   - Touched-file prohibited punctuation and attribution scan across `README.md`, `catalog.json`, `providers/wizdom/provider.json`, `providers/wizdom/provider.py`, and `tests/test_wizdom.py` found no matches.
   - Live PR review-thread inspection found no review threads on PR `#72`; `gh pr view 72 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,mergeStateStatus,headRefOid,url` reported PR `#72` open, draft, merge state `CLEAN`, and head `d0f4e5f4e426a3b58485a31f07bf941494ce3d1c`.
+  - Fresh recheck on 2026-06-02 confirmed PR `#72` is still open draft, head `d0f4e5f4e426a3b58485a31f07bf941494ce3d1c`, merge state `CLEAN`, has no review threads, no comments, no reviews, and no checks reported.
+  - Effective branch scope against current `origin/main` remains limited to `README.md`, `catalog.json`, `docs/provider-notes/wizdom.md`, `providers/wizdom/provider.json`, `providers/wizdom/provider.py`, Wizdom fixture, and `tests/test_wizdom.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_wizdom.py'`: `17` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/wizdom/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Touched-file attribution and prohibited punctuation scan across Wizdom files found no matches.
+  - `python3 -B -m unittest discover -s tests`: `741` tests passed with `6` skipped.
+  - Live SDK search smoke `python3 -B -m sdk smoke-test --provider wizdom --language heb --video-fixture tests/fixtures/wizdom_video_inception.json --config-json '{"request_delay_ms":0}' --expect-min-results 1 --skip-download`: failed with `Wizdom request failed: HTTPSConnectionPool(host='wizdom.xyz', port=443): Read timed out. (read timeout=15)`.
+  - Live origin probe `GET https://wizdom.xyz/` returned Cloudflare HTTP `522` with body `error code: 522`.
+  - Live release probe `GET https://wizdom.xyz/api/releases/tt1375666` returned Cloudflare HTTP `522` with body `error code: 522`.
 - Remaining gates:
   - Keep PR `#72` draft until Wizdom live search and download proof can be captured.
   - Treat current Wizdom proof as blocked by `wizdom.xyz` origin timeout or Cloudflare `522`, not by TMDB, local parser behavior, branch deployment, or Provider Hub loading.
