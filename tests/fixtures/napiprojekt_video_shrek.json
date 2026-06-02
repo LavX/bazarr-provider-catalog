@@ -1,0 +1,9 @@
+{
+  "kind": "movie",
+  "title": "Shrek",
+  "year": 2001,
+  "imdb_id": "tt0126029",
+  "hashes": {
+    "napiprojekt": "444563eef63f83d47cabb888f7a45113"
+  }
+}
