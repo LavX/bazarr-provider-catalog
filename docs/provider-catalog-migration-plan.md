@@ -1961,6 +1961,19 @@
   - Prohibited punctuation and attribution scan across README, catalog, Assrt provider code, tests, and fixtures found no matches.
   - `python3 -B -m unittest discover -s tests`: `719` tests passed with `6` skipped.
   - `gh pr view 28 --repo LavX/bazarr-provider-catalog --json number,title,headRefOid,state,isDraft,mergeStateStatus,reviewDecision,updatedAt,url`: PR `#28` is open, draft, head `861ad3dac62a953cd44a4893da7932fb318c01c7`, merge state `CLEAN`.
+- Continuation recheck on 2026-06-02:
+  - Live review-thread inspection found no conversation comments, no reviews, and no review threads on PR `#28`.
+  - `python3 -B -m unittest discover -s tests -p 'test_assrt.py'`: `7` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/assrt/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited attribution scan across README, catalog, Assrt provider code, tests, and fixtures found no matches.
+  - `python3 -B -m unittest discover -s tests`: `719` tests passed with `6` skipped.
+  - Local environment had no `ASSRT_TOKEN` or `ASSRT_API_TOKEN`, so SDK live smoke remains credential-gated.
+  - `gh pr view 28 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,mergeStateStatus,headRefOid,url`: PR `#28` is open draft, head `861ad3dac62a953cd44a4893da7932fb318c01c7`, merge state `CLEAN`.
+  - `gh pr checks 28 --repo LavX/bazarr-provider-catalog`: no checks reported on branch `catalog-assrt`.
 - Remaining gates:
   - Run SDK smoke search and download when a test Assrt token is available.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` is deployed on `bazarr-ui-test`; Assrt remains unproved only because the test token is missing.
