@@ -236,13 +236,14 @@ def extract_download(body, payload=None):
         return _content_payload(b"", _format_from_filename(filename), empty=True)
     if _is_rar_archive(body):
         files = _extract_rar_files(body)
-        selected = select_subtitle_file([name for name, _content in files])
-        return _content_payload(dict(files)[selected], _subtitle_extension(selected) or "srt")
+        selected = select_subtitle_files([name for name, _content in files])
+        contents = dict(files)
+        return _content_payload(_join_subtitle_parts(contents[name] for name in selected), _subtitle_extension(selected[0]) or "srt")
     stream = io.BytesIO(body)
     if zipfile.is_zipfile(stream):
         with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist())
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
+            selected = select_subtitle_files(archive.namelist())
+            return _content_payload(_join_subtitle_parts(archive.read(name) for name in selected), _subtitle_extension(selected[0]) or "srt")
     subtitle_format = _subtitle_extension(filename) or ("srt" if _looks_like_subtitle(body) else "")
     if not subtitle_format:
         raise ValueError("subtitriid download did not return a supported subtitle file")
@@ -250,10 +251,22 @@ def extract_download(body, payload=None):
 
 
 def select_subtitle_file(names):
-    candidates = [name for name in names if _subtitle_extension(name) and not os.path.basename(name).startswith(".")]
+    return select_subtitle_files(names)[0]
+
+
+def select_subtitle_files(names):
+    names = list(names or [])
+    candidates = [
+        name
+        for name in names
+        if _subtitle_extension(name)
+        and not os.path.basename(name).startswith(".")
+        and not _is_vobsub_sidecar(name, names)
+    ]
     if not candidates:
         raise ValueError("subtitriid archive contains no supported subtitle files")
-    return candidates[0]
+    multipart = _multipart_subset(candidates)
+    return multipart or [candidates[0]]
 
 
 def _extract_rar_files(body):
@@ -409,11 +422,13 @@ def _requested_variants(languages):
     for language in languages or []:
         if _alpha3_for_language(language) != "lav":
             continue
+        if bool((language or {}).get("hi")) or bool((language or {}).get("forced")):
+            continue
         variant = {
             "alpha3": "lav",
             "alpha2": "lv",
-            "hi": bool((language or {}).get("hi")),
-            "forced": bool((language or {}).get("forced")),
+            "hi": False,
+            "forced": False,
         }
         key = (variant["hi"], variant["forced"])
         if key not in seen:
@@ -494,6 +509,44 @@ def _subtitle_extension(filename):
 def _looks_like_subtitle(body):
     sample = (body or b"")[:4096].decode("utf-8", errors="ignore").lower()
     return "-->" in sample or "[script info]" in sample or "{\\an" in sample
+
+
+def _join_subtitle_parts(parts):
+    cleaned = [part.rstrip(b"\r\n") for part in parts]
+    return b"\n\n".join(cleaned) + (b"\n" if cleaned else b"")
+
+
+def _is_vobsub_sidecar(name, names):
+    path = urllib.parse.urlparse(name or "").path.lower()
+    if not path.endswith(".sub"):
+        return False
+    idx_path = f"{os.path.splitext(path)[0]}.idx"
+    normalized_names = {urllib.parse.urlparse(item or "").path.lower() for item in names or []}
+    return idx_path in normalized_names
+
+
+def _multipart_subset(names):
+    groups = {}
+    for name in names:
+        part_number = _multipart_part_number(name)
+        if part_number is None:
+            continue
+        groups.setdefault((_multipart_key(name), _subtitle_extension(name)), []).append((part_number, name))
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        return [name for _part_number, name in sorted(group, key=lambda item: item[0])]
+    return []
+
+
+def _multipart_part_number(name):
+    match = re.search(r"\b(?:cd|part|disc|disk)\s*0*(?P<number>\d{1,2})\b", _normalize(name), re.I)
+    return int(match.group("number")) if match else None
+
+
+def _multipart_key(name):
+    normalized = _normalize(os.path.splitext(os.path.basename(name or ""))[0])
+    return re.sub(r"\b(?:cd|part|disc|disk)\s*0*\d+\b", "", normalized).strip()
 
 
 def _is_rar_archive(body):

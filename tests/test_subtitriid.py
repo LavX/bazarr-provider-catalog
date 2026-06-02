@@ -110,17 +110,35 @@ class SubtitriIdProviderTests(unittest.TestCase):
         provider._http_get = get_stub
         results = provider.search(
             {"kind": "movie", "title": "Inception", "year": 2010, "imdb_id": "tt1375666"},
-            [{"alpha3": "lav", "alpha2": "lv", "hi": True, "forced": False}],
+            [{"alpha3": "lav", "alpha2": "lv", "hi": False, "forced": False}],
             {"request_delay_ms": 0},
         )
 
         self.assertEqual(calls[0], "https://subtitri.do.am/search/?q=Inception")
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["provider"], "subtitriid")
-        self.assertEqual(results[0]["language"], {"alpha3": "lav", "alpha2": "lv", "hi": True, "forced": False})
+        self.assertEqual(results[0]["language"], {"alpha3": "lav", "alpha2": "lv", "hi": False, "forced": False})
         self.assertEqual(results[0]["provider_payload"]["entry_id"], "406")
         self.assertEqual(results[0]["provider_payload"]["url"], "https://subtitri.do.am/load/0-0-0-406-20")
         self.assertIn("imdb_id", results[0]["matches"])
+
+    def test_search_skips_unverified_forced_or_hi_variants(self):
+        provider = self.mod.SubtitriIdProvider()
+        provider._http_get = lambda url, timeout=15, referer=None: DETAIL_HTML if "4-1-0-406" in url else SEARCH_HTML
+
+        forced_results = provider.search(
+            {"kind": "movie", "title": "Inception", "year": 2010, "imdb_id": "tt1375666"},
+            [{"alpha3": "lav", "alpha2": "lv", "hi": False, "forced": True}],
+            {},
+        )
+        hi_results = provider.search(
+            {"kind": "movie", "title": "Inception", "year": 2010, "imdb_id": "tt1375666"},
+            [{"alpha3": "lav", "alpha2": "lv", "hi": True, "forced": False}],
+            {},
+        )
+
+        self.assertEqual(forced_results, [])
+        self.assertEqual(hi_results, [])
 
     def test_search_checks_alternative_titles_even_after_primary_title_matches(self):
         provider = self.mod.SubtitriIdProvider()
@@ -199,6 +217,38 @@ class SubtitriIdProviderTests(unittest.TestCase):
         decoded = base64.b64decode(result["content_b64"])
         self.assertEqual(decoded, b"1\n00:00:01,000 --> 00:00:02,000\nSveiki\n")
         self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
+        self.assertEqual(result["format"], "srt")
+
+    def test_download_concatenates_multipart_movie_subtitles(self):
+        archive = _zip_body(
+            {
+                "Inception.CD2.srt": b"2\n00:00:03,000 --> 00:00:04,000\nOtra puse\n",
+                "Inception.CD1.srt": b"1\n00:00:01,000 --> 00:00:02,000\nPirma puse\n",
+            }
+        )
+
+        result = self.mod.extract_download(archive, {"filename": "subtitriid.inception.2010.lv.zip"})
+
+        decoded = base64.b64decode(result["content_b64"])
+        self.assertEqual(
+            decoded,
+            b"1\n00:00:01,000 --> 00:00:02,000\nPirma puse\n\n2\n00:00:03,000 --> 00:00:04,000\nOtra puse\n",
+        )
+        self.assertEqual(result["format"], "srt")
+
+    def test_download_skips_vobsub_pair_sub_file(self):
+        archive = _zip_body(
+            {
+                "Inception.sub": b"\x00\x01binary vobsub payload",
+                "Inception.idx": b"# VobSub index file",
+                "Inception.srt": b"1\n00:00:01,000 --> 00:00:02,000\nSveiki\n",
+            }
+        )
+
+        result = self.mod.extract_download(archive, {"filename": "subtitriid.inception.2010.lv.zip"})
+
+        decoded = base64.b64decode(result["content_b64"])
+        self.assertEqual(decoded, b"1\n00:00:01,000 --> 00:00:02,000\nSveiki\n")
         self.assertEqual(result["format"], "srt")
 
     def test_download_returns_direct_subtitle_body(self):
