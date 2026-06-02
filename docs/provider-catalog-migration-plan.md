@@ -604,7 +604,7 @@
 - Branch: `catalog-subs4free`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subs4free`
 - Current checkpoint: `6eca4fc Clean up Subs4Free release year parsing`
-- Pull request: [#67](https://github.com/LavX/bazarr-provider-catalog/pull/67), open ready for review, head `catalog-subs4free`, base `main`, merge state `CLEAN`, current head `6eca4fceed39a8b9d375616d9019c72b5a84b937`.
+- Pull request: [#67](https://github.com/LavX/bazarr-provider-catalog/pull/67), merged on 2026-06-02 UTC at merge commit `d3f50856be9f704589484783fd7a83f1e7859920`, final head `6eca4fceed39a8b9d375616d9019c72b5a84b937`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -664,6 +664,7 @@
   - Prohibited punctuation and attribution scan over the Subs4Free PR files found no matches.
   - `python3 -B -m unittest discover -s tests`: `593` tests passed, `6` skipped.
   - Live GraphQL check on PR `#67` reported merge state `CLEAN`, head `6eca4fceed39a8b9d375616d9019c72b5a84b937`, and all `7` review threads outdated with no active non-outdated threads.
+  - `gh pr view 67 --repo LavX/bazarr-provider-catalog --json number,state,mergedAt,mergeCommit,headRefName,headRefOid,url`: PR `#67` is `MERGED`, merge commit `d3f50856be9f704589484783fd7a83f1e7859920`, final head `6eca4fceed39a8b9d375616d9019c72b5a84b937`.
 - Provider Hub test-server evidence on 2026-06-01:
   - Official catalog source dev ref was set to `catalog-subs4free`; refresh returned `13` entries and resolved Subs4Free `0.1.0` at commit `f7ca9ac599bf2ced93596e9b014bf42d70e2e00f`.
   - Provider Hub staged Subs4Free `0.1.0`, installed dependencies successfully, and saved config `request_delay_ms=0`.
