@@ -4,6 +4,178 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "3907a21ae7c419be51fc9daf0ede66a4d05ea18fd0267be7350b1f251eff43b1",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between HTTP calls to animekalesi.com.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Scrapes AnimeKalesi episode subtitle pages for Turkish anime subtitles. Direct subtitle files and ZIP packages are supported.",
+        "entry_class": "AnimeKalesiProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "7a87ca21d37580450f05be85490036185cc9ab115771940fbadfcf1071af9a06"
+        },
+        "languages": [
+          "tur"
+        ],
+        "name": "AnimeKalesi",
+        "provider_id": "animekalesi",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/animekalesi",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "episode"
+        ],
+        "version": "0.1.2"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "8fff6563c6ac273c2b36c2353dea0df2b2f7c82744bc60601ba68114120e9f82",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between HTTP calls to animesub.info.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Scrapes AnimeSub.info for Polish anime movie and episode subtitles. Direct subtitle files and ZIP packages are supported.",
+        "entry_class": "AnimeSubInfoProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "4e9f14577fc31f9d933c3b5067c33ec9ae531d43126e04641099d746ecb0c8be"
+        },
+        "languages": [
+          "pol"
+        ],
+        "name": "AnimeSub.info",
+        "provider_id": "animesubinfo",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/animesubinfo",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.1"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "ccd4d9ef6ce5ed90510b753d9f6bad4d642497fe25258b9be18154a1178c5dae",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between AnimeTosho HTTP calls.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            },
+            "search_threshold": {
+              "default": 5,
+              "description": "Maximum number of complete AnimeTosho torrent entries to inspect per episode.",
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Search threshold",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Archive-only provider for AnimeTosho's JSON feed, finding embedded subtitle attachments for older anime episodes by AniDB episode id. AnimeTosho stopped new torrent ingestion on May 9, 2026. No login or API key required.",
+        "entry_class": "AnimeToshoProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "ab9efe017b6d97df1aa19ddd8704df5a43c4bd0436c2592ef1e80da1aaa870fc"
+        },
+        "languages": [
+          "ara",
+          "eng",
+          "fin",
+          "fra",
+          "deu",
+          "heb",
+          "ind",
+          "ita",
+          "jpn",
+          "por",
+          "pol",
+          "rus",
+          "spa",
+          "swe",
+          "tha",
+          "tur",
+          "vie"
+        ],
+        "name": "AnimeTosho",
+        "provider_id": "animetosho",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/animetosho",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "episode"
+        ],
+        "version": "0.1.3"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "418a51393a876478e8eca61adcb2e81c2e26b99d93179b9b682d6eb75012322f",
         "config_schema": {
           "additionalProperties": false,
@@ -93,6 +265,91 @@
           "movie"
         ],
         "version": "0.1.1"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "71d3c3f57dd92ea613775352e0a18173aa1bb34c3598d248da0124c0023049f4",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "api_url": {
+              "description": "Optional BSPlayer SOAP endpoint override. Leave blank to try the standard subdomains.",
+              "title": "API URL override",
+              "type": "string"
+            },
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional delay before the searchSubtitles SOAP call.",
+              "maximum": 10000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            },
+            "timeout_seconds": {
+              "default": 12,
+              "description": "HTTP timeout for BSPlayer SOAP calls.",
+              "maximum": 60,
+              "minimum": 3,
+              "title": "Timeout (seconds)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Uses the BSPlayer subtitles SOAP API for hash and size based movie and episode subtitle lookup.",
+        "entry_class": "BSPlayerProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "dfd2e9a61d562e2a9b674a3892b1248acb6a0a2976d50f90212568e7a68814c9"
+        },
+        "languages": [
+          "ara",
+          "bul",
+          "ces",
+          "dan",
+          "deu",
+          "ell",
+          "eng",
+          "fin",
+          "fra",
+          "hun",
+          "ita",
+          "jpn",
+          "kor",
+          "nld",
+          "pol",
+          "por",
+          "ron",
+          "rus",
+          "spa",
+          "swe",
+          "tur",
+          "ukr",
+          "zho"
+        ],
+        "name": "BSPlayer",
+        "provider_id": "bsplayer",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/bsplayer",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.0"
       }
     },
     {
@@ -249,6 +506,158 @@
           "episode"
         ],
         "version": "0.1.3"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "bd7fe7608a6d01fe8aa029c8b34363d6e59bd045ef82189eda32f02e040cfb2f",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "locked_retry_delay_ms": {
+              "default": 30000,
+              "description": "Delay before retrying when Gestdown returns HTTP 423.",
+              "maximum": 30000,
+              "minimum": 0,
+              "title": "Locked retry delay (ms)",
+              "type": "integer"
+            },
+            "request_timeout_seconds": {
+              "default": 30,
+              "description": "HTTP request timeout for Gestdown API calls.",
+              "maximum": 120,
+              "minimum": 1,
+              "title": "Request timeout (seconds)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Uses the public Gestdown API for episode subtitles by TVDB show id, season, episode, and language. No login or API key required.",
+        "entry_class": "GestdownProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "297bd9efbc985cd1713692ee05004190c684f3bd7d03e41a7185d043a7ab4d4c"
+        },
+        "languages": [
+          "ara",
+          "aze",
+          "ben",
+          "bos",
+          "bul",
+          "cat",
+          "ces",
+          "dan",
+          "deu",
+          "ell",
+          "eng",
+          "eus",
+          "fas",
+          "fin",
+          "fra",
+          "glg",
+          "heb",
+          "hrv",
+          "hun",
+          "hye",
+          "ind",
+          "ita",
+          "jpn",
+          "kor",
+          "mkd",
+          "msa",
+          "nld",
+          "nor",
+          "pol",
+          "por",
+          "pt-BR",
+          "ron",
+          "rus",
+          "slk",
+          "slv",
+          "spa",
+          "sqi",
+          "sr-Cyrl",
+          "sr-Latn",
+          "srp",
+          "swe",
+          "tha",
+          "tur",
+          "ukr",
+          "vie",
+          "zho"
+        ],
+        "name": "Gestdown",
+        "provider_id": "gestdown",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/gestdown",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "episode"
+        ],
+        "version": "0.1.0"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "cc5f9ae5ce3265334128919992d1f34ed9015a4a86fea5a8fdcbbc54d52c2514",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between HTTP calls to greeksubs.net.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Scrapes greeksubs.net for Greek movie and episode subtitles by IMDb id. No login or API key required.",
+        "entry_class": "GreekSubsProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "e4f324d55329304227f939c006a5644ff37a5ce4d6edfa5fd4fa977f06d93122"
+        },
+        "languages": [
+          "ell"
+        ],
+        "name": "GreekSubs",
+        "provider_id": "greeksubs",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/greeksubs",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.0"
       }
     },
     {
@@ -734,6 +1143,1005 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "ee432e77ec2b3302026515cddd7975ba929f56c7fcdcb6a4019fc4697908e299",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "flaresolverr_timeout_ms": {
+              "default": 25000,
+              "description": "Maximum time FlareSolverr may spend solving a Cloudflare challenge. Capped below the Provider Hub worker deadline.",
+              "maximum": 25000,
+              "minimum": 5000,
+              "title": "FlareSolverr timeout (ms)",
+              "type": "integer"
+            },
+            "flaresolverr_url": {
+              "default": "",
+              "description": "Optional FlareSolverr /v1 endpoint used when ai-cloudscraper receives a Cloudflare challenge during NapiProjekt catalog scraping.",
+              "title": "FlareSolverr URL",
+              "type": "string"
+            },
+            "only_authors": {
+              "default": false,
+              "description": "Skip subtitles whose catalog author is missing or marked as automated.",
+              "title": "Only authored subtitles",
+              "type": "boolean"
+            },
+            "only_real_names": {
+              "default": false,
+              "description": "Keep only catalog subtitles whose author resembles a real name.",
+              "title": "Only real-name authors",
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:a94627e4c065d4de21cb8ca5b357c523d97158084fc5f67777d1c5d86630e0e9"
+              ],
+              "name": "ai-cloudscraper",
+              "version": "3.8.4"
+            },
+            {
+              "hashes": [
+                "sha256:bc6b9d7ba62045542265ef954c260e1d903516ab9364b5be1466f969c887d138"
+              ],
+              "name": "ai-urllib4",
+              "version": "2.2.0"
+            },
+            {
+              "hashes": [
+                "sha256:4708045e2d7a6c6bdf8aafa8ed39649eaf926a4543b54560659129e3365953c4"
+              ],
+              "name": "aiohappyeyeballs",
+              "version": "2.6.2"
+            },
+            {
+              "hashes": [
+                "sha256:241a94f7de7c0c3b616627aaad530fe2cb620084a8b144d3be7b6ecfe95bae3b"
+              ],
+              "name": "aiohttp",
+              "version": "3.13.5"
+            },
+            {
+              "hashes": [
+                "sha256:053243f8b92b990551949e63930a839ff0cf0b0ebbe0597b0f3fb19e1a0fe82e"
+              ],
+              "name": "aiosignal",
+              "version": "1.4.0"
+            },
+            {
+              "hashes": [
+                "sha256:4d4c1eb3250f735f59ce842d8d92cd2927c008bd52008797ba030b5787c41f3b"
+              ],
+              "name": "asyncio-throttle",
+              "version": "1.0.2"
+            },
+            {
+              "hashes": [
+                "sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309"
+              ],
+              "name": "attrs",
+              "version": "26.1.0"
+            },
+            {
+              "hashes": [
+                "sha256:cf9cba6f5b78a2071ec6fb1e7bd39acf35071d90a81231d67e92d637776a6a63"
+              ],
+              "name": "brotli",
+              "version": "1.2.0"
+            },
+            {
+              "hashes": [
+                "sha256:3c52e209ba0a4ad7aebe60436a4ab349c39e1e602e8c134221e546902ad25897"
+              ],
+              "name": "certifi",
+              "version": "2026.5.20"
+            },
+            {
+              "hashes": [
+                "sha256:afb8db5439b81cf9c9d0c80404b60c3cc9c3add93e114dcae767f1477cb53775"
+              ],
+              "name": "cffi",
+              "version": "2.0.0"
+            },
+            {
+              "hashes": [
+                "sha256:bd6c2a1c7573c64738d716488d2cdd3c00e340e4835707d8fdb8dc1a66ef164e"
+              ],
+              "name": "charset-normalizer",
+              "version": "3.4.7"
+            },
+            {
+              "hashes": [
+                "sha256:bd72e68b06bb1e96913f97dd4901119bc17f39d4586a5adf2d3e47bc2b9d58b5"
+              ],
+              "name": "cryptography",
+              "version": "48.0.0"
+            },
+            {
+              "hashes": [
+                "sha256:cba69cb73723c3f329622e34bdbf5ce1f80c21c290ff04256cff1cd3c2036ed2"
+              ],
+              "name": "frozenlist",
+              "version": "1.8.0"
+            },
+            {
+              "hashes": [
+                "sha256:466e48829084efe2548012b855df21540b96f2e20e51bd124c851536556a592c"
+              ],
+              "name": "idna",
+              "version": "3.17"
+            },
+            {
+              "hashes": [
+                "sha256:40a508a79e2f8d624e3f2e604f90a1e6f46ac75b416d7f4745939ff4a2e95e09"
+              ],
+              "name": "Js2Py",
+              "version": "0.74"
+            },
+            {
+              "hashes": [
+                "sha256:7eee46ccb30ff48a1e35bb818cc90846c6be2b68240e42a78599166722cea709"
+              ],
+              "name": "multidict",
+              "version": "6.7.1"
+            },
+            {
+              "hashes": [
+                "sha256:e00820e192c8dbebcafb383ebbf99030895f09905e7a0eb2e0340a0bcc2bc825"
+              ],
+              "name": "propcache",
+              "version": "0.5.2"
+            },
+            {
+              "hashes": [
+                "sha256:076a2d2f923fd4821644f5ba89f059523da90dc9014e85f8e45a5774ca5bc6f9"
+              ],
+              "name": "psutil",
+              "version": "7.2.2"
+            },
+            {
+              "hashes": [
+                "sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992"
+              ],
+              "name": "pycparser",
+              "version": "3.0"
+            },
+            {
+              "hashes": [
+                "sha256:c8987bd3307a39bc03df5c8e0e3d8be0c4c3518b7f044b0f4c15d1aa78f52575"
+              ],
+              "name": "pycryptodome",
+              "version": "3.23.0"
+            },
+            {
+              "hashes": [
+                "sha256:be60da6b778cc5a5296a69d8e7d614f1f870faf94e1b1b6ac591f2ad5d729579"
+              ],
+              "name": "pyjsparser",
+              "version": "2.7.1"
+            },
+            {
+              "hashes": [
+                "sha256:4f9d971bc5298b8bc1fab282803da04bf000c755d4ad9d99b52de2569ca19a70"
+              ],
+              "name": "pyOpenSSL",
+              "version": "26.2.0"
+            },
+            {
+              "hashes": [
+                "sha256:850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d"
+              ],
+              "name": "pyparsing",
+              "version": "3.3.2"
+            },
+            {
+              "hashes": [
+                "sha256:2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0"
+              ],
+              "name": "requests",
+              "version": "2.34.2"
+            },
+            {
+              "hashes": [
+                "sha256:cccfdd665f0a24fcf4726e690f65639d272bb0637b9b92dfd91a5568ccf6bd06"
+              ],
+              "name": "requests-toolbelt",
+              "version": "1.0.0"
+            },
+            {
+              "hashes": [
+                "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"
+              ],
+              "name": "six",
+              "version": "1.17.0"
+            },
+            {
+              "hashes": [
+                "sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548"
+              ],
+              "name": "typing_extensions",
+              "version": "4.15.0"
+            },
+            {
+              "hashes": [
+                "sha256:eb1a66c3ef5847adf7a834f1be0800581b683b5608e74f86ecbcef8ab91bb85d"
+              ],
+              "name": "tzlocal",
+              "version": "5.3.1"
+            },
+            {
+              "hashes": [
+                "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
+              ],
+              "name": "urllib3",
+              "version": "2.7.0"
+            },
+            {
+              "hashes": [
+                "sha256:e51b2cf5ec89a8b8470177641ed62a3ba22d74e1e898e06ad53aa77972487208"
+              ],
+              "name": "yarl",
+              "version": "1.24.2"
+            }
+          ]
+        },
+        "description": "Searches NapiProjekt for Polish subtitles using hash lookup and catalog scraping with optional author filters. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback for catalog Cloudflare challenges.",
+        "entry_class": "NapiProjektProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "ee83001e80797ba00cb3f1a08aa6fddee383c30b326cdf6e021690093f88a3f9"
+        },
+        "languages": [
+          "pol"
+        ],
+        "name": "NapiProjekt",
+        "provider_id": "napiprojekt",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/napiprojekt",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.3"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "de111d855ea19987bf2b83d44f7fcb9c4c1c0641d2ef1877dd2557d2a51c4a42",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "also_foreign": {
+              "default": false,
+              "description": "Include forced or foreign-parts subtitles alongside regular subtitles.",
+              "title": "Also include forced subtitles",
+              "type": "boolean"
+            },
+            "flaresolverr_timeout_ms": {
+              "default": 60000,
+              "description": "Maximum time FlareSolverr may spend solving a Cloudflare challenge.",
+              "maximum": 120000,
+              "minimum": 1000,
+              "title": "FlareSolverr timeout (ms)",
+              "type": "integer"
+            },
+            "flaresolverr_url": {
+              "default": "",
+              "description": "Optional FlareSolverr /v1 endpoint used only when ai-cloudscraper still receives a Cloudflare browser challenge.",
+              "title": "FlareSolverr URL",
+              "type": "string"
+            },
+            "only_foreign": {
+              "default": false,
+              "description": "Return only forced or foreign-parts subtitles.",
+              "title": "Only forced subtitles",
+              "type": "boolean"
+            },
+            "request_delay_ms": {
+              "default": 1000,
+              "description": "Delay between OpenSubtitles.org requests.",
+              "maximum": 10000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            },
+            "skip_wrong_fps": {
+              "default": true,
+              "description": "Lower matches for subtitles whose FPS differs from the video.",
+              "title": "Skip wrong FPS",
+              "type": "boolean"
+            },
+            "use_tag_search": {
+              "default": false,
+              "description": "Preserve the original filename as an OpenSubtitles tag search hint for compatible helper deployments.",
+              "title": "Use tag search",
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:a94627e4c065d4de21cb8ca5b357c523d97158084fc5f67777d1c5d86630e0e9"
+              ],
+              "name": "ai-cloudscraper",
+              "version": "3.8.4"
+            },
+            {
+              "hashes": [
+                "sha256:bc6b9d7ba62045542265ef954c260e1d903516ab9364b5be1466f969c887d138"
+              ],
+              "name": "ai-urllib4",
+              "version": "2.2.0"
+            },
+            {
+              "hashes": [
+                "sha256:4708045e2d7a6c6bdf8aafa8ed39649eaf926a4543b54560659129e3365953c4"
+              ],
+              "name": "aiohappyeyeballs",
+              "version": "2.6.2"
+            },
+            {
+              "hashes": [
+                "sha256:241a94f7de7c0c3b616627aaad530fe2cb620084a8b144d3be7b6ecfe95bae3b"
+              ],
+              "name": "aiohttp",
+              "version": "3.13.5"
+            },
+            {
+              "hashes": [
+                "sha256:053243f8b92b990551949e63930a839ff0cf0b0ebbe0597b0f3fb19e1a0fe82e"
+              ],
+              "name": "aiosignal",
+              "version": "1.4.0"
+            },
+            {
+              "hashes": [
+                "sha256:4d4c1eb3250f735f59ce842d8d92cd2927c008bd52008797ba030b5787c41f3b"
+              ],
+              "name": "asyncio-throttle",
+              "version": "1.0.2"
+            },
+            {
+              "hashes": [
+                "sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309"
+              ],
+              "name": "attrs",
+              "version": "26.1.0"
+            },
+            {
+              "hashes": [
+                "sha256:cf9cba6f5b78a2071ec6fb1e7bd39acf35071d90a81231d67e92d637776a6a63"
+              ],
+              "name": "brotli",
+              "version": "1.2.0"
+            },
+            {
+              "hashes": [
+                "sha256:3c52e209ba0a4ad7aebe60436a4ab349c39e1e602e8c134221e546902ad25897"
+              ],
+              "name": "certifi",
+              "version": "2026.5.20"
+            },
+            {
+              "hashes": [
+                "sha256:afb8db5439b81cf9c9d0c80404b60c3cc9c3add93e114dcae767f1477cb53775"
+              ],
+              "name": "cffi",
+              "version": "2.0.0"
+            },
+            {
+              "hashes": [
+                "sha256:bd6c2a1c7573c64738d716488d2cdd3c00e340e4835707d8fdb8dc1a66ef164e"
+              ],
+              "name": "charset-normalizer",
+              "version": "3.4.7"
+            },
+            {
+              "hashes": [
+                "sha256:bd72e68b06bb1e96913f97dd4901119bc17f39d4586a5adf2d3e47bc2b9d58b5"
+              ],
+              "name": "cryptography",
+              "version": "48.0.0"
+            },
+            {
+              "hashes": [
+                "sha256:cba69cb73723c3f329622e34bdbf5ce1f80c21c290ff04256cff1cd3c2036ed2"
+              ],
+              "name": "frozenlist",
+              "version": "1.8.0"
+            },
+            {
+              "hashes": [
+                "sha256:466e48829084efe2548012b855df21540b96f2e20e51bd124c851536556a592c"
+              ],
+              "name": "idna",
+              "version": "3.17"
+            },
+            {
+              "hashes": [
+                "sha256:40a508a79e2f8d624e3f2e604f90a1e6f46ac75b416d7f4745939ff4a2e95e09"
+              ],
+              "name": "Js2Py",
+              "version": "0.74"
+            },
+            {
+              "hashes": [
+                "sha256:7eee46ccb30ff48a1e35bb818cc90846c6be2b68240e42a78599166722cea709"
+              ],
+              "name": "multidict",
+              "version": "6.7.1"
+            },
+            {
+              "hashes": [
+                "sha256:e00820e192c8dbebcafb383ebbf99030895f09905e7a0eb2e0340a0bcc2bc825"
+              ],
+              "name": "propcache",
+              "version": "0.5.2"
+            },
+            {
+              "hashes": [
+                "sha256:076a2d2f923fd4821644f5ba89f059523da90dc9014e85f8e45a5774ca5bc6f9"
+              ],
+              "name": "psutil",
+              "version": "7.2.2"
+            },
+            {
+              "hashes": [
+                "sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992"
+              ],
+              "name": "pycparser",
+              "version": "3.0"
+            },
+            {
+              "hashes": [
+                "sha256:c8987bd3307a39bc03df5c8e0e3d8be0c4c3518b7f044b0f4c15d1aa78f52575"
+              ],
+              "name": "pycryptodome",
+              "version": "3.23.0"
+            },
+            {
+              "hashes": [
+                "sha256:be60da6b778cc5a5296a69d8e7d614f1f870faf94e1b1b6ac591f2ad5d729579"
+              ],
+              "name": "pyjsparser",
+              "version": "2.7.1"
+            },
+            {
+              "hashes": [
+                "sha256:4f9d971bc5298b8bc1fab282803da04bf000c755d4ad9d99b52de2569ca19a70"
+              ],
+              "name": "pyOpenSSL",
+              "version": "26.2.0"
+            },
+            {
+              "hashes": [
+                "sha256:850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d"
+              ],
+              "name": "pyparsing",
+              "version": "3.3.2"
+            },
+            {
+              "hashes": [
+                "sha256:2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0"
+              ],
+              "name": "requests",
+              "version": "2.34.2"
+            },
+            {
+              "hashes": [
+                "sha256:cccfdd665f0a24fcf4726e690f65639d272bb0637b9b92dfd91a5568ccf6bd06"
+              ],
+              "name": "requests-toolbelt",
+              "version": "1.0.0"
+            },
+            {
+              "hashes": [
+                "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"
+              ],
+              "name": "six",
+              "version": "1.17.0"
+            },
+            {
+              "hashes": [
+                "sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548"
+              ],
+              "name": "typing_extensions",
+              "version": "4.15.0"
+            },
+            {
+              "hashes": [
+                "sha256:eb1a66c3ef5847adf7a834f1be0800581b683b5608e74f86ecbcef8ab91bb85d"
+              ],
+              "name": "tzlocal",
+              "version": "5.3.1"
+            },
+            {
+              "hashes": [
+                "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
+              ],
+              "name": "urllib3",
+              "version": "2.7.0"
+            },
+            {
+              "hashes": [
+                "sha256:e51b2cf5ec89a8b8470177641ed62a3ba22d74e1e898e06ad53aa77972487208"
+              ],
+              "name": "yarl",
+              "version": "1.24.2"
+            }
+          ]
+        },
+        "description": "Scrapes OpenSubtitles.org natively with ai-cloudscraper, inline Anubis proof-of-work solving, and optional FlareSolverr fallback for Cloudflare browser challenges.",
+        "entry_class": "OpenSubtitlesOrgProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "11857094e53dfc45fade3e6150192f0de03a936d2dc0920c154984b45ea6247a"
+        },
+        "languages": [
+          "aar",
+          "abk",
+          "ace",
+          "ach",
+          "ada",
+          "ady",
+          "afh",
+          "afr",
+          "ain",
+          "aka",
+          "akk",
+          "ale",
+          "alt",
+          "amh",
+          "ang",
+          "anp",
+          "ara",
+          "arc",
+          "arg",
+          "arn",
+          "arp",
+          "arw",
+          "asm",
+          "ast",
+          "ava",
+          "ave",
+          "awa",
+          "aym",
+          "aze",
+          "bak",
+          "bal",
+          "bam",
+          "ban",
+          "bas",
+          "bej",
+          "bel",
+          "bem",
+          "ben",
+          "bho",
+          "bik",
+          "bin",
+          "bis",
+          "bla",
+          "bod",
+          "bos",
+          "bra",
+          "bre",
+          "bua",
+          "bug",
+          "bul",
+          "byn",
+          "cad",
+          "car",
+          "cat",
+          "ceb",
+          "ces",
+          "cha",
+          "chb",
+          "che",
+          "chg",
+          "chk",
+          "chm",
+          "chn",
+          "cho",
+          "chp",
+          "chr",
+          "chu",
+          "chv",
+          "chy",
+          "cop",
+          "cor",
+          "cos",
+          "cre",
+          "crh",
+          "csb",
+          "cym",
+          "dak",
+          "dan",
+          "dar",
+          "del",
+          "den",
+          "deu",
+          "dgr",
+          "din",
+          "div",
+          "doi",
+          "dsb",
+          "dua",
+          "dum",
+          "dyu",
+          "dzo",
+          "efi",
+          "egy",
+          "eka",
+          "ell",
+          "elx",
+          "eng",
+          "enm",
+          "epo",
+          "est",
+          "eus",
+          "ewe",
+          "ewo",
+          "fan",
+          "fao",
+          "fas",
+          "fat",
+          "fij",
+          "fil",
+          "fin",
+          "fon",
+          "fra",
+          "frm",
+          "fro",
+          "frr",
+          "frs",
+          "fry",
+          "ful",
+          "fur",
+          "gaa",
+          "gay",
+          "gba",
+          "gez",
+          "gil",
+          "gla",
+          "gle",
+          "glg",
+          "glv",
+          "gmh",
+          "goh",
+          "gon",
+          "gor",
+          "got",
+          "grb",
+          "grc",
+          "grn",
+          "gsw",
+          "guj",
+          "gwi",
+          "hai",
+          "hat",
+          "hau",
+          "haw",
+          "hbs",
+          "heb",
+          "her",
+          "hil",
+          "hin",
+          "hit",
+          "hmn",
+          "hmo",
+          "hrv",
+          "hsb",
+          "hun",
+          "hup",
+          "hye",
+          "iba",
+          "ibo",
+          "ido",
+          "iii",
+          "iku",
+          "ile",
+          "ilo",
+          "ina",
+          "ind",
+          "inh",
+          "ipk",
+          "isl",
+          "ita",
+          "jav",
+          "jbo",
+          "jpn",
+          "jpr",
+          "jrb",
+          "kaa",
+          "kab",
+          "kac",
+          "kal",
+          "kam",
+          "kan",
+          "kas",
+          "kat",
+          "kau",
+          "kaw",
+          "kaz",
+          "kbd",
+          "kha",
+          "khm",
+          "kho",
+          "kik",
+          "kin",
+          "kir",
+          "kmb",
+          "kok",
+          "kom",
+          "kon",
+          "kor",
+          "kos",
+          "kpe",
+          "krc",
+          "krl",
+          "kru",
+          "kua",
+          "kum",
+          "kur",
+          "kut",
+          "lad",
+          "lah",
+          "lam",
+          "lao",
+          "lat",
+          "lav",
+          "lez",
+          "lim",
+          "lin",
+          "lit",
+          "lol",
+          "loz",
+          "ltz",
+          "lua",
+          "lub",
+          "lug",
+          "lui",
+          "lun",
+          "luo",
+          "lus",
+          "mad",
+          "mag",
+          "mah",
+          "mai",
+          "mak",
+          "mal",
+          "man",
+          "mar",
+          "mas",
+          "mdf",
+          "mdr",
+          "men",
+          "mga",
+          "mic",
+          "min",
+          "mis",
+          "mkd",
+          "mlg",
+          "mlt",
+          "mnc",
+          "mni",
+          "moh",
+          "mon",
+          "mos",
+          "mri",
+          "msa",
+          "mul",
+          "mus",
+          "mwl",
+          "mwr",
+          "mya",
+          "myv",
+          "nap",
+          "nau",
+          "nav",
+          "nbl",
+          "nde",
+          "ndo",
+          "nds",
+          "nep",
+          "new",
+          "nia",
+          "niu",
+          "nld",
+          "nno",
+          "nob",
+          "nog",
+          "non",
+          "nor",
+          "nqo",
+          "nso",
+          "nwc",
+          "nya",
+          "nym",
+          "nyn",
+          "nyo",
+          "nzi",
+          "oci",
+          "oji",
+          "ori",
+          "orm",
+          "osa",
+          "oss",
+          "ota",
+          "pag",
+          "pal",
+          "pam",
+          "pan",
+          "pap",
+          "pau",
+          "peo",
+          "phn",
+          "pli",
+          "pol",
+          "pon",
+          "por",
+          "por-BR",
+          "pro",
+          "pus",
+          "que",
+          "raj",
+          "rap",
+          "rar",
+          "roh",
+          "rom",
+          "ron",
+          "run",
+          "rup",
+          "rus",
+          "sad",
+          "sag",
+          "sah",
+          "sam",
+          "san",
+          "sas",
+          "sat",
+          "scn",
+          "sco",
+          "sel",
+          "sga",
+          "shn",
+          "sid",
+          "sin",
+          "slk",
+          "slv",
+          "sma",
+          "sme",
+          "smj",
+          "smn",
+          "smo",
+          "sms",
+          "sna",
+          "snd",
+          "snk",
+          "sog",
+          "som",
+          "sot",
+          "spa",
+          "sqi",
+          "srd",
+          "srn",
+          "srp",
+          "srp-ME",
+          "srr",
+          "ssw",
+          "suk",
+          "sun",
+          "sus",
+          "sux",
+          "swa",
+          "swe",
+          "syc",
+          "syr",
+          "tah",
+          "tam",
+          "tat",
+          "tel",
+          "tem",
+          "ter",
+          "tet",
+          "tgk",
+          "tgl",
+          "tha",
+          "tig",
+          "tir",
+          "tiv",
+          "tkl",
+          "tlh",
+          "tli",
+          "tmh",
+          "tog",
+          "ton",
+          "tpi",
+          "tsi",
+          "tsn",
+          "tso",
+          "tuk",
+          "tum",
+          "tur",
+          "tvl",
+          "twi",
+          "tyv",
+          "udm",
+          "uga",
+          "uig",
+          "ukr",
+          "umb",
+          "und",
+          "urd",
+          "uzb",
+          "vai",
+          "ven",
+          "vie",
+          "vol",
+          "vot",
+          "wal",
+          "war",
+          "was",
+          "wln",
+          "wol",
+          "xal",
+          "xho",
+          "yao",
+          "yap",
+          "yid",
+          "yor",
+          "zap",
+          "zbl",
+          "zen",
+          "zha",
+          "zho",
+          "zul",
+          "zun",
+          "zxx",
+          "zza"
+        ],
+        "legacy_provider_id": "opensubtitles",
+        "name": "OpenSubtitles.org",
+        "provider_id": "opensubtitles_org",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/opensubtitles_org",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.3"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "be88b89891125d78f99daebcf884062aabf7ee43c490bcf1f5951ce61dd920f0",
         "config_schema": {
           "additionalProperties": false,
@@ -804,21 +2212,21 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "f5a308dc333a8b28d5a90923b90396deff4ed5bf40161b58be92c58929e248dc",
+        "bundle_sha256": "b4b4c788d61800a63b65a160ea5ba75c9a9c8832e08042a906b6438cee245394",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
             "flaresolverr_timeout_ms": {
-              "default": 60000,
-              "description": "Maximum time FlareSolverr may spend solving a Cloudflare challenge.",
-              "maximum": 180000,
+              "default": 10000,
+              "description": "Maximum time FlareSolverr may spend solving a Cloudflare challenge. Capped below the Provider Hub worker deadline.",
+              "maximum": 10000,
               "minimum": 5000,
               "title": "FlareSolverr timeout (ms)",
               "type": "integer"
             },
             "flaresolverr_url": {
               "default": "",
-              "description": "Optional FlareSolverr /v1 endpoint used only when cloudscraper still receives a Cloudflare challenge.",
+              "description": "Optional FlareSolverr /v1 endpoint used only when ai-cloudscraper still receives a Cloudflare challenge.",
               "title": "FlareSolverr URL",
               "type": "string"
             },
@@ -837,6 +2245,72 @@
           "requirements": [
             {
               "hashes": [
+                "sha256:a94627e4c065d4de21cb8ca5b357c523d97158084fc5f67777d1c5d86630e0e9"
+              ],
+              "name": "ai-cloudscraper",
+              "version": "3.8.4"
+            },
+            {
+              "hashes": [
+                "sha256:bc6b9d7ba62045542265ef954c260e1d903516ab9364b5be1466f969c887d138"
+              ],
+              "name": "ai-urllib4",
+              "version": "2.2.0"
+            },
+            {
+              "hashes": [
+                "sha256:4708045e2d7a6c6bdf8aafa8ed39649eaf926a4543b54560659129e3365953c4"
+              ],
+              "name": "aiohappyeyeballs",
+              "version": "2.6.2"
+            },
+            {
+              "hashes": [
+                "sha256:241a94f7de7c0c3b616627aaad530fe2cb620084a8b144d3be7b6ecfe95bae3b",
+                "sha256:3df334e39d4c2f899a914f1dba283c1aadc311790733f705182998c6f7cae665",
+                "sha256:57653eac22c6a4c13eb22ecf4d673d64a12f266e72785ab1c8b8e5940d0e8090",
+                "sha256:a60eaa2d440cd4707696b52e40ed3e2b0f73f65be07fd0ef23b6b539c9c0b0b4",
+                "sha256:b18f31b80d5a33661e08c89e202edabf1986e9b49c42b4504371daeaa11b47c1",
+                "sha256:ecc26751323224cf8186efcf7fbcbc30f4e1d8c7970659daf25ad995e4032a56"
+              ],
+              "name": "aiohttp",
+              "version": "3.13.5"
+            },
+            {
+              "hashes": [
+                "sha256:053243f8b92b990551949e63930a839ff0cf0b0ebbe0597b0f3fb19e1a0fe82e"
+              ],
+              "name": "aiosignal",
+              "version": "1.4.0"
+            },
+            {
+              "hashes": [
+                "sha256:4d4c1eb3250f735f59ce842d8d92cd2927c008bd52008797ba030b5787c41f3b"
+              ],
+              "name": "asyncio-throttle",
+              "version": "1.0.2"
+            },
+            {
+              "hashes": [
+                "sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309"
+              ],
+              "name": "attrs",
+              "version": "26.1.0"
+            },
+            {
+              "hashes": [
+                "sha256:072e7624b1fc4d601036ab3f4f27942ef772887e876beff0301d261210bca97f",
+                "sha256:67a91c5187e1eec76a61625c77a6c8c785650f5b576ca732bd33ef58b0dff49c",
+                "sha256:963a08f3bebd8b75ac57661045402da15991468a621f014be54e50f53a58d19e",
+                "sha256:acec55bb7c90f1dfc476126f9711a8e81c9af7fb617409a9ee2953115343f08d",
+                "sha256:c8565e3cdc1808b1a34714b553b262c5de5fbda202285782173ec137fd13709f",
+                "sha256:cf9cba6f5b78a2071ec6fb1e7bd39acf35071d90a81231d67e92d637776a6a63"
+              ],
+              "name": "brotli",
+              "version": "1.2.0"
+            },
+            {
+              "hashes": [
                 "sha256:3c52e209ba0a4ad7aebe60436a4ab349c39e1e602e8c134221e546902ad25897"
               ],
               "name": "certifi",
@@ -844,24 +2318,122 @@
             },
             {
               "hashes": [
-                "sha256:bd6c2a1c7573c64738d716488d2cdd3c00e340e4835707d8fdb8dc1a66ef164e"
+                "sha256:24b6f81f1983e6df8db3adc38562c83f7d4a0c36162885ec7f7b77c7dcbec97b",
+                "sha256:3e17ed538242334bf70832644a32a7aae3d83b57567f9fd60a26257e992b79ba",
+                "sha256:afb8db5439b81cf9c9d0c80404b60c3cc9c3add93e114dcae767f1477cb53775",
+                "sha256:b21e08af67b8a103c71a250401c78d5e0893beff75e28c53c98f4de42f774062",
+                "sha256:c8d3b5532fc71b7a77c09192b4a5a200ea992702734a2e9279a37f2478236f26",
+                "sha256:d48a880098c96020b02d5a1f7d9251308510ce8858940e6fa99ece33f610838b"
+              ],
+              "name": "cffi",
+              "version": "2.0.0"
+            },
+            {
+              "hashes": [
+                "sha256:0ea948db76d31190bf08bd371623927ee1339d5f2a0b4b1b4a4439a65298703c",
+                "sha256:1c2aed2e5e41f24ea8ef1590b8e848a79b56f3a5564a65ceec43c9d692dc7d8a",
+                "sha256:5649fd1c7bade02f320a462fdefd0b4bd3ce036065836d4f42e0de958038e116",
+                "sha256:6178f72c5508bfc5fd446a5905e698c6212932f25bcdd4b47a757a50605a90e2",
+                "sha256:bd6c2a1c7573c64738d716488d2cdd3c00e340e4835707d8fdb8dc1a66ef164e",
+                "sha256:e044c39e41b92c845bc815e5ae4230804e8e7bc29e399b0437d64222d92809dd"
               ],
               "name": "charset-normalizer",
               "version": "3.4.7"
             },
             {
               "hashes": [
-                "sha256:76f50ca529ed2279e220837befdec892626f9511708e200d48d5bb76ded679b0"
+                "sha256:7995ef305d7165c3f11ae07f2517e5a4f1d5c18da1376a0a9ed496336b69e5f3",
+                "sha256:f5333311663ea94f75dd408665686aaf426563556bb5283554a3539177e03b8c"
               ],
-              "name": "cloudscraper",
-              "version": "1.2.71"
+              "name": "cryptography",
+              "version": "48.0.0"
             },
             {
               "hashes": [
-                "sha256:cc246e3a3f89580c3a951b5ad298ca4638078b2cdd4f115654332b5c26daded5"
+                "sha256:494a5952b1c597ba44e0e78113a7266e656b9794eec897b19ead706bd7074383",
+                "sha256:778a11b15673f6f1df23d9586f83c4846c471a8af693a22e066508b77d201ec8",
+                "sha256:96f423a119f4777a4a056b66ce11527366a8bb92f54e541ade21f2374433f6d4",
+                "sha256:cba69cb73723c3f329622e34bdbf5ce1f80c21c290ff04256cff1cd3c2036ed2",
+                "sha256:eaa352d7047a31d87dafcacbabe89df0aa506abb5b1b85a2fb91bc3faa02d822",
+                "sha256:fb30f9626572a76dfe4293c7194a09fb1fe93ba94c7d4f720dfae3b646b45027"
+              ],
+              "name": "frozenlist",
+              "version": "1.8.0"
+            },
+            {
+              "hashes": [
+                "sha256:466e48829084efe2548012b855df21540b96f2e20e51bd124c851536556a592c"
               ],
               "name": "idna",
-              "version": "3.16"
+              "version": "3.17"
+            },
+            {
+              "hashes": [
+                "sha256:40a508a79e2f8d624e3f2e604f90a1e6f46ac75b416d7f4745939ff4a2e95e09"
+              ],
+              "name": "Js2Py",
+              "version": "0.74"
+            },
+            {
+              "hashes": [
+                "sha256:7eee46ccb30ff48a1e35bb818cc90846c6be2b68240e42a78599166722cea709",
+                "sha256:97231140a50f5d447d3164f994b86a0bed7cd016e2682f8650d6a9158e14fd31",
+                "sha256:9d624335fd4fa1c08a53f8b4be7676ebde19cd092b3895c421045ca87895b429",
+                "sha256:bfde23ef6ed9db7eaee6c37dcec08524cb43903c60b285b172b6c094711b3961",
+                "sha256:e82d14e3c948952a1a85503817e038cba5905a3352de76b9a465075d072fba23",
+                "sha256:eb0ce7b2a32d09892b3dd6cc44877a0d02a33241fafca5f25c8b6b62374f8b75"
+              ],
+              "name": "multidict",
+              "version": "6.7.1"
+            },
+            {
+              "hashes": [
+                "sha256:4db0ba63d693afd40d249bd93f842b5f144f8fcbb83de05660373bcf30517b1d",
+                "sha256:5dbc581d2814337da56222fab8dc5f161cd798a434e49bac27930aaef798e144",
+                "sha256:6f328175a2cde1f0ff2c4ed8ce968b9dcfb55f3a7153f39e2957ed994da13476",
+                "sha256:a6ae2198be502c10f09b2516e7b5d019816924bc3183a43ce792a7bd6625e6f4",
+                "sha256:ba57fffe4ac99c5d30076161b5866336d97600769bad35cc68f7774b15298a4e",
+                "sha256:e00820e192c8dbebcafb383ebbf99030895f09905e7a0eb2e0340a0bcc2bc825"
+              ],
+              "name": "propcache",
+              "version": "0.5.2"
+            },
+            {
+              "hashes": [
+                "sha256:076a2d2f923fd4821644f5ba89f059523da90dc9014e85f8e45a5774ca5bc6f9",
+                "sha256:b0726cecd84f9474419d67252add4ac0cd9811b04d61123054b9fb6f57df6e9e"
+              ],
+              "name": "psutil",
+              "version": "7.2.2"
+            },
+            {
+              "hashes": [
+                "sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992"
+              ],
+              "name": "pycparser",
+              "version": "3.0"
+            },
+            {
+              "hashes": [
+                "sha256:67bd81fcbe34f43ad9422ee8fd4843c8e7198dd88dd3d40e6de42ee65fbe1490",
+                "sha256:c8987bd3307a39bc03df5c8e0e3d8be0c4c3518b7f044b0f4c15d1aa78f52575"
+              ],
+              "name": "pycryptodome",
+              "version": "3.23.0"
+            },
+            {
+              "hashes": [
+                "sha256:be60da6b778cc5a5296a69d8e7d614f1f870faf94e1b1b6ac591f2ad5d729579"
+              ],
+              "name": "pyjsparser",
+              "version": "2.7.1"
+            },
+            {
+              "hashes": [
+                "sha256:4f9d971bc5298b8bc1fab282803da04bf000c755d4ad9d99b52de2569ca19a70"
+              ],
+              "name": "pyOpenSSL",
+              "version": "26.2.0"
             },
             {
               "hashes": [
@@ -886,18 +2458,51 @@
             },
             {
               "hashes": [
+                "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"
+              ],
+              "name": "six",
+              "version": "1.17.0"
+            },
+            {
+              "hashes": [
+                "sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548"
+              ],
+              "name": "typing_extensions",
+              "version": "4.15.0"
+            },
+            {
+              "hashes": [
+                "sha256:eb1a66c3ef5847adf7a834f1be0800581b683b5608e74f86ecbcef8ab91bb85d"
+              ],
+              "name": "tzlocal",
+              "version": "5.3.1"
+            },
+            {
+              "hashes": [
                 "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
               ],
               "name": "urllib3",
               "version": "2.7.0"
+            },
+            {
+              "hashes": [
+                "sha256:507cc19f0b45454e2d6dcd62ff7d062b9f77a2812404e62dbdaec05b50faa035",
+                "sha256:7e7ebcdef69dec6c6451e616f32b622a6d4a2e92b445c992f7c8e5274a6bbc4c",
+                "sha256:863297ddede92ee49024e9a9b11ecb59f310ca85b60d8537f56bed9bbb5b1986",
+                "sha256:91e72cf093fd833483a97ee648e0c053c7c629f51ff4a0e7edd84f806b0c5617",
+                "sha256:e51b2cf5ec89a8b8470177641ed62a3ba22d74e1e898e06ad53aa77972487208",
+                "sha256:fecd17873a096036c1c87ab3486f1aef7f269ada7f23f7f856f93b1cc7744f14"
+              ],
+              "name": "yarl",
+              "version": "1.24.2"
             }
           ]
         },
-        "description": "Scrapes sub-scene.com (Subscene clone) for movie and episode subtitles in many languages including Vietnamese, Arabic, Bengali, Danish, Dutch, and more. Uses cloudscraper by default with optional FlareSolverr fallback for Cloudflare challenges.",
+        "description": "Scrapes sub-scene.com (Subscene clone) for movie and episode subtitles in many languages including Vietnamese, Arabic, Bengali, Danish, Dutch, and more. Uses ai-cloudscraper by default with inline Anubis solving and optional FlareSolverr fallback for Cloudflare challenges.",
         "entry_class": "SubSceneProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "99ab583da80051501203eca930a2ad21135ea170d1d37062a7295a9c56b122f7"
+          "provider.py": "0ce8cf2f8e78325c2e993dada8c2b64c6a2ba69b367b8cfff1e19c428c9ad032"
         },
         "languages": [
           "ara",
@@ -954,7 +2559,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.9"
+        "version": "0.1.14"
       }
     },
     {
@@ -1116,6 +2721,99 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "bfc7f480af34c85dd9c1377ff7735416a7c6570520cd79f6e0f0697609fd6d0d",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between HTTP calls to subf2m.co.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            },
+            "user_agent": {
+              "default": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub",
+              "description": "Browser User-Agent sent to subf2m.co.",
+              "title": "User-Agent",
+              "type": "string"
+            },
+            "verify_ssl": {
+              "default": true,
+              "description": "Verify TLS certificates when connecting to subf2m.co and download hosts.",
+              "title": "Verify SSL",
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Scrapes subf2m.co for movie and episode subtitle ZIP files. Custom User-Agent and SSL verification settings are supported.",
+        "entry_class": "SubF2MProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "9e5fc8b1210883c636883aa6fbe7b5ac496cf5a247beb239979a76ffbbe6bdc6"
+        },
+        "languages": [
+          "ara",
+          "ben",
+          "bul",
+          "ces",
+          "dan",
+          "deu",
+          "ell",
+          "eng",
+          "fas",
+          "fin",
+          "fra",
+          "heb",
+          "hrv",
+          "hun",
+          "ind",
+          "isl",
+          "ita",
+          "jpn",
+          "mkd",
+          "msa",
+          "nld",
+          "nor",
+          "pol",
+          "por",
+          "ron",
+          "rus",
+          "spa",
+          "srp",
+          "swe",
+          "tha",
+          "tur",
+          "vie"
+        ],
+        "name": "SubF2M",
+        "provider_id": "subf2m",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/subf2m",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.1"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "8054a67329b35c23ee464f64d5bdaa7d829aca6745e51e432414cacf6e841230",
         "config_schema": {
           "additionalProperties": false,
@@ -1176,6 +2874,46 @@
           "episode"
         ],
         "version": "0.1.3"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "7e74f072215ed1376d62abf8926f777498805cddb3b29fc66092108925b4c159",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {},
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Queries api.subt.is for Spanish movie subtitles using hash, file size, filename, and alternative filename lookups. No login or API key required.",
+        "entry_class": "SubtisProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "87101ac8bdad86fa7f297d6ab9bda78ace2d25691c186278c346d9b44aab2039"
+        },
+        "languages": [
+          "spa"
+        ],
+        "name": "Subtis",
+        "provider_id": "subtis",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/subtis",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie"
+        ],
+        "version": "0.1.0"
       }
     },
     {
@@ -1333,6 +3071,143 @@
           "episode"
         ],
         "version": "0.1.8"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "2afb11be41e8c6d57850870ce4d2babdf1f02c3a70c645f30932d6f113e60235",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {},
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Scrapes subtitulamos.tv for episode subtitles in Spanish, English, Catalan, Galician, and Portuguese. No login or API key required.",
+        "entry_class": "SubtitulamosTVProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "ae643ed91fda4e1a5712b5f68b8211b303b791711e14c5548185882c1df7216e"
+        },
+        "languages": [
+          "ca",
+          "en",
+          "en-GB",
+          "en-US",
+          "es",
+          "es-AR",
+          "es-BO",
+          "es-CL",
+          "es-CO",
+          "es-CR",
+          "es-DO",
+          "es-EC",
+          "es-GT",
+          "es-HN",
+          "es-MX",
+          "es-NI",
+          "es-PA",
+          "es-PE",
+          "es-PR",
+          "es-PY",
+          "es-SV",
+          "es-US",
+          "es-UY",
+          "es-VE",
+          "gl",
+          "pt",
+          "pt-BR"
+        ],
+        "name": "SubtitulamosTV",
+        "provider_id": "subtitulamostv",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/subtitulamostv",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "episode"
+        ],
+        "version": "0.1.1"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "c1499f4e7e3a1363bad3d2a65eb0e7be818e90ccfc4905b491513cde38419b6d",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between HTTP calls to tvsubtitles.net.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Scrapes tvsubtitles.net for episode subtitles in broad multilingual coverage. No login or API key required.",
+        "entry_class": "TvSubtitlesProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "a86671513a668e22036d2d65c4b87475e27068edf6938070697906bb5b154d90"
+        },
+        "languages": [
+          "ara",
+          "bul",
+          "ces",
+          "dan",
+          "deu",
+          "ell",
+          "eng",
+          "fin",
+          "fra",
+          "hun",
+          "ita",
+          "jpn",
+          "kor",
+          "nld",
+          "pol",
+          "por",
+          "ron",
+          "rus",
+          "spa",
+          "swe",
+          "tur",
+          "ukr",
+          "zho"
+        ],
+        "name": "TVsubtitles",
+        "provider_id": "tvsubtitles",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/tvsubtitles",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "episode"
+        ],
+        "version": "0.1.1"
       }
     }
   ],
