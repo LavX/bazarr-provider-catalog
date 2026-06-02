@@ -25,6 +25,80 @@ SEARCH_GOT_BG = (FIXTURE_DIR / "subsunacs_search_game_of_thrones_bg.html").read_
 DETAIL_DUNE = (FIXTURE_DIR / "subsunacs_detail_dune.html").read_bytes()
 DETAIL_GOT = (FIXTURE_DIR / "subsunacs_detail_game_of_thrones.html").read_bytes()
 
+SEARCH_BACK_TO_FUTURE_3_EN = b"""
+<!doctype html>
+<html>
+<body>
+<table>
+  <tr bgcolor="#333333" onmouseover="this.style.backgroundColor='#454545'">
+    <td class="tdMovie">
+      <a href="/subtitles/Back_To_The_Future_3-10001/" class="tooltip"
+         title="&lt;div&gt;&lt;b&gt;Movie: Back to the Future 3&lt;/b&gt;&lt;br&gt;Back.to.the.Future.3.1990.1080p.BluRay&lt;/div&gt;">Back to the Future 3</a>
+      <span class="smGray">&nbsp;(1990)</span><span class="smSilver"> English</span>
+    </td>
+    <td>1</td>
+    <td>23.976</td>
+    <td><a href="/subtitles/Back_To_The_Future_3-10001/!" target="_blank">----</a></td>
+    <td><a href="/subtitles/Back_To_The_Future_3-10001/!#comments" target="_blank">0</a></td>
+    <td><a href="/search.php?t=1&amp;memid=154075">subs</a></td>
+    <td>12176</td>
+    <td><a href="/subtitles/Back_To_The_Future_3-10001/!" target="_blank"><span class="sm">download</span></a></td>
+    <td align="center">---</td>
+    <td><input class="filesChk" type="checkbox" name="ids[]" value="10001" /></td>
+  </tr>
+</table>
+</body>
+</html>
+"""
+
+SEARCH_GOT_WRONG_EPISODE_BG = b"""
+<!doctype html>
+<html>
+<body>
+<table>
+  <tr bgcolor="#333333" onmouseover="this.style.backgroundColor='#454545'">
+    <td class="tdMovie">
+      <a href="/subtitles/Game_Of_Thrones_01x02-70363/" class="tooltip"
+         title="&lt;div&gt;&lt;b&gt;Movie: Game Of Thrones - 01x02&lt;/b&gt;&lt;br&gt;generic.release&lt;/div&gt;">Game Of Thrones - 01x02</a>
+      <span class="smGray">&nbsp;(2011)</span>
+    </td>
+    <td>1</td>
+    <td>23.976</td>
+    <td><a href="/subtitles/Game_Of_Thrones_01x02-70363/!" target="_blank">----</a></td>
+    <td><a href="/subtitles/Game_Of_Thrones_01x02-70363/!#comments" target="_blank">0</a></td>
+    <td><a href="/search.php?t=1&amp;u=naliareev">naliareev</a></td>
+    <td>24533</td>
+    <td><a href="/subtitles/Game_Of_Thrones_01x02-70363/!" target="_blank"><span class="sm">download</span></a></td>
+    <td align="center">---</td>
+    <td><input class="filesChk" type="checkbox" name="ids[]" value="70363" /></td>
+  </tr>
+</table>
+</body>
+</html>
+"""
+
+DETAIL_GENERIC_EPISODE = b"""
+<!doctype html>
+<html>
+<body>
+<div class="rarview">
+  <label><a href="/getentry.php?id=70363&amp;ei=0">generic.release.srt</a></label>
+</div>
+</body>
+</html>
+"""
+
+DETAIL_SINGLE_FILE = b"""
+<!doctype html>
+<html>
+<body>
+<div class="rarview">
+  <label><a href="/getentry.php?id=144478&amp;ei=0">Dune.2021.1080p.WEBRip.DD5.1.x264-SHITBOX.srt</a></label>
+</div>
+</body>
+</html>
+"""
+
 
 def _zip_body(files):
     stream = io.BytesIO()
@@ -75,6 +149,12 @@ class SubsUnacsParserTests(unittest.TestCase):
 
         self.assertEqual(self.mod.extract_archive_files(body), [])
 
+    def test_extract_archive_files_rejects_zip_entries_over_memory_limit(self):
+        self.mod.ARCHIVE_MEMORY_LIMIT = 4
+        body = _zip_body({"Movie.srt": "subtitle"})
+
+        self.assertEqual(self.mod.extract_archive_files(body), [])
+
     def test_collect_extracted_files_repairs_unreadable_archive_permissions(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "Show.S01E01.en.srt"
@@ -86,6 +166,19 @@ class SubsUnacsParserTests(unittest.TestCase):
                 path.chmod(0o600)
 
         self.assertEqual(files, [("Show.S01E01.en.srt", b"subtitle")])
+
+    def test_collect_extracted_files_skips_symlinks(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink support is unavailable")
+        with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as outside_dir:
+            outside = Path(outside_dir) / "outside.srt"
+            outside.write_bytes(b"outside subtitle")
+            link = Path(temp_dir) / "Show.S01E01.en.srt"
+            os.symlink(outside, link)
+
+            files = self.mod._collect_extracted_subtitle_files(temp_dir)
+
+        self.assertEqual(files, [])
 
 
 class SubsUnacsProviderTests(unittest.TestCase):
@@ -174,6 +267,51 @@ class SubsUnacsProviderTests(unittest.TestCase):
         )
 
         self.assertEqual(calls[0]["m"], "Bill Ted Face the Music")
+
+    def test_search_movie_uses_rewritten_title_for_row_filter(self):
+        provider = self.mod.SubsUnacsProvider()
+        provider._http_post = lambda url, data, timeout=10, referer=None: SEARCH_BACK_TO_FUTURE_3_EN
+        provider._http_get = lambda url, timeout=10, referer=None: DETAIL_SINGLE_FILE
+
+        results = provider.search(
+            {"kind": "movie", "title": "Back to the Future Part III", "year": 1990},
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertIn("title", results[0]["matches"])
+
+    def test_search_episode_rejects_rows_for_other_episodes(self):
+        provider = self.mod.SubsUnacsProvider()
+        provider._http_post = lambda url, data, timeout=10, referer=None: SEARCH_GOT_WRONG_EPISODE_BG
+        provider._http_get = lambda url, timeout=10, referer=None: DETAIL_GENERIC_EPISODE
+
+        results = provider.search(
+            {"kind": "episode", "series": "Game of Thrones", "season": 1, "episode": 1},
+            [{"alpha3": "bul", "alpha2": "bg"}],
+            {},
+        )
+
+        self.assertEqual(results, [])
+
+    def test_search_preserves_requested_language_variants_when_deduping(self):
+        provider = self.mod.SubsUnacsProvider()
+        provider._http_post = lambda url, data, timeout=10, referer=None: SEARCH_DUNE_EN
+        provider._http_get = lambda url, timeout=10, referer=None: DETAIL_SINGLE_FILE
+
+        results = provider.search(
+            {"kind": "movie", "title": "Dune", "year": 2021},
+            [
+                {"alpha3": "eng", "alpha2": "en", "forced": False, "hi": False},
+                {"alpha3": "eng", "alpha2": "en", "forced": True, "hi": False},
+            ],
+            {},
+        )
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual({item["language"]["forced"] for item in results}, {False, True})
+        self.assertEqual(len({item["id"] for item in results}), 2)
 
     def test_download_fetches_direct_entry_and_normalizes_line_endings(self):
         provider = self.mod.SubsUnacsProvider()

@@ -7,6 +7,7 @@ import io
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
@@ -62,6 +63,7 @@ _RATING_RE = re.compile(r"<img\b[^>]*(?:alt|title)=['\"](?P<rating>[\d.]+)", re.
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
 _NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
+_TITLE_EPISODE_RE = re.compile(r"^(?P<title>.+?)\s*(?:-|:)?\s+(?P<season>\d{1,2})x(?P<episode>\d{1,3})(?:\b|$)", re.I)
 
 
 def parse_search_results(body):
@@ -81,12 +83,15 @@ def parse_search_results(body):
             continue
         year_match = _YEAR_RE.search(title_cell)
         rating_match = _RATING_RE.search(cells[3] if len(cells) > 3 else "")
+        title, season, episode = _title_and_episode_from_text(anchor["body"])
         rows.append(
             {
                 "subtitle_id": _subtitle_id_from_href(href),
                 "page_url": _absolute_url(href),
                 "download_url": _download_url(href),
-                "title": _strip_tags(anchor["body"]),
+                "title": title,
+                "season": season,
+                "episode": episode,
                 "year": int(year_match.group("year")) if year_match else None,
                 "num_cds": _parse_int(cells[1] if len(cells) > 1 else ""),
                 "fps": _parse_float(cells[2] if len(cells) > 2 else ""),
@@ -122,13 +127,10 @@ def extract_archive_files(body):
     stream = io.BytesIO(body)
     if zipfile.is_zipfile(stream):
         with zipfile.ZipFile(stream) as archive:
-            names = sorted(archive.namelist())
-            if len(names) > ARCHIVE_FILE_COUNT_LIMIT:
+            candidates = _zip_subtitle_infos(archive)
+            if candidates is None:
                 return []
-            candidates = [name for name in names if _is_subtitle_file(name)]
-            if len(candidates) > ARCHIVE_SUBTITLE_FILE_COUNT_LIMIT:
-                return []
-            return _archive_rows_from_pairs((name, archive.read(name)) for name in candidates)
+            return _archive_rows_from_pairs((info.filename, archive.read(info)) for info in candidates)
     if _is_external_archive(body):
         return _archive_rows_from_pairs(_extract_external_archive_files(body))
     return []
@@ -191,12 +193,15 @@ class SubsUnacsProvider:
             if not video.get("series") or video.get("season") is None or video.get("episode") is None:
                 return []
             media_type = "episode"
-            title = _search_episode_title(video)
+            search_series = _search_title(video.get("series"), TV_NAME_FIXES)
+            title = _episode_query_title(search_series, video)
+            match_video = {**video, "series": search_series}
         elif video.get("kind") == "movie":
             if not video.get("title"):
                 return []
             media_type = "movie"
             title = _search_title(video["title"], MOVIE_NAME_FIXES)
+            match_video = {**video, "title": title}
         else:
             return []
 
@@ -207,7 +212,7 @@ class SubsUnacsProvider:
             _sleep(config)
             rows = parse_search_results(self._http_post(SEARCH_URL, _search_payload(video, title, alpha3), referer=HOME_URL))
             for row in rows[:20]:
-                if not _row_matches_video(row, video, media_type):
+                if not _row_matches_video(row, match_video, media_type):
                     continue
                 _sleep(config)
                 try:
@@ -219,15 +224,16 @@ class SubsUnacsProvider:
                         continue
                     for variant in variants:
                         item = {**row, **entry, "media_type": media_type, "language": variant}
-                        key = (row["download_url"], entry["filename"], variant["alpha3"])
+                        key = (row["download_url"], entry["filename"], _language_variant_key(variant))
                         if key in seen:
                             continue
                         seen.add(key)
-                        results.append(self._result(video, item))
+                        results.append(self._result(match_video, item))
         return sorted(results, key=lambda item: item["score"], reverse=True)
 
     def _result(self, video, item):
         language = item["language"]
+        language_key = ":".join(str(value) for value in _language_variant_key(language))
         matches = derive_matches(video, item)
         score = 35
         for match_name, value in (
@@ -256,7 +262,7 @@ class SubsUnacsProvider:
         }
         return {
             "provider": PROVIDER_ID,
-            "id": f"subsunacs-{hashlib.sha1((item['download_url'] + item['filename'] + language['alpha3']).encode('utf-8')).hexdigest()[:16]}",
+            "id": f"subsunacs-{hashlib.sha1((item['download_url'] + item['filename'] + language_key).encode('utf-8')).hexdigest()[:16]}",
             "language": {
                 "alpha3": language["alpha3"],
                 "alpha2": SUPPORTED_LANGUAGES[language["alpha3"]],
@@ -412,6 +418,8 @@ def _collect_extracted_subtitle_files(output_dir):
             rel = os.path.relpath(path, output_dir)
             if not _is_subtitle_file(rel):
                 continue
+            if not _is_safe_extracted_file(path, output_dir):
+                continue
             if os.path.getsize(path) > ARCHIVE_MEMORY_LIMIT:
                 continue
             try:
@@ -431,6 +439,41 @@ def _archive_rows_from_pairs(pairs):
         if _is_subtitle_file(filename):
             rows.append({"filename": os.path.basename(filename), "content": content})
     return rows
+
+
+def _zip_subtitle_infos(archive):
+    infos = archive.infolist()
+    if len(infos) > ARCHIVE_FILE_COUNT_LIMIT:
+        return None
+    candidates = []
+    total_size = 0
+    for info in infos:
+        if info.is_dir() or not _is_subtitle_file(info.filename):
+            continue
+        if info.file_size > ARCHIVE_MEMORY_LIMIT:
+            return None
+        total_size += info.file_size
+        if total_size > ARCHIVE_MEMORY_LIMIT:
+            return None
+        candidates.append(info)
+    if len(candidates) > ARCHIVE_SUBTITLE_FILE_COUNT_LIMIT:
+        return None
+    return sorted(candidates, key=lambda item: item.filename)
+
+
+def _is_safe_extracted_file(path, output_dir):
+    try:
+        file_stat = os.lstat(path)
+    except OSError:
+        return False
+    if not stat.S_ISREG(file_stat.st_mode):
+        return False
+    output_real = os.path.realpath(output_dir)
+    path_real = os.path.realpath(path)
+    try:
+        return os.path.commonpath([output_real, path_real]) == output_real
+    except ValueError:
+        return False
 
 
 def _is_external_archive(body):
@@ -498,6 +541,10 @@ def _row_matches_video(row, video, media_type):
         return not video.get("year") or row.get("year") == int(video.get("year"))
     if not _title_matches(video.get("series"), row.get("title")):
         return False
+    if row.get("season") is not None and row["season"] != int(video.get("season")):
+        return False
+    if row.get("episode") is not None and row["episode"] != int(video.get("episode")):
+        return False
     return True
 
 
@@ -539,6 +586,10 @@ def _requested_languages(languages):
     return grouped
 
 
+def _language_variant_key(language):
+    return (language["alpha3"], bool(language["hi"]), bool(language["forced"]))
+
+
 def _alpha3_for_language(language):
     if isinstance(language, dict):
         alpha3 = (language.get("alpha3") or "").lower()
@@ -568,9 +619,20 @@ def _search_payload(video, title, alpha3):
     return payload
 
 
-def _search_episode_title(video):
-    series = _search_title(video.get("series"), TV_NAME_FIXES)
+def _episode_query_title(series, video):
     return f"{series} {int(video.get('season')):02d} {int(video.get('episode')):02d}"
+
+
+def _title_and_episode_from_text(value):
+    title = _strip_tags(value)
+    match = _TITLE_EPISODE_RE.search(title)
+    if not match:
+        return title, None, None
+    return (
+        match.group("title").strip(" -:"),
+        int(match.group("season")),
+        int(match.group("episode")),
+    )
 
 
 def _search_title(title, replacements):
