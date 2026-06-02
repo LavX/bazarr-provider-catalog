@@ -80,7 +80,7 @@
   - `soustitreseu`: branch `catalog-soustitreseu`, worktree `/tmp/bazarr_catalog_provider_worktrees/soustitreseu`, current head `ed93af8`
   - `subclub`: branch `catalog-subclub`, worktree `/tmp/bazarr_catalog_provider_worktrees/subclub`, current head `0849eae`
   - `subdl`: branch `catalog-subdl`, worktree `/tmp/bazarr_catalog_provider_worktrees/subdl`, current head `7ff94cd`
-  - `subf2m`: branch `catalog-subf2m`, worktree `/tmp/bazarr_catalog_provider_worktrees/subf2m`, current head `35bb9c4`
+  - `subf2m`: branch `catalog-subf2m`, worktree `/tmp/bazarr_catalog_provider_worktrees/subf2m`, current head `659910f`
   - `subs4free`: branch `catalog-subs4free`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4free`, current head `f7ca9ac`
   - `subs4series`: branch `catalog-subs4series`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4series`, current head `4237a99`
   - `subsarr`: branch `catalog-subsarr`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsarr`, current head `e154cee`
@@ -1456,8 +1456,8 @@
 
 - Branch: `catalog-subf2m`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subf2m`
-- Current checkpoint: `35bb9c4 Add SubF2M provider`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/26` opened on 2026-06-01, head `catalog-subf2m`, base `main`, merge state `CLEAN`.
+- Current checkpoint: `659910f Merge remote-tracking branch 'origin/main' into catalog-subf2m`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/26` opened on 2026-06-01, head `catalog-subf2m`, base `main`, current head `659910fd6ec99311b0855dacdc353b28d4c6269f`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1506,6 +1506,20 @@
   - Prohibited punctuation and attribution scan across README, catalog, provider code, tests, and fixtures: no matches.
   - `python3 -B -m sdk smoke-test --provider subf2m --language eng --video-fixture tests/fixtures/subf2m_video_dune_2021.json --config-json '{"request_delay_ms":0}' --expect-min-results 1`: `subf2m ok`.
   - `gh pr view 26 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#26` is open, non-draft, head `catalog-subf2m`, base `main`, merge state `CLEAN`.
+- Review-fix evidence on 2026-06-02:
+  - PR `#26` had four active review threads: preserve forced-only subtitles, tag HI-only subtitles, accept season packs that omit `complete`, and reject episode search rows with conflicting years.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_subf2m.py'` failed with missing forced and HI flags, wrong-year episode rows still ranked, plain `S01` season packs rejected, and requested flag filters not applied.
+  - `fcd6c81` derives forced and hearing-impaired flags from row release/comment text, carries the flags into candidate language and provider payload fields, filters rows when request languages explicitly include `hi` or `forced`, rejects conflicting episode search years, accepts plain `S01` season packs, bumps SubF2M to `0.1.1`, and rebuilds `catalog.json`.
+  - Final branch head `659910f` merges current `main` after the NapiProjekt merge, keeping the live PR diff scoped to `README.md`, `catalog.json`, `providers/subf2m`, `tests/fixtures/subf2m_*`, and `tests/test_subf2m.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_subf2m.py'`: `16` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subf2m/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: returned Python `3.12`, `3.13`, and `3.14`.
+  - `python3 -B -m unittest discover -s tests`: `516` tests passed with `6` skipped.
+  - `git diff --check origin/main...HEAD` was clean, and the SubF2M diff scan found no attribution or prohibited punctuation matches.
+  - `gh pr view 26` reported head `659910fd6ec99311b0855dacdc353b28d4c6269f`, non-draft, merge state `CLEAN`.
+  - Final live review-thread check after push returned no current unresolved non-outdated review threads.
 
 ### `subsarr`
 
