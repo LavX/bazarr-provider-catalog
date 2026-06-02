@@ -56,7 +56,7 @@
   - `animesubinfo`: branch `catalog-animesubinfo`, worktree `/tmp/bazarr_catalog_provider_worktrees/animesubinfo`, current head `d45ba06`
   - `animetosho`: branch `catalog-animetosho`, worktree `/tmp/bazarr_catalog_provider_worktrees/animetosho`, current head `b0b6982`
   - `assrt`: branch `catalog-assrt`, worktree `/tmp/bazarr_catalog_provider_worktrees/assrt`, current head `861ad3d`
-  - `avistaz`: branch `catalog-avistaz`, worktree `/tmp/bazarr_catalog_provider_worktrees/avistaz`, current head `1b339e2`
+  - `avistaz`: branch `catalog-avistaz`, worktree `/tmp/bazarr_catalog_provider_worktrees/avistaz`, current head `47d6d3c`
   - `betaseries`: branch `catalog-betaseries`, worktree `/tmp/bazarr_catalog_provider_worktrees/betaseries`, current head `461ab52`
   - `bsplayer`: branch `catalog-bsplayer`, worktree `/tmp/bazarr_catalog_provider_worktrees/bsplayer`, current head `c04f374`
   - `cinemaz`: branch `catalog-cinemaz`, worktree `/tmp/bazarr_catalog_provider_worktrees/cinemaz`, current head `df1b3bd`
@@ -3379,7 +3379,7 @@
 
 - Branch: `catalog-avistaz`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/avistaz`
-- Current checkpoint: `1b339e2 Add AvistaZ provider`
+- Current checkpoint: `47d6d3c Merge current main into AvistaZ branch`
 - PR: `https://github.com/LavX/bazarr-provider-catalog/pull/51` opened as draft on 2026-06-01, head `catalog-avistaz`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -3415,6 +3415,21 @@
   - `python3 -B -m sdk smoke-test --provider avistaz --language eng --video-fixture /tmp/avistaz_release_video.json --expect-min-results 1 --skip-download`: failed at the expected credential gate with `AvistaZ cookies are required`.
   - PR `#51` was verified open, draft, merge state `CLEAN`, head `1b339e2dfd93faed83ef5b6054196997c74be8f3`.
   - Test-server config check read only cookie and user-agent presence plus length from `/home/lavx/bazarr-data/config/config.yaml`; `avistaz.cookies` and `avistaz.user_agent` are empty.
+- Fresh current-main merge evidence on 2026-06-02:
+  - Live thread-aware PR inspection found no conversation comments, reviews, or review threads on PR `#51`.
+  - Merged `origin/main` into `catalog-avistaz` and resolved the generated `README.md` and `catalog.json` conflicts.
+  - Effective branch scope against `origin/main` remains limited to `README.md`, `catalog.json`, `docs/provider-notes/avistaz.md`, `providers/avistaz/provider.json`, `providers/avistaz/provider.py`, and `tests/test_avistaz.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_avistaz.py'`: `7` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/avistaz/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python runtime policy remains `>=3.12,<3.15`.
+  - `git diff --cached --check` and `git diff --check origin/main...HEAD`: clean.
+  - Attribution and em-dash scan over `providers/avistaz`, `tests/test_avistaz.py`, `docs/provider-notes/avistaz.md`, `README.md`, and `catalog.json` found no matches.
+  - `python3 -B -m unittest discover -s tests`: `734` tests passed, `6` skipped.
+  - Pushed `catalog-avistaz` at `47d6d3c68ce24d18aafa06c30d07d03686b99c18`.
+  - PR `#51` was verified open, draft, merge state `CLEAN`, head `47d6d3c68ce24d18aafa06c30d07d03686b99c18`.
+  - `gh pr checks 51 --repo LavX/bazarr-provider-catalog`: no checks reported on the branch.
 - Remaining gates:
   - Run SDK live smoke search and download with valid AvistaZ cookies and a known AvistaZ release-page fixture or test-server media item.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `avistaz` in the trusted replacement policy.
