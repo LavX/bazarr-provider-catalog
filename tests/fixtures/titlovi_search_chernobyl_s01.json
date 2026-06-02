@@ -1,0 +1,41 @@
+{
+  "PagesAvailable": 1,
+  "SubtitleResults": [
+    {
+      "Id": 2001,
+      "Title": "Chernobyl",
+      "Lang": "Srpski",
+      "Link": "https://kodi.titlovi.com/download/chernobyl-s01e01.zip",
+      "Release": "Chernobyl.S01E01.1080p.WEB.H264-MEMENTO",
+      "Season": 1,
+      "Episode": 1,
+      "Year": 2019,
+      "Rating": 4.8,
+      "DownloadCount": 34
+    },
+    {
+      "Id": 2002,
+      "Title": "Chernobyl",
+      "Lang": "Srpski",
+      "Link": "https://kodi.titlovi.com/download/chernobyl-pack.zip",
+      "Release": "Chernobyl.S01.1080p.WEB.H264-MEMENTO",
+      "Season": 1,
+      "Episode": 0,
+      "Year": 2019,
+      "Rating": 4.2,
+      "DownloadCount": 77
+    },
+    {
+      "Id": 2003,
+      "Title": "Chernobyl",
+      "Lang": "Srpski",
+      "Link": "https://kodi.titlovi.com/download/chernobyl-s01e02.zip",
+      "Release": "Chernobyl.S01E02.1080p.WEB.H264-MEMENTO",
+      "Season": 1,
+      "Episode": 2,
+      "Year": 2019,
+      "Rating": 4.0,
+      "DownloadCount": 99
+    }
+  ]
+}
