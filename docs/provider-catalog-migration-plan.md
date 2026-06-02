@@ -287,7 +287,7 @@
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `git diff --check`: clean.
   - `python3 -B -m unittest discover -s tests`: `336` tests passed, `6` skipped.
-  - Attribution and AI-credit scan over touched files: no matches.
+  - Attribution scan over touched files: no matches.
   - Local fake Whisper service smoke with generated media fixture and endpoint `http://127.0.0.1:19191`: `whisperai ok`.
 - Fresh current-main merge evidence on 2026-06-02:
   - Live thread-aware PR inspection found no conversation comments, reviews, or review threads on PR `#55`.
@@ -371,7 +371,7 @@
   - `python3 -B -m unittest discover -s tests`: `333` tests passed, `6` skipped.
   - `git diff --check origin/main...HEAD`: clean.
   - Manifest language count matches the Bazarr Addic7ed UI language registry: `44` entries, with hearing-impaired represented per result.
-  - Attribution and AI-credit scan over touched Addic7ed files found no matches.
+  - Attribution scan over touched Addic7ed files found no matches.
 - Live evidence on 2026-06-01:
   - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' https://www.addic7ed.com/`: returned HTTP `200`.
   - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' 'https://www.addic7ed.com/search.php?search=Dexter'`: returned HTTP `302` to `/show/6`.
@@ -424,7 +424,7 @@
   - `python3 -B -m unittest discover -s tests`: `332` tests passed, `6` skipped.
   - `git diff --check origin/main...HEAD`: clean.
   - Manifest language count matches the Bazarr Karagarga UI language registry: `1` entry.
-  - Attribution and AI-credit scan over touched Karagarga files found no matches.
+  - Attribution scan over touched Karagarga files found no matches.
 - Live evidence on 2026-06-01:
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://karagarga.in/`: returned HTTP `200`.
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' 'https://karagarga.in/pots.php?search=Dune&status=completed'`: returned HTTP `302` to `/login.php?returnto=...`.
@@ -469,7 +469,7 @@
   - `python3 -B -m unittest discover -s tests`: `333` tests passed, `6` skipped.
   - `git diff --check origin/main...HEAD`: clean.
   - Manifest language count matches the Bazarr Ktuvit UI language registry: `1` entry.
-  - Attribution and AI-credit scan over touched Ktuvit files found no matches.
+  - Attribution scan over touched Ktuvit files found no matches.
 - Live evidence on 2026-06-01:
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://www.ktuvit.me/`: returned HTTP `200`.
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://www.ktuvit.me/Services/MembershipService.svc/Login`: returned HTTP `405` with `POST` allowed.
@@ -514,7 +514,7 @@
   - `python3 -B -m unittest discover -s tests`: `334` tests passed, `6` skipped.
   - `git diff --check origin/main...HEAD`: clean.
   - Manifest language count matches the Bazarr LegendasDivx UI language registry: `2` entries.
-  - Attribution and AI-credit scan over touched LegendasDivx files found no matches.
+  - Attribution scan over touched LegendasDivx files found no matches.
 - Live evidence on 2026-06-01:
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://www.legendasdivx.pt/`: returned HTTP `200`.
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' 'https://www.legendasdivx.pt/forum/ucp.php?mode=login'`: returned HTTP `200`.
@@ -544,7 +544,7 @@
 - Branch: `catalog-legendasnet`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/legendasnet`
 - Current checkpoint: `be91cfa Fix Legendas.net Brazilian Portuguese results`
-- Pull request: [#60](https://github.com/LavX/bazarr-provider-catalog/pull/60), open draft, head `catalog-legendasnet`, base `main`, merge state `CLEAN`.
+- Pull request: [#60](https://github.com/LavX/bazarr-provider-catalog/pull/60), merged on 2026-06-02 UTC at merge commit `108834c57e9111181220f0f536aed9938c177928`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -559,7 +559,7 @@
   - `python3 -B -m unittest discover -s tests`: `334` tests passed, `6` skipped.
   - `git diff --check origin/main...HEAD`: clean.
   - Manifest language count matches the Bazarr Legendas.net UI language registry: `1` entry.
-  - Attribution and AI-credit scan over touched Legendas.net files found no matches.
+  - Attribution scan over touched Legendas.net files found no matches.
 - Live evidence on 2026-06-01:
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://legendas.net/`: returned HTTP `200`.
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://legendas.net/api/v1/login`: returned HTTP `405` with `POST` allowed.
@@ -578,9 +578,9 @@
   - Touched-file attribution and em-dash scan across Legendas.net files found no matches.
   - `python3 -B -m unittest discover -s tests`: `733` tests passed with `6` skipped.
   - Pushed branch head `7dc630d6f7bed364f19d53a72dbc74aa7091aecf`.
-  - PR `#60` is open draft, head `catalog-legendasnet` at `7dc630d6f7bed364f19d53a72dbc74aa7091aecf`, merge state `CLEAN`, and no checks are reported.
+  - At this checkpoint, PR `#60` was open draft, head `catalog-legendasnet` at `7dc630d6f7bed364f19d53a72dbc74aa7091aecf`, merge state `CLEAN`, and no checks were reported.
 - Fresh credential recheck on 2026-06-02:
-  - PR `#60` is open draft, head `7dc630d6f7bed364f19d53a72dbc74aa7091aecf`, merge state `CLEAN`, and no checks are reported.
+  - At this checkpoint, PR `#60` was open draft, head `7dc630d6f7bed364f19d53a72dbc74aa7091aecf`, merge state `CLEAN`, and no checks were reported.
   - `python3 -B -m unittest discover -s tests -p 'test_legendasnet.py'`: `6` tests passed.
   - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
@@ -612,6 +612,7 @@
   - Compat download `POST /api/v1/download` for first Legendas.net `file_id=1` returned HTTP `200`.
   - Compat stream returned HTTP `200`, `81921` bytes, and content type `application/x-subrip`.
 - Remaining gates: none for local disposable Provider Hub compat proof.
+- Live GitHub merge confirmation on 2026-06-02: `gh pr view 60 --repo LavX/bazarr-provider-catalog` reported PR `#60` as `MERGED`, `isDraft=false`, merged at `2026-06-02T18:21:39Z`, with merge commit `108834c57e9111181220f0f536aed9938c177928`.
 
 ### `napisy24`
 
@@ -633,7 +634,7 @@
   - `python3 -B -m unittest discover -s tests`: `334` tests passed, `6` skipped.
   - `git diff --check origin/main...HEAD`: clean.
   - Manifest language count matches the Bazarr Napisy24 UI language registry: `1` entry.
-  - Attribution and AI-credit scan over touched Napisy24 files found no matches.
+  - Attribution scan over touched Napisy24 files found no matches.
 - Live evidence on 2026-06-01:
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' http://napisy24.pl/`: returned HTTP `301` to `https://napisy24.pl/`.
   - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' -d 'postAction=CheckSub&ua=subliminal&ap=lanimilbus&fs=1&fh=0000000000000000&fn=probe.mkv&n24pref=1' http://napisy24.pl/run/CheckSubAgent.php`: returned HTTP `200` with `OK-0||` for a dummy hash.
@@ -689,7 +690,7 @@
   - `python3 -B -m py_compile providers/pipocas/provider.py`: passed.
   - `python3 -B -m unittest discover -s tests`: `334` tests passed, `6` skipped.
   - `git diff --check origin/main...HEAD`: clean.
-  - Attribution and AI-credit scan over touched Pipocas files found no matches.
+  - Attribution scan over touched Pipocas files found no matches.
 - Live evidence on 2026-06-01:
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://pipocas.tv/`: returned HTTP `302` to `https://pipocas.tv/login`.
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://pipocas.tv/login`: returned HTTP `200`.
@@ -733,7 +734,7 @@
   - Final notes-only branch `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
   - `rg -n "subscenter|SubsCenter" README.md catalog.json providers tests -S`: no matches.
   - `git diff --check origin/main...HEAD`: clean.
-  - Attribution and AI-credit scan over `docs/provider-notes/subscenter.md`: no matches.
+  - Attribution scan over `docs/provider-notes/subscenter.md`: no matches.
 - Live evidence on 2026-06-01:
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' http://www.subscenter.info/he/`: failed with `curl: (6) Could not resolve host`.
   - `dig +short @1.1.1.1 subscenter.info`: returned no address records.
@@ -760,7 +761,7 @@
 - Branch: `catalog-titlovi`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/titlovi`
 - Current checkpoint: `9afb8e2 Refresh Titlovi language filtering`
-- Pull request: [#64](https://github.com/LavX/bazarr-provider-catalog/pull/64), open draft, head `catalog-titlovi`, base `main`, merge state `CLEAN`.
+- Pull request: [#64](https://github.com/LavX/bazarr-provider-catalog/pull/64), merged on 2026-06-02 UTC at merge commit `6630d9636c5b40c54971a7d8463f664369634296`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -775,7 +776,7 @@
   - `python3 -B -m unittest discover -s tests`: `338` tests passed, `6` skipped.
   - `git diff --check origin/main...HEAD`: clean.
   - Manifest language count matches the Bazarr Titlovi UI language registry: `6` entries.
-  - Attribution and AI-credit scan over touched Titlovi files found no matches.
+  - Attribution scan over touched Titlovi files found no matches.
 - Live evidence on 2026-06-01:
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://kodi.titlovi.com/api/subtitles/gettoken`: returned HTTP `405` with `POST` allowed.
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://kodi.titlovi.com/api/subtitles/search`: returned HTTP `401` without credentials.
@@ -793,7 +794,7 @@
   - Touched-file attribution and conflict-marker scan across Titlovi files found no matches.
   - `python3 -B -m unittest discover -s tests`: `737` tests passed with `6` skipped.
   - Pushed branch head `79b9c8ba7713b04626cb01f19f690e563f7b2b04`.
-  - PR `#64` is open draft, head `catalog-titlovi` at `79b9c8ba7713b04626cb01f19f690e563f7b2b04`, merge state `CLEAN`, and no checks are reported.
+  - At this checkpoint, PR `#64` was open draft, head `catalog-titlovi` at `79b9c8ba7713b04626cb01f19f690e563f7b2b04`, merge state `CLEAN`, and no checks were reported.
 - Fresh credential and live SDK proof on 2026-06-02:
   - Initial live SDK smoke with saved temporary credentials reached the Titlovi API but failed with `titlovi returned invalid language payload`.
   - Root cause: the live API returned mixed-language Dune rows even when queried with `lang=English`, so Croatian, Slovenian, Serbian, and Macedonian rows leaked into an English-only SDK smoke request.
@@ -807,13 +808,14 @@
   - `git diff --check origin/main...HEAD`: clean.
   - Touched-file attribution and prohibited punctuation scan across Titlovi files found no matches.
   - Live SDK smoke with download enabled `python3 -B -m sdk smoke-test --provider titlovi --language eng --video-fixture tests/fixtures/titlovi_video_dune_2021.json --config-json '{"request_delay_ms":0}' --secret username=TITLOVI_USERNAME --secret password=TITLOVI_PASSWORD --expect-min-results 1`: `titlovi ok`.
-  - Pushed branch head `9afb8e2d847588559b6884b7b2858c9f4adcdb1f`; PR `#64` remains open draft with no checks reported.
+  - Pushed branch head `9afb8e2d847588559b6884b7b2858c9f4adcdb1f`; at this checkpoint, PR `#64` remained open draft with no checks reported.
 - Provider Hub compat proof on 2026-06-02:
   - Local disposable Provider Hub proof used `ghcr.io/lavx/bazarr:ui-test` container `bazarr-compat-remaining` on `127.0.0.1:6770`; Provider Hub reported `state=active`, `pending_restart=false`, and active commit `9afb8e2d847588559b6884b7b2858c9f4adcdb1f`.
   - Compat search `GET /api/v1/subtitles?imdb_id=1160419&query=Dune.2021.1080p.BluRay-GROUP.mkv&type=movie&languages=en&per_page=100` returned HTTP `200`, `1` total result, and `1` Titlovi row.
   - Compat download `POST /api/v1/download` for first Titlovi `file_id=1` returned HTTP `200`.
   - Compat stream returned HTTP `200`, `71969` bytes, and content type `application/x-subrip`.
 - Remaining gates: none for local disposable Provider Hub compat proof.
+- Live GitHub merge confirmation on 2026-06-02: `gh pr view 64 --repo LavX/bazarr-provider-catalog` reported PR `#64` as `MERGED`, `isDraft=false`, merged at `2026-06-02T18:22:13Z`, with merge commit `6630d9636c5b40c54971a7d8463f664369634296`.
 
 ### `titulky`
 
@@ -835,7 +837,7 @@
   - `python3 -B -m unittest discover -s tests`: `337` tests passed, `6` skipped.
   - `git diff --check origin/main...HEAD`: clean.
   - Manifest language count matches the Bazarr Titulky UI language registry: `2` entries.
-  - Attribution and AI-credit scan over touched Titulky files found no matches.
+  - Attribution scan over touched Titulky files found no matches.
 - Live evidence on 2026-06-01:
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://premium.titulky.com/`: returned HTTP `200`.
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' 'https://premium.titulky.com/?action=serial&step=0&id=1160419'`: returned HTTP `200`.
@@ -885,7 +887,7 @@
   - `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
   - `rg -n "xsubs|XSubs" README.md catalog.json providers tests -S`: no matches.
   - `git diff --check origin/main...HEAD`: clean.
-  - Attribution and AI-credit scan over `docs/provider-notes/xsubs.md`: no matches.
+  - Attribution scan over `docs/provider-notes/xsubs.md`: no matches.
 - Live evidence on 2026-06-01:
   - `curl -sS -D - --max-time 20 -A 'BazarrProviderHub/1.0' http://xsubs.tv/series/all.xml`: returned HTTP `200` with unrelated Korean link-page HTML instead of the legacy XML series index.
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' http://xsubs.tv/xforum/account/signin/`: returned HTTP `200` from the same unrelated host.
@@ -936,7 +938,7 @@
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/subs4free/provider.py`: passed.
   - `git diff --check origin/main...HEAD`: clean.
-  - Attribution and AI-credit scan over `providers/subs4free`, `tests/test_subs4free.py`, `README.md`, `catalog.json`, and `docs/provider-notes/subs4free.md` found no matches.
+  - Attribution scan over `providers/subs4free`, `tests/test_subs4free.py`, `README.md`, `catalog.json`, and `docs/provider-notes/subs4free.md` found no matches.
   - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
   - `python3 -B -m sdk smoke-test --provider subs4free --language ell --video-fixture tests/fixtures/subs4free_video_inception_2010.json --expect-min-results 1`: `subs4free ok`.
 - Review-fix evidence on 2026-06-02:
@@ -1020,7 +1022,7 @@
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/subs4series/provider.py`: passed.
   - `git diff --check origin/main...HEAD`: clean.
-  - Attribution and AI-credit scan over touched Subs4Series files found no matches.
+  - Attribution scan over touched Subs4Series files found no matches.
   - `python3 -B -m unittest discover -s tests`: `337` tests passed, `6` skipped.
   - `python3 -B -m sdk smoke-test --provider subs4series --language eng --video-fixture tests/fixtures/subs4series_video_game_of_thrones_s01e01.json --expect-min-results 1`: `subs4series ok`.
 - Provider Hub test-server evidence on 2026-06-01:
@@ -1099,7 +1101,7 @@
 - Branch: `catalog-zimuku`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/zimuku`
 - Current checkpoint: `6fab891 Bundle Zimuku Yunsuo templates`
-- Pull request: [#69](https://github.com/LavX/bazarr-provider-catalog/pull/69), open draft, head `catalog-zimuku`, base `main`, merge state `CLEAN`.
+- Pull request: [#69](https://github.com/LavX/bazarr-provider-catalog/pull/69), merged on 2026-06-02 UTC at merge commit `569d4c087da6f701bbb801a0b53d77cf0458b39d`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1135,7 +1137,7 @@
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/zimuku/provider.py`: passed.
   - `git diff --check origin/main...HEAD`: clean.
-  - Attribution and AI-credit scan over touched Zimuku files found no matches.
+  - Attribution scan over touched Zimuku files found no matches.
   - `python3 -B -m unittest discover -s tests`: `335` tests passed, `6` skipped.
   - Live smoke after the dependency-lock fix still failed with `zimuku yunsuo captcha response required`.
 - Provider Hub test-server evidence on 2026-06-01:
@@ -1159,7 +1161,7 @@
   - Touched-file attribution and conflict-marker scan across Zimuku files found no matches.
   - `python3 -B -m unittest discover -s tests`: `734` tests passed with `6` skipped.
   - Pushed branch head `8d55984d60bfc9e85d16c780d66a8fd1eda8c7f5`.
-  - PR `#69` is open draft, head `catalog-zimuku` at `8d55984d60bfc9e85d16c780d66a8fd1eda8c7f5`, merge state `CLEAN`, and no checks are reported.
+  - At this checkpoint, PR `#69` was open draft, head `catalog-zimuku` at `8d55984d60bfc9e85d16c780d66a8fd1eda8c7f5`, merge state `CLEAN`, and no checks were reported.
 - Native Yunsuo verification evidence on 2026-06-02:
   - Checked SubHD's native anti-captcha approach. It solves SVG glyphs with local templates, so the Zimuku fix follows the same native-template principle but targets Yunsuo's BMP digit image instead of SubHD SVG paths.
   - Added native Zimuku Yunsuo BMP digit solving from sampled live challenges and kept the existing manual `captcha_response` and external `captcha_solver_url` fallback path.
@@ -1179,7 +1181,7 @@
   - Live SDK search smoke `python3 -B -m sdk smoke-test --provider zimuku --language zho --video-fixture tests/fixtures/yifysubtitles_video_dune_2021.json --expect-min-results 1 --skip-download`: `zimuku ok`.
   - Live SDK search plus download smoke `python3 -B -m sdk smoke-test --provider zimuku --language zho --video-fixture tests/fixtures/yifysubtitles_video_dune_2021.json --expect-min-results 1`: `zimuku ok`.
   - Pushed branch head `77b156bc5575d1ee41a3ba5451b61115407c408f`.
-  - PR `#69` is open draft, head `catalog-zimuku` at `77b156bc5575d1ee41a3ba5451b61115407c408f`, merge state `CLEAN`, has no review threads, and no checks are reported.
+  - At this checkpoint, PR `#69` was open draft, head `catalog-zimuku` at `77b156bc5575d1ee41a3ba5451b61115407c408f`, merge state `CLEAN`, had no review threads, and no checks were reported.
 - No-image Yunsuo fallback evidence on 2026-06-02:
   - Rechecked SubHD's native anti-captcha path: it uses local glyph templates and retry flow, while Zimuku's comparable path must target Yunsuo BMP digits or no-image coordinate verification.
   - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_zimuku.py'`: failed because a Yunsuo challenge without an embedded image raised `zimuku yunsuo captcha response required`.
@@ -1195,7 +1197,7 @@
   - `python3 -B -m unittest discover -s tests`: `740` tests passed with `6` skipped.
   - Live SDK search smoke `python3 -B -m sdk smoke-test --provider zimuku --video-fixture tests/fixtures/zimuku_video_game_of_thrones_s01e01.json --language zho --expect-min-results 1 --skip-download`: `zimuku ok`.
   - Pushed branch head `7d55b6c93bc8f27dbd5c18ed0ac1c373441cfe8c`.
-  - PR `#69` is open draft, head `catalog-zimuku` at `7d55b6c93bc8f27dbd5c18ed0ac1c373441cfe8c`, merge state `CLEAN`, has no review threads, and no checks are reported.
+  - At this checkpoint, PR `#69` was open draft, head `catalog-zimuku` at `7d55b6c93bc8f27dbd5c18ed0ac1c373441cfe8c`, merge state `CLEAN`, had no review threads, and no checks were reported.
   - Follow-up SubHD anti-captcha comparison: SubHD solves by detecting the captcha artifact in the response body, then submitting a locally solved template result. Zimuku now applies the same body-driven trigger to Yunsuo pages instead of requiring HTTP `404`.
   - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_zimuku.py' -k test_yunsuo_bypass_solves_challenge_body_without_404_status`: failed because the provider returned the Yunsuo challenge body when the response status was `200`.
   - `175ff72` makes `_bypass_get` solve any parsed Yunsuo challenge body, refreshes Zimuku provider hashes, and adds the regression.
@@ -1213,7 +1215,7 @@
   - Checked SubHD's shipped anti-captcha packaging again. SubHD keeps generated glyph rows in a sibling `captcha_templates.py` file, inserts the provider directory into `sys.path`, imports the rows, and declares the template file in `provider.json`.
   - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_zimuku.py'`: failed because `providers/zimuku/yunsuo_templates.py` was missing.
   - Added `providers/zimuku/yunsuo_templates.py`, moved Zimuku's Yunsuo BMP digit rows into it, mirrored SubHD's sibling-module import guard, cached parsed digit templates, refreshed Zimuku file and bundle hashes, and regenerated `catalog.json`.
-  - PR `#69` is open draft, head `catalog-zimuku` at `175ff72a96d12fbac506f8b21e2da3db1ceef7f9`, merge state `CLEAN`, has no review threads, no comments, no reviews, and no checks are reported before the fix.
+  - At this checkpoint before the fix, PR `#69` was open draft, head `catalog-zimuku` at `175ff72a96d12fbac506f8b21e2da3db1ceef7f9`, merge state `CLEAN`, had no review threads, no comments, no reviews, and no checks were reported.
   - `python3 -B -m unittest discover -s tests -p 'test_zimuku.py'`: `14` tests passed.
   - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `15` tests passed with `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
@@ -1222,12 +1224,12 @@
   - Touched-file attribution and em-dash scan across Zimuku files found no matches.
   - `python3 -B -m unittest discover -s tests`: `742` tests passed with `6` skipped.
   - Pushed branch head `6fab89144af39b6deda24c0921751500d354a0d6`.
-  - PR `#69` is open draft, head `catalog-zimuku` at `6fab89144af39b6deda24c0921751500d354a0d6`, merge state `CLEAN`, and no checks are reported.
+  - At this checkpoint, PR `#69` was open draft, head `catalog-zimuku` at `6fab89144af39b6deda24c0921751500d354a0d6`, merge state `CLEAN`, and no checks were reported.
 - Current SubHD anti-captcha comparison and live recheck on 2026-06-02:
   - Rechecked SubHD's anti-captcha path against Zimuku. SubHD detects an SVG captcha response from the download API, rasterizes four SVG path glyphs, template-matches them from `captcha_templates.py`, and retries the API. Zimuku uses the same native offline-template principle, but the correct provider-specific target is the Yunsuo BMP page gate: parse the body, segment five digit glyphs from the BMP, template-match them from `yunsuo_templates.py`, submit the verify URL, and retry the original URL.
   - Fetched current `origin/main`; effective branch scope remains limited to README, catalog, Zimuku notes, `providers/zimuku`, Zimuku fixtures, `tests/test_catalog.py`, and `tests/test_zimuku.py`.
   - Thread-aware GitHub review inspection found no review threads, comments, or reviews on PR `#69`.
-  - `gh pr view 69 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,headRefName,headRefOid,mergeStateStatus,title,updatedAt,reviewDecision`: PR `#69` is open draft, head `6fab89144af39b6deda24c0921751500d354a0d6`, merge state `CLEAN`.
+  - `gh pr view 69 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,headRefName,headRefOid,mergeStateStatus,title,updatedAt,reviewDecision`: at this checkpoint, PR `#69` was open draft, head `6fab89144af39b6deda24c0921751500d354a0d6`, merge state `CLEAN`.
   - `gh pr checks 69 --repo LavX/bazarr-provider-catalog`: no checks reported on branch `catalog-zimuku`.
   - `python3 -B -m unittest discover -s tests -p 'test_zimuku.py'`: `14` tests passed.
   - `python3 -B -m unittest discover -s tests -p 'test_subhd.py'`: `16` tests passed.
@@ -1239,7 +1241,7 @@
   - Prohibited punctuation and attribution scan across README, catalog, Zimuku notes, provider code, tests, and fixtures found no matches.
   - Escalated live SDK smoke `python3 -B -m sdk smoke-test --provider zimuku --language zho --video-fixture tests/fixtures/zimuku_video_game_of_thrones_s01e01.json --config-json '{"request_delay_ms":0}' --expect-min-results 1`: `zimuku ok`.
 - Fresh continuation recheck on 2026-06-02:
-  - PR `#69` is open draft, head `6fab89144af39b6deda24c0921751500d354a0d6`, merge state `CLEAN`, and no checks are reported.
+  - At this checkpoint, PR `#69` was open draft, head `6fab89144af39b6deda24c0921751500d354a0d6`, merge state `CLEAN`, and no checks were reported.
   - `python3 -B -m unittest discover -s tests -p 'test_zimuku.py'`: `14` tests passed.
   - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `15` tests passed with `6` skipped.
   - `python3 -B -m sdk validate`: `catalog ok`.
@@ -1251,13 +1253,14 @@
   - Compat download `POST /api/v1/download` for first Zimuku `file_id=1` returned HTTP `200`.
   - Compat stream returned HTTP `200`, `407536` bytes, and content type `application/x-subrip`.
 - Remaining gates: none for local disposable Provider Hub compat proof.
+- Live GitHub merge confirmation on 2026-06-02: `gh pr view 69 --repo LavX/bazarr-provider-catalog` reported PR `#69` as `MERGED`, `isDraft=false`, merged at `2026-06-02T18:22:45Z`, with merge commit `569d4c087da6f701bbb801a0b53d77cf0458b39d`.
 
 ### `regielive`
 
 - Branch: `catalog-regielive`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/regielive`
 - Current checkpoint: `fb894d9 Add RegieLive HTML fallback`
-- Pull request: [#70](https://github.com/LavX/bazarr-provider-catalog/pull/70), open draft, head `catalog-regielive`, base `main`, merge state `CLEAN`.
+- Pull request: [#70](https://github.com/LavX/bazarr-provider-catalog/pull/70), merged on 2026-06-02 UTC at merge commit `2f943bdd7fab051ea850d1345d6aca1a3e876227`.
 - Local evidence on 2026-05-29:
   - `python3 -B -m unittest discover -s tests -p 'test_regielive.py'`: `11` tests passed.
   - `python3 -B -m sdk validate`: `catalog ok`.
@@ -1272,7 +1275,7 @@
   - `python3 -B -m sdk validate`: `catalog ok`.
   - `python3 -B -m py_compile providers/regielive/provider.py`: passed.
   - `git diff --check origin/main...HEAD`: clean.
-  - Attribution and AI-credit scan over `providers/regielive`, `tests/test_regielive.py`, `README.md`, `catalog.json`, and `docs/provider-notes/regielive.md` found no matches.
+  - Attribution scan over `providers/regielive`, `tests/test_regielive.py`, `README.md`, `catalog.json`, and `docs/provider-notes/regielive.md` found no matches.
   - `python3 -B -m unittest discover -s tests`: `339` tests passed, `6` skipped.
 - Live evidence on 2026-06-01:
   - `python3 -B -m sdk smoke-test --provider regielive --language ron --video-fixture tests/fixtures/regielive_video_dune.json --expect-min-results 1 --skip-download`: failed with `regielive search failed: regielive rejected the request`.
@@ -1292,8 +1295,8 @@
   - Touched-file attribution and conflict-marker scan across RegieLive files found no matches.
   - `python3 -B -m unittest discover -s tests`: `738` tests passed with `6` skipped.
   - Pushed branch head `77e8624c536a14f82a776d89bec81804729cc698`.
-  - PR `#70` is open draft, head `catalog-regielive` at `77e8624c536a14f82a776d89bec81804729cc698`, merge state `CLEAN`, and no checks are reported.
-  - Fresh recheck on 2026-06-02 confirmed PR `#70` is still open draft, head `77e8624c536a14f82a776d89bec81804729cc698`, merge state `CLEAN`, has no review threads, no comments, no reviews, and no checks reported.
+  - At this checkpoint, PR `#70` was open draft, head `catalog-regielive` at `77e8624c536a14f82a776d89bec81804729cc698`, merge state `CLEAN`, and no checks were reported.
+  - Fresh recheck on 2026-06-02 confirmed PR `#70` was still open draft, head `77e8624c536a14f82a776d89bec81804729cc698`, merge state `CLEAN`, had no review threads, no comments, no reviews, and no checks reported.
   - Effective branch scope against current `origin/main` remains limited to `README.md`, `catalog.json`, `docs/provider-notes/regielive.md`, `providers/regielive/provider.json`, `providers/regielive/provider.py`, RegieLive fixtures, and `tests/test_regielive.py`.
   - `python3 -B -m unittest discover -s tests -p 'test_regielive.py'`: `11` tests passed.
   - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
@@ -1324,13 +1327,14 @@
   - Live SDK search smoke `python3 -B -m sdk smoke-test --provider regielive --language ron --video-fixture tests/fixtures/regielive_video_dune.json --expect-min-results 1 --skip-download`: `regielive ok`.
   - Live SDK search and download smoke `python3 -B -m sdk smoke-test --provider regielive --language ron --video-fixture tests/fixtures/regielive_video_dune.json --expect-min-results 1`: `regielive ok`.
   - Pushed branch head `fb894d9a56fc27faa520cf383b6f38e53825c099`.
-  - PR `#70` is open draft, head `catalog-regielive` at `fb894d9a56fc27faa520cf383b6f38e53825c099`, merge state `CLEAN`, has no comments, no reviews, and no checks reported.
+  - At this checkpoint, PR `#70` was open draft, head `catalog-regielive` at `fb894d9a56fc27faa520cf383b6f38e53825c099`, merge state `CLEAN`, had no comments, no reviews, and no checks reported.
 - Provider Hub compat proof on 2026-06-02:
   - Local disposable Provider Hub proof used `ghcr.io/lavx/bazarr:ui-test` container `bazarr-compat-remaining` on `127.0.0.1:6770`; Provider Hub reported `state=active`, `pending_restart=false`, and active commit `fb894d9a56fc27faa520cf383b6f38e53825c099`.
   - Compat search `GET /api/v1/subtitles?imdb_id=1160419&query=Dune.2021.1080p.BluRay.x264&type=movie&languages=ro&per_page=100` returned HTTP `200`, `20` total results, and `20` RegieLive rows.
   - Compat download `POST /api/v1/download` for first RegieLive `file_id=1` returned HTTP `200`.
   - Compat stream returned HTTP `200`, `74332` bytes, and content type `application/x-subrip`.
 - Remaining gates: none for local disposable Provider Hub compat proof.
+- Live GitHub merge confirmation on 2026-06-02: `gh pr view 70 --repo LavX/bazarr-provider-catalog` reported PR `#70` as `MERGED`, `isDraft=false`, merged at `2026-06-02T18:23:21Z`, with merge commit `2f943bdd7fab051ea850d1345d6aca1a3e876227`.
 
 ### `shooter`
 
