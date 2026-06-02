@@ -24,11 +24,9 @@
 
 ## Yunsuo Verification
 
-The live origin currently presents a Yunsuo image verification page before search. Legacy Bazarr used a process-global AntiCaptcha account key for this. Provider Hub workers do not inherit that environment, so the plugin exposes explicit settings:
+The live origin currently presents a Yunsuo verification page before search. The plugin first tries a native bundled-template solver for the embedded BMP image challenge. If the challenge has no embedded image, it preserves the legacy behavior and submits browser-like click coordinates. A helper endpoint remains available for image samples the native solver cannot decode.
 
 - `captcha_response`: one-use manual verification text for the next challenged request.
 - `captcha_solver_url`: optional helper endpoint that receives `image_b64`, `image_mime`, `provider`, and `type`.
 - `captcha_solver_token`: optional bearer token for that helper endpoint.
 - `captcha_solver_timeout_ms`: timeout for the helper endpoint.
-
-Live search and download smoke tests require one of those settings while the Yunsuo wall is active.

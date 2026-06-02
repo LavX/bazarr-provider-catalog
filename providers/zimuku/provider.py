@@ -7,6 +7,7 @@ import html
 import io
 import json
 import os
+import random
 import re
 import struct
 import tempfile
@@ -29,6 +30,8 @@ BASE_URL = "https://srtku.com"
 SEARCH_URL = f"{BASE_URL}/search"
 HTTP_TIMEOUT_SECONDS = 30
 YUNSUO_MAX_VERIFY_ATTEMPTS = 8
+YUNSUO_COORDINATE_X_RANGE = (800, 1920)
+YUNSUO_COORDINATE_Y_RANGE = (600, 1080)
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
@@ -506,6 +509,8 @@ class ZimukuProvider:
         if config.get("captcha_response"):
             return str(config["captcha_response"])
         image_b64 = _coerce_text(challenge.get("image_b64"))
+        if not image_b64:
+            return _fallback_yunsuo_coordinate()
         if image_b64:
             try:
                 return solve_yunsuo_captcha_image(base64.b64decode(image_b64, validate=True))
@@ -860,6 +865,12 @@ def _yunsuo_source_url(challenge, fallback_url):
 def _challenge_verify_url(challenge, response_url, code):
     prefix = _coerce_text((challenge or {}).get("verify_prefix"))
     return _quote_url(urllib.parse.urljoin(response_url, f"{prefix}{string_to_hex(code)}"))
+
+
+def _fallback_yunsuo_coordinate():
+    x = random.randrange(*YUNSUO_COORDINATE_X_RANGE)
+    y = random.randrange(*YUNSUO_COORDINATE_Y_RANGE)
+    return f"{x},{y}"
 
 
 def _quote_url(value):

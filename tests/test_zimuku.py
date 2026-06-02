@@ -229,6 +229,39 @@ class ZimukuProviderTests(unittest.TestCase):
         cookies = {cookie.name: cookie.value for cookie in provider._cookie_jar}
         self.assertEqual(cookies["srcurl"], self.mod.string_to_hex("https://zimuku.org/search?q=Dune 2021"))
 
+    def test_yunsuo_bypass_generates_coordinate_response_without_image(self):
+        provider = self.mod.ZimukuProvider()
+        search_url = "https://srtku.com/search?q=Dune+2021"
+        challenge_without_image = CHALLENGE_HTML.replace(
+            b'    <img class="verifyimg" alt="verify_img" src="data:image/bmp;base64,Qk1GQUtFQk1Q" />\n',
+            b"",
+        )
+        decoded_codes = []
+        responses = {
+            search_url: [
+                self.mod.HttpResponse(404, challenge_without_image, {}, search_url),
+                self.mod.HttpResponse(200, CURRENT_SEARCH_HTML, {}, search_url),
+            ],
+        }
+
+        def response_stub(url, timeout=30, referer=None, allow_redirects=True):
+            del timeout, referer, allow_redirects
+            if url.startswith("https://srtku.com/search?q=Dune%202021&security_verify_img="):
+                hex_code = url.rsplit("=", 1)[1]
+                decoded_codes.append(bytes.fromhex(hex_code).decode("ascii"))
+                return self.mod.HttpResponse(302, b"", {}, url)
+            if url not in responses or not responses[url]:
+                raise AssertionError(f"unexpected URL: {url}")
+            return responses[url].pop(0)
+
+        provider._http_get_response = response_stub
+
+        response = provider._bypass_get(search_url, {"request_delay_ms": 0})
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(len(decoded_codes), 1)
+        self.assertRegex(decoded_codes[0], r"^\d{3,4},\d{3,4}$")
+
     def test_download_follows_detail_and_download_pages(self):
         provider = self.mod.ZimukuProvider()
         calls = []
