@@ -53,7 +53,7 @@
   - `animekalesi`: branch `catalog-animekalesi`, worktree `/tmp/bazarr_catalog_provider_worktrees/animekalesi`, current head `b5db085`
   - `animesubinfo`: branch `catalog-animesubinfo`, worktree `/tmp/bazarr_catalog_provider_worktrees/animesubinfo`, current head `d45ba06`
   - `animetosho`: branch `catalog-animetosho`, worktree `/tmp/bazarr_catalog_provider_worktrees/animetosho`, current head `b0b6982`
-  - `assrt`: branch `catalog-assrt`, worktree `/tmp/bazarr_catalog_provider_worktrees/assrt`, current head `c4e2440`
+  - `assrt`: branch `catalog-assrt`, worktree `/tmp/bazarr_catalog_provider_worktrees/assrt`, current head `861ad3d`
   - `avistaz`: branch `catalog-avistaz`, worktree `/tmp/bazarr_catalog_provider_worktrees/avistaz`, current head `1b339e2`
   - `betaseries`: branch `catalog-betaseries`, worktree `/tmp/bazarr_catalog_provider_worktrees/betaseries`, current head `461ab52`
   - `bsplayer`: branch `catalog-bsplayer`, worktree `/tmp/bazarr_catalog_provider_worktrees/bsplayer`, current head `c04f374`
@@ -1640,6 +1640,18 @@
   - Prohibited punctuation and attribution scan across README, catalog, Subsarr provider code, tests, and fixtures found no matches.
   - `python3 -B -m unittest discover -s tests`: `719` tests passed with `6` skipped.
   - `gh pr view 27 --repo LavX/bazarr-provider-catalog --json number,title,headRefOid,state,isDraft,mergeStateStatus,reviewDecision,updatedAt,url`: PR `#27` is open, draft, head `cd0547bd868ff6d74ee792ea60508cb45c8478d8`, merge state `CLEAN`.
+- Continuation recheck on 2026-06-02:
+  - Live review-thread inspection again found no review threads on PR `#27`.
+  - `python3 -B -m unittest discover -s tests -p 'test_subsarr.py'`: `7` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`, ABI tags `cp312`, `cp313`, `cp314`, and `abi3`.
+  - `python3 -B -m py_compile providers/subsarr/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, Subsarr provider code, tests, and fixtures found no matches.
+  - `python3 -B -m unittest discover -s tests`: `719` tests passed with `6` skipped.
+  - `gh pr view 27 --repo LavX/bazarr-provider-catalog --json number,title,state,isDraft,mergeStateStatus,headRefOid,url`: PR `#27` is open, draft, head `cd0547bd868ff6d74ee792ea60508cb45c8478d8`, merge state `CLEAN`.
+  - No SDK live smoke or Provider Hub compat proof was possible because no reachable self-hosted Subsarr `base_url` is configured on the test server.
 - Remaining gates:
   - Run SDK smoke search and download against a reachable self-hosted Subsarr service when a test `base_url` is available.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` is deployed on `bazarr-ui-test`; `subsarr` remains unproved only because the test service URL is missing.
@@ -1649,8 +1661,8 @@
 
 - Branch: `catalog-assrt`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/assrt`
-- Current checkpoint: `c4e2440 Add Assrt provider`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/28` opened as draft on 2026-06-01, head `catalog-assrt`, base `main`, merge state `CLEAN`.
+- Current checkpoint: `861ad3d Merge origin/main into Assrt branch`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/28` opened as draft on 2026-06-01, head `catalog-assrt`, base `main`, current head `861ad3dac62a953cd44a4893da7932fb318c01c7`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1696,6 +1708,18 @@
   - Prohibited punctuation and attribution scan across README, catalog, provider code, tests, and fixtures: no matches.
   - No-token `https://api.assrt.net/v1/user/quota?token=` probe returned `{"errmsg":"invalid token","status":20001}`.
   - `gh pr view 28 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#28` is open, draft, head `catalog-assrt`, base `main`, merge state `CLEAN`.
+- Current-main merge evidence on 2026-06-02:
+  - Live review-thread inspection found no review threads on PR `#28`.
+  - `861ad3d` merges current `origin/main` into `catalog-assrt`, resolving generated `README.md` and `catalog.json` while preserving the Assrt provider scope.
+  - `python3 -B -m unittest discover -s tests -p 'test_assrt.py'`: `7` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`, ABI tags `cp312`, `cp313`, `cp314`, and `abi3`.
+  - `python3 -B -m py_compile providers/assrt/provider.py`: passed.
+  - `git diff --cached --check` and `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, Assrt provider code, tests, and fixtures found no matches.
+  - `python3 -B -m unittest discover -s tests`: `719` tests passed with `6` skipped.
+  - `gh pr view 28 --repo LavX/bazarr-provider-catalog --json number,title,headRefOid,state,isDraft,mergeStateStatus,reviewDecision,updatedAt,url`: PR `#28` is open, draft, head `861ad3dac62a953cd44a4893da7932fb318c01c7`, merge state `CLEAN`.
 - Remaining gates:
   - Run SDK smoke search and download when a test Assrt token is available.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` is deployed on `bazarr-ui-test`; Assrt remains unproved only because the test token is missing.
