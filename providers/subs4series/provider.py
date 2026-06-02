@@ -387,7 +387,7 @@ class Subs4SeriesProvider:
             body = getattr(response, "content", None)
             if body is None:
                 body = str(getattr(response, "text", "")).encode("utf-8")
-            if is_anubis_challenge(getattr(response, "url", ""), getattr(response, "status_code", 0)):
+            if is_anubis_challenge(getattr(response, "url", ""), getattr(response, "status_code", 0)) or _has_anubis_challenge_body(body):
                 solved = solve_anubis_challenge(scraper, response.url, url, timeout=timeout)
                 if not solved:
                     raise CloudflareBlockedError("subs4series Anubis challenge could not be solved")
@@ -529,6 +529,14 @@ def is_anubis_challenge(url, status_code=0):
     )
 
 
+def _has_anubis_challenge_body(body):
+    if isinstance(body, bytes):
+        text = body.decode("utf-8", "ignore")
+    else:
+        text = str(body or "")
+    return _extract_anubis_challenge(text) is not None
+
+
 def _extract_anubis_challenge(html_text):
     meta_match = _META_REFRESH_RE.search(html_text or "")
     if meta_match and "/.within.website/" in meta_match.group("url"):
@@ -545,14 +553,27 @@ def _extract_anubis_challenge(html_text):
         data = json.loads(match.group("json"))
     except json.JSONDecodeError:
         return None
+    rules = data.get("rules") or {}
+    if not isinstance(rules, dict):
+        rules = {}
     challenge = data.get("challenge") or {}
+    if isinstance(challenge, str):
+        challenge = {
+            "id": data.get("id") or challenge,
+            "randomData": challenge,
+        }
+    if not isinstance(challenge, dict):
+        return None
     if "randomData" not in challenge or "id" not in challenge:
         return None
     return {
         "id": challenge["id"],
         "randomData": challenge["randomData"],
-        "difficulty": int(challenge.get("difficulty", 4)),
-        "method": challenge.get("method", "fast"),
+        "difficulty": int(challenge.get("difficulty", rules.get("difficulty", 4))),
+        "method": challenge.get(
+            "method",
+            challenge.get("algorithm", rules.get("method", rules.get("algorithm", "fast"))),
+        ),
     }
 
 
