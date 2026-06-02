@@ -100,7 +100,7 @@
   - `subtitulamostv`: branch `catalog-subtitulamostv`, worktree `/tmp/bazarr_catalog_provider_worktrees/subtitulamostv`, current head `9ac6f4d`
   - `subx`: branch `catalog-subx`, worktree `/tmp/bazarr_catalog_provider_worktrees/subx`, current head `1f649cf`
   - `supersubtitles`: branch `catalog-supersubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/supersubtitles`, current head `402929e`
-  - `titlovi`: branch `catalog-titlovi`, worktree `/tmp/bazarr_catalog_provider_worktrees/titlovi`, current head `933fb47`
+  - `titlovi`: branch `catalog-titlovi`, worktree `/tmp/bazarr_catalog_provider_worktrees/titlovi`, current head `79b9c8b`
   - `titrari`: branch `catalog-titrari`, worktree `/tmp/bazarr_catalog_provider_worktrees/titrari`, current head `13ef747`
   - `titulky`: branch `catalog-titulky`, worktree `/tmp/bazarr_catalog_provider_worktrees/titulky`, current head `8394a28`
   - `turkcealtyaziorg`: branch `catalog-turkcealtyaziorg`, worktree `/tmp/bazarr_catalog_provider_worktrees/turkcealtyaziorg`, current head `3901e9f`
@@ -611,7 +611,7 @@
 
 - Branch: `catalog-titlovi`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/titlovi`
-- Current checkpoint: `933fb47 Add Titlovi provider`
+- Current checkpoint: `79b9c8b Merge current main into Titlovi branch`
 - Pull request: [#64](https://github.com/LavX/bazarr-provider-catalog/pull/64), open draft, head `catalog-titlovi`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -632,6 +632,20 @@
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://kodi.titlovi.com/api/subtitles/gettoken`: returned HTTP `405` with `POST` allowed.
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://kodi.titlovi.com/api/subtitles/search`: returned HTTP `401` without credentials.
   - Real search and download require valid Titlovi credentials.
+- Fresh current-main merge evidence on 2026-06-02:
+  - Live PR review-thread inspection found no conversation comments, no reviews, and no review threads.
+  - Merged `origin/main` into `catalog-titlovi`, resolved the generated README conflict by keeping the current main provider rows and inserting Titlovi in its own slot, then regenerated `catalog.json`.
+  - Effective branch scope against `origin/main`: `README.md`, `catalog.json`, `docs/provider-notes/titlovi.md`, `providers/titlovi/provider.json`, `providers/titlovi/provider.py`, Titlovi fixtures, and `tests/test_titlovi.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_titlovi.py'`: `10` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/titlovi/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`.
+  - `git diff --cached --check`: clean.
+  - Touched-file attribution and conflict-marker scan across Titlovi files found no matches.
+  - `python3 -B -m unittest discover -s tests`: `737` tests passed with `6` skipped.
+  - Pushed branch head `79b9c8ba7713b04626cb01f19f690e563f7b2b04`.
+  - PR `#64` is open draft, head `catalog-titlovi` at `79b9c8ba7713b04626cb01f19f690e563f7b2b04`, merge state `CLEAN`, and no checks are reported.
 - Remaining gates:
   - Run SDK live smoke search and download with valid Titlovi credentials.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `titlovi` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
