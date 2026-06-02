@@ -355,7 +355,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "01cdcae2b03932cd0f321785f0fb0fe584939e3cfb198799235863b26bf8002a",
+        "bundle_sha256": "a7a8dc270cd8666ce33ea2c022623c9c04fb0485060c4913234daae0fdcef499",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -407,7 +407,7 @@
         "entry_class": "EmbeddedSubtitlesProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "d06591ff99658577df569b600db396146f9c0f6f87e71677cc9cb1a3afedba0c"
+          "provider.py": "02e5855787a5cc59812438ac8df34cd9b99b0c047eb26a03b8350a48bd06227f"
         },
         "languages": [
           "afr",

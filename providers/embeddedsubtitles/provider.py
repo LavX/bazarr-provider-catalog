@@ -10,12 +10,6 @@ import subprocess
 PROVIDER_ID = "embeddedsubtitles"
 DEFAULT_CODECS = ("ass", "subrip", "webvtt", "mov_text")
 SUPPORTED_CODECS = set(DEFAULT_CODECS)
-CODEC_FORMAT = {
-    "ass": "ass",
-    "subrip": "srt",
-    "webvtt": "vtt",
-    "mov_text": "srt",
-}
 CONTENT_TYPES = {
     "ass": "text/x-ssa",
     "srt": "application/x-subrip",
@@ -173,7 +167,7 @@ def parse_probe_streams(payload, config):
         index = _int_or_none(stream.get("index"))
         if index is None:
             continue
-        fmt = CODEC_FORMAT.get(codec, "srt")
+        fmt = _provider_format_for_codec(codec)
         streams.append(
             {
                 "index": index,
@@ -383,6 +377,14 @@ def _title_is_hi(title):
 
 def _ffmpeg_muxer_for_format(fmt):
     return "webvtt" if fmt == "vtt" else fmt
+
+
+def _provider_format_for_codec(codec):
+    if codec == "ass":
+        return "ass"
+    if codec == "webvtt":
+        return "vtt"
+    return "srt"
 
 
 def _video_path(video):
