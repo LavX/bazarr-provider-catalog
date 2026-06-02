@@ -368,6 +368,13 @@
   - Pushed `catalog-addic7ed` at `c966d1016e5d037a7d029b353585e7a132249c62`.
   - PR `#56` was verified open, draft, merge state `CLEAN`, head `c966d1016e5d037a7d029b353585e7a132249c62`.
   - `gh pr checks 56 --repo LavX/bazarr-provider-catalog`: no checks reported on the branch.
+- Fresh cookie recheck on 2026-06-02:
+  - PR `#56` is open draft, head `c966d1016e5d037a7d029b353585e7a132249c62`, merge state `CLEAN`, and no checks are reported.
+  - `python3 -B -m unittest discover -s tests -p 'test_addic7ed.py'`: `5` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Live SDK smoke with the saved temporary Addic7ed cookie and User-Agent reached the cookie check but failed with `Addic7ed cookies are not valid anymore`.
 - Remaining gates:
   - Run SDK live smoke search and download with valid Addic7ed cookies or credentials.
   - Decide whether captcha-solver integration belongs in a separate Plugin Hub helper before treating username/password login as fully equivalent to the legacy in-process captcha path.
