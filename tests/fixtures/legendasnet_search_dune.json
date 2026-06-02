@@ -1,0 +1,21 @@
+{
+  "success": true,
+  "movies": [
+    {
+      "id": 101,
+      "tmdb_id": 438631,
+      "path": "/download/movie/101",
+      "release_name": "Dune.Part.One.2021.1080p.WEB-DL.DDP5.1.H.264-NTb",
+      "uploader": "movie_uploader",
+      "comment": ""
+    },
+    {
+      "id": 102,
+      "tmdb_id": 438631,
+      "path": "/download/movie/102",
+      "release_name": "Dune.Part.One.2021.FORCED.720p.WEBRip-GROUP",
+      "uploader": "forced_uploader",
+      "comment": "Foreign parts only"
+    }
+  ]
+}
