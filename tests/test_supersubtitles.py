@@ -316,6 +316,32 @@ class SuperSubtitlesProviderTests(unittest.TestCase):
         self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
         self.assertEqual(result["format"], "srt")
 
+    def test_download_selects_requested_episode_from_zip_pack_with_x_episode_marker(self):
+        provider = self.mod.SuperSubtitlesProvider()
+        archive = _zip_body(
+            {
+                "La Brea - 2x12 - The Swarm (WEB.720p-CAKES).eng.srt": b"wrong",
+                "La Brea - 2x13 - The Journey, Part 1 (WEB.720p-CAKES, WEB.1080p-CAKES).eng.srt": b"right",
+                "La Brea - 2x13 - The Journey, Part 1 (AMZN.WEB-DL.720p-NTb).eng.srt": b"right but lower release score",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: archive
+
+        result = provider.download(
+            {
+                "url": "https://feliratok.eu/index.php?action=letolt&felirat=1691315119",
+                "filename": "La.Brea.S02.WEB.WEBRip.WEB-DL.720p.1080p.ENG.zip",
+                "season": 2,
+                "episode": 13,
+                "release_info": "La Brea (WEB.720p-CAKES)",
+            },
+            {"alpha3": "eng", "alpha2": "en"},
+            {},
+        )
+
+        decoded = base64.b64decode(result["content_b64"])
+        self.assertEqual(decoded, b"right")
+
     def test_download_rejects_archive_without_requested_episode(self):
         provider = self.mod.SuperSubtitlesProvider()
         archive = _zip_body({"La.Brea.S02E12.720p.WEB.H264-CAKES.srt": b"wrong"})

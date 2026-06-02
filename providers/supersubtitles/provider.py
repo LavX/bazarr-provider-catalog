@@ -617,7 +617,7 @@ def _subtitle_file_score(name, payload):
     season = _safe_int(payload.get("season"))
     episode = _safe_int(payload.get("episode"))
     if season is not None and episode is not None:
-        if re.search(rf"\bs0*{season}e0*{episode}\b", normalized):
+        if _subtitle_file_has_episode_marker(normalized, season, episode):
             score += 100
         elif re.search(rf"\be0*{episode}\b", normalized):
             score += 80
@@ -640,7 +640,14 @@ def _subtitle_file_matches_requested_episode(name, payload):
     episode = _safe_int((payload or {}).get("episode"))
     if season is None or episode is None:
         return True
-    return bool(re.search(rf"\bs0*{season}e0*{episode}\b", normalized))
+    return _subtitle_file_has_episode_marker(normalized, season, episode)
+
+
+def _subtitle_file_has_episode_marker(normalized_name, season, episode):
+    return bool(
+        re.search(rf"\bs0*{season}e0*{episode}\b", normalized_name)
+        or re.search(rf"\b0*{season}x0*{episode}\b", normalized_name)
+    )
 
 
 def _requested_variants(languages):
