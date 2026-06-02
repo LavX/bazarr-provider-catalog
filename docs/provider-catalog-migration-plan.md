@@ -3309,6 +3309,7 @@
   - `python3 -B -m sdk smoke-test --provider subx --language spa --video-fixture /tmp/subx_live_inception_2010.json --expect-min-results 1 --secret api_key=SUBX_API_KEY`: `subx ok`.
   - `gh pr view 49 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,mergeStateStatus,reviewDecision,headRefName,headRefOid,url,title`: PR `#49` is open, draft, head `d19cdd7731828fce91aec124d6f9c4693e656e19`, merge state `CLEAN`.
   - `gh pr checks 49 --repo LavX/bazarr-provider-catalog`: no checks reported on the branch.
+  - Provider Hub compat proof could not run from this environment: `ssh bazarr-ui-test hostname` and `ssh -F /dev/null bazarr-ui-test hostname` both failed to resolve the host, `curl http://127.0.0.1:6767/api/system/status` could not connect, and no local Bazarr test container was running.
 - Remaining gates:
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `subx` in the trusted replacement policy.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured SubX API key.
