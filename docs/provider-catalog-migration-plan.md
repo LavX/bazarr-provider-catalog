@@ -14,11 +14,12 @@
 
 - Source inventory: 60 provider modules with provider classes were found under `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/`.
 - Excluded helper modules: `__init__.py`, `_agent_list.py`, `avistaz_network.py`, `mixins.py`, `opensubtitles_scraper.py`, `utils.py`.
-- Main-branch catalog inventory: 25 bundles currently ship from `main` after the Gestdown, BSPlayer, Subtis, SubtitulamosTV, TVSubtitles, GreekSubs, AnimeKalesi, AnimeSub.info, OpenSubtitles.org, AnimeTosho, NapiProjekt, SubF2M, and Nekur merges.
+- Main-branch catalog inventory: 26 bundles currently ship from `main` after the Gestdown, BSPlayer, Subtis, SubtitulamosTV, TVSubtitles, GreekSubs, AnimeKalesi, AnimeSub.info, OpenSubtitles.org, AnimeTosho, NapiProjekt, SubF2M, Nekur, and GreekSubtitles merges.
 - Branch inventory: all 60 legacy provider-class modules have matching `catalog-*` branches.
 - Current checkout audit on 2026-06-01: `git worktree list --porcelain` shows all 60 provider-class modules linked under `/tmp/bazarr_catalog_provider_worktrees`, plus the planning worktree. The missing-provider check against `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/` returned no missing worktrees.
 - Helper coverage: `opensubtitles_scraper.py` is not a provider-class module. Its behavior is covered inside the `catalog-opensubtitles` / `opensubtitles_org` branch, but the current implementation no longer defaults to a sidecar helper.
 - OpenSubtitles.org current branch evidence: `catalog-opensubtitles` at `cc19c5d` uses `ai-cloudscraper==3.8.4`, inline Anubis solving including in-place Anubis body detection, request throttling, optional FlareSolverr fallback for Cloudflare challenges, and a legacy `cloudscraper` argument retry for runtimes that reject `enable_cookie_persistence`. The final review-fix pass adds native tag lookup URLs, requested-language fetches for direct IMDb listings, full advertised-language parser round-trip coverage, regional `pob` and `spl` language preservation, forced and hearing-impaired row flags, `only_foreign` and `also_foreign` filtering, Provider Hub score fields, download `content_type`, no synthetic hash matches, wrong-FPS candidate retention with lowered matches, cleaned release names, and episode mismatch rejection for no-IMDb episode searches. PR `#16` merged on 2026-06-01 UTC at `66afa5de85c88ba48213ee2d4b8888f1cdbf757f`.
+- Cloudflare migration rule: when a provider is blocked by a real search or download Cloudflare challenge and no official API can replace the scrape, first port the OpenSubtitles.org native anti-bot path. Use `ai-cloudscraper==3.8.4` as the dependency, imported as `cloudscraper`; keep the custom User-Agent, native interpreter, disabled cookie persistence, disabled debug, and legacy argument retry; solve inline Anubis before retrying the source URL; then use optional configured FlareSolverr only if Cloudflare still blocks the native session.
 - Existing SubScene maintenance PR evidence: `fix/sub-scene-smi-download` at `ca8aef8` switches SubScene to `ai-cloudscraper==3.8.4` with the same native session shape and legacy argument retry, adds inline Anubis challenge solving, treats Anubis difficulty as bits, detects embedded Anubis pages by body, honors Anubis `Refresh` headers, unescapes meta-refresh URLs, reads Anubis difficulty and method from top-level `rules`, accepts string-form Anubis challenges, bumps SubScene to `0.1.14`, caps multi-page FlareSolverr fallback at `10000` ms, caps the outer FlareSolverr HTTP call to the same deadline, expands ABI-specific dependency hashes across Bazarr+ Python `3.12`, `3.13`, and `3.14` on linux/amd64 and linux/arm64, and PR `#14` merged on 2026-06-01 UTC at `91db075dda9ade6f8e5b609155a9c06b9974e079`.
 - Cloudflare parity sweep on 2026-06-01: pushed the OpenSubtitles.org three-layer anti-bot path, `ai-cloudscraper==3.8.4`, inline Anubis `/.within.website/` solving, and optional FlareSolverr fallback, to `wizdom` at `4164e52`, `turkcealtyaziorg` at `8c184b2`, `yavkanet` at `5b35d11`, `napiprojekt` at `24eea15`, `subs4series` at `7dd5e86`, and `sub_scene` at `33c714a`. Local provider tests, `py_compile`, `sdk validate`, `test_catalog.py`, `git diff --check`, and attribution or prohibited punctuation scans passed for each touched branch.
 - Cloudflare live recheck on 2026-06-02: escalated SDK smoke with the current anti-bot branches returned `subs4series ok` and `napiprojekt ok`; YavkaNet still returned `yavkanet hit a Cloudflare challenge and no FlareSolverr URL is configured`; TurkceAltyazi.org still required FlareSolverr or matching cookies and User-Agent; Wizdom still timed out against `wizdom.xyz`; SubScene's anti-bot unit suite passed `70` tests.
@@ -26,7 +27,7 @@
 - Prior SubScene test-server evidence on 2026-06-01: active Provider Hub state after restage was version `0.1.11`, commit `41b9fc0f460b228d4e8061aaa692233a629a7818`, enabled `true`, `pending_restart=false`, `last_error=null`. Final Dune compat search returned HTTP `200`, `79` total results, and `0` SubScene rows. Focused logs showed `sub_scene FlareSolverr request failed: HTTP Error 500: Internal Server Error` and final fanout marked `sub_scene=ok:15566ms`, not `worker exceeded 30s`. This needs restage before treating `0.1.14` as live test-server proof.
 - Provider Hub source-dependency evidence: `ai-cloudscraper==3.8.4` requires `Js2Py`, whose `pyjsparser==2.7.1` dependency is source-only. Bazarr core PR [#173](https://github.com/LavX/bazarr/pull/173), branch `fix/provider-hub-source-deps` at `b4e53d0ed`, changes the Provider Hub installer from `--only-binary=:all:` to `--prefer-binary` while keeping `--require-hashes`, allowing hash-checked source dependencies. `bazarr-ui-test` was hot-patched with that installer for the live staging evidence below.
 - Catalog runtime-matrix evidence: catalog PR [#75](https://github.com/LavX/bazarr-provider-catalog/pull/75), branch `fix/provider-runtime-matrix` at `b97435d`, defines Provider Hub Python support as `>=3.12,<3.15` with concrete targets `3.12`, `3.13`, and `3.14`, adds `sdk runtime-matrix`, and documents wheel hash coverage for pure, ABI-specific, and stable ABI wheels such as `cp311-abi3`. It was merged into `main` at `39565cbd349ec3809040ba3394d4c080c1870ed8`.
-- Merge progress through 2026-06-02 UTC: PR [#75](https://github.com/LavX/bazarr-provider-catalog/pull/75), PR [#15](https://github.com/LavX/bazarr-provider-catalog/pull/15), PR [#17](https://github.com/LavX/bazarr-provider-catalog/pull/17), PR [#18](https://github.com/LavX/bazarr-provider-catalog/pull/18), PR [#20](https://github.com/LavX/bazarr-provider-catalog/pull/20), PR [#19](https://github.com/LavX/bazarr-provider-catalog/pull/19), PR [#21](https://github.com/LavX/bazarr-provider-catalog/pull/21), PR [#22](https://github.com/LavX/bazarr-provider-catalog/pull/22), PR [#23](https://github.com/LavX/bazarr-provider-catalog/pull/23), PR [#14](https://github.com/LavX/bazarr-provider-catalog/pull/14), PR [#16](https://github.com/LavX/bazarr-provider-catalog/pull/16), PR [#24](https://github.com/LavX/bazarr-provider-catalog/pull/24), PR [#25](https://github.com/LavX/bazarr-provider-catalog/pull/25), PR [#26](https://github.com/LavX/bazarr-provider-catalog/pull/26), and PR [#31](https://github.com/LavX/bazarr-provider-catalog/pull/31) were merged after local verification and live PR inspection.
+- Merge progress through 2026-06-02 UTC: PR [#75](https://github.com/LavX/bazarr-provider-catalog/pull/75), PR [#15](https://github.com/LavX/bazarr-provider-catalog/pull/15), PR [#17](https://github.com/LavX/bazarr-provider-catalog/pull/17), PR [#18](https://github.com/LavX/bazarr-provider-catalog/pull/18), PR [#20](https://github.com/LavX/bazarr-provider-catalog/pull/20), PR [#19](https://github.com/LavX/bazarr-provider-catalog/pull/19), PR [#21](https://github.com/LavX/bazarr-provider-catalog/pull/21), PR [#22](https://github.com/LavX/bazarr-provider-catalog/pull/22), PR [#23](https://github.com/LavX/bazarr-provider-catalog/pull/23), PR [#14](https://github.com/LavX/bazarr-provider-catalog/pull/14), PR [#16](https://github.com/LavX/bazarr-provider-catalog/pull/16), PR [#24](https://github.com/LavX/bazarr-provider-catalog/pull/24), PR [#25](https://github.com/LavX/bazarr-provider-catalog/pull/25), PR [#26](https://github.com/LavX/bazarr-provider-catalog/pull/26), PR [#31](https://github.com/LavX/bazarr-provider-catalog/pull/31), and PR [#30](https://github.com/LavX/bazarr-provider-catalog/pull/30) were merged after local verification and live PR inspection.
 - Core replacement-policy evidence: Bazarr core branch `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`, contains a trusted replacement policy for 55 active migrated built-ins, the compat AniDB ID bridge needed by anime providers, and the compat NapiProjekt hash bridge. It excludes dead-origin providers `hosszupuska`, `podnapisi`, `subscenter`, and `xsubs`, and excludes legacy `opensubtitles` because the catalog rewrite ships as `opensubtitles_org`.
 - Test-server core evidence: `bazarr-ui-test` was updated on 2026-05-31 to image version `ui-test-20260531-provider-hub-replacements-f245ae096`, revision `f245ae096`, and returned healthy. The earlier test image based on old head `456071d10` failed because the image did not contain database migration `6c9f1b8d2e3a`; rebasing the core branch onto current `origin/development` fixed that mismatch.
 - License boundary: `/home/lavx/bazarr/LICENSE` is GPL-3.0. This catalog is MIT. Provider implementations in this repo must be clean-room MIT rewrites, not copied or mechanically translated GPL provider files.
@@ -39,7 +40,7 @@
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Source provider-class modules: 60 after excluding `__init__.py`, `_agent_list.py`, `avistaz_network.py`, `mixins.py`, `opensubtitles_scraper.py`, and `utils.py`.
 - Current linked provider worktrees: all 60 provider-class modules have dedicated worktrees under `/tmp/bazarr_catalog_provider_worktrees/<provider>`.
-- Current catalog checkout inventory: this planning worktree is intentionally not rebased onto `main`, but live `main` now ships 25 Provider Hub bundles, adding `gestdown`, `bsplayer`, `subtis`, `subtitulamostv`, `tvsubtitles`, `greeksubs`, `animekalesi`, `animesubinfo`, `opensubtitles_org`, `animetosho`, `napiprojekt`, `subf2m`, and `nekur` to the previous 12 bundle baseline.
+- Current catalog checkout inventory: this planning worktree is intentionally not rebased onto `main`, but live `main` now ships 26 Provider Hub bundles, adding `gestdown`, `bsplayer`, `subtis`, `subtitulamostv`, `tvsubtitles`, `greeksubs`, `animekalesi`, `animesubinfo`, `opensubtitles_org`, `animetosho`, `napiprojekt`, `subf2m`, `nekur`, and `greeksubtitles` to the previous 12 bundle baseline.
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
 - Core source-dependency branch: `fix/provider-hub-source-deps` in `/tmp/bazarr_provider_hub_source_deps`, current head `b4e53d0ed`, pushed and opened as Bazarr PR `#173`.
 - Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subtitrarinoi`, `subtitriid`, `supersubtitles`, `titrari`, `yavkanet`, `yifysubtitles`, and `subs4free`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
@@ -59,7 +60,7 @@
   - `embeddedsubtitles`: branch `catalog-embeddedsubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/embeddedsubtitles`, current head `a8257a4`, local/generated provider
   - `gestdown`: branch `catalog-gestdown`, worktree `/tmp/bazarr_catalog_provider_worktrees/gestdown`, current head `c6dfb77`
   - `greeksubs`: branch `catalog-greeksubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubs`, current head `1ec84fa`
-  - `greeksubtitles`: branch `catalog-greeksubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles`, current head `da99eee`
+  - `greeksubtitles`: branch `catalog-greeksubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles`, current head `c0059c2`
   - `hdbits`: branch `catalog-hdbits`, worktree `/tmp/bazarr_catalog_provider_worktrees/hdbits`, current head `42d7f02`
   - `hosszupuska`: branch `catalog-hosszupuska`, worktree `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`, current head `5ccb3a7`, dead origin
   - `jimaku`: branch `catalog-jimaku`, worktree `/tmp/bazarr_catalog_provider_worktrees/jimaku`, current head `112d345`
@@ -74,7 +75,7 @@
   - `opensubtitlescom`: branch `catalog-opensubtitlescom`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitlescom`, current head `885985f`
   - `pipocas`: branch `catalog-pipocas`, worktree `/tmp/bazarr_catalog_provider_worktrees/pipocas`, current head `4fe281b`
   - `podnapisi`: branch `catalog-podnapisi`, worktree `/tmp/bazarr_catalog_provider_worktrees/podnapisi`, current head `8b3d09f`, dead origin
-  - `prijevodionline`: branch `catalog-prijevodionline`, worktree `/tmp/bazarr_catalog_provider_worktrees/prijevodionline`, current head `9c1d795`
+  - `prijevodionline`: branch `catalog-prijevodionline`, worktree `/tmp/bazarr_catalog_provider_worktrees/prijevodionline`, current head `109ed16`
   - `regielive`: branch `catalog-regielive`, worktree `/tmp/bazarr_catalog_provider_worktrees/regielive`, current head `fb5a2ae`
   - `shooter`: branch `catalog-shooter`, worktree `/tmp/bazarr_catalog_provider_worktrees/shooter`, current head `103d8ee`
   - `soustitreseu`: branch `catalog-soustitreseu`, worktree `/tmp/bazarr_catalog_provider_worktrees/soustitreseu`, current head `ed93af8`
@@ -1683,8 +1684,8 @@
 
 - Branch: `catalog-greeksubtitles`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles`
-- Current checkpoint: `4d804d0 Fix GreekSubtitles raw download validation`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/30` opened on 2026-06-01, head `catalog-greeksubtitles`, base `main`, merge state `CLEAN`, current head `4d804d02511b5700118187a6faf0906838ccd825`.
+- Current checkpoint: `c0059c2 Merge remote-tracking branch 'origin/main' into catalog-greeksubtitles`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/30` opened on 2026-06-01, head `catalog-greeksubtitles`, base `main`, final head `c0059c24144da3388d58b912e52801d096cc05a8`, and merged on 2026-06-02 UTC at `48ed6e5772ac1bc6f9cae1a1edcdba32070ef815`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1743,7 +1744,21 @@
   - Prohibited punctuation and attribution scan over `README.md`, `catalog.json`, `providers/greeksubtitles`, `tests/test_greeksubtitles.py`, and `docs/provider-notes/greeksubtitles.md` found no matches.
   - `python3 -B -m unittest discover -s tests`: `529` tests passed, `6` skipped.
   - Live GraphQL `reviewThreads` recheck after pushing head `4d804d02511b5700118187a6faf0906838ccd825`: PR `#30` is open, non-draft, merge state `CLEAN`, and all three review threads are outdated with no active non-outdated unresolved threads.
-- Remaining gates: wait for approval and merge PR `#30`; restage on `bazarr-ui-test` if runtime proof is required for the `0.1.2` review-fix bundle.
+- Final merge evidence on 2026-06-02:
+  - `c0059c2` merges current `origin/main` into `catalog-greeksubtitles` after the Nekur merge.
+  - `python3 -B -m unittest discover -s tests -p 'test_greeksubtitles.py'`: `13` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/greeksubtitles/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`.
+  - `python3 -B -m unittest discover -s tests`: `538` tests passed, `6` skipped.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan over the GreekSubtitles PR files found no matches.
+  - `python3 -B -m sdk smoke-test --provider greeksubtitles --language ell --video-fixture tests/fixtures/greeksubtitles_video_dune.json --expect-min-results 1`: `greeksubtitles ok`.
+  - `python3 -B -m sdk smoke-test --provider greeksubtitles --language ell --video-fixture tests/fixtures/greeksubtitles_video_game_of_thrones_s01e01.json --expect-min-results 1`: `greeksubtitles ok`.
+  - Thread-aware GitHub check reported all three review threads resolved and outdated.
+  - `gh pr view 30 --repo LavX/bazarr-provider-catalog --json number,state,mergedAt,mergeCommit,headRefName,headRefOid,url`: PR `#30` is `MERGED`, merge commit `48ed6e5772ac1bc6f9cae1a1edcdba32070ef815`, head `c0059c24144da3388d58b912e52801d096cc05a8`.
+- Remaining gates: none for PR `#30`. Restage on `bazarr-ui-test` only if runtime proof is required for the `0.1.2` review-fix bundle.
 
 ### `hosszupuska`
 
@@ -1866,8 +1881,8 @@
 
 - Branch: `catalog-prijevodionline`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/prijevodionline`
-- Current checkpoint: `9c1d795 Add PrijevodiOnline provider`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/32` opened on 2026-06-01, head `catalog-prijevodionline`, base `main`, merge state `CLEAN`.
+- Current checkpoint: `109ed16 Merge origin/main into PrijevodiOnline branch`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/32` opened on 2026-06-01, head `catalog-prijevodionline`, base `main`, merge state `CLEAN`, current head `109ed16a046518c435c3c2b3ce330461790f3e4c`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1911,6 +1926,21 @@
   - Prohibited punctuation and attribution scan across README, catalog, docs, provider code, tests, and fixtures: no matches.
   - `python3 -B -m sdk smoke-test --provider prijevodionline --language hrv --video-fixture tests/fixtures/prijevodionline_video_game_of_thrones_s01e01.json --config-json '{"request_delay_ms":0}' --expect-min-results 1`: `prijevodionline ok`.
   - `gh pr view 32 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#32` is open, non-draft, head `catalog-prijevodionline`, base `main`, merge state `CLEAN`.
+- Review-fix evidence on 2026-06-02:
+  - Live `reviewThreads` check found three active reviewer concerns: do not treat `nije provjereno` rows as verified, normalize non-ASCII series index letters before fetching, and use standard `cnr` for Montenegrin rows instead of `mne`.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_prijevodionline.py'`: failed on those three behaviors.
+  - `333cc46` maps Montenegrin suffixes and alpha2 values to `cnr`, keeps broad `hbs` requests matching Croatian, Serbian, and Montenegrin rows, requires exact normalized `provjereno` status for the verified flag, ASCII-folds index letters for titles such as `Élite` and `Çukur`, bumps PrijevodiOnline to `0.1.1`, and rebuilds `catalog.json`.
+  - `109ed16` merges current `origin/main`, resolving `README.md` and generated `catalog.json` while keeping the PR diff scoped to `README.md`, `catalog.json`, `docs/provider-notes/prijevodionline.md`, `providers/prijevodionline`, `tests/fixtures/prijevodionline_*`, and `tests/test_prijevodionline.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_prijevodionline.py'`: `9` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed, `6` skipped.
+  - `python3 -B -m py_compile providers/prijevodionline/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`.
+  - `git diff --cached --check` and `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan over `README.md`, `catalog.json`, `providers/prijevodionline`, `tests/test_prijevodionline.py`, and `docs/provider-notes/prijevodionline.md` found no matches.
+  - `python3 -B -m unittest discover -s tests`: `534` tests passed, `6` skipped.
+  - Live GraphQL `reviewThreads` recheck after pushing head `109ed16a046518c435c3c2b3ce330461790f3e4c`: PR `#32` is open, non-draft, merge state `CLEAN`, and all three review threads are outdated with no active non-outdated unresolved threads.
+- Remaining gates: wait for approval and merge PR `#32`; restage on `bazarr-ui-test` if runtime proof is required for the `0.1.1` review-fix bundle.
 
 ### `soustitreseu`
 
@@ -2998,7 +3028,7 @@
 - `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/opensubtitles.py` contains a self-contained legacy `.org` XML-RPC implementation, but the current Bazarr behavior also mixes in `OpenSubtitlesScraperMixin`.
 - `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/opensubtitles_scraper.py` and `/home/lavx/bazarr/opensubtitles-scraper/` remain behavior references, but the catalog branch now implements the live path natively instead of requiring a sidecar by default.
 - The current migration target is `opensubtitles_org`, not legacy `opensubtitles`, so it avoids shadowing the built-in id while still preserving `.org` search and download behavior.
-- The native path has three explicit upstream defenses: `ai-cloudscraper` as the default HTTP client, inline Anubis proof solving for `/.within.website/` challenges, and optional FlareSolverr fallback when Cloudflare still returns a browser challenge. Request delay and HTTP `429` handling stay visible as rate-limit controls.
+- The native path has three explicit upstream defenses: `ai-cloudscraper==3.8.4` as the default HTTP client, inline Anubis proof solving for `/.within.website/` challenges, and optional FlareSolverr fallback when Cloudflare still returns a browser challenge. Request delay and HTTP `429` handling stay visible as rate-limit controls.
 - Keep legacy XML-RPC login fields out of the schema unless a current live XML-RPC search and download path is proven usable. Otherwise the provider would expose dead settings and still fail users.
 - Do not claim completion until `opensubtitles_org` is installed and enabled on `bazarr-ui-test`, `/api/v1/subtitles` includes that provider, `/api/v1/download` returns a link for that candidate, and the stream URL returns non-empty subtitle bytes.
 
