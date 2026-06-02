@@ -14,7 +14,7 @@
 
 - Source inventory: 60 provider modules with provider classes were found under `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/`.
 - Excluded helper modules: `__init__.py`, `_agent_list.py`, `avistaz_network.py`, `mixins.py`, `opensubtitles_scraper.py`, `utils.py`.
-- Main-branch catalog inventory: 22 bundles currently ship from `main` after the Gestdown, BSPlayer, Subtis, SubtitulamosTV, TVSubtitles, GreekSubs, AnimeKalesi, AnimeSub.info, OpenSubtitles.org, and AnimeTosho merges.
+- Main-branch catalog inventory: 23 bundles currently ship from `main` after the Gestdown, BSPlayer, Subtis, SubtitulamosTV, TVSubtitles, GreekSubs, AnimeKalesi, AnimeSub.info, OpenSubtitles.org, AnimeTosho, and NapiProjekt merges.
 - Branch inventory: all 60 legacy provider-class modules have matching `catalog-*` branches.
 - Current checkout audit on 2026-06-01: `git worktree list --porcelain` shows all 60 provider-class modules linked under `/tmp/bazarr_catalog_provider_worktrees`, plus the planning worktree. The missing-provider check against `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/` returned no missing worktrees.
 - Helper coverage: `opensubtitles_scraper.py` is not a provider-class module. Its behavior is covered inside the `catalog-opensubtitles` / `opensubtitles_org` branch, but the current implementation no longer defaults to a sidecar helper.
@@ -26,7 +26,7 @@
 - Prior SubScene test-server evidence on 2026-06-01: active Provider Hub state after restage was version `0.1.11`, commit `41b9fc0f460b228d4e8061aaa692233a629a7818`, enabled `true`, `pending_restart=false`, `last_error=null`. Final Dune compat search returned HTTP `200`, `79` total results, and `0` SubScene rows. Focused logs showed `sub_scene FlareSolverr request failed: HTTP Error 500: Internal Server Error` and final fanout marked `sub_scene=ok:15566ms`, not `worker exceeded 30s`. This needs restage before treating `0.1.14` as live test-server proof.
 - Provider Hub source-dependency evidence: `ai-cloudscraper==3.8.4` requires `Js2Py`, whose `pyjsparser==2.7.1` dependency is source-only. Bazarr core PR [#173](https://github.com/LavX/bazarr/pull/173), branch `fix/provider-hub-source-deps` at `b4e53d0ed`, changes the Provider Hub installer from `--only-binary=:all:` to `--prefer-binary` while keeping `--require-hashes`, allowing hash-checked source dependencies. `bazarr-ui-test` was hot-patched with that installer for the live staging evidence below.
 - Catalog runtime-matrix evidence: catalog PR [#75](https://github.com/LavX/bazarr-provider-catalog/pull/75), branch `fix/provider-runtime-matrix` at `b97435d`, defines Provider Hub Python support as `>=3.12,<3.15` with concrete targets `3.12`, `3.13`, and `3.14`, adds `sdk runtime-matrix`, and documents wheel hash coverage for pure, ABI-specific, and stable ABI wheels such as `cp311-abi3`. It was merged into `main` at `39565cbd349ec3809040ba3394d4c080c1870ed8`.
-- Merge progress on 2026-06-01 UTC: PR [#75](https://github.com/LavX/bazarr-provider-catalog/pull/75), PR [#15](https://github.com/LavX/bazarr-provider-catalog/pull/15), PR [#17](https://github.com/LavX/bazarr-provider-catalog/pull/17), PR [#18](https://github.com/LavX/bazarr-provider-catalog/pull/18), PR [#20](https://github.com/LavX/bazarr-provider-catalog/pull/20), PR [#19](https://github.com/LavX/bazarr-provider-catalog/pull/19), PR [#21](https://github.com/LavX/bazarr-provider-catalog/pull/21), PR [#22](https://github.com/LavX/bazarr-provider-catalog/pull/22), PR [#23](https://github.com/LavX/bazarr-provider-catalog/pull/23), PR [#14](https://github.com/LavX/bazarr-provider-catalog/pull/14), PR [#16](https://github.com/LavX/bazarr-provider-catalog/pull/16), and PR [#24](https://github.com/LavX/bazarr-provider-catalog/pull/24) were merged after local verification and live PR inspection.
+- Merge progress through 2026-06-02 UTC: PR [#75](https://github.com/LavX/bazarr-provider-catalog/pull/75), PR [#15](https://github.com/LavX/bazarr-provider-catalog/pull/15), PR [#17](https://github.com/LavX/bazarr-provider-catalog/pull/17), PR [#18](https://github.com/LavX/bazarr-provider-catalog/pull/18), PR [#20](https://github.com/LavX/bazarr-provider-catalog/pull/20), PR [#19](https://github.com/LavX/bazarr-provider-catalog/pull/19), PR [#21](https://github.com/LavX/bazarr-provider-catalog/pull/21), PR [#22](https://github.com/LavX/bazarr-provider-catalog/pull/22), PR [#23](https://github.com/LavX/bazarr-provider-catalog/pull/23), PR [#14](https://github.com/LavX/bazarr-provider-catalog/pull/14), PR [#16](https://github.com/LavX/bazarr-provider-catalog/pull/16), PR [#24](https://github.com/LavX/bazarr-provider-catalog/pull/24), and PR [#25](https://github.com/LavX/bazarr-provider-catalog/pull/25) were merged after local verification and live PR inspection.
 - Core replacement-policy evidence: Bazarr core branch `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`, contains a trusted replacement policy for 55 active migrated built-ins, the compat AniDB ID bridge needed by anime providers, and the compat NapiProjekt hash bridge. It excludes dead-origin providers `hosszupuska`, `podnapisi`, `subscenter`, and `xsubs`, and excludes legacy `opensubtitles` because the catalog rewrite ships as `opensubtitles_org`.
 - Test-server core evidence: `bazarr-ui-test` was updated on 2026-05-31 to image version `ui-test-20260531-provider-hub-replacements-f245ae096`, revision `f245ae096`, and returned healthy. The earlier test image based on old head `456071d10` failed because the image did not contain database migration `6c9f1b8d2e3a`; rebasing the core branch onto current `origin/development` fixed that mismatch.
 - License boundary: `/home/lavx/bazarr/LICENSE` is GPL-3.0. This catalog is MIT. Provider implementations in this repo must be clean-room MIT rewrites, not copied or mechanically translated GPL provider files.
@@ -39,7 +39,7 @@
 - Provider worktree root: `/tmp/bazarr_catalog_provider_worktrees`
 - Source provider-class modules: 60 after excluding `__init__.py`, `_agent_list.py`, `avistaz_network.py`, `mixins.py`, `opensubtitles_scraper.py`, and `utils.py`.
 - Current linked provider worktrees: all 60 provider-class modules have dedicated worktrees under `/tmp/bazarr_catalog_provider_worktrees/<provider>`.
-- Current catalog checkout inventory: this planning worktree is intentionally not rebased onto `main`, but live `main` now ships 22 Provider Hub bundles, adding `gestdown`, `bsplayer`, `subtis`, `subtitulamostv`, `tvsubtitles`, `greeksubs`, `animekalesi`, `animesubinfo`, `opensubtitles_org`, and `animetosho` to the previous 12 bundle baseline.
+- Current catalog checkout inventory: this planning worktree is intentionally not rebased onto `main`, but live `main` now ships 23 Provider Hub bundles, adding `gestdown`, `bsplayer`, `subtis`, `subtitulamostv`, `tvsubtitles`, `greeksubs`, `animekalesi`, `animesubinfo`, `opensubtitles_org`, `animetosho`, and `napiprojekt` to the previous 12 bundle baseline.
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
 - Core source-dependency branch: `fix/provider-hub-source-deps` in `/tmp/bazarr_provider_hub_source_deps`, current head `b4e53d0ed`, pushed and opened as Bazarr PR `#173`.
 - Bazarr test server: `bazarr-ui-test` is healthy on image version `ui-test-20260531-provider-hub-replacements-f245ae096`; runtime policy includes `bsplayer`, `gestdown`, `tvsubtitles`, `subtitulamostv`, `greeksubs`, `animekalesi`, `animesubinfo`, `animetosho`, `napiprojekt`, `subf2m`, `greeksubtitles`, `nekur`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subtitrarinoi`, `subtitriid`, `supersubtitles`, `titrari`, `yavkanet`, `yifysubtitles`, and `subs4free`, excludes `hosszupuska` and `podnapisi`, and has 55 trusted migrated built-in ids.
@@ -67,7 +67,7 @@
   - `ktuvit`: branch `catalog-ktuvit`, worktree `/tmp/bazarr_catalog_provider_worktrees/ktuvit`, current head `9d3162e`
   - `legendasdivx`: branch `catalog-legendasdivx`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasdivx`, current head `02bbb60`
   - `legendasnet`: branch `catalog-legendasnet`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasnet`, current head `983878f`
-  - `napiprojekt`: branch `catalog-napiprojekt`, worktree `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`, current head `47a7f82`
+  - `napiprojekt`: branch `catalog-napiprojekt`, worktree `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`, current head `5666c03`
   - `napisy24`: branch `catalog-napisy24`, worktree `/tmp/bazarr_catalog_provider_worktrees/napisy24`, current head `34a9720`
   - `nekur`: branch `catalog-nekur`, worktree `/tmp/bazarr_catalog_provider_worktrees/nekur`, current head `41e428e`
   - `opensubtitles`: branch `catalog-opensubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitles`, current head `cc19c5d`
@@ -1321,8 +1321,8 @@
 
 - Branch: `catalog-napiprojekt`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`
-- Current checkpoint: `24eea15 Add inline Anubis retry to NapiProjekt`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/25` opened on 2026-06-01, head `catalog-napiprojekt`, base `main`, merge state `CLEAN`, head OID `fed875603202c12c67a2ae8a0274a0782ed2ea98`.
+- Current checkpoint: `5666c03 Merge remote-tracking branch 'origin/main' into catalog-napiprojekt`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/25` opened on 2026-06-01, head `catalog-napiprojekt`, base `main`, final head `5666c03`, merged on 2026-06-02 UTC at `36af7f4777c64a68c1d1da44b97cd42b6befe8a2`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1394,6 +1394,19 @@
   - Attribution and prohibited punctuation scan over README, catalog, provider code, and tests found no matches.
 - Live anti-bot recheck on 2026-06-02:
   - Escalated live smoke `python3 -B -m sdk smoke-test --provider napiprojekt --language pol --video-fixture tests/fixtures/napiprojekt_video_shrek.json --config-json '{"request_delay_ms":0}' --expect-min-results 1 --skip-download` returned `napiprojekt ok`.
+- Final review-fix and merge evidence on 2026-06-02:
+  - `87905a4` rejects blank authors under `only_authors`, adds season and episode matches for exact episode catalog pages, forwards `Content-Type: application/x-www-form-urlencoded` through FlareSolverr POST requests, detects UTF-8 subtitle bytes returned by FlareSolverr, bumps NapiProjekt to `0.1.3`, and rebuilds `catalog.json`.
+  - Final branch head `5666c03` merges current `main` after the AnimeTosho merge, keeping the live PR diff scoped to `README.md`, `catalog.json`, `providers/napiprojekt`, `tests/fixtures/napiprojekt_*`, and `tests/test_napiprojekt.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_napiprojekt.py'`: `22` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/napiprojekt/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: returned Python `3.12`, `3.13`, and `3.14`.
+  - `python3 -B -m unittest discover -s tests`: `500` tests passed with `6` skipped.
+  - `git diff --check origin/main...HEAD` was clean, and the NapiProjekt diff scan found no attribution or prohibited punctuation matches.
+  - `python3 -B -m sdk smoke-test --provider napiprojekt --language pol --video-fixture tests/fixtures/napiprojekt_video_shrek.json --expect-min-results 1`: `napiprojekt ok`.
+  - Live PR review threads were resolved or outdated, and `gh pr view 25` reported head `5666c038882c5f312ce9270b8ecd4bec3741c46c`, non-draft, merge state `CLEAN`.
+  - PR `#25` merged on 2026-06-02 UTC at merge commit `36af7f4777c64a68c1d1da44b97cd42b6befe8a2`.
 - Remaining gates: none for the current NapiProjekt hash-path migration proof. Author-filtered catalog scraping still depends on a reachable FlareSolverr `/v1` endpoint when NapiProjekt serves a Cloudflare challenge.
 
 ### `podnapisi`
