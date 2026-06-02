@@ -117,7 +117,8 @@ def parse_search_results(body):
                 "alpha2": alpha2,
                 "release_info": release_info,
                 "title": _movie_title_from_release(release_info),
-                "year": _year_from_text(release_info),
+                "year": _release_year_from_text(release_info),
+                "years": _years_from_text(release_info),
                 "uploader": _uploader_from_row(row),
                 "downloads": _downloads_from_row(row),
             }
@@ -233,17 +234,17 @@ class Subs4FreeProvider:
             return []
         results = []
         seen = set()
+        covered_languages = set()
         for query in build_queries(video):
             _sleep(config)
             search_url = _search_url(query)
             body = self._http_get(search_url, referer=BASE_URL)
             candidates = parse_search_results(body)
             candidates.extend(self._candidates_from_suggestions(video, body, config, search_url))
-            results.extend(
-                self._result(video, item)
-                for item in _accepted_candidates(video, candidates, requested, seen)
-            )
-            if results:
+            accepted = _accepted_candidates(video, candidates, requested, seen)
+            covered_languages.update(item["language"] for item in accepted)
+            results.extend(self._result(video, item) for item in accepted)
+            if requested.issubset(covered_languages):
                 break
         return sorted(results, key=lambda item: item["score"], reverse=True)
 
@@ -403,6 +404,15 @@ def _year_from_text(text):
     return int(match.group(1)) if match else None
 
 
+def _years_from_text(text):
+    return [int(match.group(1)) for match in _YEAR_RE.finditer(text or "")]
+
+
+def _release_year_from_text(text):
+    years = _years_from_text(text)
+    return years[-1] if years else None
+
+
 def _suggestion_matches(video, suggestion):
     suggestion_tokens = set(_tokens(suggestion.get("title")))
     title_tokens = _tokens((video or {}).get("title"))
@@ -442,8 +452,11 @@ def _candidate_matches_video(video, item):
     if "title" not in matches:
         return False
     requested_year = (video or {}).get("year")
+    candidate_years = list((item or {}).get("years") or [])
     candidate_year = (item or {}).get("year")
-    if requested_year and candidate_year and int(requested_year) != int(candidate_year):
+    if not candidate_years and candidate_year:
+        candidate_years.append(candidate_year)
+    if requested_year and candidate_years and int(requested_year) not in {int(year) for year in candidate_years}:
         return False
     return True
 
@@ -525,13 +538,16 @@ def _alpha3_for_language(language):
 
 
 def _matches_token_table(value, table, release_tokens):
-    for item in _coerce_text(value).split() if _coerce_text(value) else []:
+    text = _coerce_text(value)
+    if not text:
+        return False
+    for item in text.split():
         normalized = _normalize(item)
         candidates = table.get(item) or table.get(normalized) or []
         if any(_normalize(candidate) in release_tokens for candidate in candidates):
             return True
-    normalized = _normalize(value)
-    candidates = table.get(value) or table.get(normalized) or []
+    normalized = _normalize(text)
+    candidates = table.get(text) or table.get(normalized) or []
     return any(_normalize(candidate) in release_tokens for candidate in candidates)
 
 

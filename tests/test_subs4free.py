@@ -273,6 +273,72 @@ class Subs4FreeProviderTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["language"]["alpha3"], "eng")
 
+    def test_search_continues_fallback_queries_until_requested_languages_are_covered(self):
+        provider = self.mod.Subs4FreeProvider()
+        responses = {
+            "https://www.subs4free.info/search_report.php?search=Inception+2010&searchType=1": _html_with_rows([
+                _row("ell", "Inception 2010 Greek Release", "s-ell"),
+            ]),
+            "https://www.subs4free.info/search_report.php?search=Inception&searchType=1": _html_with_rows([
+                _row("eng", "Inception 2010 English Release", "s-eng"),
+            ]),
+        }
+        calls = []
+
+        def stub(url, timeout=15, referer=None):
+            del timeout, referer
+            calls.append(url)
+            if url not in responses:
+                raise AssertionError(f"unexpected URL: {url}")
+            return responses[url]
+
+        provider._http_get = stub
+        results = provider.search(
+            {"kind": "movie", "title": "Inception", "year": 2010},
+            [{"alpha3": "ell", "alpha2": "el"}, {"alpha3": "eng", "alpha2": "en"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual({item["language"]["alpha3"] for item in results}, {"ell", "eng"})
+        self.assertTrue(any("search=Inception+2010" in url for url in calls))
+        self.assertTrue(any("search=Inception&" in url for url in calls))
+
+    def test_derive_matches_accepts_list_valued_codec_metadata(self):
+        matches = self.mod.derive_matches(
+            {
+                "title": "Inception",
+                "year": 2010,
+                "audio_codec": ["DTS-HD", "MA"],
+            },
+            {"release_info": "Inception 2010 1080p BluRay"},
+        )
+
+        self.assertIn("title", matches)
+        self.assertIn("year", matches)
+        self.assertNotIn("audio_codec", matches)
+
+    def test_search_accepts_release_year_when_title_contains_year_token(self):
+        provider = self.mod.Subs4FreeProvider()
+        body = _html_with_rows([
+            _row("eng", "1917 2019 1080p BluRay", "s-1917"),
+        ])
+
+        def stub(url, timeout=15, referer=None):
+            del timeout, referer
+            if "search_report.php" in url:
+                return body
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        results = provider.search(
+            {"kind": "movie", "title": "1917", "year": 2019},
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["release_info"], "1917 2019 1080p BluRay")
+
     def test_download_posts_form_after_anti_block_requests(self):
         provider = self.mod.Subs4FreeProvider()
         seen_gets = []
