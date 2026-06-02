@@ -13,6 +13,7 @@ _LANGUAGE_TO_SHOOTER = {
 }
 _SUPPORTED_MEDIA = {"movie", "episode"}
 _DEFAULT_TIMEOUT = 10
+_SHOOTER_HASH_READ_SIZE = 4096
 
 
 class ShooterHttpClient:
@@ -73,7 +74,33 @@ def _shooter_hash(video):
     hashes = (video or {}).get("hashes") or {}
     value = hashes.get("shooter")
     value = str(value).strip() if value is not None else ""
-    return value or None
+    if value:
+        return value
+    return _compute_shooter_hash(_existing_video_path(video))
+
+
+def _existing_video_path(video):
+    for key in ("name", "original_path", "original_name"):
+        value = str((video or {}).get(key) or "").strip()
+        if value and os.path.isfile(value):
+            return value
+    return None
+
+
+def _compute_shooter_hash(path):
+    if not path:
+        return None
+    filesize = os.path.getsize(path)
+    read_size = _SHOOTER_HASH_READ_SIZE
+    if filesize < read_size * 2:
+        return None
+    offsets = (read_size, filesize // 3 * 2, filesize // 3, filesize - read_size * 2)
+    hashes = []
+    with open(path, "rb") as handle:
+        for offset in offsets:
+            handle.seek(offset)
+            hashes.append(hashlib.md5(handle.read(read_size)).hexdigest())
+    return ";".join(hashes)
 
 
 def _candidate_id(download_url, filehash, language_code):

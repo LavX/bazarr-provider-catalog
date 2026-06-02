@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -130,6 +131,28 @@ class ShooterProviderTests(unittest.TestCase):
             [],
         )
         self.assertEqual(provider.http_client.posts, [])
+
+    def test_search_computes_shooter_hash_from_existing_video_path(self):
+        provider = self.make_provider(search_body=b"\xff")
+        body = bytes((index % 197 for index in range(20000)))
+        expected_hash = (
+            "035864be44712dd0e000d54053a40b0e;"
+            "8ac5ea5bfe13c6756988f875f010aade;"
+            "df554e195fe156c079c6055a40117f0d;"
+            "9dd9e190a937da95bc15ae883ed0d681"
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".mkv") as handle:
+            handle.write(body)
+            handle.flush()
+            results = provider.search(
+                video={"kind": "movie", "name": handle.name, "title": "Example", "year": 2024, "hashes": {}},
+                languages=[{"alpha3": "eng"}],
+                config={},
+            )
+
+        self.assertEqual(results, [])
+        self.assertEqual(provider.http_client.posts[0][1]["filehash"], expected_hash)
 
     def test_search_skips_forced_or_hearing_impaired_requests(self):
         provider = self.make_provider()
