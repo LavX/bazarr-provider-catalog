@@ -1834,8 +1834,8 @@
 
 - Branch: `catalog-betaseries`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/betaseries`
-- Current checkpoint: `461ab52 Add BetaSeries provider`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/29` opened as draft on 2026-06-01, head `catalog-betaseries`, base `main`, merge state `CLEAN`.
+- Current checkpoint: `8e228c9 Merge remote-tracking branch 'origin/main' into catalog-betaseries`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/29` opened as draft on 2026-06-01, head `catalog-betaseries`, base `main`, final checked head `8e228c910cebcd074150696bbc02f5abc9c76b21`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1873,6 +1873,20 @@
   - Prohibited punctuation and attribution scan across README, catalog, provider code, tests, and fixtures: no matches.
   - No-key `https://api.betaseries.com/episodes/display?id=1` probe returned API error code `1001`, `Please set an API key.`
   - `gh pr view 29 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#29` is open, draft, head `catalog-betaseries`, base `main`, merge state `CLEAN`.
+- Current-main merge evidence on 2026-06-02:
+  - Live review-thread inspection found no review threads on PR `#29`.
+  - `10ba971` adds BetaSeries runtime hashes, bumps BetaSeries to `0.1.1`, and refreshes the generated README and catalog entries.
+  - `8e228c9` merges current `origin/main` into `catalog-betaseries`, preserving the BetaSeries provider scope.
+  - `python3 -B -m unittest discover -s tests -p 'test_betaseries.py'`: `7` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`, ABI tags `cp312`, `cp313`, `cp314`, and `abi3`.
+  - `python3 -B -m py_compile providers/betaseries/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, BetaSeries provider code, tests, and fixtures found no matches.
+  - `python3 -B -m unittest discover -s tests`: `734` tests passed with `6` skipped.
+  - `gh pr view 29 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,mergeStateStatus,reviewDecision,headRefName,headRefOid,url,title`: PR `#29` is open, draft, head `8e228c910cebcd074150696bbc02f5abc9c76b21`, merge state `CLEAN`.
+  - `gh pr checks 29 --repo LavX/bazarr-provider-catalog`: no checks reported on the branch.
 - Remaining gates:
   - Run SDK smoke search and download when a test BetaSeries API key is available.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `betaseries` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
