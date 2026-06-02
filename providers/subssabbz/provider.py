@@ -568,7 +568,7 @@ def _search_payload(video, title, alpha3):
     payload = {
         "act": "search",
         "movie": title,
-        "select-language": "2" if alpha3 == "eng" else "1",
+        "select-language": "1" if alpha3 == "eng" else "2",
         "upldr": "",
         "yr": "",
         "release": "",

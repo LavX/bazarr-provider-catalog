@@ -160,7 +160,7 @@ class SubsSabBzProviderTests(unittest.TestCase):
             {},
         )
 
-        self.assertEqual(calls[0][1]["select-language"], "2")
+        self.assertEqual(calls[0][1]["select-language"], "1")
         self.assertEqual(results[0]["language"]["alpha3"], "eng")
         self.assertIn("imdb_id", results[0]["matches"])
         self.assertIn("release_group", results[0]["matches"])
@@ -316,8 +316,8 @@ class SubsSabBzProviderTests(unittest.TestCase):
         self.assertEqual(sleeps, [10, 10])
 
     def test_search_payload_uses_site_language_selector_ids(self):
-        self.assertEqual(self.mod._search_payload({"kind": "movie"}, "Inception", "eng")["select-language"], "2")
-        self.assertEqual(self.mod._search_payload({"kind": "movie"}, "Inception", "bul")["select-language"], "1")
+        self.assertEqual(self.mod._search_payload({"kind": "movie"}, "Inception", "eng")["select-language"], "1")
+        self.assertEqual(self.mod._search_payload({"kind": "movie"}, "Inception", "bul")["select-language"], "2")
 
     def test_download_selects_named_archive_member_and_normalizes_line_endings(self):
         provider = self.mod.SubsSabBzProvider()
