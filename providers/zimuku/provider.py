@@ -2,6 +2,7 @@
 
 import base64
 import binascii
+import functools
 import hashlib
 import html
 import io
@@ -10,6 +11,7 @@ import os
 import random
 import re
 import struct
+import sys
 import tempfile
 import time
 import unicodedata
@@ -19,6 +21,12 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass
 from http.cookiejar import Cookie, CookieJar
+
+_PROVIDER_DIR = os.path.dirname(__file__)
+if _PROVIDER_DIR and _PROVIDER_DIR not in sys.path:
+    sys.path.insert(0, _PROVIDER_DIR)
+
+from yunsuo_templates import YUNSUO_CAPTCHA_TEMPLATE_ROWS
 
 try:
     import py7zz
@@ -84,20 +92,6 @@ def parse_yunsuo_challenge(body):
         "image_b64": html.unescape(image_match.group("image")) if image_match else "",
         "image_mime": f"image/{image_match.group('mime')}" if image_match else "",
     }
-
-
-YUNSUO_CAPTCHA_TEMPLATE_ROWS = """
-0 8 14 3c 7e e7 e7 c3 cb db cb c3 c3 e7 e7 7e 3c
-1 7 14 3c 7c 7c 1c 1c 1c 1c 1c 1c 1c 1c 1c 7f 7f
-2 8 14 7e fe 87 03 03 03 07 06 0c 18 30 60 ff ff
-3 8 14 7e fe 87 03 03 1f 1e 1e 03 03 03 87 ff 7e
-4 9 14 01c 01c 03c 03c 02c 06c 0cc 0cc 18c 1ff 1ff 00e 00c 00c
-5 8 14 7e 7e 60 60 7c 7e 7f 43 03 03 03 87 fe 7c
-6 8 14 3e 7e 72 e0 e0 dc fe ff c3 c3 c3 e7 7f 7e
-7 8 14 ff ff 06 06 06 0c 0c 0c 18 18 18 18 18 30
-8 8 14 7e 7e e7 c3 c3 7e 7e 7e c3 c3 c3 e7 ff 7e
-9 8 14 7e 7e e7 c3 c3 c3 ff 7f 3b 07 07 4e 7e 7c
-"""
 
 
 def solve_yunsuo_captcha_image(image_bytes):
@@ -192,6 +186,7 @@ def _is_yunsuo_digit_pixel(pixel):
     return green > red + 18 and green > blue + 18 and green < 190
 
 
+@functools.lru_cache(maxsize=1)
 def _yunsuo_digit_templates():
     templates = []
     for line in YUNSUO_CAPTCHA_TEMPLATE_ROWS.splitlines():

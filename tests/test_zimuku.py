@@ -1,6 +1,7 @@
 import base64
 import importlib.util
 import io
+import json
 import unittest
 import zlib
 import zipfile
@@ -75,6 +76,12 @@ class ZimukuParserTests(unittest.TestCase):
         image = zlib.decompress(base64.b64decode(YUNSUO_CAPTCHA_42168_ZLIB_B64))
 
         self.assertEqual(self.mod.solve_yunsuo_captcha_image(image), "42168")
+
+    def test_yunsuo_templates_are_bundled_separately(self):
+        manifest = json.loads((PROVIDER_DIR / "provider.json").read_text(encoding="utf-8"))
+
+        self.assertTrue((PROVIDER_DIR / "yunsuo_templates.py").is_file())
+        self.assertIn("yunsuo_templates.py", manifest["files"])
 
     def test_parse_search_results_filters_requested_episode_season(self):
         rows = self.mod.parse_search_results(SEARCH_HTML, {"kind": "episode", "series": "Game of Thrones", "season": 1, "year": 2011})
