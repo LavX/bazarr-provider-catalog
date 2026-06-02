@@ -43,10 +43,24 @@ def build_queries(video):
         title = (_coerce_text(video.get("title")) or "").strip()
         if not title:
             return []
+        queries = []
+
+        def add_query(value):
+            value = value.strip()
+            if value and value not in queries:
+                queries.append(value)
+
         year = video.get("year")
         if year:
-            return [f"{title} {year}", title]
-        return [title]
+            add_query(f"{title} {year}")
+        add_query(title)
+        if ":" in title:
+            short_title = title.split(":", 1)[0].strip()
+            if short_title:
+                if year:
+                    add_query(f"{short_title} {year}")
+                add_query(short_title)
+        return queries
     if kind == "episode":
         series = (_coerce_text(video.get("series")) or "").strip()
         if not series:
@@ -424,10 +438,31 @@ def derive_matches(video, candidate_title):
     return matches
 
 
+def _normalize_imdb_id(value):
+    text = (_coerce_text(value) or "").strip().lower()
+    if not text:
+        return ""
+    match = re.search(r"tt\d+", text)
+    if match:
+        return match.group(0)
+    digits = re.sub(r"\D+", "", text)
+    return f"tt{digits}" if digits else ""
+
+
+def _detail_imdb_matches(video, details):
+    if (video or {}).get("kind") != "movie":
+        return False
+    requested = _normalize_imdb_id((video or {}).get("imdb_id"))
+    found = _normalize_imdb_id((details or {}).get("imdb_id"))
+    return bool(requested and found and requested == found)
+
+
 def _has_required_match(video, matches, candidate_title=None):
     video = video or {}
     matches = set(matches or [])
     if video.get("kind") == "movie":
+        if "imdb_id" in matches:
+            return True
         if "title" not in matches:
             return False
         requested_year = _year_int(video.get("year"))
@@ -761,6 +796,8 @@ class SubtitlestarProvider:
                 
                 score = compute_score(video, scoring_title)
                 matches = derive_matches(video, scoring_title)
+                if _detail_imdb_matches(video, details):
+                    matches.append("imdb_id")
                 if not _has_required_match(video, matches, scoring_title):
                     continue
                 
