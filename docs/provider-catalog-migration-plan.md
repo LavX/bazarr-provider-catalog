@@ -24,7 +24,7 @@
 - Cloudflare parity sweep on 2026-06-01: pushed the OpenSubtitles.org three-layer anti-bot path, `ai-cloudscraper==3.8.4`, inline Anubis `/.within.website/` solving, and optional FlareSolverr fallback, to `wizdom` at `4164e52`, `turkcealtyaziorg` at `8c184b2`, `yavkanet` at `5b35d11`, `napiprojekt` at `24eea15`, `subs4series` at `7dd5e86`, and `sub_scene` at `33c714a`. Local provider tests, `py_compile`, `sdk validate`, `test_catalog.py`, `git diff --check`, and attribution or prohibited punctuation scans passed for each touched branch.
 - Cloudflare live recheck on 2026-06-02: escalated SDK smoke with the current anti-bot branches returned `subs4series ok` and `napiprojekt ok`; YavkaNet still returned `yavkanet hit a Cloudflare challenge and no FlareSolverr URL is configured`; TurkceAltyazi.org still required FlareSolverr or matching cookies and User-Agent; Wizdom still timed out against `wizdom.xyz`; SubScene's anti-bot unit suite passed `70` tests.
 - Embedded Anubis body parity on 2026-06-02: pushed the OpenSubtitles.org in-place Anubis body detection path to `wizdom` at `93ef015`, `yavkanet` at `0ac39be`, `turkcealtyaziorg` at `c986310`, `napiprojekt` at `e78c47b`, and `subs4series` at `d390f8d`. Local provider tests, `py_compile`, `sdk validate`, `test_catalog.py`, `git diff --check`, and touched-file attribution or prohibited punctuation scans passed for each branch. Follow-up PR `#76` merged at `f941c6b972c0cff11cdb0a03f00197f28ac5ff00`, and follow-up PR `#77` merged at `03a5a4af6126ede49f7e8325100f1b895742c77a`. PR `#72`, PR `#42`, and PR `#53` have no active review threads; no checks are reported on those branches.
-- Current-main refresh on 2026-06-02: merged `origin/main` into `catalog-wizdom` at `d0f4e5f` and `catalog-turkcealtyaziorg` at `3901e9f`, resolved generated README/catalog conflicts, rebuilt catalog hashes, reran focused provider tests, `test_catalog.py`, `sdk validate`, `py_compile`, `git diff --check --cached`, and touched-file attribution or prohibited punctuation scans. PR `#72` and PR `#53` are open draft PRs with no review threads and merge state `CLEAN`.
+- Current-main refresh on 2026-06-02: merged `origin/main` into `catalog-wizdom` at `1ea63e7` and `catalog-turkcealtyaziorg` at `3901e9f`, resolved generated README/catalog conflicts, rebuilt catalog hashes, reran focused provider tests, `test_catalog.py`, `sdk validate`, `py_compile`, `git diff --check`, and touched-file attribution or prohibited punctuation scans. PR `#72` and PR `#53` are open draft PRs with no review threads and merge state `CLEAN`.
 - SubScene local evidence on 2026-06-02 after review fixes, Anubis parity, and current-main merge: `test_sub_scene.py` ran `72` tests passed, `test_catalog.py` ran `14` tests passed with `6` skipped, `sdk validate` returned `catalog ok`, `sdk runtime-matrix` returned Python `3.12`, `3.13`, and `3.14`, `py_compile` passed, full `unittest discover -s tests` ran `427` tests passed with `6` skipped, `git diff --check --cached` was clean, the staged SubScene diff scan found no attribution or prohibited punctuation matches, the live PR diff was scoped to `README.md`, `catalog.json`, `providers/sub_scene/provider.json`, `providers/sub_scene/provider.py`, and `tests/test_sub_scene.py`, and PR `#14` current non-outdated review-thread count is `0`.
 - Prior SubScene test-server evidence on 2026-06-01: active Provider Hub state after restage was version `0.1.11`, commit `41b9fc0f460b228d4e8061aaa692233a629a7818`, enabled `true`, `pending_restart=false`, `last_error=null`. Final Dune compat search returned HTTP `200`, `79` total results, and `0` SubScene rows. Focused logs showed `sub_scene FlareSolverr request failed: HTTP Error 500: Internal Server Error` and final fanout marked `sub_scene=ok:15566ms`, not `worker exceeded 30s`. This needs restage before treating `0.1.14` as live test-server proof.
 - Provider Hub source-dependency evidence: `ai-cloudscraper==3.8.4` requires `Js2Py`, whose `pyjsparser==2.7.1` dependency is source-only. Bazarr core PR [#173](https://github.com/LavX/bazarr/pull/173), branch `fix/provider-hub-source-deps` at `b4e53d0ed`, changes the Provider Hub installer from `--only-binary=:all:` to `--prefer-binary` while keeping `--require-hashes`, allowing hash-checked source dependencies. `bazarr-ui-test` was hot-patched with that installer for the live staging evidence below.
@@ -106,7 +106,7 @@
   - `turkcealtyaziorg`: branch `catalog-turkcealtyaziorg`, worktree `/tmp/bazarr_catalog_provider_worktrees/turkcealtyaziorg`, current head `3901e9f`
   - `tvsubtitles`: branch `catalog-tvsubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/tvsubtitles`, current head `80a5c47`
   - `whisperai`: branch `catalog-whisperai`, worktree `/tmp/bazarr_catalog_provider_worktrees/whisperai`, current head `16647ef`, local/generated provider
-  - `wizdom`: branch `catalog-wizdom`, worktree `/tmp/bazarr_catalog_provider_worktrees/wizdom`, current head `d0f4e5f`
+  - `wizdom`: branch `catalog-wizdom`, worktree `/tmp/bazarr_catalog_provider_worktrees/wizdom`, current head `1ea63e7`
   - `xsubs`: branch `catalog-xsubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/xsubs`, current head `5a17922`, dead origin
   - `yavkanet`: branch `catalog-yavkanet`, worktree `/tmp/bazarr_catalog_provider_worktrees/yavkanet`, current head `0ac39be`
   - `yifysubtitles`: branch `catalog-yifysubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/yifysubtitles`, current head `024f996`
@@ -1307,8 +1307,8 @@
 
 - Branch: `catalog-wizdom`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/wizdom`
-- Current checkpoint: `d0f4e5f Merge remote-tracking branch 'origin/main' into catalog-wizdom`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/72` opened as draft on 2026-06-01, head `catalog-wizdom`, base `main`, head `d0f4e5f4e426a3b58485a31f07bf941494ce3d1c`, latest checked merge state `CLEAN`.
+- Current checkpoint: `1ea63e7 Merge remote-tracking branch 'origin/main' into catalog-wizdom`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/72` opened as draft on 2026-06-01, head `catalog-wizdom`, base `main`, head `1ea63e7b56eeaafe24d6a85052fc7b5981a612ef`, latest checked merge state `CLEAN`.
 - Local evidence on 2026-05-29:
   - `python3 -B -m unittest discover -s tests -p 'test_wizdom.py'`: `11` tests passed.
   - `python3 -B -m sdk validate`: `catalog ok`.
@@ -1383,6 +1383,21 @@
   - Live SDK search smoke `python3 -B -m sdk smoke-test --provider wizdom --language heb --video-fixture tests/fixtures/wizdom_video_inception.json --config-json '{"request_delay_ms":0}' --expect-min-results 1 --skip-download`: failed with `Wizdom request failed: HTTPSConnectionPool(host='wizdom.xyz', port=443): Read timed out. (read timeout=15)`.
   - Live origin probe `GET https://wizdom.xyz/` returned Cloudflare HTTP `522` with body `error code: 522`.
   - Live release probe `GET https://wizdom.xyz/api/releases/tt1375666` returned Cloudflare HTTP `522` with body `error code: 522`.
+- Second current-main refresh on 2026-06-02:
+  - Live thread-aware PR inspection found no conversation comments, reviews, or review threads on PR `#72`.
+  - Merged `origin/main` into `catalog-wizdom`; catalog auto-merged cleanly, then `python3 -B -m sdk build-catalog` refreshed generated catalog metadata.
+  - Effective branch scope against current `origin/main` remains limited to `README.md`, `catalog.json`, `docs/provider-notes/wizdom.md`, `providers/wizdom/provider.json`, `providers/wizdom/provider.py`, Wizdom fixture, and `tests/test_wizdom.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_wizdom.py'`: `17` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/wizdom/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python runtime policy remains `>=3.12,<3.15`.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Touched-file attribution and em-dash scan across Wizdom files found no matches.
+  - `python3 -B -m unittest discover -s tests`: `744` tests passed with `6` skipped.
+  - Live SDK search smoke `python3 -B -m sdk smoke-test --provider wizdom --language heb --video-fixture tests/fixtures/wizdom_video_inception.json --config-json '{"request_delay_ms":0}' --expect-min-results 1 --skip-download`: failed with `Wizdom request failed: HTTPSConnectionPool(host='wizdom.xyz', port=443): Read timed out. (read timeout=15)`.
+  - Pushed branch head `1ea63e7b56eeaafe24d6a85052fc7b5981a612ef`.
+  - PR `#72` is open draft, head `catalog-wizdom` at `1ea63e7b56eeaafe24d6a85052fc7b5981a612ef`, merge state `CLEAN`, and no checks are reported.
 - Remaining gates:
   - Keep PR `#72` draft until Wizdom live search and download proof can be captured.
   - Treat current Wizdom proof as blocked by `wizdom.xyz` origin timeout or Cloudflare `522`, not by TMDB, local parser behavior, branch deployment, or Provider Hub loading.
