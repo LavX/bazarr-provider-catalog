@@ -46,11 +46,11 @@
 - Coverage recheck on 2026-06-02: source-provider count after excluding helper/shared modules is `60`, provider worktree count after excluding catalog maintenance worktrees is `60`, the missing-worktree comparison returned no rows, and the extra-worktree comparison returned no rows.
 - Open PR review-thread audit on 2026-06-02: GraphQL inspection of all `28` open provider PRs found no review threads, no PR comments, and no reviews. All open provider PRs are draft PRs with merge state `CLEAN`, so the remaining open queue is verification-gated rather than review-feedback-gated.
 - Open PR gate classification on 2026-06-02 continuation: live GitHub state still shows `28` open provider PRs, all draft, all merge state `CLEAN`.
-  - Credential, session, or API-key gated: `addic7ed`, `assrt`, `avistaz`, `cinemaz`, `hdbits`, `karagarga`, `ktuvit`, `legendasdivx`, `legendasnet`, `opensubtitlescom`, `pipocas`, `titlovi`, and `titulky`.
+  - Credential, session, or API-key gated: `addic7ed`, `assrt`, `avistaz`, `cinemaz`, `hdbits`, `karagarga`, `ktuvit`, `legendasdivx`, `legendasnet`, `opensubtitlescom`, `pipocas`, and `titulky`.
   - User service or base URL gated: `subsarr` needs a reachable self-hosted Subsarr `base_url`; `whisperai` needs a real Whisper web-service endpoint for non-stub proof.
   - Origin access or anti-bot gated: `turkcealtyaziorg`, `yavkanet`, and `wizdom`.
   - Real media hash or disclosure gated: `napisy24` needs a library-backed video with a valid Napisy24/OpenSubtitles hash; `shooter` needs explicit approval or a non-sensitive fixture before sending derived Shooter hashes to the public API.
-  - Compat-only gated: `betaseries`, `jimaku`, `regielive`, `subdl`, `subsource`, `subsro`, `subx`, and `zimuku` have current SDK search and download proof, but still need Provider Hub compat search, download, and stream proof.
+  - Compat-only gated: `betaseries`, `jimaku`, `regielive`, `subdl`, `subsource`, `subsro`, `subx`, `titlovi`, and `zimuku` have current SDK search and download proof, but still need Provider Hub compat search, download, and stream proof.
   - Current local compat reachability evidence: no Bazarr test container is running, `http://127.0.0.1:6767` is closed, `bazarr-ui-test` does not resolve over SSH, and `BAZARR_COMPAT_API_KEY` is unset in this shell.
 - Current catalog checkout inventory: this planning worktree is intentionally not rebased onto `main`, but live `main` now ships 40 Provider Hub bundles, adding `gestdown`, `bsplayer`, `subtis`, `subtitulamostv`, `tvsubtitles`, `greeksubs`, `animekalesi`, `animesubinfo`, `opensubtitles_org`, `animetosho`, `napiprojekt`, `subf2m`, `nekur`, `greeksubtitles`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subs4free`, `subs4series`, `embedded_subtitles`, `subtitrarinoi`, `yifysubtitles`, `subtitriid`, `titrari`, and `supersubtitles` to the previous 12 bundle baseline.
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
@@ -743,8 +743,21 @@
   - `python3 -B -m unittest discover -s tests`: `737` tests passed with `6` skipped.
   - Pushed branch head `79b9c8ba7713b04626cb01f19f690e563f7b2b04`.
   - PR `#64` is open draft, head `catalog-titlovi` at `79b9c8ba7713b04626cb01f19f690e563f7b2b04`, merge state `CLEAN`, and no checks are reported.
+- Fresh credential and live SDK proof on 2026-06-02:
+  - Initial live SDK smoke with saved temporary credentials reached the Titlovi API but failed with `titlovi returned invalid language payload`.
+  - Root cause: the live API returned mixed-language Dune rows even when queried with `lang=English`, so Croatian, Slovenian, Serbian, and Macedonian rows leaked into an English-only SDK smoke request.
+  - Added regression coverage for API rows being filtered to the requested language set, filtered constructed candidates by requested language and script, bumped Titlovi to `0.1.1`, refreshed provider hashes, and rebuilt `catalog.json`.
+  - `python3 -B -m unittest discover -s tests -p 'test_titlovi.py' -k test_search_filters_api_rows_to_requested_languages`: `1` test passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_titlovi.py'`: `11` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/titlovi/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Touched-file attribution and prohibited punctuation scan across Titlovi files found no matches.
+  - Live SDK smoke with download enabled `python3 -B -m sdk smoke-test --provider titlovi --language eng --video-fixture tests/fixtures/titlovi_video_dune_2021.json --config-json '{"request_delay_ms":0}' --secret username=TITLOVI_USERNAME --secret password=TITLOVI_PASSWORD --expect-min-results 1`: `titlovi ok`.
+  - Pushed branch head `9afb8e2d847588559b6884b7b2858c9f4adcdb1f`; PR `#64` remains open draft with no checks reported.
 - Remaining gates:
-  - Run SDK live smoke search and download with valid Titlovi credentials.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `titlovi` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Titlovi credentials.
 
