@@ -3321,8 +3321,8 @@
 
 - Branch: `catalog-yavkanet`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/yavkanet`
-- Current checkpoint: `87b0e54 Refresh YavkaNet Cloudflare fallback`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/42` opened as draft on 2026-06-01, head `catalog-yavkanet`, base `main`, head OID `87b0e54c8a60509685cfb3badbd60d6dde401c8a`, latest checked merge state `CLEAN`.
+- Current checkpoint: `6b05295 Record YavkaNet download notice`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/42` opened as draft on 2026-06-01, head `catalog-yavkanet`, base `main`, head OID `6b05295955e615545fc3bda05854cf47c882bc1c`, latest checked merge state `CLEAN`.
 - Local evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -3466,6 +3466,11 @@
   - Live SDK search smoke with official FlareSolverr `v3.5.0`, `flaresolverr_url=http://127.0.0.1:8191/v1`, and `flaresolverr_timeout_ms=30000` returned `yavkanet ok`.
   - Live SDK download-enabled smoke with the same setup reached the current direct `/download?q=...` URL, then failed with YavkaNet's own HTTP `403` page body `<?= $SLANG['combomsg104'] ?>`.
   - Pushed branch head `87b0e54c8a60509685cfb3badbd60d6dde401c8a`; PR `#42` remains open draft, merge state `CLEAN`, and no checks are reported.
+- Source-side download notice and multi-title recheck on 2026-06-02:
+  - Yavka.net currently displays a June 2 banner saying some titles are no longer available for downloads and recommending `bultor.net` or `nanoset.biz`.
+  - Live diagnostic search through the same official FlareSolverr `v3.5.0` session returned YavkaNet rows for Dune, Inception, Interstellar, The Matrix, Oppenheimer, and The Batman, but each first direct `/download?q=...` link returned HTTP `403`.
+  - Provider notes were updated to record the source banner without copying the banner's profanity into project docs.
+  - Pushed branch head `6b05295955e615545fc3bda05854cf47c882bc1c`; PR `#42` remains open draft, merge state `CLEAN`, and no checks are reported.
 - Remaining gates:
   - Treat current YavkaNet proof as search-cleared with official FlareSolverr `v3.5.0`, but still blocked for download and stream by YavkaNet's own HTTP `403` response from the current direct `/download?q=...` link after Cloudflare clearance.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` only after a title or session is found where YavkaNet currently permits subtitle downloads, or after matching browser cookies and User-Agent prove the direct download gate is session dependent.
