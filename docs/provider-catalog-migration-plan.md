@@ -1132,6 +1132,17 @@
   - Synthetic live Shooter API route check using the committed fake hash returned HTTP `200` and body byte `ff`, matching the provider's empty-response handling without disclosing real media metadata.
   - Pushed branch head `cf45c2f9baa6d2f87ddfb9c982f898cf2ddb1bb8`.
   - PR `#71` is open draft, head `catalog-shooter` at `cf45c2f9baa6d2f87ddfb9c982f898cf2ddb1bb8`, merge state `CLEAN`, has no review threads, and no checks are reported.
+  - Fresh recheck on 2026-06-02 confirmed PR `#71` is still open draft, head `cf45c2f9baa6d2f87ddfb9c982f898cf2ddb1bb8`, merge state `CLEAN`, has no review threads, no comments, no reviews, and no checks reported.
+  - Effective branch scope against current `origin/main` remains limited to `README.md`, `catalog.json`, `docs/provider-notes/shooter.md`, `providers/shooter/provider.json`, `providers/shooter/provider.py`, Shooter fixtures, and `tests/test_shooter.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_shooter.py'`: `8` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/shooter/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Touched-file attribution and prohibited punctuation scan across Shooter files found no matches.
+  - `python3 -B -m unittest discover -s tests`: `735` tests passed with `6` skipped.
+  - Non-sensitive live Shooter API route check with the committed fake hash returned HTTP `200`, `content-type: application/octet-stream`, and body byte `0xff`, matching the provider's empty-response path without sending real media metadata.
 - Remaining gates:
   - Prove Provider Hub compat search, download, and stream using a library-backed video that lets Bazarr compute `video.hashes.shooter`, because Shooter does not support title-only searches.
   - Get explicit approval before using real test-server media paths and derived Shooter hashes against the public Shooter API, or use a non-sensitive fixture supplied for this purpose.
