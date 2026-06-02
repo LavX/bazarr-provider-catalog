@@ -1181,7 +1181,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "00ecc3cc23f0152cd58f8de996574254b6aa4b6b1672d0cfcf64e442ad06e6a9",
+        "bundle_sha256": "f8a823a1338d27ae17821b268c5a25c0b8fc146170830f81fd76b3466c77e471",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1309,7 +1309,7 @@
         "entry_class": "SubtitrariNoiProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "ad3d83f1c8facb2801882152a8f4e0e61c313ddaefbac9cc27d071de8a8babe5"
+          "provider.py": "6f491f2660b2219337c16ff3a9fc981e4f378d333c1772bc4abaff7633b1b3e4"
         },
         "languages": [
           "ron"
@@ -1331,7 +1331,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.0"
+        "version": "0.1.1"
       }
     }
   ],

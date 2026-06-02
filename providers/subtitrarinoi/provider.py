@@ -51,7 +51,10 @@ _NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
 _ROUND_RE = re.compile(r"<div\b[^>]*id=['\"]round['\"][^>]*>", re.I)
 _SEASON_RE = re.compile(r"\b(?:s|season|sezonul)\s*0*(?P<season>\d{1,2})\b", re.I)
 _SEASON_RANGE_RE = re.compile(r"\bsezoanele\s+(?P<start>\d{1,2})\s*[-,]\s*(?P<end>\d{1,2})\b", re.I)
-_EPISODE_RANGE_RE = re.compile(r"\bep\.?\s*0*(?P<start>\d{1,3})(?:\s*[-,]\s*0*(?P<end>\d{1,3}))?", re.I)
+_EPISODE_RANGE_RE = re.compile(
+    r"\b(?:ep\.?|episod(?:ul|ele)?|episoadele)\s*0*(?P<start>\d{1,3})(?:\s*[-,]\s*0*(?P<end>\d{1,3}))?",
+    re.I,
+)
 _SXXEXX_RE = re.compile(r"\bs(?P<season>\d{1,2})e(?P<episode>\d{1,3})\b", re.I)
 _TAG_RE = re.compile(r"<[^>]+>")
 _TITLE_YEAR_RE = re.compile(r"^(?P<title>.*?)\s*\((?P<year>\d{4})\)\s*$")
@@ -194,9 +197,8 @@ class SubtitrariNoiProvider:
         score += 5 if "release_group" in matches else 0
         score += 3 if "source" in matches else 0
         score += 2 if "resolution" in matches else 0
-        media = "movie" if (video or {}).get("kind") == "movie" else f"s{int(video.get('season')):02d}e{int(video.get('episode')):02d}"
         variant_suffix = _variant_suffix(language)
-        filename = f"subtitrarinoi.{_slug(row.get('title'))}.{media}.{variant_suffix}.zip"
+        filename = row.get("filename") or f"subtitrarinoi.{_slug(row.get('title'))}.{variant_suffix}.zip"
         provider_payload = {
             "provider": PROVIDER_ID,
             "schema": 1,
@@ -269,6 +271,10 @@ def select_subtitle_file(names, payload):
     candidates = [name for name in names if _subtitle_extension(name) and not os.path.basename(name).startswith(".")]
     if not candidates:
         raise ValueError("subtitrarinoi archive contains no supported subtitle files")
+    if _requested_episode(payload) != (None, None):
+        candidates = [name for name in candidates if _filename_matches_requested_episode(name, payload)]
+        if not candidates:
+            raise ValueError("subtitrarinoi archive contains no subtitle for the requested episode")
     return max(enumerate(candidates), key=lambda item: _subtitle_score(item[0], item[1], payload))[1]
 
 
@@ -276,11 +282,7 @@ def _subtitle_score(index, name, payload):
     normalized = _normalize_release(name)
     release_info = _normalize_release((payload or {}).get("release_info"))
     score = -index
-    try:
-        season = int((payload or {}).get("season"))
-        episode = int((payload or {}).get("episode"))
-    except (TypeError, ValueError):
-        season = episode = None
+    season, episode = _requested_episode(payload)
     if season is not None and episode is not None:
         if f"s{season:02d}e{episode:02d}" in normalized:
             score += 200
@@ -295,6 +297,32 @@ def _subtitle_score(index, name, payload):
         if len(token) >= 3 and token in _tokens(normalized):
             score += 2
     return score
+
+
+def _requested_episode(payload):
+    try:
+        season = int((payload or {}).get("season"))
+        episode = int((payload or {}).get("episode"))
+    except (TypeError, ValueError):
+        return None, None
+    return season, episode
+
+
+def _filename_matches_requested_episode(name, payload):
+    season, episode = _requested_episode(payload)
+    if season is None or episode is None:
+        return True
+    normalized = _normalize_release(name)
+    return any(
+        token in normalized
+        for token in (
+            f"s{season:02d}e{episode:02d}",
+            f"{season}x{episode:02d}",
+            f"{season}x{episode}",
+            f"e{episode:02d}",
+            f"e{episode}",
+        )
+    )
 
 
 def _extract_rar_files(body):
@@ -470,7 +498,7 @@ def _row_matches_video(video, row, matches):
             return False
         return bool({"title", "imdb_id"} & set(matches))
     if kind == "episode":
-        return bool({"series", "imdb_id"} & set(matches))
+        return "season" in matches and bool({"series", "imdb_id"} & set(matches))
     return False
 
 
@@ -481,11 +509,13 @@ def _requested_variants(languages):
         alpha3 = _alpha3_for_language(language)
         if alpha3 != "ron":
             continue
+        if bool((language or {}).get("hi")) or bool((language or {}).get("forced")):
+            continue
         variant = {
             "alpha3": "ron",
             "alpha2": "ro",
-            "hi": bool((language or {}).get("hi")),
-            "forced": bool((language or {}).get("forced")),
+            "hi": False,
+            "forced": False,
         }
         key = (variant["hi"], variant["forced"])
         if key not in seen:
@@ -513,7 +543,12 @@ def _variant_suffix(language):
 
 
 def _imdb_query(video):
-    return _clean_imdb((video or {}).get("imdb_id") or (video or {}).get("series_imdb_id")).removeprefix("tt")
+    video = video or {}
+    if video.get("kind") == "episode":
+        value = video.get("series_imdb_id") or video.get("imdb_id")
+    else:
+        value = video.get("imdb_id") or video.get("series_imdb_id")
+    return _clean_imdb(value).removeprefix("tt")
 
 
 def _clean_imdb(value):
@@ -564,15 +599,18 @@ def _episode_matches(comments, wanted_episode):
     if wanted is None:
         return False
     text = _normalize_text(comments)
+    found_episode_hint = False
     for match in _EPISODE_RANGE_RE.finditer(text):
+        found_episode_hint = True
         start = int(match.group("start"))
         end = int(match.group("end") or start)
         if min(start, end) <= wanted <= max(start, end):
             return True
     for match in _SXXEXX_RE.finditer(text):
+        found_episode_hint = True
         if int(match.group("episode")) == wanted:
             return True
-    return True
+    return not found_episode_hint
 
 
 def _release_matches(video, comments):
