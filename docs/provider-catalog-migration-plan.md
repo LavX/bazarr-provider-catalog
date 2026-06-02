@@ -82,7 +82,7 @@
   - `subclub`: branch `catalog-subclub`, worktree `/tmp/bazarr_catalog_provider_worktrees/subclub`, current head `e10187f`
   - `subdl`: branch `catalog-subdl`, worktree `/tmp/bazarr_catalog_provider_worktrees/subdl`, current head `7ff94cd`
   - `subf2m`: branch `catalog-subf2m`, worktree `/tmp/bazarr_catalog_provider_worktrees/subf2m`, current head `659910f`
-  - `subs4free`: branch `catalog-subs4free`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4free`, current head `b32a68b`
+  - `subs4free`: branch `catalog-subs4free`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4free`, current head `6eca4fc`
   - `subs4series`: branch `catalog-subs4series`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4series`, current head `4237a99`
   - `subsarr`: branch `catalog-subsarr`, worktree `/tmp/bazarr_catalog_provider_worktrees/subsarr`, current head `e154cee`
   - `subscenter`: branch `catalog-subscenter`, worktree `/tmp/bazarr_catalog_provider_worktrees/subscenter`, current head `57de626`, dead origin
@@ -603,8 +603,8 @@
 
 - Branch: `catalog-subs4free`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subs4free`
-- Current checkpoint: `b32a68b Refactor Subs4Free review paths`
-- Pull request: [#67](https://github.com/LavX/bazarr-provider-catalog/pull/67), open ready for review, head `catalog-subs4free`, base `main`, merge state `CLEAN`, current head `b32a68bd0c41e40a7ea46585cb154d56581d30f0`.
+- Current checkpoint: `6eca4fc Clean up Subs4Free release year parsing`
+- Pull request: [#67](https://github.com/LavX/bazarr-provider-catalog/pull/67), open ready for review, head `catalog-subs4free`, base `main`, merge state `CLEAN`, current head `6eca4fceed39a8b9d375616d9019c72b5a84b937`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -649,6 +649,21 @@
   - Prohibited punctuation and attribution scan over the Subs4Free PR files found no matches.
   - `python3 -B -m unittest discover -s tests`: `577` tests passed, `6` skipped.
   - Thread-aware GitHub check reported all four review threads outdated and no active non-outdated review threads.
+- Second review-fix evidence on 2026-06-02:
+  - Live `reviewThreads` check found three new active reviewer concerns: continue fallback queries until every requested language is covered, coerce list-valued codec metadata before token-table lookup, and accept release-year matches for titles such as `1917 2019`.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_subs4free.py'`: failed with `2` failures and `1` error for those three behaviors.
+  - `302d9d5` adds regression coverage, continues fallback queries until requested languages are covered or queries are exhausted, avoids list keys in codec token lookups, compares requested movie year against all year tokens, bumps Subs4Free to `0.1.2`, and rebuilds `catalog.json`.
+  - `98f1c14` merges current `origin/main` into `catalog-subs4free` after the SubsSabBz merge.
+  - `6eca4fc` removes the old first-year helper so the remaining release-year review anchor is outdated.
+  - `python3 -B -m unittest discover -s tests -p 'test_subs4free.py'`: `15` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/subs4free/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14` with `>=3.12,<3.15`.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan over the Subs4Free PR files found no matches.
+  - `python3 -B -m unittest discover -s tests`: `593` tests passed, `6` skipped.
+  - Live GraphQL check on PR `#67` reported merge state `CLEAN`, head `6eca4fceed39a8b9d375616d9019c72b5a84b937`, and all `7` review threads outdated with no active non-outdated threads.
 - Provider Hub test-server evidence on 2026-06-01:
   - Official catalog source dev ref was set to `catalog-subs4free`; refresh returned `13` entries and resolved Subs4Free `0.1.0` at commit `f7ca9ac599bf2ced93596e9b014bf42d70e2e00f`.
   - Provider Hub staged Subs4Free `0.1.0`, installed dependencies successfully, and saved config `request_delay_ms=0`.
