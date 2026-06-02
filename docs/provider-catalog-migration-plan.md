@@ -3331,6 +3331,14 @@
   - Focused logs show the YavkaNet worker now returns `yavkanet FlareSolverr request failed: HTTP Error 500: Internal Server Error` inside the worker deadline. Final fanout marked `yavkanet=ok:14949ms`, not `worker exceeded 30s`.
 - Live anti-bot recheck on 2026-06-02:
   - Escalated live smoke `python3 -B -m sdk smoke-test --provider yavkanet --language bul --video-fixture tests/fixtures/yavkanet_video_dune_2021.json --config-json '{"request_delay_ms":0}' --expect-min-results 1 --skip-download` failed with `yavkanet hit a Cloudflare challenge and no FlareSolverr URL is configured`.
+- Local FlareSolverr comparison on 2026-06-02:
+  - Local Docker images included official `ghcr.io/flaresolverr/flaresolverr:v3.5.0`, official `v3.0.0`, and fork images `alexfozor/flaresolverr:pr-1300` and `alexfozor/flaresolverr:pr-1300-experimental-v2`.
+  - Official `ghcr.io/flaresolverr/flaresolverr:v3.5.0` started successfully with Chromium `148`; YavkaNet SDK smoke with `flaresolverr_url=http://127.0.0.1:8191/v1` and `flaresolverr_timeout_ms=10000` failed with `HTTP Error 500: Internal Server Error`. FlareSolverr logs showed `Challenge detected. Title found: Just a moment...` followed by `Timeout after 10.0 seconds`.
+  - Official `ghcr.io/flaresolverr/flaresolverr:v3.0.0` started successfully with Chrome `108`; the same YavkaNet SDK smoke failed with `HTTP Error 500: Internal Server Error`, and logs showed `Challenge detected. Title found: Just a moment...` followed by `Timeout after 10.0 seconds`.
+  - Fork `alexfozor/flaresolverr:pr-1300-experimental-v2` started but never completed browser readiness; `/v1` reset connections while logs remained at `Launching web browser`.
+  - Fork `alexfozor/flaresolverr:pr-1300` started successfully with Chromium `126`; the same YavkaNet SDK smoke failed with `HTTP Error 500: Internal Server Error`, and logs showed Cloudflare challenge solving timed out after `10.0` seconds.
+  - Direct FlareSolverr probe through the ready `pr-1300` fork with `maxTimeout=60000` also failed with `Error solving the challenge. Timeout after 60.0 seconds`.
+  - Temporary local FlareSolverr container `flaresolverr-codex` was removed after testing.
 - Current-main refresh on 2026-06-02:
   - Local YavkaNet branch was merged with `origin/main` at `a9111db6008728d6de98173366d5dc8fa1a71c98` and pushed to `catalog-yavkanet`.
   - `python3 -B -m unittest discover -s tests -p 'test_yavkanet.py'`: `14` tests passed.
