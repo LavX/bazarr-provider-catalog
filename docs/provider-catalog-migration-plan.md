@@ -105,7 +105,7 @@
   - `titulky`: branch `catalog-titulky`, worktree `/tmp/bazarr_catalog_provider_worktrees/titulky`, current head `8394a28`
   - `turkcealtyaziorg`: branch `catalog-turkcealtyaziorg`, worktree `/tmp/bazarr_catalog_provider_worktrees/turkcealtyaziorg`, current head `3901e9f`
   - `tvsubtitles`: branch `catalog-tvsubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/tvsubtitles`, current head `80a5c47`
-  - `whisperai`: branch `catalog-whisperai`, worktree `/tmp/bazarr_catalog_provider_worktrees/whisperai`, current head `0eeb964`, local/generated provider
+  - `whisperai`: branch `catalog-whisperai`, worktree `/tmp/bazarr_catalog_provider_worktrees/whisperai`, current head `16647ef`, local/generated provider
   - `wizdom`: branch `catalog-wizdom`, worktree `/tmp/bazarr_catalog_provider_worktrees/wizdom`, current head `d0f4e5f`
   - `xsubs`: branch `catalog-xsubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/xsubs`, current head `5a17922`, dead origin
   - `yavkanet`: branch `catalog-yavkanet`, worktree `/tmp/bazarr_catalog_provider_worktrees/yavkanet`, current head `0ac39be`
@@ -242,7 +242,7 @@
 
 - Branch: `catalog-whisperai`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/whisperai`
-- Current checkpoint: `0eeb964 Add WhisperAI provider`
+- Current checkpoint: `16647ef Merge current main into WhisperAI branch`
 - Pull request: [#55](https://github.com/LavX/bazarr-provider-catalog/pull/55), open draft, head `catalog-whisperai`, base `main`, merge state `CLEAN`.
 - Provider type: local/generated provider backed by a user-supplied Whisper web service.
 - Local evidence on 2026-06-01:
@@ -257,6 +257,21 @@
   - `python3 -B -m unittest discover -s tests`: `336` tests passed, `6` skipped.
   - Attribution and AI-credit scan over touched files: no matches.
   - Local fake Whisper service smoke with generated media fixture and endpoint `http://127.0.0.1:19191`: `whisperai ok`.
+- Fresh current-main merge evidence on 2026-06-02:
+  - Live thread-aware PR inspection found no conversation comments, reviews, or review threads on PR `#55`.
+  - Merged `origin/main` into `catalog-whisperai` and resolved the generated `README.md` conflict, then regenerated `catalog.json`.
+  - Effective branch scope against `origin/main` remains limited to `README.md`, `catalog.json`, `docs/provider-notes/whisperai.md`, `providers/whisperai/provider.json`, `providers/whisperai/provider.py`, `tests/fixtures/whisperai_video_japanese_audio.json`, and `tests/test_whisperai.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_whisperai.py'`: `8` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/whisperai/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python runtime policy remains `>=3.12,<3.15`.
+  - `git diff --cached --check` and `git diff --check origin/main...HEAD`: clean.
+  - Attribution and em-dash scan over `providers/whisperai`, `tests/test_whisperai.py`, `tests/fixtures/whisperai_video_japanese_audio.json`, `docs/provider-notes/whisperai.md`, `README.md`, and `catalog.json` found no matches.
+  - `python3 -B -m unittest discover -s tests`: `735` tests passed, `6` skipped.
+  - Pushed `catalog-whisperai` at `16647ef93fea7f2a47b5f6dba2d4bae11522d2aa`.
+  - PR `#55` was verified open, draft, merge state `CLEAN`, head `16647ef93fea7f2a47b5f6dba2d4bae11522d2aa`.
+  - `gh pr checks 55 --repo LavX/bazarr-provider-catalog`: no checks reported on the branch.
 - Remaining gates:
   - Run against a real Whisper web service endpoint with a real media fixture.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `whisperai` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
