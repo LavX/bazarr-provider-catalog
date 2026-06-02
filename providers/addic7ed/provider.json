@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "bb4acdcc4bf2385b1fde1f7a3d4ac2d48e68cea0cba3ff8cdd6e1426e70dbc0d",
+  "bundle_sha256": "96e1471ae729bd8a7465fa90e1cb79c3efef5ec8601a1b8212d1c1508ffd5034",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -47,7 +47,7 @@
   "entry_class": "Addic7edProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "0c7febaa040aa8ee2b2cab47695be4fd52d59ef2cd6a03c0185fa7ca51988461"
+    "provider.py": "24005c34fc70beb859ec3cb9f0e464fdba57b1453c8f8fb5dbafa4dba3aa5bd2"
   },
   "languages": [
     "ara",
@@ -95,9 +95,8 @@
     "vie",
     "zho"
   ],
-  "legacy_provider_id": "addic7ed",
   "name": "Addic7ed",
-  "provider_id": "addic7ed_com",
+  "provider_id": "addic7ed",
   "schema_version": 1,
   "secret_fields": [
     "username",

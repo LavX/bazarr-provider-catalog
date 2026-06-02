@@ -11,8 +11,7 @@ import urllib.request
 from html.parser import HTMLParser
 from http.cookies import SimpleCookie
 
-PROVIDER_ID = "addic7ed_com"
-LEGACY_PROVIDER_ID = "addic7ed"
+PROVIDER_ID = "addic7ed"
 BASE_URL = "https://www.addic7ed.com"
 DEFAULT_USER_AGENT = "BazarrProviderHub/1.0"
 HTTP_TIMEOUT_SECONDS = 30
@@ -523,11 +522,9 @@ def _candidate(item, video):
             "source": "addic7ed.com",
             "release": item["release_info"],
             "uploader": item.get("uploader"),
-            "legacy_provider_id": LEGACY_PROVIDER_ID,
         },
         "provider_payload": {
             "provider": PROVIDER_ID,
-            "legacy_provider_id": LEGACY_PROVIDER_ID,
             "schema": 1,
             "page_url": item["page_url"],
             "download_link": item["download_link"],
