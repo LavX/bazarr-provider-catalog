@@ -80,7 +80,7 @@
   - `podnapisi`: branch `catalog-podnapisi`, worktree `/tmp/bazarr_catalog_provider_worktrees/podnapisi`, current head `8b3d09f`, dead origin
   - `prijevodionline`: branch `catalog-prijevodionline`, worktree `/tmp/bazarr_catalog_provider_worktrees/prijevodionline`, current head `109ed16`
   - `regielive`: branch `catalog-regielive`, worktree `/tmp/bazarr_catalog_provider_worktrees/regielive`, current head `77e8624`
-  - `shooter`: branch `catalog-shooter`, worktree `/tmp/bazarr_catalog_provider_worktrees/shooter`, current head `103d8ee`
+  - `shooter`: branch `catalog-shooter`, worktree `/tmp/bazarr_catalog_provider_worktrees/shooter`, current head `cf45c2f`
   - `soustitreseu`: branch `catalog-soustitreseu`, worktree `/tmp/bazarr_catalog_provider_worktrees/soustitreseu`, current head `09b1dc9`
   - `subclub`: branch `catalog-subclub`, worktree `/tmp/bazarr_catalog_provider_worktrees/subclub`, current head `e10187f`
   - `subdl`: branch `catalog-subdl`, worktree `/tmp/bazarr_catalog_provider_worktrees/subdl`, current head `7ff94cd`
@@ -1047,7 +1047,7 @@
 
 - Branch: `catalog-shooter`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/shooter`
-- Current checkpoint: `103d8ee Fix Shooter fixture trailing blanks`
+- Current checkpoint: `cf45c2f Merge current main into Shooter branch`
 - Pull request: [#71](https://github.com/LavX/bazarr-provider-catalog/pull/71), open draft, head `catalog-shooter`, base `main`, merge state `CLEAN`.
 - Local evidence on 2026-05-29:
   - `python3 -B -m unittest discover -s tests -p 'test_shooter.py'`: `7` tests passed.
@@ -1074,6 +1074,21 @@
   - Provider state after restart: active version `0.1.0`, `pending_restart=false`, `trusted=true`, `enabled=true`, `last_error=None`, manifest commit `3d794c2e1adeb6e08df841e71b8c87249b577c94`.
   - Runtime replacement policy contains `55` trusted migrated built-in ids, includes `shooter`, and excludes `hosszupuska` and `podnapisi`.
   - Real-media Shooter compat proof was not run because it would send a test-server media path and derived Shooter hash to the public Shooter API; run only after explicit approval for that disclosure or with a user-provided non-sensitive fixture.
+- Fresh current-main merge evidence on 2026-06-02:
+  - Live PR review-thread inspection found no conversation comments, no reviews, and no review threads.
+  - Merged `origin/main` into `catalog-shooter`, resolved generated `README.md` and `catalog.json`, then regenerated `catalog.json`.
+  - Effective branch scope against `origin/main`: `README.md`, `catalog.json`, `docs/provider-notes/shooter.md`, `providers/shooter/provider.json`, `providers/shooter/provider.py`, Shooter fixtures, and `tests/test_shooter.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_shooter.py'`: `8` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/shooter/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`.
+  - `git diff --cached --check`: clean.
+  - Attribution scan over the Shooter PR files found no matches.
+  - `python3 -B -m unittest discover -s tests`: `735` tests passed with `6` skipped.
+  - Synthetic live Shooter API route check using the committed fake hash returned HTTP `200` and body byte `ff`, matching the provider's empty-response handling without disclosing real media metadata.
+  - Pushed branch head `cf45c2f9baa6d2f87ddfb9c982f898cf2ddb1bb8`.
+  - PR `#71` is open draft, head `catalog-shooter` at `cf45c2f9baa6d2f87ddfb9c982f898cf2ddb1bb8`, merge state `CLEAN`, has no review threads, and no checks are reported.
 - Remaining gates:
   - Prove Provider Hub compat search, download, and stream using a library-backed video that lets Bazarr compute `video.hashes.shooter`, because Shooter does not support title-only searches.
   - Get explicit approval before using real test-server media paths and derived Shooter hashes against the public Shooter API, or use a non-sensitive fixture supplied for this purpose.
