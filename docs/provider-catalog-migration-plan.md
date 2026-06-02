@@ -51,7 +51,7 @@
 - OpenSubtitles.org current state: branch `catalog-opensubtitles` merged at head `cc19c5d` in PR `#16`. Local final validation on 2026-06-02 passed `test_opensubtitles_org.py` with `19` tests, `test_catalog.py` with `14` tests and `6` skipped, `sdk validate`, `py_compile`, full `unittest discover -s tests` with `458` tests and `6` skipped, `git diff --check`, prohibited-text scan, and direct SDK live smoke `opensubtitles_org ok`. Bazarr compat proof is still incomplete because the compat key cannot stage or enable Provider Hub bundles and prior compat search results did not include `opensubtitles_org`.
 - Before editing any provider, run `git worktree list --porcelain` and `git status --short --branch` for that provider's exact worktree.
 - Existing provider worktrees:
-  - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `9464c2a`
+  - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `c966d10`
   - `animekalesi`: branch `catalog-animekalesi`, worktree `/tmp/bazarr_catalog_provider_worktrees/animekalesi`, current head `b5db085`
   - `animesubinfo`: branch `catalog-animesubinfo`, worktree `/tmp/bazarr_catalog_provider_worktrees/animesubinfo`, current head `d45ba06`
   - `animetosho`: branch `catalog-animetosho`, worktree `/tmp/bazarr_catalog_provider_worktrees/animetosho`, current head `b0b6982`
@@ -312,7 +312,7 @@
 
 - Branch: `catalog-addic7ed`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/addic7ed`
-- Current checkpoint: `9464c2a Add Addic7ed provider`
+- Current checkpoint: `c966d10 Merge current main into Addic7ed branch`
 - Pull request: [#56](https://github.com/LavX/bazarr-provider-catalog/pull/56), open draft, head `catalog-addic7ed`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -333,6 +333,21 @@
   - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' https://www.addic7ed.com/`: returned HTTP `200`.
   - `curl -sS -i --max-time 20 -A 'BazarrProviderHub/1.0' 'https://www.addic7ed.com/search.php?search=Dexter'`: returned HTTP `302` to `/show/6`.
   - Real search and download require valid Addic7ed credentials or session cookies. If Addic7ed presents captcha during username/password login, the Provider Hub plugin requires cookies.
+- Fresh current-main merge evidence on 2026-06-02:
+  - Live thread-aware PR inspection found no conversation comments, reviews, or review threads on PR `#56`.
+  - Merged `origin/main` into `catalog-addic7ed` and resolved the generated `README.md` and `catalog.json` conflicts.
+  - Effective branch scope against `origin/main` remains limited to `README.md`, `catalog.json`, `docs/provider-notes/addic7ed.md`, `providers/addic7ed/provider.json`, `providers/addic7ed/provider.py`, and `tests/test_addic7ed.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_addic7ed.py'`: `5` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/addic7ed/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python runtime policy remains `>=3.12,<3.15`.
+  - `git diff --cached --check` and `git diff --check origin/main...HEAD`: clean.
+  - Attribution and em-dash scan over `providers/addic7ed`, `tests/test_addic7ed.py`, `docs/provider-notes/addic7ed.md`, `README.md`, and `catalog.json` found no matches.
+  - `python3 -B -m unittest discover -s tests`: `732` tests passed, `6` skipped.
+  - Pushed `catalog-addic7ed` at `c966d1016e5d037a7d029b353585e7a132249c62`.
+  - PR `#56` was verified open, draft, merge state `CLEAN`, head `c966d1016e5d037a7d029b353585e7a132249c62`.
+  - `gh pr checks 56 --repo LavX/bazarr-provider-catalog`: no checks reported on the branch.
 - Remaining gates:
   - Run SDK live smoke search and download with valid Addic7ed cookies or credentials.
   - Decide whether captcha-solver integration belongs in a separate Plugin Hub helper before treating username/password login as fully equivalent to the legacy in-process captcha path.
