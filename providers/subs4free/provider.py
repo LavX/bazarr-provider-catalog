@@ -241,14 +241,20 @@ class Subs4FreeProvider:
             body = self._http_get(search_url, referer=BASE_URL)
             candidates = parse_search_results(body)
             candidates.extend(self._candidates_from_suggestions(video, body, config, search_url))
-            for item in candidates[:MAX_CANDIDATES_PER_QUERY]:
+            accepted = 0
+            for item in candidates:
                 if item["language"] not in requested:
+                    continue
+                if not _candidate_matches_video(video, item):
                     continue
                 key = (item["detail_url"], item["language"])
                 if key in seen:
                     continue
                 seen.add(key)
                 results.append(self._result(video, item))
+                accepted += 1
+                if accepted >= MAX_CANDIDATES_PER_QUERY:
+                    break
             if results:
                 break
         return sorted(results, key=lambda item: item["score"], reverse=True)
@@ -418,6 +424,17 @@ def _suggestion_matches(video, suggestion):
     return not year or str(year) in suggestion_tokens
 
 
+def _candidate_matches_video(video, item):
+    matches = set(derive_matches(video, item))
+    if "title" not in matches:
+        return False
+    requested_year = (video or {}).get("year")
+    candidate_year = (item or {}).get("year")
+    if requested_year and candidate_year and int(requested_year) != int(candidate_year):
+        return False
+    return True
+
+
 def _attr(tag, name):
     match = re.search(rf"\b{name}\s*=\s*([\"'])(.*?)\1", tag or "", re.I | re.S)
     return html.unescape(match.group(2)) if match else ""
@@ -426,7 +443,13 @@ def _attr(tag, name):
 def _absolute_url(url):
     if not url:
         return ""
-    return urllib.parse.urljoin(f"{BASE_URL}/", html.unescape(url))
+    value = html.unescape(url).strip()
+    parsed = urllib.parse.urlparse(value)
+    query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+    legacy_path = (query.get("p") or [""])[0]
+    if legacy_path.startswith(("movie-details/", "/movie-details/")):
+        return urllib.parse.urljoin(f"{BASE_URL}/", legacy_path.lstrip("/"))
+    return urllib.parse.urljoin(f"{BASE_URL}/", value)
 
 
 def _subtitle_id_from_url(url):
@@ -560,12 +583,18 @@ def _collect_extracted_subtitle_files(output_dir):
 
 def _content_payload(content, subtitle_format="srt", empty=False):
     content = _normalize_line_endings(content or b"")
+    encoding = "utf-8"
+    if content:
+        try:
+            content.decode("utf-8")
+        except UnicodeDecodeError:
+            encoding = "latin-1"
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": "text/plain",
         "format": subtitle_format or "srt",
-        "encoding": "utf-8",
+        "encoding": encoding,
         "empty": bool(empty),
     }
 
