@@ -110,7 +110,7 @@
   - `xsubs`: branch `catalog-xsubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/xsubs`, current head `5a17922`, dead origin
   - `yavkanet`: branch `catalog-yavkanet`, worktree `/tmp/bazarr_catalog_provider_worktrees/yavkanet`, current head `0ac39be`
   - `yifysubtitles`: branch `catalog-yifysubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/yifysubtitles`, current head `024f996`
-  - `zimuku`: branch `catalog-zimuku`, worktree `/tmp/bazarr_catalog_provider_worktrees/zimuku`, current head `f9a9eff`
+  - `zimuku`: branch `catalog-zimuku`, worktree `/tmp/bazarr_catalog_provider_worktrees/zimuku`, current head `8d55984`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -912,7 +912,7 @@
 
 - Branch: `catalog-zimuku`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/zimuku`
-- Current checkpoint: `f9a9eff Fix Zimuku dependency lock`
+- Current checkpoint: `8d55984 Merge current main into Zimuku branch`
 - Pull request: [#69](https://github.com/LavX/bazarr-provider-catalog/pull/69), open draft, head `catalog-zimuku`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -960,6 +960,20 @@
   - Compat search `GET /api/v1/subtitles?imdb_id=tt0944947&query=Game.of.Thrones.S01E01.HDTV.XviD-FEVER.mkv&type=episode&season_number=1&episode_number=1&languages=zh&per_page=100` returned HTTP `200`, `11` total results, and `0` Zimuku rows.
   - Direct active-bundle search failed with `ValueError: zimuku yunsuo captcha response required`.
   - Direct first search response from `https://srtku.com/search?q=Game+of+Thrones.S01` returned HTTP `404`, parsed as a Yunsuo challenge with `image_mime=image/bmp` and `10872` base64 characters.
+- Fresh current-main merge evidence on 2026-06-02:
+  - Live PR review-thread inspection found no conversation comments, no reviews, and no review threads.
+  - Merged `origin/main` into `catalog-zimuku`, resolved the generated README conflict by keeping the current main provider rows and placing Zimuku after YIFYSubtitles, then regenerated `catalog.json`.
+  - Effective branch scope against `origin/main`: `README.md`, `catalog.json`, `docs/provider-notes/zimuku.md`, `providers/zimuku/provider.json`, `providers/zimuku/provider.py`, Zimuku fixtures, `tests/test_catalog.py`, and `tests/test_zimuku.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_zimuku.py'`: `6` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `15` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/zimuku/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`.
+  - `git diff --cached --check`: clean.
+  - Touched-file attribution and conflict-marker scan across Zimuku files found no matches.
+  - `python3 -B -m unittest discover -s tests`: `734` tests passed with `6` skipped.
+  - Pushed branch head `8d55984d60bfc9e85d16c780d66a8fd1eda8c7f5`.
+  - PR `#69` is open draft, head `catalog-zimuku` at `8d55984d60bfc9e85d16c780d66a8fd1eda8c7f5`, merge state `CLEAN`, and no checks are reported.
 - Remaining gates:
   - Configure a working `captcha_solver_url` or one-use `captcha_response`, then rerun live Zimuku search and download smoke.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with Yunsuo verification solved.
