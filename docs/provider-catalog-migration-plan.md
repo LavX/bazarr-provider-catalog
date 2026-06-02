@@ -2248,6 +2248,15 @@
   - Local environment had no `ASSRT_TOKEN` or `ASSRT_API_TOKEN`, so SDK live smoke remains credential-gated.
   - `gh pr view 28 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,mergeStateStatus,headRefOid,url`: PR `#28` is open draft, head `861ad3dac62a953cd44a4893da7932fb318c01c7`, merge state `CLEAN`.
   - `gh pr checks 28 --repo LavX/bazarr-provider-catalog`: no checks reported on branch `catalog-assrt`.
+- Fresh token-gate and community-validation update on 2026-06-02:
+  - PR `#28` is open draft, head `2eecd352903f7fb9881a769f0adbce4b7c16a2ec`, merge state `CLEAN`, and no checks are reported.
+  - `python3 -B -m unittest discover -s tests -p 'test_assrt.py'`: `7` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `git diff --check origin/main...HEAD`: clean.
+  - No-token, empty-token, and placeholder-token probes to `/user/quota` and `/sub/search` all returned Assrt status `20001` with `invalid token`, confirming a token is required before download URL discovery can be exercised.
+  - Added `docs/provider-notes/assrt.md` documenting the tokened API contract, season-pack file selection, and community validation request.
+  - Updated PR `#28` body to request community validation from a token holder, especially for final download URLs from the target region.
 - Remaining gates:
   - Run SDK smoke search and download when a test Assrt token is available.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` is deployed on `bazarr-ui-test`; Assrt remains unproved only because the test token is missing.
