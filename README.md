@@ -40,6 +40,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`subclub`](providers/subclub/) | 0.1.0 | Scrapes [Subclub.eu](https://www.subclub.eu) for Estonian movie and episode subtitles. No login or API key. |
 | [`subf2m`](providers/subf2m/) | 0.1.1 | Scrapes [SubF2M](https://subf2m.co) for movie and episode subtitle ZIP files in 30+ languages. Configurable User-Agent and SSL verification. |
 | [`subs4free`](providers/subs4free/) | 0.1.2 | Scrapes [Subs4Free](https://www.subs4free.info) for Greek and English movie subtitles. No login or API key. |
+| [`subs4series`](providers/subs4series/) | 0.1.3 | Scrapes [Subs4Series](https://www.subs4series.com) for Greek and English episode subtitles. Uses ai-cloudscraper with inline Anubis solving, optional FlareSolverr fallback, and optional captcha helper settings for download gates. |
 | [`subhd`](providers/subhd/) | 0.1.3 | Scrapes [SubHD.tv](https://subhd.tv) for Chinese-first movie and episode subtitles with multilingual releases. No login or API key. |
 | [`subsarr`](providers/subsarr/) | 0.1.0 | Connects to a self-hosted [Subsarr](https://github.com/slimcdk/subsarr) API for Subscene-style movie and episode subtitles. Requires a Base URL. |
 | [`subsynchro`](providers/subsynchro/) | 0.1.2 | Scrapes [SubSynchro](https://www.subsynchro.com) for French movie release subtitle ZIP files. No login or API key. |
@@ -99,6 +100,7 @@ Every provider here ships independently of Bazarr+ releases. [Contribute](#contr
 - `providers/subclub/`: scrapes Subclub.eu movie and episode subtitle listings and downloads.
 - `providers/subf2m/`: scrapes SubF2M movie and episode subtitle pages and ZIP downloads.
 - `providers/subs4free/`: scrapes Subs4Free movie subtitle listings and anti-block downloads.
+- `providers/subs4series/`: scrapes Subs4Series episode subtitles with ai-cloudscraper, inline Anubis solving, optional FlareSolverr fallback, anti-block requests, optional captcha helper settings, and archive extraction.
 - `providers/subhd/`: scrapes SubHD.tv Chinese-first movie and episode subtitle pages.
 - `providers/subsarr/`: connects to a configured self-hosted Subsarr API.
 - `providers/subsynchro/`: scrapes SubSynchro French movie release subtitle ZIP files.
