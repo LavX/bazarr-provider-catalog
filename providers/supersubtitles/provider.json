@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "2941f47c40ecfba2255a333541221cf0bfaf8aaa2bd930b3ec3cf4e232f8a706",
+  "bundle_sha256": "59b5a58be1d17819badf326c928e3d95b3f50867e6da435fc98b7813dc6033c1",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -128,7 +128,7 @@
   "entry_class": "SuperSubtitlesProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "9f9d970ffd83d871b6f455b2ba5f577cdd498ac485d672ab649f34f21de74c89"
+    "provider.py": "0537bb7c316f0f30fdb31708a1bbe50d72df5843b37de19815ddb7ff78bb5f49"
   },
   "languages": [
     "eng",

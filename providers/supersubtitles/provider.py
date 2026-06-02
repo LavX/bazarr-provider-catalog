@@ -275,18 +275,9 @@ class SuperSubtitlesProvider:
         results = []
         seen = set()
         for row in _matching_episode_rows(rows, requested, video):
-            _sleep(config)
-            row = dict(row)
-            _apply_matched_release(video, row)
-            row["imdb_id"] = parse_detail_imdb_id(self._http_get(row["page_url"], referer=episode_url))
-            matches = derive_matches(video, row)
-            if _clean_imdb(video.get("series_imdb_id")) and row.get("imdb_id") and "series_imdb_id" not in matches:
-                continue
-            key = (row["subtitle_id"], row["language"])
-            if key in seen:
-                continue
-            seen.add(key)
-            results.append(_result(video, row, _language_variant(row["language"]), matches))
+            item = _episode_result_from_row(self._http_get, row, video, episode_url, seen, config)
+            if item is not None:
+                results.append(item)
         return sorted(results, key=lambda item: item["score"], reverse=True)
 
     def download(self, provider_payload, language, config):
@@ -343,7 +334,14 @@ def _episode_archive_candidates(candidates, payload):
 
 
 def _best_subtitle_candidate(candidates, payload):
-    return max(candidates, key=lambda name: _subtitle_file_score(name, payload))
+    best_name = candidates[0]
+    best_score = _subtitle_file_score(best_name, payload)
+    for name in candidates[1:]:
+        score = _subtitle_file_score(name, payload)
+        if score > best_score:
+            best_name = name
+            best_score = score
+    return best_name
 
 
 def _movie_matches(video, row):
@@ -390,6 +388,21 @@ def _matching_episode_rows(rows, requested, video):
         if not _episode_row_matches_requested(video, row):
             continue
         yield row
+
+
+def _episode_result_from_row(fetch, row, video, episode_url, seen, config):
+    _sleep(config)
+    row = dict(row)
+    _apply_matched_release(video, row)
+    row["imdb_id"] = parse_detail_imdb_id(fetch(row["page_url"], referer=episode_url))
+    matches = derive_matches(video, row)
+    if _clean_imdb(video.get("series_imdb_id")) and row.get("imdb_id") and "series_imdb_id" not in matches:
+        return None
+    key = (row["subtitle_id"], row["language"])
+    if key in seen:
+        return None
+    seen.add(key)
+    return _result(video, row, _language_variant(row["language"]), matches)
 
 
 def _apply_matched_release(video, row):
@@ -455,11 +468,12 @@ def _result(video, row, language, matches):
     score += 5 if "release_group" in matches else 0
     score = min(score, 100)
     filename = row.get("filename") or _generated_filename(row, language)
+    release_info = _result_release_info(row)
     return {
         "provider": PROVIDER_ID,
         "id": f"{PROVIDER_ID}-{row['subtitle_id']}-{language['alpha3']}{'-forced' if language.get('forced') else ''}",
         "language": dict(language),
-        "release_info": row.get("release_info") or _row_release_text(row),
+        "release_info": release_info,
         "filename": filename,
         "matches": matches,
         "score": score,
@@ -469,26 +483,38 @@ def _result(video, row, language, matches):
         "hearing_impaired_verifiable": False,
         "hearing_impaired": False,
         "page_link": row.get("page_url"),
-        "display": {
-            "source": "feliratok.eu",
-            "title": row.get("title"),
-            "release": row.get("release_info") or _row_release_text(row),
-            "uploader": row.get("uploader"),
-        },
-        "provider_payload": {
-            "provider": PROVIDER_ID,
-            "schema": 1,
-            "subtitle_id": row["subtitle_id"],
-            "url": row.get("download_url"),
-            "page_url": row.get("page_url"),
-            "filename": filename,
-            "release_info": row.get("release_info") or _row_release_text(row),
-            "language": language["alpha3"],
-            "forced": bool(language.get("forced")),
-            "season": row.get("season"),
-            "episode": row.get("episode"),
-            "is_pack": bool(row.get("is_pack")),
-        },
+        "display": _result_display(row, release_info),
+        "provider_payload": _provider_payload(row, language, filename, release_info),
+    }
+
+
+def _result_release_info(row):
+    return row.get("release_info") or _row_release_text(row)
+
+
+def _result_display(row, release_info):
+    return {
+        "source": "feliratok.eu",
+        "title": row.get("title"),
+        "release": release_info,
+        "uploader": row.get("uploader"),
+    }
+
+
+def _provider_payload(row, language, filename, release_info):
+    return {
+        "provider": PROVIDER_ID,
+        "schema": 1,
+        "subtitle_id": row["subtitle_id"],
+        "url": row.get("download_url"),
+        "page_url": row.get("page_url"),
+        "filename": filename,
+        "release_info": release_info,
+        "language": language["alpha3"],
+        "forced": bool(language.get("forced")),
+        "season": row.get("season"),
+        "episode": row.get("episode"),
+        "is_pack": bool(row.get("is_pack")),
     }
 
 
