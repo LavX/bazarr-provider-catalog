@@ -57,7 +57,7 @@
   - `betaseries`: branch `catalog-betaseries`, worktree `/tmp/bazarr_catalog_provider_worktrees/betaseries`, current head `461ab52`
   - `bsplayer`: branch `catalog-bsplayer`, worktree `/tmp/bazarr_catalog_provider_worktrees/bsplayer`, current head `c04f374`
   - `cinemaz`: branch `catalog-cinemaz`, worktree `/tmp/bazarr_catalog_provider_worktrees/cinemaz`, current head `df1b3bd`
-  - `embeddedsubtitles`: branch `catalog-embeddedsubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/embeddedsubtitles`, current head `a8257a4`, local/generated provider
+  - `embeddedsubtitles`: branch `catalog-embeddedsubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/embeddedsubtitles`, current head `3da76ef`, local/generated provider
   - `gestdown`: branch `catalog-gestdown`, worktree `/tmp/bazarr_catalog_provider_worktrees/gestdown`, current head `c6dfb77`
   - `greeksubs`: branch `catalog-greeksubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubs`, current head `1ec84fa`
   - `greeksubtitles`: branch `catalog-greeksubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubtitles`, current head `c0059c2`
@@ -155,7 +155,7 @@
 
 - Branch: `catalog-embeddedsubtitles`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/embeddedsubtitles`
-- Current checkpoint: `a8257a4 Add EmbeddedSubtitles provider`
+- Current checkpoint: `3da76ef Clarify EmbeddedSubtitles WebVTT muxing`
 - PR: `https://github.com/LavX/bazarr-provider-catalog/pull/54` opened on 2026-06-01 and marked ready for review, head `catalog-embeddedsubtitles`, base `main`, merge state `CLEAN`.
 - Provider type: local/generated provider.
 - Local evidence on 2026-05-31:
@@ -199,6 +199,17 @@
   - Prohibited punctuation and attribution scan over README, catalog, EmbeddedSubtitles notes, provider code, tests, and fixtures found no matches.
   - `python3 -B -m unittest discover -s tests`: `336` tests passed, `6` skipped.
   - PR `#54` is open, non-draft, merge state `CLEAN`, head `a8257a4f98bf825a3ad3cb2c2bb0c9d5df6bcb16`.
+- Review-fix evidence on 2026-06-02:
+  - PR `#54` was updated to head `3da76ef267e7f32c732fcf20dfdb5196ea692f29` after fixing review feedback for ffprobe process failures, forced and SDH title flags, and WebVTT muxing.
+  - Regression coverage added for missing `ffprobe`, ffprobe timeout, title-derived forced and SDH flags, and passing `webvtt` to ffmpeg `-f` while keeping Provider Hub payload format `vtt`.
+  - `python3 -B -m unittest discover -s tests -p 'test_embeddedsubtitles.py'`: `12` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/embeddedsubtitles/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14` with `>=3.12,<3.15`.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan over README, catalog, EmbeddedSubtitles notes, provider code, tests, and fixtures found no matches.
+  - Live GraphQL review-thread check on PR `#54` found all `3` review threads outdated and no active non-outdated threads.
 - Remaining gates: none for the current EmbeddedSubtitles migration proof.
 
 ### `whisperai`
