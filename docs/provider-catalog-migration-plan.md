@@ -59,7 +59,7 @@
   - `avistaz`: branch `catalog-avistaz`, worktree `/tmp/bazarr_catalog_provider_worktrees/avistaz`, current head `47d6d3c`
   - `betaseries`: branch `catalog-betaseries`, worktree `/tmp/bazarr_catalog_provider_worktrees/betaseries`, current head `461ab52`
   - `bsplayer`: branch `catalog-bsplayer`, worktree `/tmp/bazarr_catalog_provider_worktrees/bsplayer`, current head `c04f374`
-  - `cinemaz`: branch `catalog-cinemaz`, worktree `/tmp/bazarr_catalog_provider_worktrees/cinemaz`, current head `df1b3bd`
+  - `cinemaz`: branch `catalog-cinemaz`, worktree `/tmp/bazarr_catalog_provider_worktrees/cinemaz`, current head `77eaf7a`
   - `embeddedsubtitles`: branch `catalog-embeddedsubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/embeddedsubtitles`, current head `73b7169`, local/generated provider
   - `gestdown`: branch `catalog-gestdown`, worktree `/tmp/bazarr_catalog_provider_worktrees/gestdown`, current head `c6dfb77`
   - `greeksubs`: branch `catalog-greeksubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/greeksubs`, current head `1ec84fa`
@@ -3439,7 +3439,7 @@
 
 - Branch: `catalog-cinemaz`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/cinemaz`
-- Current checkpoint: `df1b3bd Add CinemaZ provider`
+- Current checkpoint: `77eaf7a Merge current main into CinemaZ branch`
 - PR: `https://github.com/LavX/bazarr-provider-catalog/pull/52` opened as draft on 2026-06-01, head `catalog-cinemaz`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -3475,6 +3475,21 @@
   - `python3 -B -m sdk smoke-test --provider cinemaz --language eng --video-fixture /tmp/cinemaz_release_video.json --expect-min-results 1 --skip-download`: failed at the expected credential gate with `CinemaZ cookies are required`.
   - PR `#52` was verified open, draft, merge state `CLEAN`, head `df1b3bd4d72163888b68ba2e659bacd016af96d7`.
   - Test-server config check read only cookie and user-agent presence plus length from `/home/lavx/bazarr-data/config/config.yaml`; `cinemaz.cookies` and `cinemaz.user_agent` are empty.
+- Fresh current-main merge evidence on 2026-06-02:
+  - Live thread-aware PR inspection found no conversation comments, reviews, or review threads on PR `#52`.
+  - Merged `origin/main` into `catalog-cinemaz` and resolved the generated `README.md` and `catalog.json` conflicts.
+  - Effective branch scope against `origin/main` remains limited to `README.md`, `catalog.json`, `docs/provider-notes/cinemaz.md`, `providers/cinemaz/provider.json`, `providers/cinemaz/provider.py`, and `tests/test_cinemaz.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_cinemaz.py'`: `7` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/cinemaz/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python runtime policy remains `>=3.12,<3.15`.
+  - `git diff --cached --check` and `git diff --check origin/main...HEAD`: clean.
+  - Attribution and em-dash scan over `providers/cinemaz`, `tests/test_cinemaz.py`, `docs/provider-notes/cinemaz.md`, `README.md`, and `catalog.json` found no matches.
+  - `python3 -B -m unittest discover -s tests`: `734` tests passed, `6` skipped.
+  - Pushed `catalog-cinemaz` at `77eaf7a46ee1b7c0e7e1dbb9a62e663d4e790910`.
+  - PR `#52` was verified open, draft, merge state `CLEAN`, head `77eaf7a46ee1b7c0e7e1dbb9a62e663d4e790910`.
+  - `gh pr checks 52 --repo LavX/bazarr-provider-catalog`: no checks reported on the branch.
 - Remaining gates:
   - Run SDK live smoke search and download with valid CinemaZ cookies and a known CinemaZ release-page fixture or test-server media item.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `cinemaz` in the trusted replacement policy.
