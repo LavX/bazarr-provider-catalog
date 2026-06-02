@@ -399,11 +399,6 @@ def _movie_title_from_release(release):
     return _clean_text(title)
 
 
-def _year_from_text(text):
-    match = _YEAR_RE.search(text or "")
-    return int(match.group(1)) if match else None
-
-
 def _years_from_text(text):
     return [int(match.group(1)) for match in _YEAR_RE.finditer(text or "")]
 
