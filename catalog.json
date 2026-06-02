@@ -2564,6 +2564,99 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "bfc7f480af34c85dd9c1377ff7735416a7c6570520cd79f6e0f0697609fd6d0d",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between HTTP calls to subf2m.co.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            },
+            "user_agent": {
+              "default": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub",
+              "description": "Browser User-Agent sent to subf2m.co.",
+              "title": "User-Agent",
+              "type": "string"
+            },
+            "verify_ssl": {
+              "default": true,
+              "description": "Verify TLS certificates when connecting to subf2m.co and download hosts.",
+              "title": "Verify SSL",
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Scrapes subf2m.co for movie and episode subtitle ZIP files. Custom User-Agent and SSL verification settings are supported.",
+        "entry_class": "SubF2MProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "9e5fc8b1210883c636883aa6fbe7b5ac496cf5a247beb239979a76ffbbe6bdc6"
+        },
+        "languages": [
+          "ara",
+          "ben",
+          "bul",
+          "ces",
+          "dan",
+          "deu",
+          "ell",
+          "eng",
+          "fas",
+          "fin",
+          "fra",
+          "heb",
+          "hrv",
+          "hun",
+          "ind",
+          "isl",
+          "ita",
+          "jpn",
+          "mkd",
+          "msa",
+          "nld",
+          "nor",
+          "pol",
+          "por",
+          "ron",
+          "rus",
+          "spa",
+          "srp",
+          "swe",
+          "tha",
+          "tur",
+          "vie"
+        ],
+        "name": "SubF2M",
+        "provider_id": "subf2m",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/subf2m",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.1"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "8054a67329b35c23ee464f64d5bdaa7d829aca6745e51e432414cacf6e841230",
         "config_schema": {
           "additionalProperties": false,
