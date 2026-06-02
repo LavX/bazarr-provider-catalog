@@ -194,6 +194,36 @@ class YavkaNetCloudflareTests(unittest.TestCase):
         self.assertEqual(solved_calls[0][1], "https://yavka.net/.within.website/?redir=/imdb/tt1160419")
         self.assertEqual(solved_calls[0][2], "https://yavka.net/imdb/tt1160419")
 
+    def test_http_get_solves_anubis_body_before_retrying_original_url(self):
+        anubis_body = (
+            b'<html><head><meta http-equiv="refresh" '
+            b'content="0; url=/.within.website/?redir=/imdb/tt1160419"></head></html>'
+        )
+        solved_response = FakeResponse(b"<html>ok</html>", url="https://yavka.net/imdb/tt1160419")
+        scraper = mock.MagicMock()
+        scraper.get.side_effect = [
+            FakeResponse(anubis_body, status=200, url="https://yavka.net/imdb/tt1160419"),
+            solved_response,
+        ]
+        solved_calls = []
+
+        def fake_solve(active_scraper, challenge_url, original_url, timeout):
+            solved_calls.append((active_scraper, challenge_url, original_url, timeout))
+            return {"techaro.lol-anubis-auth": "ok"}
+
+        with mock.patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), mock.patch.object(
+            self.mod,
+            "solve_anubis_challenge",
+            side_effect=fake_solve,
+        ):
+            body = self.mod.http_get("https://yavka.net/imdb/tt1160419", state={})
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(scraper.get.call_count, 2)
+        self.assertIs(solved_calls[0][0], scraper)
+        self.assertEqual(solved_calls[0][1], "https://yavka.net/imdb/tt1160419")
+        self.assertEqual(solved_calls[0][2], "https://yavka.net/imdb/tt1160419")
+
     def test_http_get_uses_flaresolverr_fallback_after_challenge(self):
         scraper = mock.MagicMock()
         scraper.get.return_value = FakeResponse(

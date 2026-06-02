@@ -5162,7 +5162,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "792287c25200bcc400f5b59fc1f69150b4690cfe78338cda9629b2799b94b8ec",
+        "bundle_sha256": "43f2513ac0851bab4b656babcf77fe20e949fbccf8cccc54a216f4d0c267df43",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -5479,7 +5479,7 @@
         "entry_class": "YavkaNetProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "966276df590188dee85752f7c53a3f840326cfb82dd310f2f287b1d082a3c5ef"
+          "provider.py": "9a010f7fe35dd83ce25e69e848303ece2e9c281dff277a295c5e9bf5c42a99f6"
         },
         "languages": [
           "bul",
