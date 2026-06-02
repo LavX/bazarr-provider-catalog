@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import tempfile
 import unittest
 import zipfile
 from pathlib import Path
@@ -142,6 +143,36 @@ class Napisy24ProviderTests(unittest.TestCase):
         self.assertEqual(provider.search(video, [{"alpha3": "eng"}], {}), [])
         video["hashes"] = {}
         self.assertEqual(provider.search(video, [{"alpha3": "pol"}], {}), [])
+
+    def test_search_computes_hash_from_existing_video_path(self):
+        provider = self.mod.Napisy24Provider()
+        body = bytes((index % 251 for index in range(150000)))
+        calls = []
+
+        def post(url, data, headers=None, timeout=10):
+            del url, headers, timeout
+            calls.append(dict(data))
+            return self.mod.HttpResponse(200, b"OK-0", {})
+
+        provider._http_post = post
+        with tempfile.NamedTemporaryFile(suffix=".mkv") as handle:
+            handle.write(body)
+            handle.flush()
+            results = provider.search(
+                {
+                    "kind": "movie",
+                    "title": "Example",
+                    "year": 2024,
+                    "name": handle.name,
+                    "hashes": {},
+                },
+                [{"alpha3": "pol"}],
+                {},
+            )
+
+        self.assertEqual(results, [])
+        self.assertEqual(calls[0]["fh"], "661cd19248ffe906")
+        self.assertEqual(calls[0]["fs"], "150000")
 
     def test_download_extracts_embedded_zip_content(self):
         archive_body = _zip_body(

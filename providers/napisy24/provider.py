@@ -6,6 +6,7 @@ import html
 import io
 import os
 import re
+import struct
 import time
 import urllib.error
 import urllib.parse
@@ -21,6 +22,7 @@ HTTP_TIMEOUT_SECONDS = 10
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt")
 LANGUAGE = {"alpha3": "pol", "alpha2": "pl", "hi": False, "forced": False}
 _NON_ALNUM_RE = re.compile(r"[\W_]+")
+_OPENSUBTITLES_HASH_READ_SIZE = 64 * 1024
 
 
 class HttpResponse:
@@ -171,13 +173,50 @@ def _split_response(body):
 def _lookup_inputs(video):
     hashes = video.get("hashes") or {}
     file_hash = str(hashes.get("napisy24") or "").strip()
+    path = _existing_video_path(video)
+    computed_size = None
     if not file_hash:
-        return None
+        computed = _compute_opensubtitles_hash(path)
+        if not computed:
+            return None
+        file_hash, computed_size = computed
     size = video.get("size")
+    if size in (None, "") and computed_size is not None:
+        size = computed_size
+    if size in (None, "") and path:
+        size = os.path.getsize(path)
     name = video.get("name")
+    if not name and path:
+        name = path
     if size in (None, "") or not name:
         return None
     return {"hash": file_hash, "size": size, "name": str(name)}
+
+
+def _existing_video_path(video):
+    for key in ("name", "original_path", "original_name"):
+        value = str((video or {}).get(key) or "").strip()
+        if value and os.path.isfile(value):
+            return value
+    return None
+
+
+def _compute_opensubtitles_hash(path):
+    if not path:
+        return None
+    size = os.path.getsize(path)
+    read_size = _OPENSUBTITLES_HASH_READ_SIZE
+    if size < read_size * 2:
+        return None
+    total = size
+    with open(path, "rb") as handle:
+        for offset in (0, size - read_size):
+            handle.seek(offset)
+            chunk = handle.read(read_size)
+            usable = len(chunk) - (len(chunk) % 8)
+            if usable:
+                total += sum(struct.unpack(f"<{usable // 8}Q", chunk[:usable]))
+    return f"{total & 0xFFFFFFFFFFFFFFFF:016x}", size
 
 
 def _credentials(config):

@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "14d1a133bc1eb7429086f081ae292207e1338a96176b7491d28f4a4fb457a22e",
+  "bundle_sha256": "841249643351181419a5b756b1cdd1578ec5acd3772548e7c74f274daa701d58",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -33,7 +33,7 @@
   "entry_class": "Napisy24Provider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "8c286227debd66c660129abf5660d33da52aed8e37f65bc487f647f5efe82d1e"
+    "provider.py": "673099609aba1d55f1c0186a42f63ac0fcbab7101014b2cd2fdd6b97eb5454b5"
   },
   "languages": [
     "pol"
@@ -58,5 +58,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.0"
+  "version": "0.1.1"
 }
