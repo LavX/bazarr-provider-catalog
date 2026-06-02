@@ -57,6 +57,7 @@ _TITLE_RE = re.compile(
     r"^(?P<title>.+?)\s*\((?P<year>\d{4})\)(?:\s*\[(?P<season>\d+)x(?P<episode>\d+)\])?",
     re.I,
 )
+_TITLE_EPISODE_RE = re.compile(r"(?:^|[\s._-])(?P<season>\d{1,2})x(?P<episode>\d{1,3})(?:\b|$)", re.I)
 _IMDB_RE = re.compile(r"imdb\.com/title/(?P<imdb>tt\d+)/?", re.I)
 _RATING_RE = re.compile(r"(?:alt|title)=['\"]Rating:\s*(?P<rating>[\d.]+)", re.I)
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -78,6 +79,7 @@ def parse_search_results(body):
         title_match = _TITLE_RE.search(title_text)
         if not title_match:
             continue
+        title, season, episode = _title_and_episode_from_match(title_match)
         language = _language_from_cell(cells[5] if len(cells) > 5 else "")
         if not language:
             continue
@@ -86,10 +88,10 @@ def parse_search_results(body):
         rows.append(
             {
                 "download_url": _clean_download_url(anchor["href"]),
-                "title": title_match.group("title").strip(),
+                "title": title,
                 "year": int(title_match.group("year")),
-                "season": int(title_match.group("season")) if title_match.group("season") else None,
-                "episode": int(title_match.group("episode")) if title_match.group("episode") else None,
+                "season": season,
+                "episode": episode,
                 "language": language,
                 "num_cds": _parse_int(cells[6] if len(cells) > 6 else ""),
                 "fps": _parse_float(cells[7] if len(cells) > 7 else ""),
@@ -198,6 +200,11 @@ class SubsSabBzProvider:
             title = _search_title(video["title"], MOVIE_NAME_FIXES)
         else:
             return []
+        match_video = dict(video)
+        if media_type == "episode":
+            match_video["series"] = title
+        else:
+            match_video["title"] = title
 
         config = dict(config or {})
         results = []
@@ -206,7 +213,7 @@ class SubsSabBzProvider:
             _sleep(config)
             rows = parse_search_results(self._http_post(SEARCH_URL, _search_payload(video, title, alpha3), referer=BASE_URL + "/"))
             for row in rows[:25]:
-                if row["language"] != alpha3 or not _row_matches_video(row, video, media_type):
+                if row["language"] != alpha3 or not _row_matches_video(row, match_video, media_type):
                     continue
                 _sleep(config)
                 try:
@@ -227,7 +234,7 @@ class SubsSabBzProvider:
                         if key in seen:
                             continue
                         seen.add(key)
-                        results.append(self._result(video, item))
+                        results.append(self._result(match_video, item))
         return sorted(results, key=lambda item: item["score"], reverse=True)
 
     def _result(self, video, item):
@@ -475,6 +482,18 @@ def _language_from_cell(value):
     return None
 
 
+def _title_and_episode_from_match(title_match):
+    title = title_match.group("title").strip()
+    season = int(title_match.group("season")) if title_match.group("season") else None
+    episode = int(title_match.group("episode")) if title_match.group("episode") else None
+    marker = _TITLE_EPISODE_RE.search(title)
+    if marker:
+        season = int(marker.group("season"))
+        episode = int(marker.group("episode"))
+        title = title[: marker.start()].strip(" .-_")
+    return title, season, episode
+
+
 def _row_matches_video(row, video, media_type):
     if media_type == "movie":
         if not _title_matches(video.get("title"), row.get("title")):
@@ -492,7 +511,10 @@ def _file_matches_video(filename, video, media_type):
         return True
     season, episode = _season_episode_from_filename(filename)
     if season is None or episode is None:
-        return True
+        episode = _episode_from_numeric_filename(filename)
+        if episode is None:
+            return True
+        return episode == int(video.get("episode"))
     return season == int(video.get("season")) and episode == int(video.get("episode"))
 
 
@@ -508,6 +530,13 @@ def _season_episode_from_filename(filename):
     if match:
         return int(match.group("season")), int(match.group("episode"))
     return None, None
+
+
+def _episode_from_numeric_filename(filename):
+    base = os.path.splitext(os.path.basename(str(filename or "")))[0]
+    if re.fullmatch(r"\d{1,3}", base):
+        return int(base)
+    return None
 
 
 def _requested_languages(languages):
@@ -539,7 +568,7 @@ def _search_payload(video, title, alpha3):
     payload = {
         "act": "search",
         "movie": title,
-        "select-language": "1" if alpha3 == "eng" else "2",
+        "select-language": "2" if alpha3 == "eng" else "1",
         "upldr": "",
         "yr": "",
         "release": "",

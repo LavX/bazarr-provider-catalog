@@ -24,6 +24,61 @@ SEARCH_INCEPTION_BG_HTML = (FIXTURE_DIR / "subssabbz_search_inception_bg.html").
 SEARCH_GOT_BG_HTML = (FIXTURE_DIR / "subssabbz_search_game_of_thrones_bg.html").read_bytes()
 
 
+DAREDEVIL_EN_HTML = b"""
+<!doctype html>
+<html>
+<body>
+<table>
+  <tr class="subs-row">
+    <td class="c1field">TV</td>
+    <td class="c1trailer">&nbsp;</td>
+    <td class="c1notice">&nbsp;</td>
+    <td class="c2field">
+      <a href="http://subs.sab.bz/index.php?s=session&amp;act=download&amp;attach_id=88001"
+         onMouseover="ddrivetip('&lt;b&gt;release&lt;/b&gt;: Daredevil.S01E01.WEB-DL')">Daredevil</a> (2015) [1x1]
+    </td>
+    <td>10 Apr 2015</td>
+    <td>English</td>
+    <td>1</td>
+    <td>23.976</td>
+    <td>translator</td>
+    <td><a href="http://www.imdb.com/title/tt3322312/">URL</a></td>
+    <td>1200</td>
+    <td><img alt="Rating: 5" title="Rating: 5" /></td>
+  </tr>
+</table>
+</body>
+</html>
+"""
+
+SONS_OF_ANARCHY_EN_HTML = b"""
+<!doctype html>
+<html>
+<body>
+<table>
+  <tr class="subs-row">
+    <td class="c1field">TV</td>
+    <td class="c1trailer">&nbsp;</td>
+    <td class="c1notice">&nbsp;</td>
+    <td class="c2field">
+      <a href="http://subs.sab.bz/index.php?s=session&amp;act=download&amp;attach_id=88002"
+         onMouseover="ddrivetip('&lt;b&gt;release&lt;/b&gt;: Sons.of.Anarchy.S05E11')">Sons of Anarchy - 05x11</a> (2012)
+    </td>
+    <td>21 Nov 2012</td>
+    <td>English</td>
+    <td>1</td>
+    <td>23.976</td>
+    <td>translator</td>
+    <td><a href="http://www.imdb.com/title/tt1124373/">URL</a></td>
+    <td>1200</td>
+    <td><img alt="Rating: 5" title="Rating: 5" /></td>
+  </tr>
+</table>
+</body>
+</html>
+"""
+
+
 def _zip_body(files):
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w") as archive:
@@ -53,6 +108,13 @@ class SubsSabBzParserTests(unittest.TestCase):
 
         self.assertEqual(rows[0]["language"], "bul")
         self.assertEqual(rows[0]["download_url"], "http://subs.sab.bz/index.php?act=download&attach_id=51764")
+
+    def test_parse_search_results_extracts_tv_marker_from_title_text(self):
+        rows = self.mod.parse_search_results(SONS_OF_ANARCHY_EN_HTML)
+
+        self.assertEqual(rows[0]["title"], "Sons of Anarchy")
+        self.assertEqual(rows[0]["season"], 5)
+        self.assertEqual(rows[0]["episode"], 11)
 
     def test_extract_archive_files_reads_zip_members(self):
         body = _zip_body(
@@ -98,7 +160,7 @@ class SubsSabBzProviderTests(unittest.TestCase):
             {},
         )
 
-        self.assertEqual(calls[0][1]["select-language"], "1")
+        self.assertEqual(calls[0][1]["select-language"], "2")
         self.assertEqual(results[0]["language"]["alpha3"], "eng")
         self.assertIn("imdb_id", results[0]["matches"])
         self.assertIn("release_group", results[0]["matches"])
@@ -132,6 +194,60 @@ class SubsSabBzProviderTests(unittest.TestCase):
         self.assertEqual(results[0]["filename"], "Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.srt")
         self.assertIn("episode", results[0]["matches"])
         self.assertIn("series_imdb_id", results[0]["matches"])
+
+    def test_search_episode_uses_normalized_series_title_for_row_filter(self):
+        provider = self.mod.SubsSabBzProvider()
+        archive = _zip_body({"Daredevil.S01E01.WEB-DL.srt": "subtitle"})
+        calls = []
+
+        def post_stub(url, data, timeout=30, referer=None):
+            del url, timeout, referer
+            calls.append(data)
+            return DAREDEVIL_EN_HTML
+
+        provider._http_post = post_stub
+        provider._http_get = lambda url, timeout=30, referer=None: archive
+
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "Marvel's Daredevil",
+                "season": 1,
+                "episode": 1,
+                "series_imdb_id": "tt3322312",
+            },
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {},
+        )
+
+        self.assertEqual(calls[0]["movie"], "Daredevil")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["filename"], "Daredevil.S01E01.WEB-DL.srt")
+
+    def test_search_episode_filters_ambiguous_numeric_archive_members(self):
+        provider = self.mod.SubsSabBzProvider()
+        archive = _zip_body(
+            {
+                "01.srt": "right episode",
+                "02.srt": "wrong episode",
+            }
+        )
+        provider._http_post = lambda url, data, timeout=30, referer=None: SEARCH_GOT_BG_HTML
+        provider._http_get = lambda url, timeout=30, referer=None: archive
+
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "Game of Thrones",
+                "season": 1,
+                "episode": 1,
+                "series_imdb_id": "tt0944947",
+            },
+            [{"alpha3": "bul", "alpha2": "bg"}],
+            {},
+        )
+
+        self.assertEqual([item["filename"] for item in results], ["01.srt"])
 
     def test_search_preserves_hi_and_forced_requested_flags(self):
         provider = self.mod.SubsSabBzProvider()
@@ -198,6 +314,10 @@ class SubsSabBzProviderTests(unittest.TestCase):
         self.assertEqual(body, b"ok")
         self.assertEqual(opener.calls, 3)
         self.assertEqual(sleeps, [10, 10])
+
+    def test_search_payload_uses_site_language_selector_ids(self):
+        self.assertEqual(self.mod._search_payload({"kind": "movie"}, "Inception", "eng")["select-language"], "2")
+        self.assertEqual(self.mod._search_payload({"kind": "movie"}, "Inception", "bul")["select-language"], "1")
 
     def test_download_selects_named_archive_member_and_normalizes_line_endings(self):
         provider = self.mod.SubsSabBzProvider()
