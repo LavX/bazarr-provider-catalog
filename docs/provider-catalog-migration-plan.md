@@ -1155,6 +1155,13 @@
   - `git diff --check origin/main...HEAD`: clean.
   - Prohibited punctuation and attribution scan across README, catalog, Zimuku notes, provider code, tests, and fixtures found no matches.
   - Escalated live SDK smoke `python3 -B -m sdk smoke-test --provider zimuku --language zho --video-fixture tests/fixtures/zimuku_video_game_of_thrones_s01e01.json --config-json '{"request_delay_ms":0}' --expect-min-results 1`: `zimuku ok`.
+- Fresh continuation recheck on 2026-06-02:
+  - PR `#69` is open draft, head `6fab89144af39b6deda24c0921751500d354a0d6`, merge state `CLEAN`, and no checks are reported.
+  - `python3 -B -m unittest discover -s tests -p 'test_zimuku.py'`: `14` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `15` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Escalated live SDK smoke with download enabled `python3 -B -m sdk smoke-test --provider zimuku --language zho --video-fixture tests/fixtures/zimuku_video_game_of_thrones_s01e01.json --config-json '{"request_delay_ms":0}' --expect-min-results 1`: `zimuku ok`.
 - Remaining gates:
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with Yunsuo verification solved.
 
