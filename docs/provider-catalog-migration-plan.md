@@ -46,11 +46,11 @@
 - Coverage recheck on 2026-06-02: source-provider count after excluding helper/shared modules is `60`, provider worktree count after excluding catalog maintenance worktrees is `60`, the missing-worktree comparison returned no rows, and the extra-worktree comparison returned no rows.
 - Open PR review-thread audit on 2026-06-02: GraphQL inspection of all `28` open provider PRs found no review threads, no PR comments, and no reviews. All open provider PRs are draft PRs with merge state `CLEAN`, so the remaining open queue is verification-gated rather than review-feedback-gated.
 - Open PR gate classification on 2026-06-02 continuation: live GitHub state still shows `28` open provider PRs, all draft, all merge state `CLEAN`.
-  - Credential, session, or API-key gated: `addic7ed`, `assrt`, `avistaz`, `betaseries`, `cinemaz`, `hdbits`, `karagarga`, `ktuvit`, `legendasdivx`, `legendasnet`, `opensubtitlescom`, `pipocas`, `subdl`, `subsource`, `subsro`, `titlovi`, and `titulky`.
+  - Credential, session, or API-key gated: `addic7ed`, `assrt`, `avistaz`, `cinemaz`, `hdbits`, `karagarga`, `ktuvit`, `legendasdivx`, `legendasnet`, `opensubtitlescom`, `pipocas`, `subdl`, `subsource`, `subsro`, `titlovi`, and `titulky`.
   - User service or base URL gated: `subsarr` needs a reachable self-hosted Subsarr `base_url`; `whisperai` needs a real Whisper web-service endpoint for non-stub proof.
   - Origin access or anti-bot gated: `turkcealtyaziorg`, `yavkanet`, and `wizdom`.
   - Real media hash or disclosure gated: `napisy24` needs a library-backed video with a valid Napisy24/OpenSubtitles hash; `shooter` needs explicit approval or a non-sensitive fixture before sending derived Shooter hashes to the public API.
-  - Compat-only gated: `jimaku`, `regielive`, `subx`, and `zimuku` have current SDK search and download proof, but still need Provider Hub compat search, download, and stream proof.
+  - Compat-only gated: `betaseries`, `jimaku`, `regielive`, `subx`, and `zimuku` have current SDK search and download proof, but still need Provider Hub compat search, download, and stream proof.
   - Current local compat reachability evidence: no Bazarr test container is running, `http://127.0.0.1:6767` is closed, `bazarr-ui-test` does not resolve over SSH, and `BAZARR_COMPAT_API_KEY` is unset in this shell.
 - Current catalog checkout inventory: this planning worktree is intentionally not rebased onto `main`, but live `main` now ships 40 Provider Hub bundles, adding `gestdown`, `bsplayer`, `subtis`, `subtitulamostv`, `tvsubtitles`, `greeksubs`, `animekalesi`, `animesubinfo`, `opensubtitles_org`, `animetosho`, `napiprojekt`, `subf2m`, `nekur`, `greeksubtitles`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subs4free`, `subs4series`, `embedded_subtitles`, `subtitrarinoi`, `yifysubtitles`, `subtitriid`, `titrari`, and `supersubtitles` to the previous 12 bundle baseline.
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
@@ -2270,8 +2270,13 @@
   - Fresh recheck after fetching `origin/main` confirmed branch scope remains limited to README, catalog, `providers/betaseries`, `tests/test_betaseries.py`, and BetaSeries fixtures.
   - Fresh live GraphQL review-thread check found no review threads on PR `#29`.
   - Local environment has no `BETASERIES_TOKEN` or `BETASERIES_API_TOKEN`, so live SDK smoke remains credential-gated.
+  - Fresh SDK recheck on 2026-06-02 using the temporary BetaSeries API key from `/tmp/bazarr_provider_test_credentials.env`: `python3 -B -m unittest discover -s tests -p 'test_betaseries.py'` ran `7` tests passed, `python3 -B -m unittest discover -s tests -p 'test_catalog.py'` ran `14` tests passed with `6` skipped, `python3 -B -m sdk validate` returned `catalog ok`, and `git diff --check origin/main...HEAD` was clean.
+  - Raw API probe for the committed Blue Lights fixture returned `0` subtitles from `episodes/display`, while `shows/episodes` returned HTTP `400`; this fixture should not be used as live positive proof.
+  - Raw API probe for Breaking Bad S03E13 with `series_tvdb_id=81189`, season `3`, and episode `13` returned `24` subtitles through `shows/episodes`.
+  - `python3 -B -m sdk smoke-test --provider betaseries --language fra --video-fixture /tmp/betaseries_breaking_bad_s03e13.json --config-json '{}' --secret token=BETASERIES_API_KEY --expect-min-results 1 --skip-download`: `betaseries ok`.
+  - `python3 -B -m sdk smoke-test --provider betaseries --language fra --video-fixture /tmp/betaseries_breaking_bad_s03e13.json --config-json '{}' --secret token=BETASERIES_API_KEY --expect-min-results 1`: `betaseries ok`.
+  - `gh pr view 29 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,mergeStateStatus,reviewDecision,headRefOid,url`: PR `#29` is open, draft, head `8e228c910cebcd074150696bbc02f5abc9c76b21`, merge state `CLEAN`.
 - Remaining gates:
-  - Run SDK smoke search and download when a test BetaSeries API key is available.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `betaseries` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with a real API key.
 
