@@ -1,12 +1,14 @@
 """Zimuku provider for the Bazarr+ Provider Hub catalog."""
 
 import base64
+import binascii
 import hashlib
 import html
 import io
 import json
 import os
 import re
+import struct
 import tempfile
 import time
 import unicodedata
@@ -26,6 +28,7 @@ PROVIDER_ID = "zimuku"
 BASE_URL = "https://srtku.com"
 SEARCH_URL = f"{BASE_URL}/search"
 HTTP_TIMEOUT_SECONDS = 30
+YUNSUO_MAX_VERIFY_ATTEMPTS = 8
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
@@ -80,6 +83,139 @@ def parse_yunsuo_challenge(body):
     }
 
 
+YUNSUO_CAPTCHA_TEMPLATE_ROWS = """
+0 8 14 3c 7e e7 e7 c3 cb db cb c3 c3 e7 e7 7e 3c
+1 7 14 3c 7c 7c 1c 1c 1c 1c 1c 1c 1c 1c 1c 7f 7f
+2 8 14 7e fe 87 03 03 03 07 06 0c 18 30 60 ff ff
+3 8 14 7e fe 87 03 03 1f 1e 1e 03 03 03 87 ff 7e
+4 9 14 01c 01c 03c 03c 02c 06c 0cc 0cc 18c 1ff 1ff 00e 00c 00c
+5 8 14 7e 7e 60 60 7c 7e 7f 43 03 03 03 87 fe 7c
+6 8 14 3e 7e 72 e0 e0 dc fe ff c3 c3 c3 e7 7f 7e
+7 8 14 ff ff 06 06 06 0c 0c 0c 18 18 18 18 18 30
+8 8 14 7e 7e e7 c3 c3 7e 7e 7e c3 c3 c3 e7 ff 7e
+9 8 14 7e 7e e7 c3 c3 c3 ff 7f 3b 07 07 4e 7e 7c
+"""
+
+
+def solve_yunsuo_captcha_image(image_bytes):
+    rows = _read_bmp_rows(image_bytes)
+    glyphs = _extract_yunsuo_glyphs(rows)
+    if len(glyphs) != 5:
+        raise ValueError("zimuku yunsuo solver expected 5 glyphs")
+    templates = _yunsuo_digit_templates()
+    solved = []
+    for glyph in glyphs:
+        matching = [template for template in templates if template[1] == glyph[0] and template[2] == glyph[1]]
+        candidates = matching or templates
+        best = min(candidates, key=lambda template: _yunsuo_bitmap_distance(glyph, template[1:]))
+        score = _yunsuo_bitmap_distance(glyph, best[1:])
+        if score > max(8, glyph[0] * glyph[1] // 3):
+            raise ValueError("zimuku yunsuo solver confidence too low")
+        solved.append(best[0])
+    return "".join(solved)
+
+
+def _read_bmp_rows(image_bytes):
+    if not image_bytes or image_bytes[:2] != b"BM" or len(image_bytes) < 54:
+        raise ValueError("zimuku yunsuo captcha is not a BMP image")
+    pixel_offset = struct.unpack_from("<I", image_bytes, 10)[0]
+    dib_size = struct.unpack_from("<I", image_bytes, 14)[0]
+    if dib_size < 40:
+        raise ValueError("zimuku yunsuo captcha BMP header is unsupported")
+    width = struct.unpack_from("<i", image_bytes, 18)[0]
+    height = struct.unpack_from("<i", image_bytes, 22)[0]
+    bits_per_pixel = struct.unpack_from("<H", image_bytes, 28)[0]
+    compression = struct.unpack_from("<I", image_bytes, 30)[0]
+    if width <= 0 or height == 0 or bits_per_pixel != 24 or compression != 0:
+        raise ValueError("zimuku yunsuo captcha BMP format is unsupported")
+    row_count = abs(height)
+    stride = ((width * 3 + 3) // 4) * 4
+    if pixel_offset + stride * row_count > len(image_bytes):
+        raise ValueError("zimuku yunsuo captcha BMP data is truncated")
+    rows = []
+    for y in range(row_count):
+        source_y = row_count - 1 - y if height > 0 else y
+        source = pixel_offset + source_y * stride
+        row = []
+        for x in range(width):
+            blue, green, red = image_bytes[source + x * 3 : source + x * 3 + 3]
+            row.append((red, green, blue))
+        rows.append(row)
+    return rows
+
+
+def _extract_yunsuo_glyphs(rows):
+    if not rows or not rows[0]:
+        return []
+    width = len(rows[0])
+    column_counts = [
+        sum(1 for y in range(len(rows)) if _is_yunsuo_digit_pixel(rows[y][x]))
+        for x in range(width)
+    ]
+    runs = []
+    start = None
+    for index, count in enumerate(column_counts + [0]):
+        if count and start is None:
+            start = index
+        elif start is not None and not count:
+            if index - start >= 3:
+                runs.append((start, index - 1))
+            start = None
+    glyphs = []
+    for left, right in runs:
+        ys = [
+            y
+            for y, row in enumerate(rows)
+            for x in range(left, right + 1)
+            if _is_yunsuo_digit_pixel(row[x])
+        ]
+        if not ys:
+            continue
+        top = min(ys)
+        bottom = max(ys)
+        glyph_width = right - left + 1
+        bits = []
+        for y in range(top, bottom + 1):
+            value = 0
+            for x in range(left, right + 1):
+                value = (value << 1) | (1 if _is_yunsuo_digit_pixel(rows[y][x]) else 0)
+            bits.append(value)
+        glyphs.append((glyph_width, bottom - top + 1, tuple(bits)))
+    return glyphs
+
+
+def _is_yunsuo_digit_pixel(pixel):
+    red, green, blue = pixel
+    return green > red + 18 and green > blue + 18 and green < 190
+
+
+def _yunsuo_digit_templates():
+    templates = []
+    for line in YUNSUO_CAPTCHA_TEMPLATE_ROWS.splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        if len(parts) < 4:
+            raise ValueError("zimuku yunsuo captcha template row is invalid")
+        digit = parts[0]
+        width = int(parts[1])
+        height = int(parts[2])
+        rows = tuple(int(value, 16) for value in parts[3:])
+        if len(rows) != height:
+            raise ValueError("zimuku yunsuo captcha template height is invalid")
+        templates.append((digit, width, height, rows))
+    return tuple(templates)
+
+
+def _yunsuo_bitmap_distance(left, right):
+    left_width, left_height, left_rows = left
+    right_width, right_height, right_rows = right
+    penalty = (abs(left_width - right_width) + abs(left_height - right_height)) * 100
+    height = min(left_height, right_height)
+    distance = sum((left_rows[index] ^ right_rows[index]).bit_count() for index in range(height))
+    return penalty + distance
+
+
 def parse_search_results(body, video):
     video = video or {}
     rows = []
@@ -99,6 +235,41 @@ def parse_search_results(body, video):
                 "year": _result_year(title, video),
             }
         )
+    return rows
+
+
+def parse_search_subtitle_rows(body, video):
+    video = video or {}
+    rows = []
+    seen = set()
+    for match in _ITEM_RE.finditer(_decode(body)):
+        item = match.group("body")
+        title = _item_title(item)
+        if not _item_matches_video(title, video):
+            continue
+        year = _result_year(title, video)
+        for row_match in _ROW_RE.finditer(item):
+            row = row_match.group("body")
+            anchor = _first_anchor(row)
+            if not anchor or "/detail/" not in anchor["href"]:
+                continue
+            release = _extract_name(_strip_tags(anchor.get("title") or anchor["text"]))
+            release = os.path.splitext(release)[0]
+            if not release:
+                continue
+            for language in _languages_from_row(row, release):
+                key = (anchor["href"], language)
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append(
+                    {
+                        "language": language,
+                        "detail_url": _absolute_url(anchor["href"]),
+                        "release_info": release,
+                        "year": year,
+                    }
+                )
     return rows
 
 
@@ -242,6 +413,16 @@ class ZimukuProvider:
         for query in _queries(video):
             search_url = f"{SEARCH_URL}?q={urllib.parse.quote_plus(query)}"
             search_response = self._bypass_get(search_url, config or {})
+            for row in parse_search_subtitle_rows(search_response.content, video):
+                if not _requested(row["language"], requested):
+                    continue
+                key = (row["detail_url"], row["language"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                results.append(self._result(video, row))
+            if results:
+                break
             for result_page in parse_search_results(search_response.content, video):
                 _sleep(config)
                 rows = parse_episode_page(self._bypass_get(result_page["url"], config or {}, referer=search_url).content, result_page["year"])
@@ -304,15 +485,15 @@ class ZimukuProvider:
 
     def _bypass_get(self, url, config, referer=None):
         current_url = url
-        for _attempt in range(4):
+        for _attempt in range(YUNSUO_MAX_VERIFY_ATTEMPTS):
             response = self._http_get_response(current_url, referer=referer)
             challenge = parse_yunsuo_challenge(response.content)
             if response.status == 404 and challenge:
                 code = self._solve_yunsuo_image(challenge, config or {})
                 if not code:
                     raise ValueError("zimuku yunsuo captcha response required")
-                self._set_cookie("srcurl", string_to_hex(response.url), response.url)
-                verify_url = _absolute_url(f"{challenge['verify_prefix']}{string_to_hex(code)}")
+                self._set_cookie("srcurl", string_to_hex(_yunsuo_source_url(challenge, response.url)), response.url)
+                verify_url = _challenge_verify_url(challenge, response.url, code)
                 self._http_get_response(verify_url, referer=response.url, allow_redirects=False)
                 current_url = url
                 continue
@@ -324,6 +505,12 @@ class ZimukuProvider:
     def _solve_yunsuo_image(self, challenge, config):
         if config.get("captcha_response"):
             return str(config["captcha_response"])
+        image_b64 = _coerce_text(challenge.get("image_b64"))
+        if image_b64:
+            try:
+                return solve_yunsuo_captcha_image(base64.b64decode(image_b64, validate=True))
+            except (binascii.Error, ValueError):
+                pass
         solver_url = _coerce_text(config.get("captcha_solver_url"))
         if not solver_url:
             return None
@@ -451,13 +638,76 @@ def _language_payload(language):
     return {"alpha3": "eng", "alpha2": "en"}
 
 
-def _first_anchor(text):
+def _anchors(text):
     for match in _ANCHOR_RE.finditer(text or ""):
         tag = match.group(0)
         href = _attr(tag, "href")
         if href:
-            return {"href": href, "text": match.group("text")}
+            yield {"href": href, "text": match.group("text"), "title": _attr(tag, "title")}
+
+
+def _first_anchor(text):
+    return next(_anchors(text), None)
+
+
+def _item_title(item):
+    title_match = re.search(
+        r"<p\b(?=[^>]*\bclass=[\"'][^\"']*\btt\b)[^>]*>(?P<body>.*?)</p>",
+        item or "",
+        re.I | re.S,
+    )
+    candidates = [title_match.group("body")] if title_match else []
+    candidates.append(item)
+    for candidate in candidates:
+        for anchor in _anchors(candidate):
+            title = _strip_tags(anchor["text"])
+            if title:
+                return title
     return None
+
+
+def _item_matches_video(title, video):
+    if not title:
+        return False
+    video = video or {}
+    if video.get("kind") == "episode" and not _season_matches(title, video.get("season")):
+        return False
+    try:
+        expected_year = int(video.get("year")) if video.get("year") else None
+        actual_year = int(_result_year(title, video)) if _result_year(title, video) else None
+    except (TypeError, ValueError):
+        expected_year = actual_year = None
+    if expected_year and actual_year and expected_year != actual_year:
+        return False
+    item_tokens = _title_latin_tokens(title)
+    if not item_tokens:
+        return True
+    for candidate in _title_candidates(video):
+        candidate_tokens = _title_latin_tokens(candidate)
+        if not candidate_tokens:
+            continue
+        if item_tokens == candidate_tokens:
+            return True
+        if len(candidate_tokens) > 1 and item_tokens[: len(candidate_tokens)] == candidate_tokens:
+            return True
+    return False
+
+
+def _title_candidates(video):
+    title_key = "series" if (video or {}).get("kind") == "episode" else "title"
+    alt_key = "alternative_series" if (video or {}).get("kind") == "episode" else "alternative_titles"
+    values = [video.get(title_key)] if video else []
+    alternatives = (video or {}).get(alt_key) or []
+    if isinstance(alternatives, str):
+        values.append(alternatives)
+    elif isinstance(alternatives, (list, tuple)):
+        values.extend(alternatives)
+    return [value for value in values if _coerce_text(value)]
+
+
+def _title_latin_tokens(value):
+    tokens = re.findall(r"[a-z0-9]+", _coerce_text(value).lower())
+    return [token for token in tokens if not re.fullmatch(r"(?:19|20)\d{2}", token)]
 
 
 def _season_matches(title, season):
@@ -585,6 +835,10 @@ def _extract_name(name):
 
 
 def _absolute_url(value):
+    return _quote_url(_raw_absolute_url(value))
+
+
+def _raw_absolute_url(value):
     value = html.unescape((value or "").strip())
     if value.startswith("http://") or value.startswith("https://"):
         return value
@@ -593,6 +847,26 @@ def _absolute_url(value):
     if value.startswith("/"):
         return f"{BASE_URL}{value}"
     return f"{BASE_URL}/{value.lstrip('/')}"
+
+
+def _yunsuo_source_url(challenge, fallback_url):
+    prefix = _coerce_text((challenge or {}).get("verify_prefix")) or ""
+    source, marker, _tail = prefix.partition("&security_verify_img=")
+    if marker and source:
+        return urllib.parse.urljoin(fallback_url, html.unescape(source.strip()))
+    return fallback_url
+
+
+def _challenge_verify_url(challenge, response_url, code):
+    prefix = _coerce_text((challenge or {}).get("verify_prefix"))
+    return _quote_url(urllib.parse.urljoin(response_url, f"{prefix}{string_to_hex(code)}"))
+
+
+def _quote_url(value):
+    parts = urllib.parse.urlsplit(value)
+    path = urllib.parse.quote(parts.path, safe="/%")
+    query = urllib.parse.quote(parts.query, safe="=&%+")
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, path, query, parts.fragment))
 
 
 def _attr(tag, name):

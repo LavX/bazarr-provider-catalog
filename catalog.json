@@ -5623,7 +5623,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "5b5a8aa9c16d709fb020f631aac4aa026a74ff965f9007a6573be6c158e76437",
+        "bundle_sha256": "3cf2d52903e84cafcb419ff666b2d55f6b33a8f9e655d973bed051147e0751b8",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -5775,11 +5775,11 @@
             }
           ]
         },
-        "description": "Scrapes Zimuku / srtku.com for Chinese and English movie and episode subtitles. Supports Yunsuo image verification helper settings and ZIP, RAR, or direct subtitle downloads.",
+        "description": "Scrapes Zimuku / srtku.com for Chinese and English movie and episode subtitles. Includes native Yunsuo image verification with optional helper fallback and supports ZIP, RAR, or direct subtitle downloads.",
         "entry_class": "ZimukuProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "f999c8e03c0fc6637cae52baa22b914e81d7ac34fc54abd552d1485917436f27"
+          "provider.py": "cf1e4acb01c6891fce9feab9919c3cf2d4f26c4d65ff25f6e4c2edc3bcc76a86"
         },
         "languages": [
           "eng",
@@ -5807,7 +5807,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.1"
+        "version": "0.1.2"
       }
     }
   ],
