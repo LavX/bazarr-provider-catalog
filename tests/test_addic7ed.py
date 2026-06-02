@@ -98,6 +98,29 @@ def _episode_page_with_brazilian_portuguese():
     """
 
 
+def _episode_page_with_odd_row():
+    return b"""
+    <html>
+      <body>
+        <table>
+          <tr class="epodd">
+            <td>1</td>
+            <td>2</td>
+            <td><a href="/serie/Example_Show/1/2/Pilot">Pilot</a></td>
+            <td>English</td>
+            <td>HDTV.GROUP</td>
+            <td>Completed</td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td><a href="/updated/1/2/odd">Download</a></td>
+          </tr>
+        </table>
+      </body>
+    </html>
+    """
+
+
 def _movie_search_page():
     return b"""
     <html>
@@ -123,6 +146,28 @@ def _movie_page():
             <td><a href="/download/movie/55/eng">Download</a></td>
           </tr>
           <tr><td><img src="/images/hi.jpg"></td></tr>
+        </table>
+      </body>
+    </html>
+    """
+
+
+def _multi_language_movie_page():
+    return b"""
+    <html>
+      <body>
+        <table align="center" border="0" class="tabel95" width="100%">
+          <tr><td class="NewsTitle">Version WEB-DL.GROUP, 0.00</td><td class="uploader">movie-uploader</td></tr>
+          <tr>
+            <td>English</td>
+            <td>Completed</td>
+            <td><a href="/download/movie/55/eng">Download</a></td>
+          </tr>
+          <tr>
+            <td>Spanish</td>
+            <td>Completed</td>
+            <td><a href="/download/movie/55/spa">Download</a></td>
+          </tr>
         </table>
       </body>
     </html>
@@ -260,6 +305,35 @@ class Addic7edSearchTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["language"], {"alpha3": "por", "country_alpha2": "BR", "hi": False, "forced": False})
 
+    def test_episode_search_includes_odd_rows(self):
+        provider = self.mod.Addic7edProvider()
+
+        def get_response(url, headers, cookies, timeout=30, params=None, allow_redirects=True):
+            del headers, cookies, timeout, allow_redirects
+            if url.endswith("/panel.php"):
+                return self.mod.HttpResponse(200, b"panel", {})
+            if url.endswith("/shows.php"):
+                return self.mod.HttpResponse(200, _shows_page(), {})
+            if url.endswith("/ajax_loadShow.php"):
+                return self.mod.HttpResponse(200, _episode_page_with_odd_row(), {})
+            raise AssertionError(url)
+
+        provider._http_get = get_response
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "Example Show",
+                "year": 2020,
+                "season": 1,
+                "episode": 2,
+            },
+            [{"alpha3": "eng"}],
+            {"cookies": "PHPSESSID=session"},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["provider_payload"]["download_link"], "updated/1/2/odd")
+
     def test_movie_search_logs_in_and_parses_movie_page(self):
         provider = self.mod.Addic7edProvider()
         calls = []
@@ -269,8 +343,8 @@ class Addic7edSearchTests(unittest.TestCase):
             calls.append(("GET", url, headers, params))
             if url.endswith("/login.php"):
                 return self.mod.HttpResponse(200, b"<html>login</html>", {})
-            if url.endswith("/search.php"):
-                self.assertEqual(params, {"search": "Dune"})
+            if url.endswith("/srch.php"):
+                self.assertEqual(params, {"Submit": "Search", "search": "Dune"})
                 return self.mod.HttpResponse(200, _movie_search_page(), {})
             if url.endswith("/movie/55"):
                 return self.mod.HttpResponse(200, _movie_page(), {})
@@ -300,6 +374,30 @@ class Addic7edSearchTests(unittest.TestCase):
         self.assertIn("year", results[0]["matches"])
         self.assertIn("release_group", results[0]["matches"])
 
+    def test_movie_search_returns_later_language_from_same_version_table(self):
+        provider = self.mod.Addic7edProvider()
+
+        def get_response(url, headers, cookies, timeout=30, params=None, allow_redirects=True):
+            del timeout, headers, cookies, allow_redirects
+            if url.endswith("/panel.php"):
+                return self.mod.HttpResponse(200, b"panel", {})
+            if url.endswith("/srch.php"):
+                return self.mod.HttpResponse(200, _movie_search_page(), {})
+            if url.endswith("/movie/55"):
+                return self.mod.HttpResponse(200, _multi_language_movie_page(), {})
+            raise AssertionError(url)
+
+        provider._http_get = get_response
+        results = provider.search(
+            {"kind": "movie", "title": "Dune", "year": 2021, "release_group": "GROUP"},
+            [{"alpha3": "spa"}],
+            {"cookies": "PHPSESSID=session"},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["language"], {"alpha3": "spa", "hi": False, "forced": False})
+        self.assertEqual(results[0]["provider_payload"]["download_link"], "download/movie/55/spa")
+
     def test_movie_search_rejects_partial_completed_rows(self):
         provider = self.mod.Addic7edProvider()
 
@@ -307,7 +405,7 @@ class Addic7edSearchTests(unittest.TestCase):
             del timeout, headers, cookies, allow_redirects
             if url.endswith("/panel.php"):
                 return self.mod.HttpResponse(200, b"panel", {})
-            if url.endswith("/search.php"):
+            if url.endswith("/srch.php"):
                 return self.mod.HttpResponse(200, _movie_search_page(), {})
             if url.endswith("/movie/55"):
                 return self.mod.HttpResponse(200, _partial_movie_page(), {})

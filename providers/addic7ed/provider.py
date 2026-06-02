@@ -169,11 +169,11 @@ class Addic7edProvider:
 
     def _get_movie_id(self, title, year, config, cookies):
         response = self._http_get(
-            f"{BASE_URL}/search.php",
+            f"{BASE_URL}/srch.php",
             self._headers(config),
             cookies,
             timeout=10,
-            params={"search": title},
+            params={"Submit": "Search", "search": title},
         )
         _raise_for_status(response, "Addic7ed movie lookup")
         return parse_movie_id(response.body, title, year)
@@ -427,7 +427,7 @@ def parse_episode_rows(body, series, video):
     root = _parse_html(body)
     results = []
     for row in root.descendants("tr"):
-        if "epeven" not in row.classes():
+        if not {"epeven", "epodd"}.intersection(row.classes()):
             continue
         cells = row.direct_children("td")
         if len(cells) < 10 or "%" in cells[5].text():
@@ -470,18 +470,6 @@ def parse_movie_rows(body, movie_id, title, video):
         if "tabel95" not in table.classes():
             continue
         texts = [td.text() for td in table.descendants("td")]
-        language = next((_language_from_name(text) for text in texts if _language_from_name(text)), None)
-        if not language:
-            continue
-        if _has_incomplete_status(texts):
-            continue
-        download_link = None
-        for link in table.descendants("a"):
-            if "download" in link.text().lower() or "download" in link.attrs.get("href", "").lower():
-                download_link = _strip_leading_slash(link.attrs.get("href", ""))
-                break
-        if not download_link:
-            continue
         version = ""
         for text in texts:
             if text.lower().startswith("version "):
@@ -494,18 +482,30 @@ def parse_movie_rows(body, movie_id, title, video):
                 uploader = td.text()
                 break
         hi = any((img.attrs.get("src") or "").endswith("hi.jpg") for img in table.descendants("img"))
-        results.append(
-            {
-                "kind": "movie",
-                "title": title,
-                "year": _int_or_none(video.get("year")),
-                "release_info": _normalize_release_info(version),
-                "language": _language_payload(language, hi=hi),
-                "download_link": download_link,
-                "page_url": f"{BASE_URL}/movie/{movie_id}",
-                "uploader": uploader,
-            }
-        )
+        for row in table.descendants("tr"):
+            row_texts = [td.text() for td in row.direct_children("td")]
+            language = next((_language_from_name(text) for text in row_texts if _language_from_name(text)), None)
+            if not language or _has_incomplete_status(row_texts):
+                continue
+            download_link = None
+            for link in row.descendants("a"):
+                if "download" in link.text().lower() or "download" in link.attrs.get("href", "").lower():
+                    download_link = _strip_leading_slash(link.attrs.get("href", ""))
+                    break
+            if not download_link:
+                continue
+            results.append(
+                {
+                    "kind": "movie",
+                    "title": title,
+                    "year": _int_or_none(video.get("year")),
+                    "release_info": _normalize_release_info(version),
+                    "language": _language_payload(language, hi=hi),
+                    "download_link": download_link,
+                    "page_url": f"{BASE_URL}/movie/{movie_id}",
+                    "uploader": uploader,
+                }
+            )
     return results
 
 
