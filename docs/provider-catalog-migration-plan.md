@@ -106,7 +106,7 @@
   - `whisperai`: branch `catalog-whisperai`, worktree `/tmp/bazarr_catalog_provider_worktrees/whisperai`, current head `0eeb964`, local/generated provider
   - `wizdom`: branch `catalog-wizdom`, worktree `/tmp/bazarr_catalog_provider_worktrees/wizdom`, current head `2d5425c`
   - `xsubs`: branch `catalog-xsubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/xsubs`, current head `5a17922`, dead origin
-  - `yavkanet`: branch `catalog-yavkanet`, worktree `/tmp/bazarr_catalog_provider_worktrees/yavkanet`, current head `42487cd`
+  - `yavkanet`: branch `catalog-yavkanet`, worktree `/tmp/bazarr_catalog_provider_worktrees/yavkanet`, current head `a9111db`
   - `yifysubtitles`: branch `catalog-yifysubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/yifysubtitles`, current head `024f996`
   - `zimuku`: branch `catalog-zimuku`, worktree `/tmp/bazarr_catalog_provider_worktrees/zimuku`, current head `f9a9eff`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
@@ -2676,8 +2676,8 @@
 
 - Branch: `catalog-yavkanet`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/yavkanet`
-- Current checkpoint: `5b35d11 Add inline Anubis retry to YavkaNet`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/42` opened as draft on 2026-06-01, head `catalog-yavkanet`, base `main`, merge state `CLEAN`, head OID `f40f6d34c9952389e0676fafd46b19f009d20def`.
+- Current checkpoint: `a9111db Merge origin/main into YavkaNet branch`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/42` opened as draft on 2026-06-01, head `catalog-yavkanet`, base `main`, merge state `CLEAN`, head OID `a9111db6008728d6de98173366d5dc8fa1a71c98`.
 - Local evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -2746,8 +2746,21 @@
   - Focused logs show the YavkaNet worker now returns `yavkanet FlareSolverr request failed: HTTP Error 500: Internal Server Error` inside the worker deadline. Final fanout marked `yavkanet=ok:14949ms`, not `worker exceeded 30s`.
 - Live anti-bot recheck on 2026-06-02:
   - Escalated live smoke `python3 -B -m sdk smoke-test --provider yavkanet --language bul --video-fixture tests/fixtures/yavkanet_video_dune_2021.json --config-json '{"request_delay_ms":0}' --expect-min-results 1 --skip-download` failed with `yavkanet hit a Cloudflare challenge and no FlareSolverr URL is configured`.
+- Current-main refresh on 2026-06-02:
+  - Local YavkaNet branch was merged with `origin/main` at `a9111db6008728d6de98173366d5dc8fa1a71c98` and pushed to `catalog-yavkanet`.
+  - `python3 -B -m unittest discover -s tests -p 'test_yavkanet.py'`: `14` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`, ABI tags `cp312`, `cp313`, `cp314`, and `abi3`.
+  - `python3 -B -m py_compile providers/yavkanet/provider.py`: passed.
+  - `git diff --check --cached`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, YavkaNet notes, provider code, tests, and fixtures found no matches.
+  - Escalated live smoke without solver still failed at the known Cloudflare boundary with `yavkanet hit a Cloudflare challenge and no FlareSolverr URL is configured`.
+  - Escalated live smoke configured with `http://127.0.0.1:8191/v1` failed with connection refused, and an explicit local FlareSolverr probe to the same endpoint also returned connection refused.
+  - `gh pr view 42 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,mergeStateStatus,headRefOid,url`: PR `#42` is open, draft, head `a9111db6008728d6de98173366d5dc8fa1a71c98`, latest checked merge state `CLEAN`.
 - Remaining gates:
   - Treat current YavkaNet proof as blocked by the origin Cloudflare challenge and the configured FlareSolverr endpoint returning HTTP `500`, not by Provider Hub config, dependency installation, branch deployment, or worker deadline.
+  - Current local environment also has no reachable FlareSolverr at `http://127.0.0.1:8191/v1`.
   - Re-run live smoke with a solver, cookie, or FlareSolverr environment that can actually solve `https://yavka.net/imdb/tt1160419`.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test`.
 
