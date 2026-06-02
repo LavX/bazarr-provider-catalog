@@ -40,6 +40,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`soustitreseu`](providers/soustitreseu/) | 0.1.2 | Scrapes [Sous-Titres.eu](https://www.sous-titres.eu) for French and English movie and episode subtitles. No login or API key. |
 | [`subcentral`](providers/subcentral/) | 0.1.0 | Scrapes [SubCentral.de](https://www.subcentral.de) forum subtitle threads for German and English episode releases. No login or API key. |
 | [`subclub`](providers/subclub/) | 0.1.0 | Scrapes [Subclub.eu](https://www.subclub.eu) for Estonian movie and episode subtitles. No login or API key. |
+| [`subdl`](providers/subdl/) | 0.1.0 | Uses the official [SubDL](https://subdl.com) API for movie and episode subtitles, including optional anime pack handling. API key required. |
 | [`subf2m`](providers/subf2m/) | 0.1.1 | Scrapes [SubF2M](https://subf2m.co) for movie and episode subtitle ZIP files in 30+ languages. Configurable User-Agent and SSL verification. |
 | [`subs4free`](providers/subs4free/) | 0.1.2 | Scrapes [Subs4Free](https://www.subs4free.info) for Greek and English movie subtitles. No login or API key. |
 | [`subs4series`](providers/subs4series/) | 0.1.3 | Scrapes [Subs4Series](https://www.subs4series.com) for Greek and English episode subtitles. Uses ai-cloudscraper with inline Anubis solving, optional FlareSolverr fallback, and optional captcha helper settings for download gates. |
@@ -101,6 +102,7 @@ Every provider here ships independently of Bazarr+ releases. [Contribute](#contr
 - `providers/soustitreseu/`: scrapes Sous-Titres.eu movie and episode subtitle listings and archive downloads.
 - `providers/subcentral/`: scrapes SubCentral.de forum threads for German and English episode subtitles.
 - `providers/subclub/`: scrapes Subclub.eu movie and episode subtitle listings and downloads.
+- `providers/subdl/`: uses the official SubDL API for movie and episode subtitles with optional anime pack handling.
 - `providers/subf2m/`: scrapes SubF2M movie and episode subtitle pages and ZIP downloads.
 - `providers/subs4free/`: scrapes Subs4Free movie subtitle listings and anti-block downloads.
 - `providers/subs4series/`: scrapes Subs4Series episode subtitles with ai-cloudscraper, inline Anubis solving, optional FlareSolverr fallback, anti-block requests, optional captcha helper settings, and archive extraction.

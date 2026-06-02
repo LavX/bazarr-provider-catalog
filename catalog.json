@@ -3866,6 +3866,128 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "af9b67c2c4f7852c970b226d487abdbfe6adb13b6575ca7f3e60fe8cde7be011",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "anime_mode": {
+              "default": false,
+              "description": "Enable extra absolute-episode, season-only, title-only, and pack matching searches for anime libraries.",
+              "title": "Anime mode",
+              "type": "boolean"
+            },
+            "api_key": {
+              "description": "SubDL API key from your SubDL account.",
+              "title": "API key",
+              "type": "string"
+            },
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between SubDL API calls.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "api_key"
+          ],
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Uses the official SubDL API for movie and episode subtitles, including optional anime pack handling.",
+        "entry_class": "SubDLProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "72cd72bd375de99d31acabea3e3dac43f24ce5d648cd79b38511e76946f927fd"
+        },
+        "languages": [
+          "ara",
+          "aze",
+          "bel",
+          "ben",
+          "bos",
+          "bul",
+          "cat",
+          "ces",
+          "dan",
+          "deu",
+          "ell",
+          "eng",
+          "epo",
+          "est",
+          "fas",
+          "fin",
+          "fra",
+          "heb",
+          "hin",
+          "hrv",
+          "hun",
+          "ind",
+          "isl",
+          "ita",
+          "jpn",
+          "kal",
+          "kat",
+          "kor",
+          "kur",
+          "lav",
+          "lit",
+          "mal",
+          "mkd",
+          "msa",
+          "mya",
+          "nld",
+          "nor",
+          "pol",
+          "por",
+          "ron",
+          "rus",
+          "sin",
+          "slk",
+          "slv",
+          "spa",
+          "sqi",
+          "srp",
+          "swe",
+          "tam",
+          "tel",
+          "tgl",
+          "tha",
+          "tur",
+          "ukr",
+          "urd",
+          "vie",
+          "zho"
+        ],
+        "name": "SubDL",
+        "provider_id": "subdl",
+        "schema_version": 1,
+        "secret_fields": [
+          "api_key"
+        ],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/subdl",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.0"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "bfc7f480af34c85dd9c1377ff7735416a7c6570520cd79f6e0f0697609fd6d0d",
         "config_schema": {
           "additionalProperties": false,
