@@ -3085,8 +3085,8 @@
 
 - Branch: `catalog-subdl`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subdl`
-- Current checkpoint: `7ff94cd Add SubDL provider`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/46` opened as draft on 2026-06-01, head `catalog-subdl`, base `main`, merge state `CLEAN`.
+- Current checkpoint: `0f47d37 Merge current main into SubDL branch`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/46` opened as draft on 2026-06-01, head `catalog-subdl`, base `main`, current head `0f47d3789db3178d8341cd69c33b3ae543712dd0`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -3118,6 +3118,20 @@
   - `python3 -B -m sdk smoke-test --provider subdl --language eng --expect-min-results 1 --skip-download`: failed at the expected credential gate with `SubDL api_key is required`.
   - PR `#46` was verified open, draft, merge state `CLEAN`, head `7ff94cd8e52bad87a10ad89f1e004060a4dd6d12`.
   - Test-server config check read only API-key presence and length from `/home/lavx/bazarr-data/config/config.yaml`; `subdl.api_key` is empty.
+- Current-main merge evidence on 2026-06-02:
+  - Live PR diff scope remains limited to `README.md`, `catalog.json`, `docs/provider-notes/subdl.md`, `providers/subdl`, and `tests/test_subdl.py`.
+  - Live review-thread inspection found no review threads on PR `#46`.
+  - `0f47d37` merges current `origin/main` into `catalog-subdl`, resolving generated `README.md` and `catalog.json` while preserving the SubDL provider scope.
+  - `python3 -B -m unittest discover -s tests -p 'test_subdl.py'`: `13` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`, ABI tags `cp312`, `cp313`, `cp314`, and `abi3`.
+  - `python3 -B -m py_compile providers/subdl/provider.py`: passed.
+  - `git diff --cached --check` and `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, SubDL notes, provider code, and tests found no matches.
+  - `python3 -B -m unittest discover -s tests`: `740` tests passed with `6` skipped.
+  - `gh pr view 46 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,mergeStateStatus,reviewDecision,headRefName,headRefOid,url,title`: PR `#46` is open, draft, head `0f47d3789db3178d8341cd69c33b3ae543712dd0`, merge state `CLEAN`.
+  - `gh pr checks 46 --repo LavX/bazarr-provider-catalog`: no checks reported on the branch.
 - Remaining gates:
   - Run SDK live smoke search and download with a real SubDL API key.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `subdl` in the trusted replacement policy.
