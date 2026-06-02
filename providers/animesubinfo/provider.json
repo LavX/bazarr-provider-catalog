@@ -1,0 +1,48 @@
+{
+  "api_version": "bazarr.provider-hub.v1",
+  "bundle_sha256": "8fff6563c6ac273c2b36c2353dea0df2b2f7c82744bc60601ba68114120e9f82",
+  "config_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "request_delay_ms": {
+        "default": 0,
+        "description": "Optional politeness delay between HTTP calls to animesub.info.",
+        "maximum": 5000,
+        "minimum": 0,
+        "title": "Delay between requests (ms)",
+        "type": "integer"
+      }
+    },
+    "type": "object"
+  },
+  "dependencies": {
+    "requirements": []
+  },
+  "description": "Scrapes AnimeSub.info for Polish anime movie and episode subtitles. Direct subtitle files and ZIP packages are supported.",
+  "entry_class": "AnimeSubInfoProvider",
+  "entry_module": "provider",
+  "files": {
+    "provider.py": "4e9f14577fc31f9d933c3b5067c33ec9ae531d43126e04641099d746ecb0c8be"
+  },
+  "languages": [
+    "pol"
+  ],
+  "name": "AnimeSub.info",
+  "provider_id": "animesubinfo",
+  "schema_version": 1,
+  "secret_fields": [],
+  "source": {
+    "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+    "commit": "0000000000000000000000000000000000000000",
+    "path": "providers/animesubinfo",
+    "ref": "main",
+    "repo": "LavX/bazarr-provider-catalog",
+    "trusted": true,
+    "type": "github"
+  },
+  "supported_media": [
+    "movie",
+    "episode"
+  ],
+  "version": "0.1.1"
+}
