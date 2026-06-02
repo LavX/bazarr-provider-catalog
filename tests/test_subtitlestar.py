@@ -27,6 +27,15 @@ class BuildQueriesTests(unittest.TestCase):
         )
         self.assertEqual(queries, ["Dune 2021", "Dune"])
 
+    def test_movie_colon_title_emits_short_title_fallback(self):
+        queries = self.mod.build_queries(
+            {"kind": "movie", "title": "Dune: Part One", "year": 2021}
+        )
+        self.assertEqual(
+            queries,
+            ["Dune: Part One 2021", "Dune: Part One", "Dune 2021", "Dune"],
+        )
+
     def test_movie_without_year_emits_single_query(self):
         queries = self.mod.build_queries({"kind": "movie", "title": "Inception"})
         self.assertEqual(queries, ["Inception"])
@@ -574,6 +583,53 @@ class SubtitlestarProviderSearchTests(unittest.TestCase):
 
         self.assertEqual(len(results), 1)
         self.assertIn("title", results[0]["matches"])
+
+    def test_search_accepts_movie_when_detail_imdb_matches_refined_title_alias(self):
+        search_url = "https://subtitlestar.com/?s=Dune%3A%20Part%20One%202021&post_type=post"
+        fallback_search_url = "https://subtitlestar.com/?s=Dune%3A%20Part%20One&post_type=post"
+        short_search_url = "https://subtitlestar.com/?s=Dune%202021&post_type=post"
+        detail_url = "https://subtitlestar.com/persian-subtitles-dune-2021/"
+        search_html = """
+        <html>
+        <body>
+        <a href="https://subtitlestar.com/persian-subtitles-dune-2021/">
+        <img alt="دانلود زیرنویس فارسی dune" src="x.jpg">
+        </a>
+        </body>
+        </html>
+        """.encode("utf-8")
+        detail_html = """
+        <html>
+        <head><title>دانلود زیرنویس فارسی فیلم Dune 2021 - ساب استار</title></head>
+        <body>
+        <a href="https://www.imdb.com/title/tt1160419/">IMDB</a>
+        <span><i class="icon-years"></i><a>2021</a></span>
+        <a href="https://dl.subtitlestar.com/dlsub/dune-2021.zip">Download</a>
+        </body>
+        </html>
+        """.encode("utf-8")
+        provider, _ = self._provider_with_stub(
+            {
+                search_url: b"<html><body></body></html>",
+                fallback_search_url: b"<html><body></body></html>",
+                short_search_url: search_html,
+                detail_url: detail_html,
+            }
+        )
+
+        results = provider.search(
+            video={
+                "kind": "movie",
+                "title": "Dune: Part One",
+                "year": 2021,
+                "imdb_id": "tt1160419",
+            },
+            languages=[{"alpha3": "fas", "alpha2": "fa"}],
+            config={},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertIn("imdb_id", results[0]["matches"])
 
     def test_search_strips_query_string_from_advertised_filename(self):
         search_url = "https://subtitlestar.com/?s=Dune%202021&post_type=post"
