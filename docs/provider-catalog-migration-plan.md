@@ -46,11 +46,11 @@
 - Coverage recheck on 2026-06-02: source-provider count after excluding helper/shared modules is `60`, provider worktree count after excluding catalog maintenance worktrees is `60`, the missing-worktree comparison returned no rows, and the extra-worktree comparison returned no rows.
 - Open PR review-thread audit on 2026-06-02: GraphQL inspection of all `28` open provider PRs found no review threads, no PR comments, and no reviews. All open provider PRs are draft PRs with merge state `CLEAN`, so the remaining open queue is verification-gated rather than review-feedback-gated.
 - Open PR gate classification on 2026-06-02 continuation: live GitHub state still shows `28` open provider PRs, all draft, all merge state `CLEAN`.
-  - Credential, session, or API-key gated: `addic7ed`, `assrt`, `avistaz`, `cinemaz`, `hdbits`, `karagarga`, `ktuvit`, `legendasdivx`, `legendasnet`, `opensubtitlescom`, `pipocas`, and `titulky`.
+  - Credential, session, or API-key gated: `addic7ed`, `assrt`, `avistaz`, `cinemaz`, `hdbits`, `karagarga`, `ktuvit`, `legendasdivx`, `opensubtitlescom`, `pipocas`, and `titulky`.
   - User service or base URL gated: `subsarr` needs a reachable self-hosted Subsarr `base_url`; `whisperai` needs a real Whisper web-service endpoint for non-stub proof.
   - Origin access or anti-bot gated: `turkcealtyaziorg`, `yavkanet`, and `wizdom`.
   - Real media hash or disclosure gated: `napisy24` needs a library-backed video with a valid Napisy24/OpenSubtitles hash; `shooter` needs explicit approval or a non-sensitive fixture before sending derived Shooter hashes to the public API.
-  - Compat-only gated: `betaseries`, `jimaku`, `regielive`, `subdl`, `subsource`, `subsro`, `subx`, `titlovi`, and `zimuku` have current SDK search and download proof, but still need Provider Hub compat search, download, and stream proof.
+  - Compat-only gated: `betaseries`, `jimaku`, `legendasnet`, `regielive`, `subdl`, `subsource`, `subsro`, `subx`, `titlovi`, and `zimuku` have current SDK search and download proof, but still need Provider Hub compat search, download, and stream proof.
   - Current local compat reachability evidence: no Bazarr test container is running, `http://127.0.0.1:6767` is closed, `bazarr-ui-test` does not resolve over SSH, and `BAZARR_COMPAT_API_KEY` is unset in this shell.
 - Invite-only or community-validation PR body refresh on 2026-06-02: PR `#44` HDBits, PR `#51` AvistaZ, PR `#52` CinemaZ, PR `#57` Karagarga, PR `#59` LegendasDivx, and PR `#62` Pipocas.tv now explicitly request community validation from users with the required account, cookies, or tracker access. Live GitHub verification showed all six PRs remain draft and merge state `CLEAN`.
 - Current catalog checkout inventory: this planning worktree is intentionally not rebased onto `main`, but live `main` now ships 40 Provider Hub bundles, adding `gestdown`, `bsplayer`, `subtis`, `subtitulamostv`, `tvsubtitles`, `greeksubs`, `animekalesi`, `animesubinfo`, `opensubtitles_org`, `animetosho`, `napiprojekt`, `subf2m`, `nekur`, `greeksubtitles`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subs4free`, `subs4series`, `embedded_subtitles`, `subtitrarinoi`, `yifysubtitles`, `subtitriid`, `titrari`, and `supersubtitles` to the previous 12 bundle baseline.
@@ -565,8 +565,14 @@
   - `git diff --check origin/main...HEAD`: clean.
   - Live SDK smoke with the saved temporary credential failed at the expected auth boundary with `Invalid Legendas.net username or password`.
   - Public fake-login probes confirmed `POST /api/v1/login` rejects `username` without `email` as `Email and password are required`, while the catalog provider and legacy Bazarr provider both send `email` plus `password`.
+- Corrected email credential recheck on 2026-06-02:
+  - Temporary `LEGENDASNET_USERNAME` was updated to the email-form username in `/tmp/bazarr_provider_test_credentials.env`; values are intentionally not recorded here.
+  - `python3 -B -m unittest discover -s tests -p 'test_legendasnet.py'`: `6` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - Live API probes confirmed `POST /api/v1/login` returns HTTP `200` and an access token with the corrected email.
+  - The provider-specific Dune and Chernobyl fixtures returned zero live rows, but the live API returned rows for generic titles such as `Dune`, `Inception`, `Interstellar`, `The Batman`, `Oppenheimer`, `Breaking Bad`, `Game of Thrones`, and `The Last of Us`.
+  - `python3 -B -m sdk smoke-test --provider legendasnet --language por-BR --video-fixture tests/fixtures/yifysubtitles_video_dune_2021.json --config-json '{"request_delay_ms":0}' --secret username=LEGENDASNET_USERNAME --secret password=LEGENDASNET_PASSWORD --expect-min-results 1`: `legendasnet ok`.
 - Remaining gates:
-  - Run SDK live smoke search and download with valid Legendas.net email credentials.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `legendasnet` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Legendas.net email credentials.
 
@@ -3893,8 +3899,15 @@
   - Token-only probe: `/infos/user` returned HTTP `401` with `No API KEY in request`; `/subtitles` returned HTTP `403` with `You cannot consume this service`; `/infos/languages` remains public and returned HTTP `200`.
   - Token plus JWT issuer as `Api-Key` also failed: `/infos/user` returned HTTP `401` with `Invalid token a1`, and `/subtitles` still returned HTTP `403`.
   - Conclusion: the supplied token does not prove a viable token-only provider config path and does not clear the full SDK search/download gate.
+- Supplied username and password recheck on 2026-06-02:
+  - Temporary `OPENSUBTITLESCOM_USERNAME` and `OPENSUBTITLESCOM_PASSWORD` values were saved in `/tmp/bazarr_provider_test_credentials.env`; values are intentionally not recorded here.
+  - `python3 -B -m unittest discover -s tests -p 'test_opensubtitlescom.py'`: `12` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - SDK live smoke against the Dune 2021 movie fixture with username, password, and the saved bearer-shaped token passed as `api_key` failed with `OpenSubtitles.com request failed with status 403: You cannot consume this service`.
+  - Direct API probes confirmed the saved token still fails as `Api-Key` on `/login` and `/subtitles` with HTTP `403`. Retrying with the JWT issuer as `Api-Key` also failed `/login` with HTTP `403`.
+  - Conclusion: the supplied username and password are now available for testing, but a valid OpenSubtitles.com API key is still missing.
 - Remaining gates:
-  - Run SDK live smoke search and download with real OpenSubtitles.com credentials.
+  - Run SDK live smoke search and download with a real OpenSubtitles.com API key plus the saved username and password.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `opensubtitlescom` in the trusted replacement policy.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured OpenSubtitles.com credentials.
 
