@@ -44,7 +44,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`subsynchro`](providers/subsynchro/) | 0.1.2 | Scrapes [SubSynchro](https://www.subsynchro.com) for French movie release subtitle ZIP files. No login or API key. |
 | [`subtis`](providers/subtis/) | 0.1.0 | Queries [api.subt.is](https://api.subt.is) for Spanish movie subtitles using hash, size, filename, and alternative lookups. No login or API key. |
 | [`subtitrarinoi`](providers/subtitrarinoi/) | 0.1.1 | Scrapes [subtitrari-noi.ro](https://www.subtitrari-noi.ro) for Romanian movie and episode subtitles. No login or API key. |
-| [`subtitlestar`](providers/subtitlestar/) | 0.1.8 | Scrapes [subtitlestar.com](https://subtitlestar.com) for Persian/Farsi movie and episode subtitles. No login or API key. |
+| [`subtitlestar`](providers/subtitlestar/) | 0.1.9 | Scrapes [subtitlestar.com](https://subtitlestar.com) for Persian/Farsi movie and episode subtitles. No login or API key. |
 | [`subtitriid`](providers/subtitriid/) | 0.1.1 | Scrapes [subtitri.do.am](https://subtitri.do.am) for Latvian movie subtitles. No login or API key. |
 | [`subtitulamostv`](providers/subtitulamostv/) | 0.1.1 | Scrapes [subtitulamos.tv](https://www.subtitulamos.tv) for episode subtitles in Spanish variants, English, Catalan, Galician, and Portuguese. No login or API key. |
 | [`sub_scene`](providers/sub_scene/) | 0.1.14 | Scrapes [sub-scene.com](https://sub-scene.com) (Subscene clone) for movie and episode subtitles in 35+ languages including Vietnamese, Arabic, Bengali, Danish, Dutch. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback. |
