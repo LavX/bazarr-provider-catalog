@@ -436,7 +436,10 @@ class CloudflareTests(unittest.TestCase):
         self.assertEqual(body, b"<html>ok</html>")
         self.assertEqual(len(fake_scraper.calls), 2)
         self.assertIs(solved_calls[0][0], fake_scraper)
-        self.assertEqual(solved_calls[0][1], "https://www.napiprojekt.pl/ajax/search_catalog.php")
+        self.assertEqual(
+            solved_calls[0][1],
+            "https://www.napiprojekt.pl/.within.website/?redir=/ajax/search_catalog.php",
+        )
         self.assertEqual(solved_calls[0][2], "https://www.napiprojekt.pl/ajax/search_catalog.php")
 
     def test_flaresolverr_timeout_is_capped_below_worker_deadline(self):
