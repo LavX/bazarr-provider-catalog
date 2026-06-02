@@ -4121,6 +4121,13 @@
   - Live SDK search smoke `python3 -B -m sdk smoke-test --provider turkcealtyaziorg --language tur --video-fixture /tmp/turkcealtyaziorg_inception_video.json --config-json '{"request_delay_ms":0}' --expect-min-results 1 --skip-download`: failed with `TurkceAltyazi is presenting a Cloudflare challenge; configure FlareSolverr URL or matching cookies and User-Agent`.
   - Pushed branch head `fa5e7f84b5903594be0b225dc07e720bdbbd89af`.
   - PR `#53` is open draft, head `catalog-turkcealtyaziorg` at `fa5e7f84b5903594be0b225dc07e720bdbbd89af`, merge state `CLEAN`, and no checks are reported.
+- Local FlareSolverr comparison on 2026-06-02:
+  - `python3 -B -m unittest discover -s tests -p 'test_turkcealtyaziorg.py'`: `15` tests passed.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - Native live SDK smoke with no solver still failed with `TurkceAltyazi is presenting a Cloudflare challenge; configure FlareSolverr URL or matching cookies and User-Agent`.
+  - Official `ghcr.io/flaresolverr/flaresolverr:v3.5.0` started successfully with Chromium `148`; TurkceAltyazi.org SDK smoke with `flaresolverr_url=http://127.0.0.1:8191/v1` and `flaresolverr_timeout_ms=10000` failed with `timed out`. FlareSolverr logs showed `Challenge detected. Title found: Just a moment...` followed by `Timeout after 10.0 seconds` and HTTP `500`.
+  - Fork `alexfozor/flaresolverr:pr-1300` started successfully with Chromium `126`; the same SDK smoke failed with `TurkceAltyazi FlareSolverr request failed: Internal Server Error`. Logs showed `Challenge detected` followed by `Timeout after 10.0 seconds` and HTTP `500`.
+  - Temporary local FlareSolverr container `flaresolverr-codex` was removed after testing.
 - Remaining gates:
   - Run SDK live smoke search and download with valid TurkceAltyazi.org cookies and User-Agent, or a FlareSolverr environment that can solve this origin.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `turkcealtyaziorg` in the trusted replacement policy.
