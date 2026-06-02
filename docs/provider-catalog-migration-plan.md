@@ -76,7 +76,7 @@
   - `nekur`: branch `catalog-nekur`, worktree `/tmp/bazarr_catalog_provider_worktrees/nekur`, current head `d549ad9`
   - `opensubtitles`: branch `catalog-opensubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitles`, current head `cc19c5d`
   - `opensubtitlescom`: branch `catalog-opensubtitlescom`, worktree `/tmp/bazarr_catalog_provider_worktrees/opensubtitlescom`, current head `8d014b0`
-  - `pipocas`: branch `catalog-pipocas`, worktree `/tmp/bazarr_catalog_provider_worktrees/pipocas`, current head `4fe281b`
+  - `pipocas`: branch `catalog-pipocas`, worktree `/tmp/bazarr_catalog_provider_worktrees/pipocas`, current head `263e652`
   - `podnapisi`: branch `catalog-podnapisi`, worktree `/tmp/bazarr_catalog_provider_worktrees/podnapisi`, current head `8b3d09f`, dead origin
   - `prijevodionline`: branch `catalog-prijevodionline`, worktree `/tmp/bazarr_catalog_provider_worktrees/prijevodionline`, current head `109ed16`
   - `regielive`: branch `catalog-regielive`, worktree `/tmp/bazarr_catalog_provider_worktrees/regielive`, current head `fb5a2ae`
@@ -526,7 +526,7 @@
 
 - Branch: `catalog-pipocas`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/pipocas`
-- Current checkpoint: `4fe281b Add Pipocas.tv provider`
+- Current checkpoint: `263e652 Merge current main into Pipocas.tv branch`
 - Pull request: [#62](https://github.com/LavX/bazarr-provider-catalog/pull/62), open draft, head `catalog-pipocas`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -546,6 +546,21 @@
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://pipocas.tv/`: returned HTTP `302` to `https://pipocas.tv/login`.
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://pipocas.tv/login`: returned HTTP `200`.
   - Real search and download require valid Pipocas.tv credentials.
+- Fresh current-main merge evidence on 2026-06-02:
+  - Live thread-aware PR inspection found no conversation comments, reviews, or review threads on PR `#62`.
+  - Merged `origin/main` into `catalog-pipocas` and resolved the generated `README.md` and `catalog.json` conflicts.
+  - Effective branch scope against `origin/main` remains limited to `README.md`, `catalog.json`, `docs/provider-notes/pipocas.md`, `providers/pipocas/provider.json`, `providers/pipocas/provider.py`, `tests/fixtures/pipocas_detail_chernobyl.html`, `tests/fixtures/pipocas_detail_dune.html`, `tests/fixtures/pipocas_login.html`, `tests/fixtures/pipocas_search_chernobyl.html`, `tests/fixtures/pipocas_search_dune.html`, `tests/fixtures/pipocas_video_chernobyl_s01e01.json`, `tests/fixtures/pipocas_video_dune_2021.json`, and `tests/test_pipocas.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_pipocas.py'`: `6` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/pipocas/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python runtime policy remains `>=3.12,<3.15`.
+  - `git diff --cached --check` and `git diff --check origin/main...HEAD`: clean.
+  - Attribution and em-dash scan over touched Pipocas files found no matches.
+  - `python3 -B -m unittest discover -s tests`: `733` tests passed, `6` skipped.
+  - Pushed `catalog-pipocas` at `263e652bb07b1e78da83cf38b9b8d3716b28df85`.
+  - PR `#62` was verified open, draft, merge state `CLEAN`, head `263e652bb07b1e78da83cf38b9b8d3716b28df85`.
+  - `gh pr checks 62 --repo LavX/bazarr-provider-catalog`: no checks reported on the branch.
 - Remaining gates:
   - Run SDK live smoke search and download with valid Pipocas.tv credentials.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `pipocas` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
