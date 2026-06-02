@@ -167,7 +167,7 @@ def select_subtitle_file(names, payload=None):
 
     def score(name):
         value = 0
-        text = f"{name} {release}"
+        text = name
         if _title_in_text(_release_title(release), name):
             value += 10
         if _token_in_text(payload.get("resolution"), text):
@@ -225,13 +225,15 @@ class YifySubtitlesProvider:
         return sorted(results, key=lambda item: (item["score"], item["provider_payload"]["rating"]), reverse=True)
 
     def download(self, provider_payload, language, config):
-        del language, config
+        del language
+        config = dict(config or {})
         payload = provider_payload or {}
         page_url = payload.get("page_url")
         if not page_url:
             raise ValueError("yifysubtitles download requires page_url")
         detail = self._http_get(page_url, referer=HOME_URL)
         download_url = parse_download_url(detail)
+        _sleep(config)
         body = self._http_get(download_url, referer=page_url)
         merged = dict(payload)
         merged["download_url"] = download_url
@@ -383,7 +385,7 @@ def _content_payload(content, fmt, empty=False):
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(fmt),
         "format": fmt,
-        "encoding": "utf-8",
+        "encoding": _detect_subtitle_encoding(content),
         "empty": bool(empty),
     }
 
@@ -396,6 +398,16 @@ def _content_type(fmt):
     if fmt in ("ass", "ssa"):
         return "text/x-ssa"
     return "application/octet-stream"
+
+
+def _detect_subtitle_encoding(content):
+    if not content:
+        return "utf-8"
+    try:
+        content.decode("utf-8")
+    except UnicodeDecodeError:
+        return "latin-1"
+    return "utf-8"
 
 
 def _format_from_filename(filename):

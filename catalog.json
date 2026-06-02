@@ -1181,7 +1181,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "735b2a8c6239d0b192214e20724c382901084daba5177bae54ee399746da4dbc",
+        "bundle_sha256": "631488dafff0066a6f1609e38f82a5873169a7e9eeaa3f59d04ee3c2f4264f1d",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1203,7 +1203,7 @@
         "entry_class": "YifySubtitlesProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "af1d790e7d93aed5c5f19120bb1f82cc904ba84a464c3941ed94e05c95dba823"
+          "provider.py": "fd467cd368f8e6a5b6f5d3841d91687ead18c8a6ac9e1affab3bcc7f709daa62"
         },
         "languages": [
           "ara",
@@ -1260,7 +1260,7 @@
         "supported_media": [
           "movie"
         ],
-        "version": "0.1.0"
+        "version": "0.1.1"
       }
     }
   ],

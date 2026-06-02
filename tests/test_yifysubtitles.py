@@ -227,6 +227,77 @@ class YifyProviderTests(unittest.TestCase):
         self.assertEqual(result["content_sha256"], hashlib.sha256(SRT_BODY).hexdigest())
         self.assertEqual(result["format"], "srt")
 
+    def test_download_applies_configured_delay_between_detail_and_zip_requests(self):
+        archive = _zip_with({"Dune.2021.srt": SRT_BODY})
+        provider = self.mod.YifySubtitlesProvider()
+        events = []
+        original_sleep = self.mod._sleep
+
+        def stub(url, timeout=15, referer=None):
+            del timeout
+            if url == rows_page_url():
+                events.append(("detail", referer))
+                return DETAIL_HTML
+            if url == "https://yifysubtitles.ch/subtitle/dune-2021-english-yify-364913.zip":
+                events.append(("zip", referer))
+                return archive
+            raise AssertionError(f"unexpected URL: {url}")
+
+        def fake_sleep(config):
+            events.append(("sleep", dict(config or {})))
+
+        provider._http_get = stub
+        self.mod._sleep = fake_sleep
+        try:
+            provider.download(
+                {
+                    "page_url": rows_page_url(),
+                    "release": "Dune.2021",
+                    "filename": "yifysubtitles.364913.en.zip",
+                },
+                {"alpha3": "eng"},
+                {"request_delay_ms": 250},
+            )
+        finally:
+            self.mod._sleep = original_sleep
+
+        self.assertEqual(
+            events,
+            [
+                ("detail", "https://yifysubtitles.ch/"),
+                ("sleep", {"request_delay_ms": 250}),
+                ("zip", rows_page_url()),
+            ],
+        )
+
+    def test_select_subtitle_file_scores_archive_members_without_release_metadata(self):
+        selected = self.mod.select_subtitle_file(
+            [
+                "Other.Movie.srt",
+                "Dune.2021.1080p.WEBRip-CM.srt",
+            ],
+            {
+                "release": "Dune Part One 2021 1080p WEBRip-CM",
+                "resolution": "1080p",
+                "source": "Web",
+                "release_group": "CM",
+            },
+        )
+
+        self.assertEqual(selected, "Dune.2021.1080p.WEBRip-CM.srt")
+
+    def test_extract_download_reports_latin1_when_subtitle_is_not_utf8(self):
+        body = "Acentuado ü".encode("latin-1")
+        archive = _zip_with({"Dune.2021.srt": body})
+
+        payload = self.mod.extract_download(
+            archive,
+            {"filename": "yifysubtitles.364913.en.zip"},
+        )
+
+        self.assertEqual(payload["format"], "srt")
+        self.assertEqual(payload["encoding"], "latin-1")
+
 
 def rows_page_url():
     return "https://yifysubtitles.ch/subtitles/dune-part-one-2021-english-yify-364913"
