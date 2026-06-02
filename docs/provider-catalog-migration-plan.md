@@ -67,7 +67,7 @@
   - `hdbits`: branch `catalog-hdbits`, worktree `/tmp/bazarr_catalog_provider_worktrees/hdbits`, current head `a6b35fd`
   - `hosszupuska`: branch `catalog-hosszupuska`, worktree `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`, current head `5ccb3a7`, dead origin
   - `jimaku`: branch `catalog-jimaku`, worktree `/tmp/bazarr_catalog_provider_worktrees/jimaku`, current head `d4a1600`
-  - `karagarga`: branch `catalog-karagarga`, worktree `/tmp/bazarr_catalog_provider_worktrees/karagarga`, current head `0167ba8`
+  - `karagarga`: branch `catalog-karagarga`, worktree `/tmp/bazarr_catalog_provider_worktrees/karagarga`, current head `b394520`
   - `ktuvit`: branch `catalog-ktuvit`, worktree `/tmp/bazarr_catalog_provider_worktrees/ktuvit`, current head `9d3162e`
   - `legendasdivx`: branch `catalog-legendasdivx`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasdivx`, current head `02bbb60`
   - `legendasnet`: branch `catalog-legendasnet`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasnet`, current head `983878f`
@@ -369,7 +369,7 @@
 
 - Branch: `catalog-karagarga`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/karagarga`
-- Current checkpoint: `0167ba8 Add Karagarga provider`
+- Current checkpoint: `b394520 Merge remote-tracking branch 'origin/main' into catalog-karagarga`
 - Pull request: [#57](https://github.com/LavX/bazarr-provider-catalog/pull/57), open draft, head `catalog-karagarga`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -391,6 +391,20 @@
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' 'https://karagarga.in/pots.php?search=Dune&status=completed'`: returned HTTP `302` to `/login.php?returnto=...`.
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://forum.karagarga.in/`: returned HTTP `200`.
   - Real search and download require valid Karagarga tracker and forum credentials.
+- Fresh current-main merge evidence on 2026-06-02:
+  - Live thread-aware PR inspection found no conversation comments, reviews, or review threads on PR `#57`.
+  - Merged `origin/main` into `catalog-karagarga`; README and catalog auto-merged cleanly, then `python3 -B -m sdk build-catalog` refreshed generated catalog metadata.
+  - Effective branch scope against current `origin/main` remains limited to `README.md`, `catalog.json`, `docs/provider-notes/karagarga.md`, `providers/karagarga/provider.json`, `providers/karagarga/provider.py`, and `tests/test_karagarga.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_karagarga.py'`: `4` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/karagarga/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python runtime policy remains `>=3.12,<3.15`.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Touched-file attribution and em-dash scan across Karagarga files found no matches.
+  - `python3 -B -m unittest discover -s tests`: `731` tests passed with `6` skipped.
+  - Pushed branch head `b3945206809025849d1096628020a5ea553fc055`.
+  - PR `#57` is open draft, head `catalog-karagarga` at `b3945206809025849d1096628020a5ea553fc055`, merge state `CLEAN`, and no checks are reported.
 - Remaining gates:
   - Run SDK live smoke search and download with valid Karagarga tracker and forum credentials.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `karagarga` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
