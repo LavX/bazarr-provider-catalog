@@ -228,6 +228,14 @@
   - `python3 -B -m unittest discover -s tests`: `622` tests passed, `6` skipped.
   - Live GraphQL check on PR `#54` reported merge state `CLEAN`, head `73b716913dfa82877a8993ed10a5a6837bd51f3e`, and all `6` review threads outdated with no active non-outdated threads.
   - `gh pr view 54 --repo LavX/bazarr-provider-catalog --json number,state,mergedAt,mergeCommit,headRefName,headRefOid,url`: PR `#54` is `MERGED`, merge commit `e6ee32b561ecd57bbf5dc33ccfff7226d3a7452c`, final head `73b716913dfa82877a8993ed10a5a6837bd51f3e`.
+- Final-id local recheck on 2026-06-02:
+  - `python3 -B -m unittest discover -s tests -p 'test_embeddedsubtitles.py'`: `15` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/embeddedsubtitles/provider.py`: passed.
+  - `git diff --check origin/main...HEAD`: clean.
+  - `python3 -B -m sdk smoke-test --provider embedded_subtitles --language eng --video-fixture /tmp/embeddedsubtitles_sample_video.json --expect-min-results 1`: `embedded_subtitles ok`.
+  - Current session could not reach `bazarr-ui-test`: SSH alias resolution failed, no local `bazarr-ui-test` container was running, and local `127.0.0.1:6767` had no listener. This leaves only the remote Provider Hub compat proof outstanding.
 - Remaining gates: fresh Provider Hub compat proof for final provider id `embedded_subtitles`; earlier live proof used legacy id `embeddedsubtitles`.
 
 ### `whisperai`
