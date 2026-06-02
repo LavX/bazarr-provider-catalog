@@ -110,7 +110,7 @@
   - `xsubs`: branch `catalog-xsubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/xsubs`, current head `5a17922`, dead origin
   - `yavkanet`: branch `catalog-yavkanet`, worktree `/tmp/bazarr_catalog_provider_worktrees/yavkanet`, current head `0ac39be`
   - `yifysubtitles`: branch `catalog-yifysubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/yifysubtitles`, current head `024f996`
-  - `zimuku`: branch `catalog-zimuku`, worktree `/tmp/bazarr_catalog_provider_worktrees/zimuku`, current head `7d55b6c`
+  - `zimuku`: branch `catalog-zimuku`, worktree `/tmp/bazarr_catalog_provider_worktrees/zimuku`, current head `175ff72`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -912,7 +912,7 @@
 
 - Branch: `catalog-zimuku`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/zimuku`
-- Current checkpoint: `7d55b6c Add Zimuku Yunsuo coordinate fallback`
+- Current checkpoint: `175ff72 Handle Zimuku challenge bodies`
 - Pull request: [#69](https://github.com/LavX/bazarr-provider-catalog/pull/69), open draft, head `catalog-zimuku`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -1010,6 +1010,19 @@
   - Live SDK search smoke `python3 -B -m sdk smoke-test --provider zimuku --video-fixture tests/fixtures/zimuku_video_game_of_thrones_s01e01.json --language zho --expect-min-results 1 --skip-download`: `zimuku ok`.
   - Pushed branch head `7d55b6c93bc8f27dbd5c18ed0ac1c373441cfe8c`.
   - PR `#69` is open draft, head `catalog-zimuku` at `7d55b6c93bc8f27dbd5c18ed0ac1c373441cfe8c`, merge state `CLEAN`, has no review threads, and no checks are reported.
+  - Follow-up SubHD anti-captcha comparison: SubHD solves by detecting the captcha artifact in the response body, then submitting a locally solved template result. Zimuku now applies the same body-driven trigger to Yunsuo pages instead of requiring HTTP `404`.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_zimuku.py' -k test_yunsuo_bypass_solves_challenge_body_without_404_status`: failed because the provider returned the Yunsuo challenge body when the response status was `200`.
+  - `175ff72` makes `_bypass_get` solve any parsed Yunsuo challenge body, refreshes Zimuku provider hashes, and adds the regression.
+  - `python3 -B -m unittest discover -s tests -p 'test_zimuku.py'`: `13` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `15` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/zimuku/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`.
+  - `git diff --check`: clean.
+  - Touched-file attribution scan across Zimuku files found no matches.
+  - `python3 -B -m unittest discover -s tests`: `741` tests passed with `6` skipped.
+  - Live SDK search smoke `python3 -B -m sdk smoke-test --provider zimuku --language zho --video-fixture tests/fixtures/zimuku_video_game_of_thrones_s01e01.json --expect-min-results 1 --skip-download --config-json '{"request_delay_ms":0}'`: `zimuku ok`.
+  - Pushed branch head `175ff72bf68fc86005cb949697673bb231e28f36`.
 - Remaining gates:
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with Yunsuo verification solved.
 
