@@ -3141,8 +3141,8 @@
 
 - Branch: `catalog-subsource`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subsource`
-- Current checkpoint: `d50b08f Add SubSource provider`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/47` opened as draft on 2026-06-01, head `catalog-subsource`, base `main`, merge state `CLEAN`.
+- Current checkpoint: `34b3b19 Merge current main into SubSource branch`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/47` opened as draft on 2026-06-01, head `catalog-subsource`, base `main`, current head `34b3b1978ef322d6e279424697fba700b2627267`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -3175,6 +3175,20 @@
   - `python3 -B -m sdk smoke-test --provider subsource --language eng --expect-min-results 1 --skip-download`: failed at the expected credential gate with `SubSource api_key is required`.
   - PR `#47` was verified open, draft, merge state `CLEAN`, head `d50b08fa0775b6313d5b8bd8f7ecd6c85d8aa447`.
   - Test-server config check read only API-key presence and length from `/home/lavx/bazarr-data/config/config.yaml`; `subsource.apikey` is empty.
+- Current-main merge evidence on 2026-06-02:
+  - Live PR diff scope remains limited to `README.md`, `catalog.json`, `docs/provider-notes/subsource.md`, `providers/subsource`, and `tests/test_subsource.py`.
+  - Live review-thread inspection found no review threads on PR `#47`.
+  - `34b3b19` merges current `origin/main` into `catalog-subsource`, resolving generated `README.md` and `catalog.json` while preserving the SubSource provider scope.
+  - `python3 -B -m unittest discover -s tests -p 'test_subsource.py'`: `10` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`, ABI tags `cp312`, `cp313`, `cp314`, and `abi3`.
+  - `python3 -B -m py_compile providers/subsource/provider.py`: passed.
+  - `git diff --cached --check` and `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, SubSource notes, provider code, and tests found no matches.
+  - `python3 -B -m unittest discover -s tests`: `737` tests passed with `6` skipped.
+  - `gh pr view 47 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,mergeStateStatus,reviewDecision,headRefName,headRefOid,url,title`: PR `#47` is open, draft, head `34b3b1978ef322d6e279424697fba700b2627267`, merge state `CLEAN`.
+  - `gh pr checks 47 --repo LavX/bazarr-provider-catalog`: no checks reported on the branch.
 - Remaining gates:
   - Run SDK live smoke search and download with a real SubSource API key.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `subsource` in the trusted replacement policy.
