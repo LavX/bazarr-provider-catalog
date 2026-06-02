@@ -24,3 +24,5 @@ Historical provider id: `wizdom`.
 Local verification on 2026-05-31 did not complete against `wizdom.xyz`: both the home page and `https://wizdom.xyz/api/releases/tt1375666` timed out after 20 seconds with no bytes received. Unit tests cover the API contract, but live compat proof still requires the origin to respond.
 
 On 2026-06-01, the provider was updated to try the same anti-bot transport used by OpenSubtitles.org. This can handle browser challenges, but a Cloudflare 522 still means the upstream origin did not answer Cloudflare in time.
+
+On 2026-06-03, direct probes to `https://wizdom.xyz/`, `http://wizdom.xyz/`, and `https://www.wizdom.xyz/` all returned Cloudflare HTTP 522. Mark the provider as potential dead-origin and recheck later before spending more migration or compat-validation time.
