@@ -46,11 +46,11 @@
 - Coverage recheck on 2026-06-02: source-provider count after excluding helper/shared modules is `60`, provider worktree count after excluding catalog maintenance worktrees is `60`, the missing-worktree comparison returned no rows, and the extra-worktree comparison returned no rows.
 - Open PR review-thread audit on 2026-06-02: GraphQL inspection of all `28` open provider PRs found no review threads, no PR comments, and no reviews. All open provider PRs are draft PRs with merge state `CLEAN`, so the remaining open queue is verification-gated rather than review-feedback-gated.
 - Open PR gate classification on 2026-06-02 continuation: live GitHub state still shows `28` open provider PRs, all draft, all merge state `CLEAN`.
-  - Credential, session, or API-key gated: `addic7ed`, `assrt`, `avistaz`, `cinemaz`, `hdbits`, `karagarga`, `ktuvit`, `legendasdivx`, `legendasnet`, `opensubtitlescom`, `pipocas`, `subsource`, `subsro`, `titlovi`, and `titulky`.
+  - Credential, session, or API-key gated: `addic7ed`, `assrt`, `avistaz`, `cinemaz`, `hdbits`, `karagarga`, `ktuvit`, `legendasdivx`, `legendasnet`, `opensubtitlescom`, `pipocas`, `subsro`, `titlovi`, and `titulky`.
   - User service or base URL gated: `subsarr` needs a reachable self-hosted Subsarr `base_url`; `whisperai` needs a real Whisper web-service endpoint for non-stub proof.
   - Origin access or anti-bot gated: `turkcealtyaziorg`, `yavkanet`, and `wizdom`.
   - Real media hash or disclosure gated: `napisy24` needs a library-backed video with a valid Napisy24/OpenSubtitles hash; `shooter` needs explicit approval or a non-sensitive fixture before sending derived Shooter hashes to the public API.
-  - Compat-only gated: `betaseries`, `jimaku`, `regielive`, `subdl`, `subx`, and `zimuku` have current SDK search and download proof, but still need Provider Hub compat search, download, and stream proof.
+  - Compat-only gated: `betaseries`, `jimaku`, `regielive`, `subdl`, `subsource`, `subx`, and `zimuku` have current SDK search and download proof, but still need Provider Hub compat search, download, and stream proof.
   - Current local compat reachability evidence: no Bazarr test container is running, `http://127.0.0.1:6767` is closed, `bazarr-ui-test` does not resolve over SSH, and `BAZARR_COMPAT_API_KEY` is unset in this shell.
 - Current catalog checkout inventory: this planning worktree is intentionally not rebased onto `main`, but live `main` now ships 40 Provider Hub bundles, adding `gestdown`, `bsplayer`, `subtis`, `subtitulamostv`, `tvsubtitles`, `greeksubs`, `animekalesi`, `animesubinfo`, `opensubtitles_org`, `animetosho`, `napiprojekt`, `subf2m`, `nekur`, `greeksubtitles`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subs4free`, `subs4series`, `embedded_subtitles`, `subtitrarinoi`, `yifysubtitles`, `subtitriid`, `titrari`, and `supersubtitles` to the previous 12 bundle baseline.
 - Core migration prerequisite branch: `worktree-provider-hub-builtin-replacements` in `/tmp/bazarr_provider_hub_builtin_replacements`, current head `f245ae096`
@@ -3635,8 +3635,11 @@
   - Fresh recheck after fetching `origin/main` confirmed no review threads, PR merge state `CLEAN`, and no checks reported.
   - Local environment has no `SUBSOURCE_API_KEY` or `SUBSOURCE_TOKEN`, so live SDK smoke remains credential-gated.
   - No-key SDK smoke `python3 -B -m sdk smoke-test --provider subsource --language eng --video-fixture tests/fixtures/yifysubtitles_video_dune_2021.json --expect-min-results 1 --skip-download` failed at the expected credential gate with `SubSource api_key is required`.
+  - Fresh SDK recheck on 2026-06-02 using the temporary SubSource API key from `/tmp/bazarr_provider_test_credentials.env`: `python3 -B -m unittest discover -s tests -p 'test_subsource.py'` ran `10` tests passed, `python3 -B -m unittest discover -s tests -p 'test_catalog.py'` ran `14` tests passed with `6` skipped, `python3 -B -m sdk validate` returned `catalog ok`, and `git diff --check origin/main...HEAD` was clean.
+  - `python3 -B -m sdk smoke-test --provider subsource --language eng --video-fixture tests/fixtures/subclub_video_inception.json --config-json '{"request_delay_ms":0}' --secret api_key=SUBSOURCE_API_KEY --expect-min-results 1 --skip-download`: `subsource ok`.
+  - `python3 -B -m sdk smoke-test --provider subsource --language eng --video-fixture tests/fixtures/subclub_video_inception.json --config-json '{"request_delay_ms":0}' --secret api_key=SUBSOURCE_API_KEY --expect-min-results 1`: `subsource ok`.
+  - `gh pr view 47 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,mergeStateStatus,reviewDecision,headRefOid,url`: PR `#47` is open, draft, head `34b3b1978ef322d6e279424697fba700b2627267`, merge state `CLEAN`.
 - Remaining gates:
-  - Run SDK live smoke search and download with a real SubSource API key.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `subsource` in the trusted replacement policy.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured SubSource API key.
 
