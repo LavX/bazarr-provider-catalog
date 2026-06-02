@@ -257,9 +257,7 @@ def extract_download(body, payload=None):
         with zipfile.ZipFile(stream) as archive:
             selected = select_subtitle_file(archive.namelist())
             return _normalize_line_endings(archive.read(selected)), _subtitle_extension(selected) or "srt"
-    if _looks_like_html(body):
-        raise ValueError("greeksubtitles download returned HTML instead of subtitle content")
-    return _normalize_line_endings(body or b""), _format_from_filename(payload.get("filename"))
+    return _extract_raw_subtitle_download(body, payload.get("filename"))
 
 
 def select_subtitle_file(names):
@@ -438,6 +436,27 @@ def _looks_like_html(body):
     )
 
 
+def _extract_raw_subtitle_download(body, filename):
+    if _looks_like_html(body):
+        raise ValueError("greeksubtitles download returned HTML instead of subtitle content")
+    subtitle_format = _format_from_filename(filename)
+    if not subtitle_format and not _looks_like_raw_subtitle(body):
+        raise ValueError("greeksubtitles download returned unsupported raw content")
+    return _normalize_line_endings(body or b""), subtitle_format or "srt"
+
+
+def _looks_like_raw_subtitle(body):
+    prefix = (body or b"").lstrip()[:2048]
+    lower = prefix.lower()
+    return (
+        b"-->" in prefix
+        or lower.startswith(b"webvtt")
+        or b"[script info]" in lower
+        or b"{\\an" in lower
+        or b"{y:i}" in lower
+    )
+
+
 def _sleep(config):
     delay_ms = (config or {}).get("request_delay_ms", 0) or 0
     if delay_ms > 0:
@@ -481,7 +500,7 @@ def _is_rar_archive(body):
 
 
 def _format_from_filename(filename):
-    return _subtitle_extension(filename or "") or "srt"
+    return _subtitle_extension(filename or "")
 
 
 def _subtitle_extension(name):

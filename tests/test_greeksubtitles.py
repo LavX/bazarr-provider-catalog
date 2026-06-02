@@ -258,6 +258,13 @@ class GreekSubtitlesDownloadTests(unittest.TestCase):
                 {"filename": "greeksubtitles.failure.zip"},
             )
 
+    def test_extract_download_rejects_unsupported_raw_response(self):
+        with self.assertRaises(ValueError):
+            self.mod.extract_download(
+                b"download temporarily unavailable",
+                {"filename": "greeksubtitles.failure.zip"},
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
