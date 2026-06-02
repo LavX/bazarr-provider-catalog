@@ -38,6 +38,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`subcentral`](providers/subcentral/) | 0.1.0 | Scrapes [SubCentral.de](https://www.subcentral.de) forum subtitle threads for German and English episode releases. No login or API key. |
 | [`subclub`](providers/subclub/) | 0.1.0 | Scrapes [Subclub.eu](https://www.subclub.eu) for Estonian movie and episode subtitles. No login or API key. |
 | [`subf2m`](providers/subf2m/) | 0.1.1 | Scrapes [SubF2M](https://subf2m.co) for movie and episode subtitle ZIP files in 30+ languages. Configurable User-Agent and SSL verification. |
+| [`subs4free`](providers/subs4free/) | 0.1.2 | Scrapes [Subs4Free](https://www.subs4free.info) for Greek and English movie subtitles. No login or API key. |
 | [`subhd`](providers/subhd/) | 0.1.3 | Scrapes [SubHD.tv](https://subhd.tv) for Chinese-first movie and episode subtitles with multilingual releases. No login or API key. |
 | [`subtis`](providers/subtis/) | 0.1.0 | Queries [api.subt.is](https://api.subt.is) for Spanish movie subtitles using hash, size, filename, and alternative lookups. No login or API key. |
 | [`subtitlestar`](providers/subtitlestar/) | 0.1.8 | Scrapes [subtitlestar.com](https://subtitlestar.com) for Persian/Farsi movie and episode subtitles. No login or API key. |
@@ -88,6 +89,7 @@ Every provider here ships independently of Bazarr+ releases. [Contribute](#contr
 - `providers/subcentral/`: scrapes SubCentral.de forum threads for German and English episode subtitles.
 - `providers/subclub/`: scrapes Subclub.eu movie and episode subtitle listings and downloads.
 - `providers/subf2m/`: scrapes SubF2M movie and episode subtitle pages and ZIP downloads.
+- `providers/subs4free/`: scrapes Subs4Free movie subtitle listings and anti-block downloads.
 - `providers/subhd/`: scrapes SubHD.tv Chinese-first movie and episode subtitle pages.
 - `providers/subtis/`: queries api.subt.is for Spanish movie subtitles using hash, size, filename, and alternative lookups.
 - `providers/subtitlestar/`: scrapes subtitlestar.com for Persian/Farsi movie and episode subtitles.
