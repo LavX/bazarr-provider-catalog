@@ -53,8 +53,8 @@ LANGUAGE_NAMES = {
     "norwegian": "nor",
     "polish": "pol",
     "portuguese": "por",
-    "portuguese (brazilian)": "por-BR",
-    "brazilian portuguese": "por-BR",
+    "portuguese (brazilian)": ("por", "BR"),
+    "brazilian portuguese": ("por", "BR"),
     "romanian": "ron",
     "russian": "rus",
     "slovak": "slk",
@@ -77,7 +77,7 @@ class HttpResponse:
     def __init__(self, status, body, headers):
         self.status = int(status)
         self.body = body or b""
-        self.headers = dict(headers or {})
+        self.headers = headers or {}
 
 
 class Addic7edProvider:
@@ -132,10 +132,11 @@ class Addic7edProvider:
             show_id = self._get_show_id(series, video.get("year"), config, cookies)
             if not show_id:
                 continue
+            requested_episodes = _episode_numbers(video.get("episode"))
             results = [
                 item
                 for item in self._query_episode(show_id, series, video, config, cookies)
-                if item["language"]["alpha3"] in requested and item["episode"] == _int_or_none(video.get("episode"))
+                if _language_matches(item["language"], requested) and item["episode"] in requested_episodes
             ]
             if results:
                 return [_candidate(item, video) for item in results]
@@ -151,7 +152,7 @@ class Addic7edProvider:
             results = [
                 item
                 for item in self._query_movie(movie_id, title, video, config, cookies)
-                if item["language"]["alpha3"] in requested
+                if _language_matches(item["language"], requested)
             ]
             if results:
                 return [_candidate(item, video) for item in results]
@@ -330,9 +331,9 @@ def _http_request(
         opener = urllib.request.build_opener(_NoRedirectHandler)
     try:
         with opener.open(request, timeout=timeout) as response:
-            return HttpResponse(response.status, response.read(), dict(response.headers.items()))
+            return HttpResponse(response.status, response.read(), list(response.headers.items()))
     except urllib.error.HTTPError as exc:
-        return HttpResponse(exc.code, exc.read(), dict(exc.headers.items()))
+        return HttpResponse(exc.code, exc.read(), list(exc.headers.items()))
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Addic7ed request failed: {exc.reason}") from exc
 
@@ -359,17 +360,36 @@ def _parse_cookies(config):
 
 
 def _store_response_cookies(target, response):
-    cookie_header = _header(response.headers, "set-cookie")
-    if not cookie_header:
-        return
-    cookie = SimpleCookie()
-    cookie.load(cookie_header)
-    for key, morsel in cookie.items():
-        target[key] = morsel.value
+    for cookie_header in _header_values(response.headers, "set-cookie"):
+        cookie = SimpleCookie()
+        cookie.load(cookie_header)
+        for key, morsel in cookie.items():
+            target[key] = morsel.value
 
 
 def _requested_languages(languages):
-    return {str(item.get("alpha3")) for item in languages or [] if isinstance(item, dict) and item.get("alpha3")}
+    requested = set()
+    for item in languages or []:
+        if not isinstance(item, dict) or not item.get("alpha3"):
+            continue
+        alpha3, country = _language_code_parts(item.get("alpha3"))
+        country = str(item.get("country_alpha2") or item.get("country") or country or "").upper() or None
+        requested.add((alpha3, country))
+    return requested
+
+
+def _language_matches(language, requested):
+    alpha3, country = _language_code_parts((language or {}).get("alpha3"))
+    country = str((language or {}).get("country_alpha2") or country or "").upper() or None
+    return (alpha3, country) in requested or (alpha3, None) in requested
+
+
+def _language_code_parts(value):
+    code = str(value or "").strip()
+    if "-" in code:
+        alpha3, country = code.split("-", 1)
+        return alpha3.lower(), country.upper()
+    return code.lower(), None
 
 
 def parse_show_ids(body):
@@ -434,7 +454,7 @@ def parse_episode_rows(body, series, video):
                 "title": cells[2].text(),
                 "year": _int_or_none(video.get("year")),
                 "release_info": release_info,
-                "language": {"alpha3": language, "hi": hi, "forced": False},
+                "language": _language_payload(language, hi=hi),
                 "download_link": download_link,
                 "page_url": page_link,
                 "uploader": None,
@@ -453,7 +473,7 @@ def parse_movie_rows(body, movie_id, title, video):
         language = next((_language_from_name(text) for text in texts if _language_from_name(text)), None)
         if not language:
             continue
-        if any("%" in text for text in texts if "completed" not in text.lower()):
+        if _has_incomplete_status(texts):
             continue
         download_link = None
         for link in table.descendants("a"):
@@ -480,7 +500,7 @@ def parse_movie_rows(body, movie_id, title, video):
                 "title": title,
                 "year": _int_or_none(video.get("year")),
                 "release_info": _normalize_release_info(version),
-                "language": {"alpha3": language, "hi": hi, "forced": False},
+                "language": _language_payload(language, hi=hi),
                 "download_link": download_link,
                 "page_url": f"{BASE_URL}/movie/{movie_id}",
                 "uploader": uploader,
@@ -646,6 +666,30 @@ def _language_from_name(value):
     return LANGUAGE_NAMES.get(" ".join(str(value or "").strip().lower().split()))
 
 
+def _language_payload(value, hi=False):
+    if isinstance(value, tuple):
+        payload = {"alpha3": value[0], "country_alpha2": value[1]}
+    else:
+        payload = {"alpha3": value}
+    payload.update({"hi": bool(hi), "forced": False})
+    return payload
+
+
+def _episode_numbers(value):
+    if isinstance(value, (list, tuple, set)):
+        return {item for item in (_int_or_none(item) for item in value) if item is not None}
+    episode = _int_or_none(value)
+    return {episode} if episode is not None else set()
+
+
+def _has_incomplete_status(texts):
+    for text in texts:
+        match = re.search(r"(\d+(?:\.\d+)?)\s*%", str(text or ""))
+        if match and float(match.group(1)) < 100:
+            return True
+    return False
+
+
 def _normalize_release_info(value):
     return ",".join(part.strip() for part in str(value or "").replace("+", ",").split(",") if part.strip())
 
@@ -673,11 +717,21 @@ def _int_or_none(value):
 
 
 def _header(headers, name):
+    values = _header_values(headers, name)
+    return values[0] if values else ""
+
+
+def _header_values(headers, name):
     wanted = name.lower()
-    for key, value in (headers or {}).items():
+    if hasattr(headers, "get_all"):
+        values = headers.get_all(name) or headers.get_all(name.lower()) or []
+        return [str(value) for value in values]
+    items = headers.items() if isinstance(headers, dict) else list(headers or [])
+    values = []
+    for key, value in items:
         if str(key).lower() == wanted:
-            return str(value)
-    return ""
+            values.append(str(value))
+    return values
 
 
 def _format_from_filename(filename):

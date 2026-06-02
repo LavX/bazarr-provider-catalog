@@ -75,6 +75,29 @@ def _episode_page():
     """
 
 
+def _episode_page_with_brazilian_portuguese():
+    return b"""
+    <html>
+      <body>
+        <table>
+          <tr class="epeven">
+            <td>1</td>
+            <td>2</td>
+            <td><a href="/serie/Example_Show/1/2/Pilot">Pilot</a></td>
+            <td>Portuguese (Brazilian)</td>
+            <td>WEB-DL+GROUP</td>
+            <td>Completed</td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td><a href="/updated/1/2/porbr">Download</a></td>
+          </tr>
+        </table>
+      </body>
+    </html>
+    """
+
+
 def _movie_search_page():
     return b"""
     <html>
@@ -100,6 +123,23 @@ def _movie_page():
             <td><a href="/download/movie/55/eng">Download</a></td>
           </tr>
           <tr><td><img src="/images/hi.jpg"></td></tr>
+        </table>
+      </body>
+    </html>
+    """
+
+
+def _partial_movie_page():
+    return b"""
+    <html>
+      <body>
+        <table align="center" border="0" class="tabel95" width="100%">
+          <tr><td class="NewsTitle">Version WEB-DL.GROUP, 0.00</td><td class="uploader">movie-uploader</td></tr>
+          <tr>
+            <td>English</td>
+            <td>99.86% Completed</td>
+            <td><a href="/download/movie/55/eng-partial">Download</a></td>
+          </tr>
         </table>
       </body>
     </html>
@@ -162,6 +202,64 @@ class Addic7edSearchTests(unittest.TestCase):
         self.assertIn("release_group", results[0]["matches"])
         self.assertIn("source", results[0]["matches"])
 
+    def test_episode_search_matches_requested_multi_episode_list(self):
+        provider = self.mod.Addic7edProvider()
+
+        def get_response(url, headers, cookies, timeout=30, params=None, allow_redirects=True):
+            del headers, cookies, timeout, allow_redirects
+            if url.endswith("/panel.php"):
+                return self.mod.HttpResponse(200, b"panel", {})
+            if url.endswith("/shows.php"):
+                return self.mod.HttpResponse(200, _shows_page(), {})
+            if url.endswith("/ajax_loadShow.php"):
+                self.assertEqual(params, {"show": "123", "season": 1, "langs": "|"})
+                return self.mod.HttpResponse(200, _episode_page(), {})
+            raise AssertionError(url)
+
+        provider._http_get = get_response
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "Example Show",
+                "year": 2020,
+                "season": 1,
+                "episode": [2, 3],
+            },
+            [{"alpha3": "eng"}],
+            {"cookies": "PHPSESSID=session"},
+        )
+
+        self.assertEqual([item["provider_payload"]["episode"] for item in results], [2, 3])
+
+    def test_episode_search_preserves_brazilian_portuguese_country(self):
+        provider = self.mod.Addic7edProvider()
+
+        def get_response(url, headers, cookies, timeout=30, params=None, allow_redirects=True):
+            del headers, cookies, timeout, allow_redirects
+            if url.endswith("/panel.php"):
+                return self.mod.HttpResponse(200, b"panel", {})
+            if url.endswith("/shows.php"):
+                return self.mod.HttpResponse(200, _shows_page(), {})
+            if url.endswith("/ajax_loadShow.php"):
+                return self.mod.HttpResponse(200, _episode_page_with_brazilian_portuguese(), {})
+            raise AssertionError(url)
+
+        provider._http_get = get_response
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "Example Show",
+                "year": 2020,
+                "season": 1,
+                "episode": 2,
+            },
+            [{"alpha3": "por", "country_alpha2": "BR"}],
+            {"cookies": "PHPSESSID=session"},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["language"], {"alpha3": "por", "country_alpha2": "BR", "hi": False, "forced": False})
+
     def test_movie_search_logs_in_and_parses_movie_page(self):
         provider = self.mod.Addic7edProvider()
         calls = []
@@ -201,6 +299,28 @@ class Addic7edSearchTests(unittest.TestCase):
         self.assertIn("title", results[0]["matches"])
         self.assertIn("year", results[0]["matches"])
         self.assertIn("release_group", results[0]["matches"])
+
+    def test_movie_search_rejects_partial_completed_rows(self):
+        provider = self.mod.Addic7edProvider()
+
+        def get_response(url, headers, cookies, timeout=30, params=None, allow_redirects=True):
+            del timeout, headers, cookies, allow_redirects
+            if url.endswith("/panel.php"):
+                return self.mod.HttpResponse(200, b"panel", {})
+            if url.endswith("/search.php"):
+                return self.mod.HttpResponse(200, _movie_search_page(), {})
+            if url.endswith("/movie/55"):
+                return self.mod.HttpResponse(200, _partial_movie_page(), {})
+            raise AssertionError(url)
+
+        provider._http_get = get_response
+        results = provider.search(
+            {"kind": "movie", "title": "Dune", "year": 2021, "release_group": "GROUP"},
+            [{"alpha3": "eng"}],
+            {"cookies": "PHPSESSID=session"},
+        )
+
+        self.assertEqual(results, [])
 
 
 class Addic7edDownloadTests(unittest.TestCase):
@@ -259,6 +379,34 @@ class Addic7edDownloadTests(unittest.TestCase):
                 {"alpha3": "eng"},
                 {"cookies": "PHPSESSID=session"},
             )
+
+
+class Addic7edCookieTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_store_response_cookies_preserves_duplicate_set_cookie_headers(self):
+        target = {}
+        response = self.mod.HttpResponse(
+            302,
+            b"",
+            [
+                ("Set-Cookie", "PHPSESSID=session; path=/"),
+                ("Set-Cookie", "wikisubtitlesuser=user; path=/"),
+                ("Set-Cookie", "wikisubtitlespass=pass; path=/"),
+            ],
+        )
+
+        self.mod._store_response_cookies(target, response)
+
+        self.assertEqual(
+            target,
+            {
+                "PHPSESSID": "session",
+                "wikisubtitlesuser": "user",
+                "wikisubtitlespass": "pass",
+            },
+        )
 
 
 if __name__ == "__main__":

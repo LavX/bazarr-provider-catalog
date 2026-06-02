@@ -4,7 +4,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "96e1471ae729bd8a7465fa90e1cb79c3efef5ec8601a1b8212d1c1508ffd5034",
+        "bundle_sha256": "36c1b0907c0c711cf3b0984d67bed711876e6fc48f381d4751203b06959f3d30",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -51,7 +51,7 @@
         "entry_class": "Addic7edProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "24005c34fc70beb859ec3cb9f0e464fdba57b1453c8f8fb5dbafa4dba3aa5bd2"
+          "provider.py": "ec9d1cdb147e55b52ff8bae7881a20d5e7e7d75aaadc6b45b9c29aefc7e3b491"
         },
         "languages": [
           "ara",
