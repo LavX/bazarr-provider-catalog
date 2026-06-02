@@ -83,7 +83,7 @@
   - `shooter`: branch `catalog-shooter`, worktree `/tmp/bazarr_catalog_provider_worktrees/shooter`, current head `cf45c2f`
   - `soustitreseu`: branch `catalog-soustitreseu`, worktree `/tmp/bazarr_catalog_provider_worktrees/soustitreseu`, current head `09b1dc9`
   - `subclub`: branch `catalog-subclub`, worktree `/tmp/bazarr_catalog_provider_worktrees/subclub`, current head `e10187f`
-  - `subdl`: branch `catalog-subdl`, worktree `/tmp/bazarr_catalog_provider_worktrees/subdl`, current head `7ff94cd`
+  - `subdl`: branch `catalog-subdl`, worktree `/tmp/bazarr_catalog_provider_worktrees/subdl`, current head `0f47d37`
   - `subf2m`: branch `catalog-subf2m`, worktree `/tmp/bazarr_catalog_provider_worktrees/subf2m`, current head `659910f`
   - `subs4free`: branch `catalog-subs4free`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4free`, current head `6eca4fc`
   - `subs4series`: branch `catalog-subs4series`, worktree `/tmp/bazarr_catalog_provider_worktrees/subs4series`, current head `15dd455`
@@ -3331,6 +3331,9 @@
   - `python3 -B -m unittest discover -s tests`: `740` tests passed with `6` skipped.
   - `gh pr view 46 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,mergeStateStatus,reviewDecision,headRefName,headRefOid,url,title`: PR `#46` is open, draft, head `0f47d3789db3178d8341cd69c33b3ae543712dd0`, merge state `CLEAN`.
   - `gh pr checks 46 --repo LavX/bazarr-provider-catalog`: no checks reported on the branch.
+  - Fresh recheck after fetching `origin/main` confirmed no review threads, PR merge state `CLEAN`, and no checks reported.
+  - Local environment has no `SUBDL_API_KEY` or `SUBDL_TOKEN`, so live SDK smoke remains credential-gated.
+  - No-key SDK smoke `python3 -B -m sdk smoke-test --provider subdl --language eng --video-fixture tests/fixtures/yifysubtitles_video_dune_2021.json --expect-min-results 1 --skip-download` failed at the expected credential gate with `SubDL api_key is required`.
 - Remaining gates:
   - Run SDK live smoke search and download with a real SubDL API key.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `subdl` in the trusted replacement policy.
