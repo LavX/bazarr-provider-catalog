@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "216629b6073c6e5a62b043b2edc33632c6e5fecc293d138951df3db58665cff0",
+  "bundle_sha256": "ce692833f4f3a1fdebf996ee4a1748f94f9c2f00797b89dfd79267f2a2ccb60e",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -156,7 +156,7 @@
   "entry_class": "ZimukuProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "1e8a8176eb60687f1bbc7ea15e479152b4600b8021c4b502fc033016e9e48843"
+    "provider.py": "0877d20c13db1467f5ed4a14b43f505d6f91f37b5e924d49756c280946d0b161"
   },
   "languages": [
     "eng",

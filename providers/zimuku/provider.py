@@ -491,7 +491,7 @@ class ZimukuProvider:
         for _attempt in range(YUNSUO_MAX_VERIFY_ATTEMPTS):
             response = self._http_get_response(current_url, referer=referer)
             challenge = parse_yunsuo_challenge(response.content)
-            if response.status == 404 and challenge:
+            if challenge:
                 code = self._solve_yunsuo_image(challenge, config or {})
                 if not code:
                     raise ValueError("zimuku yunsuo captcha response required")

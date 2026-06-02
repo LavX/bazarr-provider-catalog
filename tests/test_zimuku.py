@@ -199,6 +199,31 @@ class ZimukuProviderTests(unittest.TestCase):
 
         self.assertEqual(response.status, 200)
 
+    def test_yunsuo_bypass_solves_challenge_body_without_404_status(self):
+        provider = self.mod.ZimukuProvider()
+        search_url = "https://srtku.com/search?q=Dune+2021"
+        verify_url = "https://srtku.com/search?q=Dune%202021&security_verify_img=31323334"
+        responses = {
+            search_url: [
+                self.mod.HttpResponse(200, CHALLENGE_HTML, {}, search_url),
+                self.mod.HttpResponse(200, CURRENT_SEARCH_HTML, {}, search_url),
+            ],
+            verify_url: [self.mod.HttpResponse(302, b"", {}, verify_url)],
+        }
+
+        def response_stub(url, timeout=30, referer=None, allow_redirects=True):
+            del timeout, referer, allow_redirects
+            if url not in responses or not responses[url]:
+                raise AssertionError(f"unexpected URL: {url}")
+            return responses[url].pop(0)
+
+        provider._http_get_response = response_stub
+        provider._solve_yunsuo_image = lambda challenge, config: "1234"
+
+        response = provider._bypass_get(search_url, {"request_delay_ms": 0})
+
+        self.assertEqual(response.content, CURRENT_SEARCH_HTML)
+
     def test_yunsuo_verify_url_uses_challenge_response_host(self):
         provider = self.mod.ZimukuProvider()
         detail_url = "https://zimuku.org/detail/210615.html"
