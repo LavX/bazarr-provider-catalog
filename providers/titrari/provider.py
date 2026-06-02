@@ -216,16 +216,11 @@ def select_subtitle_file(names, payload=None):
             value += 6
         return value
 
-    if len(candidates) == 1:
-        only = candidates[0]
-        value = score(only)
-        if value > 0 or not _archive_has_episode_hint(only):
-            return only
+    single_candidate = _select_single_episode_candidate(candidates, score)
+    if single_candidate:
+        return single_candidate
 
-    selected = max(candidates, key=score)
-    if score(selected) <= 0:
-        raise ValueError("titrari archive does not contain the requested episode")
-    return selected
+    return _best_scored_episode_candidate(candidates, score)
 
 
 class TitrariProvider:
@@ -549,7 +544,30 @@ def _archive_episode_score(name, season, episode):
         for match in _EPISODE_RE.finditer(basename):
             if int(match.group("episode")) == episode:
                 return 90
-    if not has_structured_episode and re.search(rf"(?<!\d)0*{episode}(?!\d)", _normalize(basename)):
+    return _archive_numeric_episode_score(basename, has_structured_episode, episode)
+
+
+def _select_single_episode_candidate(candidates, score):
+    if len(candidates) != 1:
+        return None
+    only = candidates[0]
+    value = score(only)
+    if value > 0 or not _archive_has_episode_hint(only):
+        return only
+    return None
+
+
+def _best_scored_episode_candidate(candidates, score):
+    selected = max(candidates, key=score)
+    if score(selected) <= 0:
+        raise ValueError("titrari archive does not contain the requested episode")
+    return selected
+
+
+def _archive_numeric_episode_score(basename, has_structured_episode, episode):
+    if has_structured_episode:
+        return 0
+    if re.search(rf"(?<!\d)0*{episode}(?!\d)", _normalize(basename)):
         return 70
     return 0
 

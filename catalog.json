@@ -4622,7 +4622,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "e0721278df6b6d0e02c8cc3b4861372a80a8f786fdf80d1aabb8f11eb163b819",
+        "bundle_sha256": "1f2b2e3e387d06c145dc18d08e7f12d34672ac09b02bccccc12002a21cd55d12",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -4750,7 +4750,7 @@
         "entry_class": "TitrariProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "a782f0e72976a8926318d34d78211f59b3f639295fc7263daa1c4ca8e0851c9b"
+          "provider.py": "bc9bb8b3470828575ae07cfb2e77050e73e654300de6daee8eb99d892a1c801f"
         },
         "languages": [
           "ron",
