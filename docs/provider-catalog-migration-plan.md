@@ -26,7 +26,7 @@
 - Embedded Anubis body parity on 2026-06-02: pushed the OpenSubtitles.org in-place Anubis body detection path to `wizdom` at `93ef015`, `yavkanet` at `0ac39be`, `turkcealtyaziorg` at `c986310`, `napiprojekt` at `e78c47b`, and `subs4series` at `d390f8d`. Local provider tests, `py_compile`, `sdk validate`, `test_catalog.py`, `git diff --check`, and touched-file attribution or prohibited punctuation scans passed for each branch. Follow-up PR `#76` merged at `f941c6b972c0cff11cdb0a03f00197f28ac5ff00`, and follow-up PR `#77` merged at `03a5a4af6126ede49f7e8325100f1b895742c77a`. PR `#72`, PR `#42`, and PR `#53` have no active review threads; no checks are reported on those branches.
 - Current-main refresh on 2026-06-02: merged `origin/main` into `catalog-wizdom` at `1ea63e7` and `catalog-turkcealtyaziorg` at `fa5e7f8`, resolved generated README/catalog conflicts, rebuilt catalog hashes, reran focused provider tests, `test_catalog.py`, `sdk validate`, `py_compile`, `git diff --check`, and touched-file attribution or prohibited punctuation scans. PR `#72` and PR `#53` are open draft PRs with no review threads and merge state `CLEAN`.
 - Draft dirty-branch refresh on 2026-06-02: merged current `origin/main` into `catalog-legendasdivx` at `6adbed8`, `catalog-ktuvit` at `4d43790`, `catalog-karagarga` at `1c637c4`, `catalog-turkcealtyaziorg` at `82d8690`, `catalog-avistaz` at `41e92b6`, `catalog-assrt` at `f5b37bc`, `catalog-subsarr` at `1876ca1`, and `catalog-shooter` at `24751e5`. Each branch resolved generated README/catalog conflicts, rebuilt catalog hashes, reran the focused provider test, `test_catalog.py`, `sdk validate`, `py_compile`, `git diff --check`, and touched-file attribution or prohibited punctuation scans. AvistaZ also added the missing `py7zz` request dependency closure after `test_catalog.py` caught the manifest gap. Final live GitHub PR list shows all `18` open PRs are draft and all have merge state `CLEAN`.
-- Open draft blocker audit on 2026-06-02: live GitHub still shows `18` open draft PRs, all merge state `CLEAN`, and no checks reported. Rechecked stale-looking candidates against the inventory: Addic7ed is SDK search/download-cleared with fresh cookies but still needs Provider Hub compat proof, Titulky remains gated by a non-VIP account, OpenSubtitles.com remains gated by a missing real API key, YavkaNet is search-cleared with official FlareSolverr but gated by source-side direct download HTTP `403`, TurkceAltyazi.org is challenge-cleared with official FlareSolverr but gated by Cloudflare `522` origin timeout pages, and Shooter remains gated by Provider Hub compat proof requiring either approval to disclose a real derived hash or a non-sensitive library-backed fixture. No open draft currently has enough evidence to mark ready or merge.
+- Addic7ed compat clearance on 2026-06-02: PR `#56` is open, ready for review, merge state `CLEAN`, and head `21050e557eef9574e36c2efa2b6659145abda1d3`. Live GitHub now shows `17` remaining draft PRs. Addic7ed is SDK and disposable Provider Hub compat-cleared with fresh cookies after switching to installable catalog id `addic7ed_com`; Titulky remains gated by a non-VIP account, OpenSubtitles.com remains gated by a missing real API key, YavkaNet is search-cleared with official FlareSolverr but gated by source-side direct download HTTP `403`, TurkceAltyazi.org is challenge-cleared with official FlareSolverr but gated by Cloudflare `522` origin timeout pages, and Shooter remains gated by Provider Hub compat proof requiring either approval to disclose a real derived hash or a non-sensitive library-backed fixture.
 - SDK regional smoke validation on 2026-06-02: catalog PR [#78](https://github.com/LavX/bazarr-provider-catalog/pull/78), branch `sdk-smoke-regional-language` at `c676f7b`, adds smoke-test coverage for requested regional codes such as `por-BR` when providers return normalized language payloads such as `alpha3=por` plus `country_alpha2=BR`. Verification before merge passed `test_catalog.py`, `sdk validate`, `py_compile sdk/cli.py`, full `unittest discover -s tests` with `851` tests and `6` skipped, `git diff --check`, prohibited-text scan, and live Legendas.net `sdk smoke-test --provider legendasnet --language por-BR ... --skip-download` with `legendasnet ok`. PR `#78` merged into `main` at `2b6035bd31030ad8039b489ee19e41b744e9a5af`.
 - Post-SDK-fix PR audit on 2026-06-02: after PR `#78` merged, live GraphQL inspection still shows `18` open provider PRs, all draft, all merge state `CLEAN`, and no comments, reviews, or review threads. The remaining queue is still external-proof gated, not review-feedback gated.
 - Post-SDK-fix credential recheck on 2026-06-02: fresh live smoke now clears Addic7ed search and download with the complete cookie pair and matching User-Agent; Titulky remains gated by `Titulky VIP account is required`, and OpenSubtitles.com remains gated by HTTP `403` `You cannot consume this service` when the saved bearer-shaped token is used as the required API key. Live PR body inspection confirmed Assrt PR `#28` already asks the community to validate final download URLs from the target region.
@@ -59,7 +59,7 @@
   - Dirty-branch refresh status on 2026-06-02: the previously dirty draft PRs `#71`, `#59`, `#58`, `#57`, `#53`, `#51`, `#28`, and `#27` were refreshed, pushed, and rechecked live. The final `gh pr list` snapshot shows every open provider PR has merge state `CLEAN`.
   - Ready-state audit on 2026-06-02: no open draft PR has stale draft status only. All remaining open drafts still need a valid credential, service endpoint, reachable anti-bot solution, real hash-bearing fixture, approved hash disclosure, or community validation.
   - Credential, session, or API-key gated: `assrt`, `avistaz`, `cinemaz`, `hdbits`, `karagarga`, `ktuvit`, `legendasdivx`, `opensubtitlescom`, `pipocas`, and `titulky`.
-  - SDK-cleared but Provider Hub compat gated: `addic7ed`.
+  - SDK-cleared but Provider Hub compat gated: none after disposable Provider Hub compat proof for `addic7ed_com`.
   - User service or base URL gated: `subsarr` needs a reachable self-hosted Subsarr `base_url`; `whisperai` needs a real Whisper web-service endpoint for non-stub proof.
   - Origin access or anti-bot gated: `turkcealtyaziorg`, `yavkanet`, and `wizdom`.
   - Real media hash or disclosure gated: `napisy24` needs a library-backed video with a valid Napisy24/OpenSubtitles hash; `shooter` needs explicit approval or a non-sensitive fixture before sending derived Shooter hashes to the public API.
@@ -85,7 +85,7 @@
 - OpenSubtitles.org current state: branch `catalog-opensubtitles` merged at head `cc19c5d` in PR `#16`. Local final validation on 2026-06-02 passed `test_opensubtitles_org.py` with `19` tests, `test_catalog.py` with `14` tests and `6` skipped, `sdk validate`, `py_compile`, full `unittest discover -s tests` with `458` tests and `6` skipped, `git diff --check`, prohibited-text scan, and direct SDK live smoke `opensubtitles_org ok`. Bazarr compat proof is still incomplete because the compat key cannot stage or enable Provider Hub bundles and prior compat search results did not include `opensubtitles_org`.
 - Before editing any provider, run `git worktree list --porcelain` and `git status --short --branch` for that provider's exact worktree.
 - Existing provider worktrees:
-  - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `c966d10`
+  - `addic7ed`: branch `catalog-addic7ed`, worktree `/tmp/bazarr_catalog_provider_worktrees/addic7ed`, current head `21050e5`
   - `animekalesi`: branch `catalog-animekalesi`, worktree `/tmp/bazarr_catalog_provider_worktrees/animekalesi`, current head `b5db085`
   - `animesubinfo`: branch `catalog-animesubinfo`, worktree `/tmp/bazarr_catalog_provider_worktrees/animesubinfo`, current head `d45ba06`
   - `animetosho`: branch `catalog-animetosho`, worktree `/tmp/bazarr_catalog_provider_worktrees/animetosho`, current head `b0b6982`
@@ -357,8 +357,8 @@
 
 - Branch: `catalog-addic7ed`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/addic7ed`
-- Current checkpoint: `c966d10 Merge current main into Addic7ed branch`
-- Pull request: [#56](https://github.com/LavX/bazarr-provider-catalog/pull/56), open draft, head `catalog-addic7ed`, base `main`, merge state `CLEAN`.
+- Current checkpoint: `21050e5 Fix Addic7ed Provider Hub ID`
+- Pull request: [#56](https://github.com/LavX/bazarr-provider-catalog/pull/56), open ready-for-review, head `catalog-addic7ed`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -405,10 +405,22 @@
   - `python3 -B -m pytest tests/test_addic7ed.py tests/test_catalog.py -q`: `13` tests passed with `6` skipped.
   - `python3 -B -m py_compile providers/addic7ed/provider.py`: passed.
   - PR `#56` body was updated with the current SDK proof and remains draft pending Provider Hub compat proof.
+- Provider Hub ID and compat proof on 2026-06-02:
+  - Current `ui-test` Provider Hub runtime rejected the original `addic7ed` manifest with HTTP `400`: `provider_id 'addic7ed' shadows a built-in provider`.
+  - Commit `21050e557eef9574e36c2efa2b6659145abda1d3` changes the catalog id to `addic7ed_com`, records `legacy_provider_id: addic7ed`, and preserves the legacy id in result payload/display metadata.
+  - `python3 -B -m pytest tests/test_addic7ed.py tests/test_catalog.py -q`: `13` passed, `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/addic7ed/provider.py`: passed.
+  - `git diff --check`: clean.
+  - Live SDK smoke with saved cookies and User-Agent returned `addic7ed_com ok`.
+  - Disposable Bazarr compat container `bazarr-compat-remaining` installed and activated `addic7ed_com` at commit `21050e557eef9574e36c2efa2b6659145abda1d3`, `state: active`, `pending_restart: false`.
+  - Compat `/api/v1/subtitles` returned HTTP `200`, `total_count: 29`, and `addic7ed_com_count: 9`.
+  - Compat `/api/v1/download` returned HTTP `200`.
+  - Compat stream fetch returned HTTP `200`, `38750` bytes, and `application/x-subrip`.
+  - PR `#56` body was updated with the current SDK and compat proof.
 - Remaining gates:
   - Decide whether captcha-solver integration belongs in a separate Plugin Hub helper before treating username/password login as fully equivalent to the legacy in-process captcha path.
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `addic7ed` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Addic7ed credentials or cookies.
+  - If direct built-in replacement is preferred over a parallel installable catalog provider, deploy or rebuild the replacement-policy runtime from the current core replacement branch and revert the catalog id back to `addic7ed`.
 
 ### `karagarga`
 
