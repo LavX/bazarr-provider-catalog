@@ -31,6 +31,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`isubtitles`](providers/isubtitles/) | 0.1.1 | Scrapes [iSubtitles.org](https://isubtitles.org) for movie and episode subtitles in broad multilingual coverage. No login or API key. |
 | [`jimaku`](providers/jimaku/) | 0.1.0 | Uses the [Jimaku](https://jimaku.cc) API for Japanese movie and episode subtitles. Requires API key. |
 | [`kitsunekko`](providers/kitsunekko/) | 0.1.0 | Scrapes [Kitsunekko](https://kitsunekko.net) for anime subtitle directories and ZIP packs. No login or API key. |
+| [`legendasnet`](providers/legendasnet/) | 0.1.0 | Uses the [Legendas.net](https://legendas.net) API for Brazilian Portuguese movie and episode subtitles. Requires username and password. |
 | [`moviesubtitles`](providers/moviesubtitles/) | 0.1.0 | Scrapes [Moviesubtitles.org](https://www.moviesubtitles.org) for movie subtitles, including multipart archives. No login or API key. |
 | [`my_subs`](providers/my_subs/) | 0.1.1 | Scrapes [My-Subs.co](https://my-subs.co) for movie and episode subtitles in many languages. No login or API key. |
 | [`napiprojekt`](providers/napiprojekt/) | 0.1.3 | Searches [NapiProjekt](https://www.napiprojekt.pl) for Polish subtitles using hash lookup and catalog scraping with optional author filters. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback. |
@@ -94,6 +95,7 @@ Every provider here ships independently of Bazarr+ releases. [Contribute](#contr
 - `providers/isubtitles/`: scrapes iSubtitles movie and episode subtitle pages.
 - `providers/jimaku/`: uses the Jimaku API for Japanese movie and episode subtitles.
 - `providers/kitsunekko/`: scrapes Kitsunekko anime subtitle directories and ZIP packs.
+- `providers/legendasnet/`: uses the Legendas.net API for Brazilian Portuguese movie and episode subtitles.
 - `providers/moviesubtitles/`: scrapes Moviesubtitles.org movie subtitle listings and multipart downloads.
 - `providers/my_subs/`: scrapes My-Subs.co movie and episode subtitle listings.
 - `providers/napiprojekt/`: searches NapiProjekt Polish subtitles by hash and catalog pages, with ai-cloudscraper, inline Anubis solving, and optional FlareSolverr fallback for catalog Cloudflare challenges.
