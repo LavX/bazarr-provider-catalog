@@ -48,9 +48,18 @@ Before writing code, check the target site:
 - Access limits: login, CAPTCHA, Cloudflare-style challenge, throttling, or unusual User-Agent behavior.
 - Stability: readable HTML markers, stable IDs, and clean detail URLs.
 
-Avoid sites that require a browser challenge or account automation unless you already have a supported helper service. Provider Hub workers should be deterministic HTTP clients, not headless browsers.
+Avoid sites that require account automation or a full browser unless the provider has no useful API and the site is still important enough to justify explicit anti-bot handling. Provider Hub workers should stay deterministic HTTP clients, not headless browsers.
 
-When a site is hidden behind Cloudflare and no official API can replace the scrape, use a helper-service pattern like `/home/lavx/opensubtitles-scraper/`: try a normal session first, detect Cloudflare challenge responses, fall back to FlareSolverr, cache the returned cookies and User-Agent, and expose health or status so failures are visible. Keep this bypass explicit in config and tests. Do not silently add a browser dependency to a provider worker.
+When a site is hidden behind Cloudflare and no official API can replace the scrape, first try the native OpenSubtitles.org pattern from `providers/opensubtitles_org/provider.py`:
+
+- Use `ai-cloudscraper` as the default HTTP client with a realistic User-Agent.
+- Keep the legacy `cloudscraper.create_scraper()` option retry for runtimes that reject newer arguments.
+- Detect and solve inline Anubis `/.within.website/` challenges before retrying the original URL.
+- Detect Cloudflare challenge pages and fall back to an optional configured FlareSolverr `/v1` URL only when `ai-cloudscraper` still cannot pass.
+- Cache returned cookies and User-Agent in the provider session or request state.
+- Keep request delay, HTTP `429`, unresolved Anubis, missing FlareSolverr, invalid FlareSolverr JSON, and challenge-after-fallback failures explicit in tests and errors.
+
+Do not add this stack just because a public landing page or API docs page is behind Cloudflare. If the actual API endpoints return normal JSON auth or data responses, keep the provider API-first and document the page-level challenge as non-blocking.
 
 ## Discovery checklist
 
