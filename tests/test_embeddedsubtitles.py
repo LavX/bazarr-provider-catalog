@@ -84,6 +84,31 @@ class EmbeddedSubtitlesParserTests(unittest.TestCase):
         self.assertTrue(streams[1]["language"]["forced"])
         self.assertTrue(streams[2]["language"]["hi"])
 
+    def test_parse_streams_derives_forced_and_hi_flags_from_titles(self):
+        payload = {
+            "streams": [
+                {
+                    "index": 8,
+                    "codec_name": "subrip",
+                    "tags": {"language": "eng", "title": "English Forced"},
+                    "disposition": {"forced": 0, "hearing_impaired": 0, "default": 0},
+                },
+                {
+                    "index": 9,
+                    "codec_name": "subrip",
+                    "tags": {"language": "eng", "title": "English SDH"},
+                    "disposition": {"forced": 0, "hearing_impaired": 0, "default": 0},
+                },
+            ]
+        }
+
+        streams = self.mod.parse_probe_streams(payload, {})
+
+        self.assertTrue(streams[0]["language"]["forced"])
+        self.assertFalse(streams[0]["language"]["hi"])
+        self.assertFalse(streams[1]["language"]["forced"])
+        self.assertTrue(streams[1]["language"]["hi"])
+
     def test_unknown_language_can_use_fallback(self):
         payload = {
             "streams": [
@@ -103,6 +128,27 @@ class EmbeddedSubtitlesParserTests(unittest.TestCase):
 
         self.assertEqual(streams[0]["language"]["alpha3"], "eng")
         self.assertEqual(streams[0]["display_language"], "und -> eng")
+
+    def test_probe_media_wraps_missing_ffprobe_as_embedded_error(self):
+        with self.assertRaises(self.mod.EmbeddedSubtitleError):
+            self.mod.probe_media(
+                "/media/Example.Show.S01E02.mkv",
+                {"ffprobe_path": "/definitely/missing/ffprobe"},
+            )
+
+    def test_probe_media_wraps_timeout_as_embedded_error(self):
+        original_run = self.mod.subprocess.run
+
+        def raise_timeout(command, **kwargs):
+            del kwargs
+            raise self.mod.subprocess.TimeoutExpired(command, timeout=30)
+
+        self.mod.subprocess.run = raise_timeout
+        try:
+            with self.assertRaises(self.mod.EmbeddedSubtitleError):
+                self.mod.probe_media("/media/Example.Show.S01E02.mkv", {})
+        finally:
+            self.mod.subprocess.run = original_run
 
 
 class EmbeddedSubtitlesProviderSearchTests(unittest.TestCase):
@@ -194,6 +240,34 @@ class EmbeddedSubtitlesProviderDownloadTests(unittest.TestCase):
         self.assertEqual(base64.b64decode(result["content_b64"]), body)
         self.assertEqual(result["content_sha256"], hashlib.sha256(body).hexdigest())
         self.assertFalse(result["empty"])
+
+    def test_extract_stream_uses_webvtt_muxer_for_vtt_format(self):
+        calls = []
+        original_run = self.mod.subprocess.run
+
+        class CompletedProcess:
+            returncode = 0
+            stdout = b"WEBVTT\n\n"
+            stderr = b""
+
+        def fake_run(command, **kwargs):
+            del kwargs
+            calls.append(command)
+            return CompletedProcess()
+
+        self.mod.subprocess.run = fake_run
+        try:
+            result = self.mod.extract_subtitle_stream(
+                "/media/Example.Show.S01E02.mkv",
+                6,
+                "vtt",
+                {},
+            )
+        finally:
+            self.mod.subprocess.run = original_run
+
+        self.assertEqual(result, b"WEBVTT\n\n")
+        self.assertEqual(calls[0][calls[0].index("-f") + 1], "webvtt")
 
     def test_download_rejects_wrong_provider_payload(self):
         provider = self.mod.EmbeddedSubtitlesProvider(extract_runner=FakeExtractRunner())

@@ -144,6 +144,8 @@ ALIASES = {
     "bur": "mya",
     "tib": "bod",
 }
+FORCED_TITLE_RE = re.compile(r"\bforced\b", re.I)
+HI_TITLE_RE = re.compile(r"\b(?:sdh|hi|hearing[ -]?impaired|cc)\b", re.I)
 
 
 class EmbeddedSubtitleError(RuntimeError):
@@ -162,15 +164,15 @@ def parse_probe_streams(payload, config):
         if language is None:
             continue
         disposition = stream.get("disposition") or {}
-        forced = _as_bool(disposition.get("forced"))
-        hi = _as_bool(disposition.get("hearing_impaired"))
+        title = ((stream.get("tags") or {}).get("title") or "").strip()
+        forced = _as_bool(disposition.get("forced")) or _title_is_forced(title)
+        hi = _as_bool(disposition.get("hearing_impaired")) or _title_is_hi(title)
         language = dict(language)
         language["forced"] = forced
         language["hi"] = hi
         index = _int_or_none(stream.get("index"))
         if index is None:
             continue
-        title = ((stream.get("tags") or {}).get("title") or "").strip()
         fmt = CODEC_FORMAT.get(codec, "srt")
         streams.append(
             {
@@ -202,13 +204,18 @@ def probe_media(path, config):
         "json",
         str(path),
     ]
-    result = subprocess.run(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-        timeout=timeout,
-    )
+    try:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=timeout,
+        )
+    except FileNotFoundError as exc:
+        raise EmbeddedSubtitleError(f"ffprobe executable not found: {ffprobe}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise EmbeddedSubtitleError("ffprobe timed out") from exc
     if result.returncode != 0:
         message = result.stderr.decode("utf-8", errors="replace").strip()
         raise EmbeddedSubtitleError(message or "ffprobe failed")
@@ -224,6 +231,7 @@ def extract_subtitle_stream(path, stream_index, fmt, config):
     timeout = _timeout(config, default=600)
     fmt = fmt if fmt in CONTENT_TYPES else "srt"
     codec = "ass" if fmt == "ass" else "webvtt" if fmt == "vtt" else "srt"
+    muxer = _ffmpeg_muxer_for_format(fmt)
     command = [
         ffmpeg,
         "-v",
@@ -236,7 +244,7 @@ def extract_subtitle_stream(path, stream_index, fmt, config):
         "-c:s",
         codec,
         "-f",
-        fmt,
+        muxer,
         "-",
     ]
     result = subprocess.run(
@@ -363,6 +371,18 @@ def _language_requested(stream_language, requested):
 def _language_key(language):
     payload = _language_payload(language)
     return (payload.get("alpha3"), bool(payload.get("hi")), bool(payload.get("forced")))
+
+
+def _title_is_forced(title):
+    return bool(FORCED_TITLE_RE.search(title or ""))
+
+
+def _title_is_hi(title):
+    return bool(HI_TITLE_RE.search(title or ""))
+
+
+def _ffmpeg_muxer_for_format(fmt):
+    return "webvtt" if fmt == "vtt" else fmt
 
 
 def _video_path(video):
