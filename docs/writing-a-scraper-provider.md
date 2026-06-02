@@ -311,7 +311,7 @@ git commit -m "Add <provider> provider
 
 - **Inline HTML parsing inside `search()`.** Move the regex to a module-level function so it's testable.
 - **Calling `time.sleep()` directly in tests.** Wrap delays in a helper that reads from config; tests pass `request_delay_ms: 0`.
-- **Adding `requests` as a dependency for one HTTP call.** stdlib `urllib.request` works fine. Each wheel you pin is one more thing to verify across Python patch releases.
+- **Adding `requests` as a dependency for one HTTP call.** stdlib `urllib.request` works fine. Each wheel you pin is one more thing to verify across the Bazarr+ Provider Hub runtime matrix. Run `python3 -B -m sdk runtime-matrix`; current targets are Python `3.12`, `3.13`, and `3.14`.
 - **Catching exceptions in `_http_get`.** Let urllib raise. The orchestration layer (`search()`) decides whether to surface or swallow.
 - **Hardcoding the User-Agent's version.** A realistic, stable UA is fine; a UA that pretends to be Chrome 117 in 2026 looks bot-y.
 - **Returning Bazarr-internal types from the worker.** The plugin lives in an isolated process and talks to the hub via plain dicts. Never `import subliminal` or `import babelfish` from a plugin.
@@ -371,4 +371,4 @@ Reject obviously-binary responses (`b"\x00"` in the first 4 bytes is a classic n
 - [ ] `git status --short` shows no `__pycache__` or fixture caches accidentally staged.
 - [ ] `catalog.json` regenerated and the diff makes sense.
 - [ ] Manifest's `languages` array is the *declared* set (Marketplace card); the runtime filters down further.
-- [ ] No third-party deps unless absolutely necessary, and if any, every wheel hash is pinned in `dependencies.requirements`.
+- [ ] No third-party deps unless absolutely necessary, and if any, every wheel hash is pinned in `dependencies.requirements` for the supported runtime matrix.
