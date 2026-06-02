@@ -50,11 +50,12 @@
   - User service or base URL gated: `subsarr` needs a reachable self-hosted Subsarr `base_url`; `whisperai` needs a real Whisper web-service endpoint for non-stub proof.
   - Origin access or anti-bot gated: `turkcealtyaziorg`, `yavkanet`, and `wizdom`.
   - Real media hash or disclosure gated: `napisy24` needs a library-backed video with a valid Napisy24/OpenSubtitles hash; `shooter` needs explicit approval or a non-sensitive fixture before sending derived Shooter hashes to the public API.
-  - Compat-only gated: `betaseries`, `jimaku`, `legendasnet`, `regielive`, `titlovi`, and `zimuku` have current SDK search and download proof, but still need Provider Hub compat search, download, and stream proof.
+  - Compat-only gated: `betaseries`, `jimaku`, `regielive`, `titlovi`, and `zimuku` have current SDK search and download proof, but still need Provider Hub compat search, download, and stream proof.
   - Local disposable compat evidence on 2026-06-02 cleared SubDL's compat gate using container `bazarr-compat-subdl` on `127.0.0.1:6769`; the official catalog source was pointed at `catalog-subdl`, Provider Hub activated SubDL `0.1.0` at commit `0f47d3789db3178d8341cd69c33b3ae543712dd0`, and compat search/download/stream all returned HTTP `200`.
   - The same local disposable compat run cleared SubSource's compat gate after switching the official source to `catalog-subsource`, activating SubSource `0.1.0` at commit `34b3b1978ef322d6e279424697fba700b2627267`, disabling SubDL for an isolated fanout, and proving compat search/download/stream with HTTP `200`.
   - The same local disposable compat run cleared Subs.ro's compat gate after switching the official source to `catalog-subsro`, activating Subs.ro `0.1.0` at commit `b1f6fe6150c429f509cc1fb875611b8d605f857d`, disabling SubSource for an isolated fanout, installing all hash-checked dependencies including `py7zz==1.1.4`, and proving compat search/download/stream with HTTP `200`.
   - The same local disposable compat run cleared SubX's compat gate after switching the official source to `catalog-subx`, activating SubX `0.1.0` at commit `d19cdd7731828fce91aec124d6f9c4693e656e19`, disabling Subs.ro for an isolated fanout, installing all hash-checked dependencies including `py7zz==1.1.4`, and proving compat search/download/stream with HTTP `200`.
+  - Local disposable compat evidence on 2026-06-02 cleared Legendas.net's compat gate using container `bazarr-compat-remaining` on `127.0.0.1:6770`; the official catalog source was pointed at `catalog-legendasnet`, Provider Hub activated Legendas.net `0.1.0` at commit `be91cfa74cc25ba1bc7a170f53934e659475bd3f`, and compat search/download/stream all returned HTTP `200`.
   - Current remote compat reachability evidence still needs refresh for the remaining queue: `bazarr-ui-test` does not resolve over SSH, and `BAZARR_COMPAT_API_KEY` is unset in this shell.
 - Invite-only or community-validation PR body refresh on 2026-06-02: PR `#44` HDBits, PR `#51` AvistaZ, PR `#52` CinemaZ, PR `#57` Karagarga, PR `#59` LegendasDivx, and PR `#62` Pipocas.tv now explicitly request community validation from users with the required account, cookies, or tracker access. Live GitHub verification showed all six PRs remain draft and merge state `CLEAN`.
 - Current catalog checkout inventory: this planning worktree is intentionally not rebased onto `main`, but live `main` now ships 40 Provider Hub bundles, adding `gestdown`, `bsplayer`, `subtis`, `subtitulamostv`, `tvsubtitles`, `greeksubs`, `animekalesi`, `animesubinfo`, `opensubtitles_org`, `animetosho`, `napiprojekt`, `subf2m`, `nekur`, `greeksubtitles`, `prijevodionline`, `soustitreseu`, `subclub`, `subssabbz`, `subsunacs`, `subsynchro`, `subs4free`, `subs4series`, `embedded_subtitles`, `subtitrarinoi`, `yifysubtitles`, `subtitriid`, `titrari`, and `supersubtitles` to the previous 12 bundle baseline.
@@ -525,7 +526,7 @@
 
 - Branch: `catalog-legendasnet`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/legendasnet`
-- Current checkpoint: `7dc630d Merge remote-tracking branch 'origin/main' into catalog-legendasnet`
+- Current checkpoint: `be91cfa Fix Legendas.net Brazilian Portuguese results`
 - Pull request: [#60](https://github.com/LavX/bazarr-provider-catalog/pull/60), open draft, head `catalog-legendasnet`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -576,9 +577,23 @@
   - Live API probes confirmed `POST /api/v1/login` returns HTTP `200` and an access token with the corrected email.
   - The provider-specific Dune and Chernobyl fixtures returned zero live rows, but the live API returned rows for generic titles such as `Dune`, `Inception`, `Interstellar`, `The Batman`, `Oppenheimer`, `Breaking Bad`, `Game of Thrones`, and `The Last of Us`.
   - `python3 -B -m sdk smoke-test --provider legendasnet --language por-BR --video-fixture tests/fixtures/yifysubtitles_video_dune_2021.json --config-json '{"request_delay_ms":0}' --secret username=LEGENDASNET_USERNAME --secret password=LEGENDASNET_PASSWORD --expect-min-results 1`: `legendasnet ok`.
-- Remaining gates:
-  - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `legendasnet` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Legendas.net email credentials.
+- Provider Hub compat fix and proof on 2026-06-02:
+  - Added regression coverage for Provider Hub language payloads using `country_alpha2` and for movie fallback search through `alternative_titles` when the canonical title returns an empty API result.
+  - Live API query probe confirmed `Dune: Part One` returns zero rows while alternate title `Dune` returns `3` rows, so the provider now retries alternate movie titles before returning empty results.
+  - `python3 -B -m unittest discover -s tests -p 'test_legendasnet.py'`: `8` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/legendasnet/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python runtime policy remains `>=3.12,<3.15`.
+  - `git diff --check origin/main...HEAD && git diff --check`: clean.
+  - Touched-diff attribution and prohibited punctuation scan found no matches.
+  - Direct SDK smoke with regional language payload `alpha3=por`, `country_alpha2=BR`, saved env credentials, and the Dune fixture returned `legendasnet ok`.
+  - Pushed branch head `be91cfa74cc25ba1bc7a170f53934e659475bd3f`.
+  - Local disposable Provider Hub proof used `ghcr.io/lavx/bazarr:ui-test` container `bazarr-compat-remaining` on `127.0.0.1:6770`; Provider Hub reported `state=active`, `pending_restart=false`, and active commit `be91cfa74cc25ba1bc7a170f53934e659475bd3f`.
+  - Compat search `GET /api/v1/subtitles?imdb_id=1160419&query=Dune.2021.1080p.BluRay.x264&type=movie&languages=pt-BR&per_page=100` returned HTTP `200`, `3` total results, and `3` Legendas.net rows.
+  - Compat download `POST /api/v1/download` for first Legendas.net `file_id=1` returned HTTP `200`.
+  - Compat stream returned HTTP `200`, `81921` bytes, and content type `application/x-subrip`.
+- Remaining gates: none for local disposable Provider Hub compat proof.
 
 ### `napisy24`
 
