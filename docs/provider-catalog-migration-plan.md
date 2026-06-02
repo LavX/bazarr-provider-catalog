@@ -3869,6 +3869,12 @@
   - Pushed `catalog-opensubtitlescom` at `8d014b0423d7260d17611f23265e84b914b82597`.
   - PR `#50` was verified open, draft, merge state `CLEAN`, head `8d014b0423d7260d17611f23265e84b914b82597`.
   - `gh pr checks 50 --repo LavX/bazarr-provider-catalog`: no checks reported on the branch.
+- Fresh token-shape recheck on 2026-06-02:
+  - PR `#50` is open draft, head `8d014b0423d7260d17611f23265e84b914b82597`, merge state `CLEAN`, and no checks are reported.
+  - The saved temporary OpenSubtitles.com value is a bearer-shaped token, but the current provider and legacy behavior require `username`, `password`, and `api_key`.
+  - Token-only probe: `/infos/user` returned HTTP `401` with `No API KEY in request`; `/subtitles` returned HTTP `403` with `You cannot consume this service`; `/infos/languages` remains public and returned HTTP `200`.
+  - Token plus JWT issuer as `Api-Key` also failed: `/infos/user` returned HTTP `401` with `Invalid token a1`, and `/subtitles` still returned HTTP `403`.
+  - Conclusion: the supplied token does not prove a viable token-only provider config path and does not clear the full SDK search/download gate.
 - Remaining gates:
   - Run SDK live smoke search and download with real OpenSubtitles.com credentials.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `opensubtitlescom` in the trusted replacement policy.
