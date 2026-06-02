@@ -102,12 +102,13 @@ def search_url_for(query):
 def derive_matches(video, release):
     video = video or {}
     release_normalized = _normalize(release)
+    release_tokens = set(release_normalized.split())
     matches = []
     kind = video.get("kind")
     if kind == "movie":
         if _all_tokens_in(video.get("title"), release_normalized):
             matches.append("title")
-        if video.get("year") and str(video["year"]) in release_normalized:
+        if video.get("year") and str(video["year"]) in release_tokens:
             matches.append("year")
     elif kind == "episode":
         if _all_tokens_in(video.get("series"), release_normalized):
@@ -124,7 +125,7 @@ def derive_matches(video, release):
             matches.extend(["season", "episode"])
         elif episode is not None and re.search(rf"\be0*{episode}\b", release_normalized):
             matches.append("episode")
-        if video.get("year"):
+        if video.get("year") and str(video["year"]) in release_tokens:
             matches.append("year")
     for key in ("source", "resolution", "video_codec", "audio_codec", "release_group"):
         value = video.get(key)
@@ -256,6 +257,8 @@ def extract_download(body, payload=None):
         with zipfile.ZipFile(stream) as archive:
             selected = select_subtitle_file(archive.namelist())
             return _normalize_line_endings(archive.read(selected)), _subtitle_extension(selected) or "srt"
+    if _looks_like_html(body):
+        raise ValueError("greeksubtitles download returned HTML instead of subtitle content")
     return _normalize_line_endings(body or b""), _format_from_filename(payload.get("filename"))
 
 
@@ -421,7 +424,18 @@ def _alpha3_for_language(language):
 
 def _all_tokens_in(value, normalized_haystack):
     tokens = [token for token in _normalize(value).split() if token]
-    return bool(tokens) and all(token in normalized_haystack for token in tokens)
+    haystack_tokens = set((normalized_haystack or "").split())
+    return bool(tokens) and all(token in haystack_tokens for token in tokens)
+
+
+def _looks_like_html(body):
+    prefix = (body or b"").lstrip()[:512].lower()
+    return (
+        prefix.startswith(b"<!doctype html")
+        or prefix.startswith(b"<html")
+        or b"<body" in prefix
+        or b"<head" in prefix
+    )
 
 
 def _sleep(config):

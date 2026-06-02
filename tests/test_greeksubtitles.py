@@ -83,6 +83,24 @@ class GreekSubtitlesParserTests(unittest.TestCase):
             ["Dune 2021", "Dune: Part One 2021"],
         )
 
+    def test_derive_matches_requires_episode_year_in_release(self):
+        matches = self.mod.derive_matches(
+            {"kind": "episode", "series": "The Office", "season": 1, "episode": 2, "year": 2005},
+            "The Office S01E02 HDTV x264",
+        )
+
+        self.assertIn("series", matches)
+        self.assertIn("episode", matches)
+        self.assertNotIn("year", matches)
+
+    def test_derive_matches_compares_whole_tokens(self):
+        matches = self.mod.derive_matches(
+            {"kind": "movie", "title": "Ann", "year": 2021},
+            "Joanne 2021 WEBRip",
+        )
+
+        self.assertNotIn("title", matches)
+
 
 class GreekSubtitlesSearchTests(unittest.TestCase):
     def setUp(self):
@@ -232,6 +250,13 @@ class GreekSubtitlesDownloadTests(unittest.TestCase):
 
         self.assertEqual(base64.b64decode(result["content_b64"]), b"1\n00:00:01,000 --> 00:00:02,000\nRaw\n")
         self.assertEqual(result["format"], "srt")
+
+    def test_extract_download_rejects_html_response(self):
+        with self.assertRaises(ValueError):
+            self.mod.extract_download(
+                b"<!doctype html><html><body>not a subtitle</body></html>",
+                {"filename": "greeksubtitles.failure.zip"},
+            )
 
 
 if __name__ == "__main__":
