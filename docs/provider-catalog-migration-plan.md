@@ -2988,8 +2988,8 @@
 
 - Branch: `catalog-hdbits`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/hdbits`
-- Current checkpoint: `42d7f02 Add HDBits provider`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/44` opened as draft on 2026-06-01, head `catalog-hdbits`, base `main`, merge state `CLEAN`.
+- Current checkpoint: `a6b35fd Merge current main into HDBits branch`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/44` opened as draft on 2026-06-01, head `catalog-hdbits`, base `main`, current head `a6b35fd173728d25a3d8123f210867a1d364c384`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -3020,6 +3020,20 @@
   - No-credential `https://hdbits.org/api/torrents` probe returned `{"status":3,"message":"Json missing or malformed"}`.
   - PR `#44` was verified open, draft, merge state `CLEAN`, head `42d7f02be3308e59167f2056ef3485a9dd35e672`.
   - Test-server config check read only credential presence and length from `/home/lavx/bazarr-data/config/config.yaml`; `hdbits.username` and `hdbits.passkey` are empty.
+- Current-main merge evidence on 2026-06-02:
+  - Live PR diff scope remains limited to `README.md`, `catalog.json`, `docs/provider-notes/hdbits.md`, `providers/hdbits`, `tests/test_hdbits.py`, and HDBits fixtures.
+  - Live review-thread inspection found no review threads on PR `#44`.
+  - `a6b35fd` merges current `origin/main` into `catalog-hdbits`, resolving generated `README.md` and `catalog.json` while preserving the HDBits provider scope.
+  - `python3 -B -m unittest discover -s tests -p 'test_hdbits.py'`: `11` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`, ABI tags `cp312`, `cp313`, `cp314`, and `abi3`.
+  - `python3 -B -m py_compile providers/hdbits/provider.py`: passed.
+  - `git diff --cached --check` and `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, HDBits notes, provider code, tests, and fixtures found no matches.
+  - `python3 -B -m unittest discover -s tests`: `738` tests passed with `6` skipped.
+  - `gh pr view 44 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,mergeStateStatus,reviewDecision,headRefName,headRefOid,url,title`: PR `#44` is open, draft, head `a6b35fd173728d25a3d8123f210867a1d364c384`, merge state `CLEAN`.
+  - `gh pr checks 44 --repo LavX/bazarr-provider-catalog`: no checks reported on the branch.
 - Remaining gates:
   - Run SDK live smoke search and download with real HDBits credentials.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `hdbits` in the trusted replacement policy.
