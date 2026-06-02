@@ -1,0 +1,25 @@
+{
+  "status": true,
+  "tv_shows": [
+    {
+      "id": 201,
+      "tmdb_id": 87108,
+      "path": "/download/tv/201",
+      "release_name": "Chernobyl.S01E01.1080p.WEB.H264-MEMENTO",
+      "uploader": "tv_uploader",
+      "comment": "",
+      "season": 1,
+      "episode": 1
+    },
+    {
+      "id": 202,
+      "tmdb_id": 87108,
+      "path": "/download/tv/202",
+      "release_name": "Chernobyl.S01E02.1080p.WEB.H264-MEMENTO",
+      "uploader": "wrong_episode",
+      "comment": "",
+      "season": 1,
+      "episode": 2
+    }
+  ]
+}
