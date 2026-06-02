@@ -68,7 +68,7 @@
   - `hosszupuska`: branch `catalog-hosszupuska`, worktree `/tmp/bazarr_catalog_provider_worktrees/hosszupuska`, current head `5ccb3a7`, dead origin
   - `jimaku`: branch `catalog-jimaku`, worktree `/tmp/bazarr_catalog_provider_worktrees/jimaku`, current head `d4a1600`
   - `karagarga`: branch `catalog-karagarga`, worktree `/tmp/bazarr_catalog_provider_worktrees/karagarga`, current head `b394520`
-  - `ktuvit`: branch `catalog-ktuvit`, worktree `/tmp/bazarr_catalog_provider_worktrees/ktuvit`, current head `9d3162e`
+  - `ktuvit`: branch `catalog-ktuvit`, worktree `/tmp/bazarr_catalog_provider_worktrees/ktuvit`, current head `e706af3`
   - `legendasdivx`: branch `catalog-legendasdivx`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasdivx`, current head `02bbb60`
   - `legendasnet`: branch `catalog-legendasnet`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasnet`, current head `983878f`
   - `napiprojekt`: branch `catalog-napiprojekt`, worktree `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`, current head `af6ff27`
@@ -414,7 +414,7 @@
 
 - Branch: `catalog-ktuvit`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/ktuvit`
-- Current checkpoint: `9d3162e Add Ktuvit provider`
+- Current checkpoint: `e706af3 Merge remote-tracking branch 'origin/main' into catalog-ktuvit`
 - Pull request: [#58](https://github.com/LavX/bazarr-provider-catalog/pull/58), open draft, head `catalog-ktuvit`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -436,6 +436,20 @@
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' https://www.ktuvit.me/Services/MembershipService.svc/Login`: returned HTTP `405` with `POST` allowed.
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' 'https://www.ktuvit.me/MovieInfo.aspx?ID=1'`: returned HTTP `200`.
   - Real search and download require valid Ktuvit email and hashed password credentials.
+- Fresh current-main merge evidence on 2026-06-02:
+  - Live thread-aware PR inspection found no conversation comments, reviews, or review threads on PR `#58`.
+  - Merged `origin/main` into `catalog-ktuvit`; README and catalog auto-merged cleanly, then `python3 -B -m sdk build-catalog` refreshed generated catalog metadata.
+  - Effective branch scope against current `origin/main` remains limited to `README.md`, `catalog.json`, `docs/provider-notes/ktuvit.md`, `providers/ktuvit/provider.json`, `providers/ktuvit/provider.py`, and `tests/test_ktuvit.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_ktuvit.py'`: `5` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/ktuvit/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python runtime policy remains `>=3.12,<3.15`.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Touched-file attribution and em-dash scan across Ktuvit files found no matches.
+  - `python3 -B -m unittest discover -s tests`: `732` tests passed with `6` skipped.
+  - Pushed branch head `e706af32abb4bc70935166787be815343a0daccb`.
+  - PR `#58` is open draft, head `catalog-ktuvit` at `e706af32abb4bc70935166787be815343a0daccb`, merge state `CLEAN`, and no checks are reported.
 - Remaining gates:
   - Run SDK live smoke search and download with valid Ktuvit credentials.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `ktuvit` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
