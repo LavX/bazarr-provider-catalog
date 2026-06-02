@@ -62,7 +62,18 @@ class PrijevodiOnlineParserTests(unittest.TestCase):
         self.assertTrue(rows[0]["verified"])
         self.assertEqual(rows[0]["releases"], ["HDTV.XviD-FEVER", "720p.HDTV.X264-CTU"])
         self.assertEqual(rows[1]["language"], "srp")
-        self.assertEqual(rows[2]["language"], "mne")
+        self.assertEqual(rows[2]["language"], "cnr")
+        self.assertFalse(rows[2]["verified"])
+
+    def test_index_url_normalizes_non_ascii_title_letters(self):
+        self.assertEqual(
+            self.mod._index_url("Élite"),
+            "https://www.prijevodi-online.org/serije/index/e",
+        )
+        self.assertEqual(
+            self.mod._index_url("Çukur"),
+            "https://www.prijevodi-online.org/serije/index/c",
+        )
 
 
 class PrijevodiOnlineProviderTests(unittest.TestCase):
@@ -124,6 +135,23 @@ class PrijevodiOnlineProviderTests(unittest.TestCase):
 
         self.assertEqual({item["language"]["alpha3"] for item in results}, {"hbs"})
         self.assertEqual(len(results), 3)
+
+    def test_search_supports_standard_montenegrin_code(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        provider._http_get = lambda url, timeout=10, referer=None: (
+            INDEX_HTML if "index" in url else SERIES_HTML
+        )
+        provider._http_post = lambda url, data, timeout=10, referer=None: SUBTITLES_HTML
+
+        results = provider.search(
+            {"kind": "episode", "series": "Game of Thrones", "season": 1, "episode": 1},
+            [{"alpha3": "cnr", "alpha2": "me"}],
+            {},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["language"]["alpha3"], "cnr")
+        self.assertEqual(results[0]["language"]["alpha2"], "me")
 
     def test_search_ignores_movies_and_missing_episode_fields(self):
         provider = self.mod.PrijevodiOnlineProvider()

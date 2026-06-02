@@ -27,20 +27,20 @@ HTTP_TIMEOUT_SECONDS = 10
 SUPPORTED_LANGUAGES = {
     "hrv": "hr",
     "srp": "sr",
-    "mne": "me",
+    "cnr": "me",
     "hbs": "sh",
 }
 ALPHA2_TO_ALPHA3 = {
     "hr": "hrv",
     "sr": "srp",
-    "me": "mne",
-    "cg": "mne",
+    "me": "cnr",
+    "cg": "cnr",
     "sh": "hbs",
 }
 LANGUAGE_BY_SUFFIX = {
     "hr": "hrv",
     "sr": "srp",
-    "cg": "mne",
+    "cg": "cnr",
 }
 SUBTITLE_EXTENSIONS = (".srt", ".sub", ".ssa", ".ass", ".vtt")
 USER_AGENT = (
@@ -135,7 +135,7 @@ def parse_subtitle_rows(body):
                 "language": language,
                 "url": _absolute_url(href),
                 "filename": _strip_tags(anchor.group("body")),
-                "verified": "provjereno" in _normalize(status),
+                "verified": _is_verified_status(status),
                 "releases": releases,
             }
         )
@@ -526,7 +526,7 @@ def _requested_languages(languages):
 def _output_language(row_language, requested):
     if row_language in requested:
         return row_language
-    if "hbs" in requested and row_language in {"hrv", "srp", "mne"}:
+    if "hbs" in requested and row_language in {"hrv", "srp", "cnr"}:
         return "hbs"
     return None
 
@@ -544,7 +544,8 @@ def _series_titles(video):
 
 def _index_url(title):
     title = str(title or "").strip()
-    first = title[:1].lower()
+    folded = _ascii_fold(title).lower()
+    first = folded[:1]
     letter = first if first.isalpha() else "num"
     return f"{BASE_URL}/serije/index/{letter}"
 
@@ -631,6 +632,15 @@ def _alpha3_for_language(language):
         return ALPHA2_TO_ALPHA3.get((language.get("alpha2") or "").lower())
     value = str(language or "").lower()
     return ALPHA2_TO_ALPHA3.get(value, value)
+
+
+def _is_verified_status(status):
+    return _normalize(status) == "provjereno"
+
+
+def _ascii_fold(value):
+    normalized = unicodedata.normalize("NFKD", str(value or ""))
+    return normalized.encode("ascii", "ignore").decode("ascii")
 
 
 def _sleep(config):

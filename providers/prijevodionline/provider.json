@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "54a2ef3854ccae0d580ad8fab81d1342a096ed3d0e78d8e84724a0bf8a0dde8b",
+  "bundle_sha256": "8e42f25a1976c33b487c2c6366d8bcdde463626dca6173bcf16b552deafdbcef",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -128,7 +128,7 @@
   "entry_class": "PrijevodiOnlineProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "557d6d46f5c5a95ea5379e1be379df78d04fa878b29961bc63f35e238a9f1a46"
+    "provider.py": "3d9e0052294df1647130240071bb11b219f069381d761a8b7cd09ce37764bd75"
   },
   "languages": [
     "hbs",
@@ -152,5 +152,5 @@
   "supported_media": [
     "episode"
   ],
-  "version": "0.1.0"
+  "version": "0.1.1"
 }
