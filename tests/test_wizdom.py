@@ -184,6 +184,50 @@ class WizdomProviderTests(unittest.TestCase):
         self.assertEqual(created[0]["interpreter"], "native")
         self.assertFalse(created[0]["enable_cookie_persistence"])
 
+    def test_http_get_solves_anubis_body_before_retrying_original_url(self):
+        anubis_body = (
+            '<html><head><meta http-equiv="refresh" '
+            'content="0; url=/.within.website/?redir=/api/releases/tt1375666"></head></html>'
+        )
+        session = FakeSession(
+            [
+                FakeResponse(
+                    "https://wizdom.xyz/api/releases/tt1375666",
+                    status_code=200,
+                    content=anubis_body.encode("utf-8"),
+                    text=anubis_body,
+                ),
+                FakeResponse(
+                    "https://wizdom.xyz/api/releases/tt1375666",
+                    content=b'{"subs":[]}',
+                    text='{"subs":[]}',
+                ),
+            ]
+        )
+
+        class FakeCloudscraper:
+            @staticmethod
+            def create_scraper(**kwargs):
+                return session
+
+        solved_calls = []
+
+        def fake_solve(active_session, challenge_url, original_url, timeout):
+            solved_calls.append((active_session, challenge_url, original_url, timeout))
+            return {"techaro.lol-anubis-auth": "ok"}
+
+        self.mod.cloudscraper = FakeCloudscraper
+        self.mod.solve_anubis_challenge = fake_solve
+
+        provider = self.mod.WizdomProvider()
+        body = provider._http_get("https://wizdom.xyz/api/releases/tt1375666", {})
+
+        self.assertEqual(body, b'{"subs":[]}')
+        self.assertEqual(len(session.calls), 2)
+        self.assertIs(solved_calls[0][0], session)
+        self.assertEqual(solved_calls[0][1], "https://wizdom.xyz/api/releases/tt1375666")
+        self.assertEqual(solved_calls[0][2], "https://wizdom.xyz/api/releases/tt1375666")
+
     def test_get_session_retries_without_cookie_persistence_for_legacy_cloudscraper(self):
         session = FakeSession([])
         created = []

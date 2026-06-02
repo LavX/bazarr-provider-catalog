@@ -160,7 +160,8 @@ class WizdomProvider:
             response = session.get(url, headers=headers, timeout=timeout, allow_redirects=True)
         except Exception as exc:
             raise ServiceUnavailable(f"Wizdom request failed: {exc}") from exc
-        if is_anubis_challenge(getattr(response, "url", ""), getattr(response, "status_code", 0)):
+        body = _response_body(response)
+        if is_anubis_challenge(getattr(response, "url", ""), getattr(response, "status_code", 0)) or _has_anubis_challenge_body(body):
             solved = solve_anubis_challenge(session, response.url, url, timeout=timeout)
             if not solved:
                 raise ServiceUnavailable("Wizdom Anubis challenge could not be solved")
@@ -368,6 +369,14 @@ def _response_body(response):
     if hasattr(response, "read"):
         return response.read()
     return b""
+
+
+def _has_anubis_challenge_body(body):
+    if isinstance(body, bytes):
+        text = body.decode("utf-8", "ignore")
+    else:
+        text = str(body or "")
+    return _extract_anubis_challenge(text) is not None
 
 
 def _flaresolverr_timeout_ms(config):
