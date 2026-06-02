@@ -16,7 +16,7 @@ Clean-room target for `supersubtitles`.
   - `eng`
 - Movie rows expose localized title, original title, language label, release list, uploader, forced markers, detail page, and download link.
 - Episode rows are JSON and can contain multiple rows for the same subtitle id, one per compatible release. Rows are grouped into one candidate with all release names.
-- Episode searches first request the exact episode. If no rows are returned, they retry the same season without the episode parameter to pick up season packs.
+- Episode searches first request the exact episode. If no rows are returned, they retry the same season without the episode parameter to pick up season packs, then discard non-pack rows for other episodes.
 - Downloads can be direct subtitle files or ZIP/RAR archives.
 
 ## Compatibility quirks
@@ -25,7 +25,7 @@ Clean-room target for `supersubtitles`.
 - Hearing-impaired variants are not advertised by the legacy provider and are skipped.
 - Episode names such as `Series - 1x05 (WEB.2160p-GROUP)` and season-pack names such as `Series (Season 1) (WEB-DL)` are normalized to the series title plus release text.
 - Detail pages are fetched to attach IMDb ids before final match filtering.
-- Archive extraction prefers the requested episode and then release hints from the candidate.
+- Archive extraction requires the requested episode when season and episode are known, then prefers release hints from the matched release instead of the full season-pack release list.
 
 ## License notes
 

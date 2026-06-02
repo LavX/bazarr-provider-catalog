@@ -2,6 +2,7 @@ import base64
 import hashlib
 import importlib.util
 import io
+import json
 import unittest
 import zipfile
 from pathlib import Path
@@ -187,6 +188,86 @@ class SuperSubtitlesProviderTests(unittest.TestCase):
         self.assertEqual(results[0]["provider_payload"]["season"], 2)
         self.assertEqual(results[0]["provider_payload"]["episode"], 13)
         self.assertTrue(results[0]["provider_payload"]["is_pack"])
+        self.assertEqual(results[0]["provider_payload"]["release_info"], "La Brea (WEB.720p-CAKES)")
+
+    def test_search_episode_uses_matching_alternative_series_query(self):
+        provider = self.mod.SuperSubtitlesProvider()
+        alias_autoname = json.dumps([{"name": "A hasadék (2021)", "ID": "8142"}]).encode("utf-8")
+
+        def get_stub(url, timeout=15, referer=None):
+            del timeout, referer
+            if "action=autoname" in url and "term=La+Brea" in url:
+                return b"[]"
+            if "action=autoname" in url and "term=A+hasad" in url:
+                return alias_autoname
+            if "action=xbmc" in url:
+                return EPISODE_LA_BREA_JSON
+            if "a_1691315119" in url:
+                return DETAIL_LA_BREA_HTML
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = get_stub
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "La Brea",
+                "alternative_series": ["A hasadék"],
+                "season": 2,
+                "episode": 13,
+                "year": 2021,
+                "series_imdb_id": "tt11640018",
+            },
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["provider_payload"]["subtitle_id"], "1691315119")
+
+    def test_search_episode_filters_season_fallback_to_requested_episode(self):
+        provider = self.mod.SuperSubtitlesProvider()
+        wrong_episode_json = json.dumps(
+            {
+                "0": {
+                    "language": "Angol",
+                    "nev": "La Brea - 2x12 (WEB.720p-CAKES)",
+                    "fnev": "La.Brea.S02E12.720p.WEB.H264-CAKES.srt",
+                    "felirat": "1691315118",
+                    "evad": "2",
+                    "ep": "12",
+                    "feltolto": "J1GG4",
+                    "evadpakk": "0",
+                }
+            }
+        ).encode("utf-8")
+
+        def get_stub(url, timeout=15, referer=None):
+            del timeout, referer
+            if "action=autoname" in url:
+                return AUTONAME_LA_BREA_JSON
+            if "action=xbmc" in url and "rtol=13" in url:
+                return b"{}"
+            if "action=xbmc" in url:
+                return wrong_episode_json
+            if "a_1691315118" in url:
+                return DETAIL_LA_BREA_HTML
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = get_stub
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "La Brea",
+                "season": 2,
+                "episode": 13,
+                "year": 2021,
+                "series_imdb_id": "tt11640018",
+            },
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {},
+        )
+
+        self.assertEqual(results, [])
 
     def test_search_rejects_unsupported_language(self):
         provider = self.mod.SuperSubtitlesProvider()
@@ -234,6 +315,24 @@ class SuperSubtitlesProviderTests(unittest.TestCase):
         self.assertEqual(decoded, b"right")
         self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
         self.assertEqual(result["format"], "srt")
+
+    def test_download_rejects_archive_without_requested_episode(self):
+        provider = self.mod.SuperSubtitlesProvider()
+        archive = _zip_body({"La.Brea.S02E12.720p.WEB.H264-CAKES.srt": b"wrong"})
+        provider._http_get = lambda url, timeout=30, referer=None: archive
+
+        with self.assertRaisesRegex(ValueError, "requested episode"):
+            provider.download(
+                {
+                    "url": "https://feliratok.eu/index.php?action=letolt&felirat=1691315119",
+                    "filename": "La.Brea.S02.WEB.WEBRip.WEB-DL.720p.1080p.ENG.zip",
+                    "season": 2,
+                    "episode": 13,
+                    "release_info": "La Brea (WEB.720p-CAKES)",
+                },
+                {"alpha3": "eng", "alpha2": "en"},
+                {},
+            )
 
     def test_download_returns_direct_subtitle_body(self):
         result = self.mod.extract_download(

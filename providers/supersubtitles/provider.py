@@ -181,6 +181,11 @@ def select_series_id(matches, series, year=None):
     return None
 
 
+def _series_id_for_query(fetch, query, video):
+    autoname_url = _autoname_url(query)
+    return select_series_id(parse_autoname_results(fetch(autoname_url)), query, (video or {}).get("year"))
+
+
 def parse_detail_imdb_id(body):
     text = _decode_html(body)
     match = _IMDB_RE.search(text or "")
@@ -255,12 +260,7 @@ class SuperSubtitlesProvider:
         series_id = None
         for query in build_queries(video):
             _sleep(config)
-            autoname_url = _autoname_url(query)
-            series_id = select_series_id(
-                parse_autoname_results(self._http_get(autoname_url)),
-                video.get("series"),
-                video.get("year"),
-            )
+            series_id = _series_id_for_query(self._http_get, query, video)
             if series_id:
                 break
         if not series_id:
@@ -274,11 +274,10 @@ class SuperSubtitlesProvider:
             rows = parse_episode_rows(self._http_get(episode_url), video)
         results = []
         seen = set()
-        for row in rows:
-            if row["language"] not in requested:
-                continue
+        for row in _matching_episode_rows(rows, requested, video):
             _sleep(config)
             row = dict(row)
+            _apply_matched_release(video, row)
             row["imdb_id"] = parse_detail_imdb_id(self._http_get(row["page_url"], referer=episode_url))
             matches = derive_matches(video, row)
             if _clean_imdb(video.get("series_imdb_id")) and row.get("imdb_id") and "series_imdb_id" not in matches:
@@ -321,10 +320,29 @@ def extract_download(body, payload=None):
 
 
 def select_subtitle_file(names, payload=None):
+    candidates = _archive_subtitle_candidates(names)
+    payload = dict(payload or {})
+    candidates = _episode_archive_candidates(candidates, payload)
+    return _best_subtitle_candidate(candidates, payload)
+
+
+def _archive_subtitle_candidates(names):
     candidates = [name for name in names if _subtitle_extension(name) and not os.path.basename(name).startswith(".")]
     if not candidates:
         raise ValueError("supersubtitles archive contains no supported subtitle files")
-    payload = dict(payload or {})
+    return candidates
+
+
+def _episode_archive_candidates(candidates, payload):
+    if _safe_int(payload.get("season")) is None or _safe_int(payload.get("episode")) is None:
+        return candidates
+    matched = [name for name in candidates if _subtitle_file_matches_requested_episode(name, payload)]
+    if not matched:
+        raise ValueError("supersubtitles archive contains no subtitle file for the requested episode")
+    return matched
+
+
+def _best_subtitle_candidate(candidates, payload):
     return max(candidates, key=lambda name: _subtitle_file_score(name, payload))
 
 
@@ -355,19 +373,77 @@ def _episode_matches(video, row):
     return matches
 
 
+def _episode_row_matches_requested(video, row):
+    wanted_season = _safe_int((video or {}).get("season"))
+    wanted_episode = _safe_int((video or {}).get("episode"))
+    if wanted_season is not None and _safe_int((row or {}).get("season")) != wanted_season:
+        return False
+    if wanted_episode is not None and _safe_int((row or {}).get("episode")) != wanted_episode:
+        return False
+    return True
+
+
+def _matching_episode_rows(rows, requested, video):
+    for row in rows:
+        if row["language"] not in requested:
+            continue
+        if not _episode_row_matches_requested(video, row):
+            continue
+        yield row
+
+
+def _apply_matched_release(video, row):
+    matched_release = _best_release_for_video(video, (row or {}).get("releases") or [])
+    if not matched_release:
+        return
+    row["matched_release"] = matched_release
+    row["release_info"] = _release_info_from_parts(row.get("title"), None, [matched_release])
+
+
+def _best_release_for_video(video, releases):
+    releases = _unique_texts(releases)
+    if not releases:
+        return ""
+    return max(releases, key=lambda release: _release_score(video, release))
+
+
+def _release_score(video, release):
+    matches = set(_release_matches(video or {}, release))
+    score = 0
+    if "release_group" in matches:
+        score += 50
+    if "resolution" in matches:
+        score += 15
+    if "source" in matches:
+        score += 5
+    return score
+
+
 def _release_matches(video, release_text):
     matches = []
     normalized = _normalize(release_text)
-    release_group = _normalize(video.get("release_group"))
-    if release_group and re.search(rf"\b{re.escape(release_group)}\b", normalized):
+    if _release_group_matches_release(video, normalized):
         matches.append("release_group")
-    resolution = _normalize(video.get("resolution"))
-    if resolution and re.search(rf"\b{re.escape(resolution)}\b", normalized):
+    if _release_resolution_matches(video, normalized):
         matches.append("resolution")
-    source = _source_token(video.get("source"))
-    if source and source in normalized:
+    if _release_source_matches(video, normalized):
         matches.append("source")
     return matches
+
+
+def _release_group_matches_release(video, normalized_release):
+    release_group = _normalize((video or {}).get("release_group"))
+    return bool(release_group and re.search(rf"\b{re.escape(release_group)}\b", normalized_release))
+
+
+def _release_resolution_matches(video, normalized_release):
+    resolution = _normalize((video or {}).get("resolution"))
+    return bool(resolution and re.search(rf"\b{re.escape(resolution)}\b", normalized_release))
+
+
+def _release_source_matches(video, normalized_release):
+    source = _source_token((video or {}).get("source"))
+    return bool(source and source in normalized_release)
 
 
 def _result(video, row, language, matches):
@@ -558,6 +634,15 @@ def _subtitle_file_score(name, payload):
     return score
 
 
+def _subtitle_file_matches_requested_episode(name, payload):
+    normalized = _normalize(os.path.basename(name))
+    season = _safe_int((payload or {}).get("season"))
+    episode = _safe_int((payload or {}).get("episode"))
+    if season is None or episode is None:
+        return True
+    return bool(re.search(rf"\bs0*{season}e0*{episode}\b", normalized))
+
+
 def _requested_variants(languages):
     variants = []
     seen = set()
@@ -649,7 +734,7 @@ def _movie_row_matches(video, row):
 
 
 def _row_release_text(row):
-    releases = row.get("releases") or []
+    releases = [row.get("matched_release")] if row.get("matched_release") else row.get("releases") or []
     return " ".join([row.get("release_info") or "", row.get("filename") or "", " ".join(releases)]).strip()
 
 
