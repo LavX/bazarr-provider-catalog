@@ -139,6 +139,23 @@ class SdkCliTests(unittest.TestCase):
 
         self.assertIn("catalog ok", result.stdout)
 
+    def test_runtime_matrix_reports_bazarr_plus_python_versions(self):
+        result = self.run_cli("runtime-matrix")
+        matrix = json.loads(result.stdout)
+
+        self.assertEqual(matrix["python_requires"], ">=3.12,<3.15")
+        self.assertEqual(matrix["python_versions"], ["3.12", "3.13", "3.14"])
+        self.assertEqual(matrix["abi_tags"], ["cp312", "cp313", "cp314", "abi3"])
+        self.assertIn("cp311-abi3", matrix["wheel_coverage"])
+        self.assertIn("py3-none-any", matrix["wheel_coverage"])
+        self.assertNotIn("3.11", result.stdout)
+
+    def test_readme_python_badge_matches_runtime_matrix(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn("Python-3.12%20to%203.14", readme)
+        self.assertNotIn("Python-3.11%2B", readme)
+
     def test_build_catalog_matches_checked_in_catalog(self):
         result = self.run_cli("build-catalog", "--stdout")
         generated = json.loads(result.stdout)
