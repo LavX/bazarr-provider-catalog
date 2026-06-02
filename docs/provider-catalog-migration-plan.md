@@ -108,7 +108,7 @@
   - `whisperai`: branch `catalog-whisperai`, worktree `/tmp/bazarr_catalog_provider_worktrees/whisperai`, current head `16647ef`, local/generated provider
   - `wizdom`: branch `catalog-wizdom`, worktree `/tmp/bazarr_catalog_provider_worktrees/wizdom`, current head `1ea63e7`
   - `xsubs`: branch `catalog-xsubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/xsubs`, current head `5a17922`, dead origin
-  - `yavkanet`: branch `catalog-yavkanet`, worktree `/tmp/bazarr_catalog_provider_worktrees/yavkanet`, current head `0ac39be`
+  - `yavkanet`: branch `catalog-yavkanet`, worktree `/tmp/bazarr_catalog_provider_worktrees/yavkanet`, current head `62ba3dc`
   - `yifysubtitles`: branch `catalog-yifysubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/yifysubtitles`, current head `024f996`
   - `zimuku`: branch `catalog-zimuku`, worktree `/tmp/bazarr_catalog_provider_worktrees/zimuku`, current head `6fab891`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
@@ -3149,8 +3149,8 @@
 
 - Branch: `catalog-yavkanet`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/yavkanet`
-- Current checkpoint: `0ac39be Handle embedded YavkaNet Anubis challenges`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/42` opened as draft on 2026-06-01, head `catalog-yavkanet`, base `main`, head OID `0ac39be3653b7de1afbfa517a4b8ee5ee74056e7`, latest checked merge state `CLEAN`.
+- Current checkpoint: `62ba3dc Merge remote-tracking branch 'origin/main' into catalog-yavkanet`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/42` opened as draft on 2026-06-01, head `catalog-yavkanet`, base `main`, head OID `62ba3dc4b07d599b9bb3bfb211f44252dfc0e9a7`, latest checked merge state `CLEAN`.
 - Local evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -3254,6 +3254,21 @@
   - `python3 -B -m unittest discover -s tests`: `727` tests passed with `6` skipped.
   - Local FlareSolverr probe `curl -sS --max-time 5 http://127.0.0.1:8191/v1` failed with connection refused.
   - Live SDK smoke `python3 -B -m sdk smoke-test --provider yavkanet --language bul --video-fixture tests/fixtures/yavkanet_video_dune_2021.json --expect-min-results 1 --skip-download` failed with `yavkanet hit a Cloudflare challenge and no FlareSolverr URL is configured`.
+- Second current-main refresh on 2026-06-02:
+  - Fetched current `origin/main`; local branch remains clean at `62ba3dc4b07d599b9bb3bfb211f44252dfc0e9a7` and tracks `origin/catalog-yavkanet`.
+  - Effective branch scope against current `origin/main` remains limited to `README.md`, `catalog.json`, `docs/provider-notes/yavkanet.md`, `providers/yavkanet/provider.json`, `providers/yavkanet/provider.py`, `tests/fixtures/yavkanet_video_dune_2021.json`, and `tests/test_yavkanet.py`.
+  - Thread-aware GitHub review inspection found no review threads, comments, or reviews on PR `#42`.
+  - `gh pr view 42 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,headRefName,headRefOid,mergeStateStatus,title,updatedAt,reviewDecision`: PR `#42` is open draft, head `62ba3dc4b07d599b9bb3bfb211f44252dfc0e9a7`, merge state `CLEAN`.
+  - `gh pr checks 42 --repo LavX/bazarr-provider-catalog`: no checks reported on branch `catalog-yavkanet`.
+  - `python3 -B -m unittest discover -s tests -p 'test_yavkanet.py'`: `15` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/yavkanet/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python policy `>=3.12,<3.15`, versions `3.12`, `3.13`, and `3.14`.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, YavkaNet notes, provider code, tests, and fixtures found no matches.
+  - `python3 -B -m unittest discover -s tests`: `742` tests passed with `6` skipped.
+  - Escalated live SDK smoke `python3 -B -m sdk smoke-test --provider yavkanet --language bul --video-fixture tests/fixtures/yavkanet_video_dune_2021.json --config-json '{"request_delay_ms":0}' --expect-min-results 1 --skip-download` failed with `yavkanet hit a Cloudflare challenge and no FlareSolverr URL is configured`.
 - Remaining gates:
   - Treat current YavkaNet proof as blocked by the origin Cloudflare challenge and the configured FlareSolverr endpoint returning HTTP `500`, not by Provider Hub config, dependency installation, branch deployment, or worker deadline.
   - Current local environment also has no reachable FlareSolverr at `http://127.0.0.1:8191/v1`.
