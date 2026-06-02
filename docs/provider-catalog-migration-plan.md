@@ -57,7 +57,7 @@
   - `animetosho`: branch `catalog-animetosho`, worktree `/tmp/bazarr_catalog_provider_worktrees/animetosho`, current head `b0b6982`
   - `assrt`: branch `catalog-assrt`, worktree `/tmp/bazarr_catalog_provider_worktrees/assrt`, current head `861ad3d`
   - `avistaz`: branch `catalog-avistaz`, worktree `/tmp/bazarr_catalog_provider_worktrees/avistaz`, current head `47d6d3c`
-  - `betaseries`: branch `catalog-betaseries`, worktree `/tmp/bazarr_catalog_provider_worktrees/betaseries`, current head `461ab52`
+  - `betaseries`: branch `catalog-betaseries`, worktree `/tmp/bazarr_catalog_provider_worktrees/betaseries`, current head `8e228c9`
   - `bsplayer`: branch `catalog-bsplayer`, worktree `/tmp/bazarr_catalog_provider_worktrees/bsplayer`, current head `c04f374`
   - `cinemaz`: branch `catalog-cinemaz`, worktree `/tmp/bazarr_catalog_provider_worktrees/cinemaz`, current head `77eaf7a`
   - `embeddedsubtitles`: branch `catalog-embeddedsubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/embeddedsubtitles`, current head `73b7169`, local/generated provider
@@ -2052,6 +2052,9 @@
   - `python3 -B -m unittest discover -s tests`: `734` tests passed with `6` skipped.
   - `gh pr view 29 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,mergeStateStatus,reviewDecision,headRefName,headRefOid,url,title`: PR `#29` is open, draft, head `8e228c910cebcd074150696bbc02f5abc9c76b21`, merge state `CLEAN`.
   - `gh pr checks 29 --repo LavX/bazarr-provider-catalog`: no checks reported on the branch.
+  - Fresh recheck after fetching `origin/main` confirmed branch scope remains limited to README, catalog, `providers/betaseries`, `tests/test_betaseries.py`, and BetaSeries fixtures.
+  - Fresh live GraphQL review-thread check found no review threads on PR `#29`.
+  - Local environment has no `BETASERIES_TOKEN` or `BETASERIES_API_TOKEN`, so live SDK smoke remains credential-gated.
 - Remaining gates:
   - Run SDK smoke search and download when a test BetaSeries API key is available.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `betaseries` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
