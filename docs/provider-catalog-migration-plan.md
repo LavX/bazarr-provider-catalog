@@ -110,7 +110,7 @@
   - `xsubs`: branch `catalog-xsubs`, worktree `/tmp/bazarr_catalog_provider_worktrees/xsubs`, current head `5a17922`, dead origin
   - `yavkanet`: branch `catalog-yavkanet`, worktree `/tmp/bazarr_catalog_provider_worktrees/yavkanet`, current head `0ac39be`
   - `yifysubtitles`: branch `catalog-yifysubtitles`, worktree `/tmp/bazarr_catalog_provider_worktrees/yifysubtitles`, current head `024f996`
-  - `zimuku`: branch `catalog-zimuku`, worktree `/tmp/bazarr_catalog_provider_worktrees/zimuku`, current head `77b156b`
+  - `zimuku`: branch `catalog-zimuku`, worktree `/tmp/bazarr_catalog_provider_worktrees/zimuku`, current head `7d55b6c`
 - The current checkout `/home/lavx/Documents/bazarr_catalog` is not a provider migration workspace. Do not implement providers there.
 - Before implementing the next provider, verify whether its worktree already exists with `git worktree list --porcelain`; reuse it if it exists.
 
@@ -912,7 +912,7 @@
 
 - Branch: `catalog-zimuku`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/zimuku`
-- Current checkpoint: `77b156b Solve Zimuku Yunsuo verification natively`
+- Current checkpoint: `7d55b6c Add Zimuku Yunsuo coordinate fallback`
 - Pull request: [#69](https://github.com/LavX/bazarr-provider-catalog/pull/69), open draft, head `catalog-zimuku`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -994,6 +994,22 @@
   - Live SDK search plus download smoke `python3 -B -m sdk smoke-test --provider zimuku --language zho --video-fixture tests/fixtures/yifysubtitles_video_dune_2021.json --expect-min-results 1`: `zimuku ok`.
   - Pushed branch head `77b156bc5575d1ee41a3ba5451b61115407c408f`.
   - PR `#69` is open draft, head `catalog-zimuku` at `77b156bc5575d1ee41a3ba5451b61115407c408f`, merge state `CLEAN`, has no review threads, and no checks are reported.
+- No-image Yunsuo fallback evidence on 2026-06-02:
+  - Rechecked SubHD's native anti-captcha path: it uses local glyph templates and retry flow, while Zimuku's comparable path must target Yunsuo BMP digits or no-image coordinate verification.
+  - Red TDD gate `python3 -B -m unittest discover -s tests -p 'test_zimuku.py'`: failed because a Yunsuo challenge without an embedded image raised `zimuku yunsuo captcha response required`.
+  - Added browser-like coordinate fallback for no-image Yunsuo challenges, kept native BMP solving as the first image path, and kept manual `captcha_response` plus external helper fallback for image samples the native solver cannot decode.
+  - Updated Zimuku metadata to `0.1.3`, rebuilt `catalog.json`, and refreshed README and provider notes to describe native verification instead of helper-only operation.
+  - `python3 -B -m unittest discover -s tests -p 'test_zimuku.py'`: `12` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `15` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/zimuku/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`.
+  - `git diff --check`: clean.
+  - Touched-file attribution scan across Zimuku files found no matches.
+  - `python3 -B -m unittest discover -s tests`: `740` tests passed with `6` skipped.
+  - Live SDK search smoke `python3 -B -m sdk smoke-test --provider zimuku --video-fixture tests/fixtures/zimuku_video_game_of_thrones_s01e01.json --language zho --expect-min-results 1 --skip-download`: `zimuku ok`.
+  - Pushed branch head `7d55b6c93bc8f27dbd5c18ed0ac1c373441cfe8c`.
+  - PR `#69` is open draft, head `catalog-zimuku` at `7d55b6c93bc8f27dbd5c18ed0ac1c373441cfe8c`, merge state `CLEAN`, has no review threads, and no checks are reported.
 - Remaining gates:
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with Yunsuo verification solved.
 
@@ -4037,7 +4053,7 @@ Each row is one branch, one worktree, one provider PR, and one independent valid
 | 53 | `xsubs` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/xsubs.py` | `catalog-xsubs` | `/tmp/bazarr_catalog_provider_worktrees/xsubs` | episode | `username`, `password` | dead origin, auth |
 | 54 | `subs4free` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/subs4free.py` | `catalog-subs4free` | `/tmp/bazarr_catalog_provider_worktrees/subs4free` | movie | none | archive, anti-bot |
 | 55 | `subs4series` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/subs4series.py` | `catalog-subs4series` | `/tmp/bazarr_catalog_provider_worktrees/subs4series` | episode | `captcha_response`, `captcha_solver_url`, `captcha_solver_token`, `captcha_solver_timeout_ms`, `request_delay_ms` | archive, anti-bot, captcha helper |
-| 56 | `zimuku` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/zimuku.py` | `catalog-zimuku` | `/tmp/bazarr_catalog_provider_worktrees/zimuku` | movie, episode | `captcha_response`, `captcha_solver_url`, `captcha_solver_token`, `captcha_solver_timeout_ms`, `request_delay_ms` | archive, native Yunsuo captcha, optional helper |
+| 56 | `zimuku` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/zimuku.py` | `catalog-zimuku` | `/tmp/bazarr_catalog_provider_worktrees/zimuku` | movie, episode | `captcha_response`, `captcha_solver_url`, `captcha_solver_token`, `captcha_solver_timeout_ms`, `request_delay_ms` | archive, native Yunsuo captcha, no-image coordinate fallback, optional helper |
 | 57 | `opensubtitles` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/opensubtitles.py` | `catalog-opensubtitles` | `/tmp/bazarr_catalog_provider_worktrees/opensubtitles` | movie, episode | `use_tag_search`, `skip_wrong_fps`, `only_foreign`, `also_foreign`, `request_delay_ms`, `flaresolverr_url`, `flaresolverr_timeout_ms` | OpenSubtitles.org native scraper, ai-cloudscraper, Anubis, Cloudflare fallback |
 | 58 | `embeddedsubtitles` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/embeddedsubtitles.py` | `catalog-embeddedsubtitles` | `/tmp/bazarr_catalog_provider_worktrees/embeddedsubtitles` | movie, episode | `included_codecs`, `hi_fallback`, `timeout`, `unknown_as_fallback`, `fallback_lang` | local video path, ffprobe, ffmpeg |
 | 59 | `whisperai` | `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/whisperai.py` | `catalog-whisperai` | `/tmp/bazarr_catalog_provider_worktrees/whisperai` | movie, episode | `endpoint`, `response`, `timeout`, `loglevel`, `pass_video_name` | local video path, external AI service, ffmpeg |
