@@ -3,6 +3,7 @@
 ## Public Source
 
 - Site or API base URL: `https://api.regielive.ro/bazarr/search.php`
+- Public HTML search URL: `https://subtitrari.regielive.ro/cauta.html`
 - Subtitle download origin: `https://subtitrari.regielive.ro`
 - Public docs URL, if any: none found in the repository or current public site.
 - Source behavior inspected from: `/home/lavx/bazarr/custom_libs/subliminal_patch/providers/regielive.py`
@@ -13,10 +14,11 @@
 - Languages: Romanian only, `ron` / `ro`.
 - Auth and settings: no user credentials. Requests must send the public RegieLive Bazarr API header value required by the endpoint.
 - Search inputs: movie searches send title and year. Episode searches send series title, season number, episode number, and year when available.
+- Search fallback: if the Bazarr API rejects the request with HTTP `403`, the plugin searches the public HTML site, follows the exact matching movie or series page, and parses subtitle rows from the public download links.
 - Download flow: call the RegieLive subtitle host first to obtain session cookies, then download the subtitle ZIP from the result URL.
 - Archive handling: extract the first non-hidden subtitle file from a ZIP archive. Ignore `.txt` files because they may contain notes rather than subtitles.
 - Hash or FPS behavior: no provider hash verification and no FPS filtering.
-- Anti-bot or helper-service behavior: the live API can return 403 from some egress networks. Treat non-200 API responses as provider errors rather than silently returning fabricated results.
+- Anti-bot or helper-service behavior: the live API can return 403 from some egress networks. The plugin falls back to public HTML pages only for the API rejected-request case, and still treats other non-200 API responses as provider errors rather than silently returning fabricated results.
 
 ## Clean-Room Boundary
 

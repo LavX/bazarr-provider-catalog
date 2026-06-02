@@ -23,6 +23,8 @@ def _load_provider_module():
 MOVIE_JSON = (FIXTURE_DIR / "regielive_search_movie.json").read_bytes()
 EPISODE_JSON = (FIXTURE_DIR / "regielive_search_episode.json").read_bytes()
 EMPTY_JSON = (FIXTURE_DIR / "regielive_empty.json").read_bytes()
+SEARCH_HTML = (FIXTURE_DIR / "regielive_search_dune_html.html").read_bytes()
+DETAIL_HTML = (FIXTURE_DIR / "regielive_detail_dune_html.html").read_bytes()
 
 
 def _zip_body(files):
@@ -72,6 +74,30 @@ class RegieLiveParserTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.mod.parse_search_results(b"<html>not json</html>")
 
+    def test_parse_html_search_results_filters_movie_title_and_year(self):
+        rows = self.mod.parse_html_search_results(SEARCH_HTML, {"kind": "movie", "title": "Dune", "year": 2021})
+
+        self.assertEqual(
+            rows,
+            [
+                {
+                    "title": "Dune",
+                    "url": "https://subtitrari.regielive.ro/dune-39590/",
+                    "year": "2021",
+                    "kind": "movie",
+                }
+            ],
+        )
+
+    def test_parse_html_detail_results_extracts_download_rows(self):
+        rows = self.mod.parse_html_detail_results(DETAIL_HTML, "https://subtitrari.regielive.ro/dune-39590/")
+
+        self.assertEqual([row["subtitle_id"] for row in rows], ["503896", "503898"])
+        self.assertEqual(rows[0]["title"], "Dune 2021 1080p HDRip X264 AC3-EVO")
+        self.assertEqual(rows[0]["download_url"], "https://subtitrari.regielive.ro/descarca-39590-503896.zip")
+        self.assertEqual(rows[0]["rating"], 4.34)
+        self.assertEqual(rows[1]["download_url"], "https://subtitrari.regielive.ro/descarca-39590-503898.zip")
+
 
 class RegieLiveProviderTests(unittest.TestCase):
     def setUp(self):
@@ -105,6 +131,43 @@ class RegieLiveProviderTests(unittest.TestCase):
         self.assertIn("year", first["matches"])
         self.assertIn("release_group", first["matches"])
         self.assertEqual(first["provider_payload"]["download_url"], "https://subtitrari.regielive.ro/download/2573535")
+
+    def test_search_falls_back_to_html_when_api_rejects_request(self):
+        provider = self.mod.RegieLiveProvider()
+        calls = []
+
+        def stub(url, headers=None, timeout=15, referer=None):
+            del headers, timeout, referer
+            calls.append(url)
+            if url == "https://api.regielive.ro/bazarr/search.php?nume=Dune&an=2021":
+                raise RuntimeError("regielive rejected the request")
+            if url == "https://subtitrari.regielive.ro/cauta.html?s=Dune":
+                return SEARCH_HTML
+            if url == "https://subtitrari.regielive.ro/dune-39590/":
+                return DETAIL_HTML
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        results = provider.search(
+            {"kind": "movie", "title": "Dune", "year": 2021, "release_group": "EVO"},
+            [{"alpha3": "ron", "alpha2": "ro"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(
+            calls,
+            [
+                "https://api.regielive.ro/bazarr/search.php?nume=Dune&an=2021",
+                "https://subtitrari.regielive.ro/cauta.html?s=Dune",
+                "https://subtitrari.regielive.ro/dune-39590/",
+            ],
+        )
+        self.assertGreaterEqual(len(results), 2)
+        first = results[0]
+        self.assertEqual(first["provider"], "regielive")
+        self.assertEqual(first["provider_payload"]["subtitle_id"], "503896")
+        self.assertEqual(first["provider_payload"]["download_url"], "https://subtitrari.regielive.ro/descarca-39590-503896.zip")
+        self.assertIn("release_group", first["matches"])
 
     def test_search_returns_only_romanian(self):
         provider = self.mod.RegieLiveProvider()

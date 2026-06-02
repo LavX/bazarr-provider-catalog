@@ -6,6 +6,7 @@ import html
 import io
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -16,6 +17,7 @@ from http.cookiejar import CookieJar
 PROVIDER_ID = "regielive"
 API_URL = "https://api.regielive.ro/bazarr/search.php"
 DOWNLOAD_ORIGIN = "https://subtitrari.regielive.ro"
+HTML_SEARCH_URL = f"{DOWNLOAD_ORIGIN}/cauta.html"
 API_HEADER_VALUE = "API-BAZARR-YTZ-SL"
 HTTP_TIMEOUT_SECONDS = 15
 MAX_RESULTS = 20
@@ -26,6 +28,33 @@ USER_AGENT = (
 )
 
 ROMANIAN = {"alpha3": "ron", "alpha2": "ro", "hi": False, "forced": False}
+
+_HTML_SEARCH_ITEM_RE = re.compile(
+    r"<li\b[^>]*>(?P<body>.*?)(?=<li\b|</ul>)",
+    re.I | re.S,
+)
+_HTML_TITLE_LINK_RE = re.compile(
+    r"<a\b(?P<attrs>[^>]*\bclass=[\"'][^\"']*\btext-xl\b[^\"']*[\"'][^>]*)>"
+    r"(?P<title>.*?)</a>\s*<span\b[^>]*>\((?P<year>\d{4})\)</span>",
+    re.I | re.S,
+)
+_HTML_DETAIL_ITEM_RE = re.compile(
+    r"<li\b(?=[^>]*\bclass=[\"'][^\"']*\bsubtitrare\b)[^>]*>(?P<body>.*?)</li>",
+    re.I | re.S,
+)
+_HTML_SUBTITLE_TITLE_RE = re.compile(
+    r"<span\b(?P<attrs>[^>]*\bid=[\"']sub_(?P<id>\d+)[\"'][^>]*)>(?P<title>.*?)</span>",
+    re.I | re.S,
+)
+_HTML_DOWNLOAD_RE = re.compile(
+    r"<a\b[^>]*\bhref=[\"'](?P<href>[^\"']*descarca-[^\"']+\.zip)[\"']",
+    re.I | re.S,
+)
+_HTML_RATING_RE = re.compile(r"\btitle=[\"']Nota\s+(?P<rating>\d+(?:[.,]\d+)?)", re.I)
+_TAG_RE = re.compile(r"<[^>]+>")
+_WORD_RE = re.compile(r"[a-z0-9]+")
+_SXXEXX_RE = re.compile(r"\bs0*(?P<season>\d{1,2})e0*(?P<episode>\d{1,3})\b", re.I)
+_X_EPISODE_RE = re.compile(r"\b0*(?P<season>\d{1,2})x0*(?P<episode>\d{1,3})\b", re.I)
 
 
 def build_query_params(video):
@@ -100,6 +129,60 @@ def parse_search_results(body):
     return rows
 
 
+def parse_html_search_results(body, video):
+    video = video or {}
+    rows = []
+    seen = set()
+    for match in _HTML_SEARCH_ITEM_RE.finditer(_decode(body)):
+        item = match.group("body")
+        title_match = _HTML_TITLE_LINK_RE.search(item)
+        if not title_match:
+            continue
+        url = _attr(title_match.group("attrs"), "href")
+        title = _strip_tags(title_match.group("title"))
+        year = title_match.group("year")
+        kind = "episode" if "tag-serial" in item else "movie"
+        if not url or not title:
+            continue
+        row = {
+            "title": title,
+            "url": urllib.parse.urljoin(DOWNLOAD_ORIGIN, url),
+            "year": year,
+            "kind": kind,
+        }
+        key = row["url"]
+        if key in seen or not _html_media_matches_video(row, video):
+            continue
+        seen.add(key)
+        rows.append(row)
+    return rows
+
+
+def parse_html_detail_results(body, detail_url):
+    rows = []
+    for match in _HTML_DETAIL_ITEM_RE.finditer(_decode(body)):
+        item = match.group("body")
+        title_match = _HTML_SUBTITLE_TITLE_RE.search(item)
+        download_match = _HTML_DOWNLOAD_RE.search(item)
+        if not title_match or not download_match:
+            continue
+        title = _strip_tags(title_match.group("title"))
+        download_url = urllib.parse.urljoin(detail_url, html.unescape(download_match.group("href")))
+        if not title or not download_url:
+            continue
+        rating_match = _HTML_RATING_RE.search(item)
+        rating = _safe_float((rating_match.group("rating") if rating_match else "").replace(",", "."))
+        rows.append(
+            {
+                "subtitle_id": title_match.group("id"),
+                "title": title,
+                "download_url": download_url,
+                "rating": rating,
+            }
+        )
+    return rows
+
+
 class RegieLiveProvider:
     def __init__(self):
         cookie_jar = CookieJar()
@@ -137,11 +220,35 @@ class RegieLiveProvider:
 
         _sleep(config)
         url = f"{API_URL}?{urllib.parse.urlencode(params)}"
-        body = self._http_get(url, headers={"RL-API": API_HEADER_VALUE})
-        rows = parse_search_results(body)
+        try:
+            body = self._http_get(url, headers={"RL-API": API_HEADER_VALUE})
+            rows = parse_search_results(body)
+        except RuntimeError as exc:
+            if "rejected the request" not in str(exc):
+                raise
+            rows = self._search_html(video, config or {})
         results = [self._result(video or {}, row) for row in rows]
         results.sort(key=lambda item: (-item["score"], item["release_info"].lower()))
         return results[:MAX_RESULTS]
+
+    def _search_html(self, video, config):
+        query = _html_query(video)
+        if not query:
+            return []
+        search_url = f"{HTML_SEARCH_URL}?{urllib.parse.urlencode({'s': query})}"
+        _sleep(config)
+        search_body = self._http_get(search_url)
+        rows = []
+        for media in parse_html_search_results(search_body, video)[:3]:
+            _sleep(config)
+            detail_body = self._http_get(media["url"], referer=search_url)
+            for row in parse_html_detail_results(detail_body, media["url"]):
+                if not _html_subtitle_matches_video(row, video):
+                    continue
+                row = dict(row)
+                row["year"] = media.get("year")
+                rows.append(row)
+        return rows
 
     def download(self, provider_payload, language, config):
         del language
@@ -258,6 +365,58 @@ def _requests_romanian(languages):
         if alpha3 == "ron" or alpha2 == "ro":
             return True
     return False
+
+
+def _html_query(video):
+    video = video or {}
+    if video.get("kind") == "movie":
+        return _clean_text(video.get("title"))
+    if video.get("kind") == "episode":
+        return _clean_text(video.get("series"))
+    return ""
+
+
+def _html_media_matches_video(row, video):
+    video = video or {}
+    if video.get("kind") and row.get("kind") and row["kind"] != video["kind"]:
+        return False
+    expected_year = _clean_number(video.get("year"))
+    if expected_year and row.get("year") and expected_year != str(row["year"]):
+        return False
+    expected_title = _html_query(video)
+    if expected_title and _normalized_words(row.get("title")) != _normalized_words(expected_title):
+        return False
+    return True
+
+
+def _html_subtitle_matches_video(row, video):
+    video = video or {}
+    if video.get("kind") != "episode":
+        return True
+    try:
+        expected_season = int(video.get("season"))
+        expected_episode = int(video.get("episode"))
+    except (TypeError, ValueError):
+        return True
+    release = _clean_text(row.get("title"))
+    for pattern in (_SXXEXX_RE, _X_EPISODE_RE):
+        match = pattern.search(release)
+        if match:
+            return int(match.group("season")) == expected_season and int(match.group("episode")) == expected_episode
+    return False
+
+
+def _normalized_words(value):
+    return " ".join(_WORD_RE.findall(_clean_text(value).lower()))
+
+
+def _attr(tag, name):
+    match = re.search(rf"\b{name}\s*=\s*([\"'])(?P<value>.*?)\1", tag or "", re.I | re.S)
+    return html.unescape(match.group("value")) if match else ""
+
+
+def _strip_tags(value):
+    return _clean_text(_TAG_RE.sub(" ", value or ""))
 
 
 def _clean_text(value):
