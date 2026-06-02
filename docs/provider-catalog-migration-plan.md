@@ -1588,8 +1588,8 @@
 
 - Branch: `catalog-subsarr`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subsarr`
-- Current checkpoint: `e154cee Add Subsarr provider`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/27` opened as draft on 2026-06-01, head `catalog-subsarr`, base `main`, merge state `CLEAN`.
+- Current checkpoint: `cd0547b Merge origin/main into Subsarr branch`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/27` opened as draft on 2026-06-01, head `catalog-subsarr`, base `main`, current head `cd0547bd868ff6d74ee792ea60508cb45c8478d8`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -1628,6 +1628,18 @@
   - `git diff --check origin/main...HEAD`: clean.
   - Prohibited punctuation and attribution scan across README, catalog, provider code, tests, and fixtures: no matches.
   - `gh pr view 27 --repo LavX/bazarr-provider-catalog --json number,url,state,isDraft,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,title`: PR `#27` is open, draft, head `catalog-subsarr`, base `main`, merge state `CLEAN`.
+- Current-main merge evidence on 2026-06-02:
+  - Live review-thread inspection found no review threads on PR `#27`.
+  - `cd0547b` merges current `origin/main` into `catalog-subsarr`, resolving generated `README.md` and `catalog.json` while preserving the Subsarr provider scope.
+  - `python3 -B -m unittest discover -s tests -p 'test_subsarr.py'`: `7` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`, ABI tags `cp312`, `cp313`, `cp314`, and `abi3`.
+  - `python3 -B -m py_compile providers/subsarr/provider.py`: passed.
+  - `git diff --cached --check` and `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, Subsarr provider code, tests, and fixtures found no matches.
+  - `python3 -B -m unittest discover -s tests`: `719` tests passed with `6` skipped.
+  - `gh pr view 27 --repo LavX/bazarr-provider-catalog --json number,title,headRefOid,state,isDraft,mergeStateStatus,reviewDecision,updatedAt,url`: PR `#27` is open, draft, head `cd0547bd868ff6d74ee792ea60508cb45c8478d8`, merge state `CLEAN`.
 - Remaining gates:
   - Run SDK smoke search and download against a reachable self-hosted Subsarr service when a test `base_url` is available.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` is deployed on `bazarr-ui-test`; `subsarr` remains unproved only because the test service URL is missing.
