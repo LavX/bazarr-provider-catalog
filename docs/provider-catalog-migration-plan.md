@@ -3256,8 +3256,8 @@
 
 - Branch: `catalog-subx`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/subx`
-- Current checkpoint: `1f649cf Add SubX provider`
-- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/49` opened as draft on 2026-06-01, head `catalog-subx`, base `main`, merge state `CLEAN`.
+- Current checkpoint: `d19cdd7 Merge current main into SubX branch`
+- PR: `https://github.com/LavX/bazarr-provider-catalog/pull/49` opened as draft on 2026-06-01, head `catalog-subx`, base `main`, current head `d19cdd7731828fce91aec124d6f9c4693e656e19`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-29:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
   - Fresh worktree baseline `python3 -B -m unittest discover -s tests`: `328` tests passed, `6` skipped.
@@ -3293,8 +3293,23 @@
   - `python3 -B -m sdk smoke-test --provider subx --language spa --expect-min-results 1 --skip-download`: failed at the expected credential gate with `SubX api_key is required`.
   - PR `#49` was verified open, draft, merge state `CLEAN`, head `1f649cf83ed84abd2e1474d6e796d14c9e56e249`.
   - Test-server config check read only API-key presence and length from `/home/lavx/bazarr-data/config/config.yaml`; `subx.api_key` is empty.
+- Current-main merge evidence on 2026-06-02:
+  - Live PR diff scope remains limited to `README.md`, `catalog.json`, `docs/provider-notes/subx.md`, `providers/subx`, and `tests/test_subx.py`.
+  - Live review-thread inspection found no review threads on PR `#49`.
+  - `d19cdd7` merges current `origin/main` into `catalog-subx`, resolving generated `README.md` and `catalog.json` while preserving the SubX provider scope.
+  - `python3 -B -m unittest discover -s tests -p 'test_subx.py'`: `15` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m sdk runtime-matrix`: Python `3.12`, `3.13`, and `3.14`, ABI tags `cp312`, `cp313`, `cp314`, and `abi3`.
+  - `python3 -B -m py_compile providers/subx/provider.py`: passed.
+  - `git diff --cached --check` and `git diff --check origin/main...HEAD`: clean.
+  - Prohibited punctuation and attribution scan across README, catalog, SubX notes, provider code, and tests found no matches.
+  - `python3 -B -m unittest discover -s tests`: `742` tests passed with `6` skipped.
+  - `python3 -B -m sdk smoke-test --provider subx --language spa --video-fixture /tmp/subx_live_inception_2010.json --expect-min-results 1 --skip-download --secret api_key=SUBX_API_KEY`: `subx ok`.
+  - `python3 -B -m sdk smoke-test --provider subx --language spa --video-fixture /tmp/subx_live_inception_2010.json --expect-min-results 1 --secret api_key=SUBX_API_KEY`: `subx ok`.
+  - `gh pr view 49 --repo LavX/bazarr-provider-catalog --json number,state,isDraft,mergeStateStatus,reviewDecision,headRefName,headRefOid,url,title`: PR `#49` is open, draft, head `d19cdd7731828fce91aec124d6f9c4693e656e19`, merge state `CLEAN`.
+  - `gh pr checks 49 --repo LavX/bazarr-provider-catalog`: no checks reported on the branch.
 - Remaining gates:
-  - Run SDK live smoke search and download with a real SubX API key.
   - Core branch `worktree-provider-hub-builtin-replacements` at `f245ae096` already includes `subx` in the trusted replacement policy.
   - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured SubX API key.
 
