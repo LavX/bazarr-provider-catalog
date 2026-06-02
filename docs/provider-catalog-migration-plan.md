@@ -549,10 +549,18 @@
   - `python3 -B -m unittest discover -s tests`: `733` tests passed with `6` skipped.
   - Pushed branch head `7dc630d6f7bed364f19d53a72dbc74aa7091aecf`.
   - PR `#60` is open draft, head `catalog-legendasnet` at `7dc630d6f7bed364f19d53a72dbc74aa7091aecf`, merge state `CLEAN`, and no checks are reported.
+- Fresh credential recheck on 2026-06-02:
+  - PR `#60` is open draft, head `7dc630d6f7bed364f19d53a72dbc74aa7091aecf`, merge state `CLEAN`, and no checks are reported.
+  - `python3 -B -m unittest discover -s tests -p 'test_legendasnet.py'`: `6` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Live SDK smoke with the saved temporary credential failed at the expected auth boundary with `Invalid Legendas.net username or password`.
+  - Public fake-login probes confirmed `POST /api/v1/login` rejects `username` without `email` as `Email and password are required`, while the catalog provider and legacy Bazarr provider both send `email` plus `password`.
 - Remaining gates:
-  - Run SDK live smoke search and download with valid Legendas.net credentials.
+  - Run SDK live smoke search and download with valid Legendas.net email credentials.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `legendasnet` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
-  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Legendas.net credentials.
+  - Prove Provider Hub compat search, download, and stream on `bazarr-ui-test` with configured Legendas.net email credentials.
 
 ### `napisy24`
 
