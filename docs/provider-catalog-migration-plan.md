@@ -800,6 +800,14 @@
   - `python3 -B -m unittest discover -s tests`: `736` tests passed with `6` skipped.
   - Pushed branch head `71ffc9c94778177de2ad093e79088252483c62db`.
   - PR `#65` is open draft, head `catalog-titulky` at `71ffc9c94778177de2ad093e79088252483c62db`, merge state `CLEAN`, and no checks are reported.
+- Fresh credential recheck on 2026-06-02:
+  - PR `#65` is open draft, head `71ffc9c94778177de2ad093e79088252483c62db`, merge state `CLEAN`, and no checks are reported.
+  - `python3 -B -m unittest discover -s tests -p 'test_titulky.py'`: `9` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Initial live SDK smoke hit a transient `Connection refused` before auth, while direct `curl` and provider `_http_get` probes to `https://premium.titulky.com/` returned HTTP `200`.
+  - Retried live SDK smoke with saved temporary credentials and reached the real account gate: `Titulky VIP account is required`.
 - Remaining gates:
   - Run SDK live smoke search and download with valid Titulky VIP credentials.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `titulky` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
