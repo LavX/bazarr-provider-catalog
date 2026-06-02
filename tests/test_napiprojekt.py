@@ -401,6 +401,44 @@ class CloudflareTests(unittest.TestCase):
         )
         self.assertEqual(solved_calls[0][2], "https://www.napiprojekt.pl/ajax/search_catalog.php")
 
+    def test_cloudscraper_solves_anubis_body_before_retrying_original_url(self):
+        provider = self.mod.NapiProjektProvider()
+        anubis_body = (
+            b'<html><head><meta http-equiv="refresh" '
+            b'content="0; url=/.within.website/?redir=/ajax/search_catalog.php"></head></html>'
+        )
+        fake_scraper = _FakeScraper(
+            [
+                _FakeResponse(
+                    200,
+                    anubis_body,
+                    url="https://www.napiprojekt.pl/ajax/search_catalog.php",
+                ),
+                _FakeResponse(200, b"<html>ok</html>", url="https://www.napiprojekt.pl/ajax/search_catalog.php"),
+            ]
+        )
+        solved_calls = []
+
+        def fake_solve(active_scraper, challenge_url, original_url, timeout):
+            solved_calls.append((active_scraper, challenge_url, original_url, timeout))
+            return {"techaro.lol-anubis-auth": "ok"}
+
+        original_create = self.mod.cloudscraper.create_scraper
+        original_solve = self.mod.solve_anubis_challenge
+        self.mod.cloudscraper.create_scraper = lambda **kwargs: fake_scraper
+        self.mod.solve_anubis_challenge = fake_solve
+        try:
+            body = provider._http_post("https://www.napiprojekt.pl/ajax/search_catalog.php", {"queryString": "Shrek"}, {})
+        finally:
+            self.mod.cloudscraper.create_scraper = original_create
+            self.mod.solve_anubis_challenge = original_solve
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(len(fake_scraper.calls), 2)
+        self.assertIs(solved_calls[0][0], fake_scraper)
+        self.assertEqual(solved_calls[0][1], "https://www.napiprojekt.pl/ajax/search_catalog.php")
+        self.assertEqual(solved_calls[0][2], "https://www.napiprojekt.pl/ajax/search_catalog.php")
+
     def test_flaresolverr_timeout_is_capped_below_worker_deadline(self):
         self.assertEqual(
             self.mod._flaresolverr_timeout_ms({"flaresolverr_timeout_ms": 45000}),
