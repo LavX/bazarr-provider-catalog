@@ -256,7 +256,7 @@ def _language_requested(languages):
         if not isinstance(language, dict):
             continue
         alpha3 = _text(language.get("alpha3"))
-        country = _text(language.get("country")).upper()
+        country = _text(language.get("country") or language.get("country_alpha2")).upper()
         if alpha3 in {"por-BR", "pob"}:
             return True
         if alpha3 == "por" and country == "BR":

@@ -99,6 +99,26 @@ class LegendasNetSearchTests(unittest.TestCase):
         self.assertTrue(results[1]["language"]["forced"])
         self.assertTrue(results[1]["provider_payload"]["forced"])
 
+    def test_movie_search_accepts_provider_hub_country_alpha2_language_payload(self):
+        provider = self.mod.LegendasNetProvider()
+
+        def request(method, url, headers=None, json_body=None, timeout=30):
+            del method, headers, json_body, timeout
+            if url.endswith("/login"):
+                return self.mod.HttpResponse(200, _fixture("legendasnet_login.json"), {})
+            if url.endswith("/search/movie"):
+                return self.mod.HttpResponse(200, _fixture("legendasnet_search_dune.json"), {})
+            raise AssertionError(url)
+
+        provider._http_json = request
+        results = provider.search(
+            _json_fixture("legendasnet_video_dune_2021.json"),
+            [{"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR"}],
+            {"username": "user", "password": "pass"},
+        )
+
+        self.assertEqual(len(results), 2)
+
     def test_episode_search_filters_requested_episode(self):
         provider = self.mod.LegendasNetProvider()
 
