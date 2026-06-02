@@ -69,7 +69,7 @@
   - `jimaku`: branch `catalog-jimaku`, worktree `/tmp/bazarr_catalog_provider_worktrees/jimaku`, current head `d4a1600`
   - `karagarga`: branch `catalog-karagarga`, worktree `/tmp/bazarr_catalog_provider_worktrees/karagarga`, current head `b394520`
   - `ktuvit`: branch `catalog-ktuvit`, worktree `/tmp/bazarr_catalog_provider_worktrees/ktuvit`, current head `e706af3`
-  - `legendasdivx`: branch `catalog-legendasdivx`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasdivx`, current head `02bbb60`
+  - `legendasdivx`: branch `catalog-legendasdivx`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasdivx`, current head `3f59e45`
   - `legendasnet`: branch `catalog-legendasnet`, worktree `/tmp/bazarr_catalog_provider_worktrees/legendasnet`, current head `983878f`
   - `napiprojekt`: branch `catalog-napiprojekt`, worktree `/tmp/bazarr_catalog_provider_worktrees/napiprojekt`, current head `af6ff27`
   - `napisy24`: branch `catalog-napisy24`, worktree `/tmp/bazarr_catalog_provider_worktrees/napisy24`, current head `4790b0f`
@@ -459,7 +459,7 @@
 
 - Branch: `catalog-legendasdivx`
 - Worktree: `/tmp/bazarr_catalog_provider_worktrees/legendasdivx`
-- Current checkpoint: `02bbb60 Add LegendasDivx provider`
+- Current checkpoint: `3f59e45 Merge remote-tracking branch 'origin/main' into catalog-legendasdivx`
 - Pull request: [#59](https://github.com/LavX/bazarr-provider-catalog/pull/59), open draft, head `catalog-legendasdivx`, base `main`, merge state `CLEAN`.
 - Baseline evidence on 2026-05-31:
   - Fresh worktree baseline `python3 -B -m sdk validate`: `catalog ok`.
@@ -481,6 +481,20 @@
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' 'https://www.legendasdivx.pt/forum/ucp.php?mode=login'`: returned HTTP `200`.
   - `curl -sS -D - -o /dev/null --max-time 20 -A 'BazarrProviderHub/1.0' 'https://www.legendasdivx.pt/modules.php?name=Downloads&file=jz&d_op=search&op=_jz00&query=tt1160419&temporada=&episodio=&imdb='`: returned HTTP `302` to `modules.php?name=Your_Account`.
   - Real search and download require valid LegendasDivx credentials.
+- Fresh current-main merge evidence on 2026-06-02:
+  - Live thread-aware PR inspection found no conversation comments, reviews, or review threads on PR `#59`.
+  - Merged `origin/main` into `catalog-legendasdivx`; README and catalog auto-merged cleanly, then `python3 -B -m sdk build-catalog` refreshed generated catalog metadata.
+  - Effective branch scope against current `origin/main` remains limited to `README.md`, `catalog.json`, `docs/provider-notes/legendasdivx.md`, `providers/legendasdivx/provider.json`, `providers/legendasdivx/provider.py`, LegendasDivx fixtures, and `tests/test_legendasdivx.py`.
+  - `python3 -B -m unittest discover -s tests -p 'test_legendasdivx.py'`: `6` tests passed.
+  - `python3 -B -m unittest discover -s tests -p 'test_catalog.py'`: `14` tests passed with `6` skipped.
+  - `python3 -B -m sdk validate`: `catalog ok`.
+  - `python3 -B -m py_compile providers/legendasdivx/provider.py`: passed.
+  - `python3 -B -m sdk runtime-matrix`: Python runtime policy remains `>=3.12,<3.15`.
+  - `git diff --check origin/main...HEAD`: clean.
+  - Touched-file attribution and em-dash scan across LegendasDivx files found no matches.
+  - `python3 -B -m unittest discover -s tests`: `733` tests passed with `6` skipped.
+  - Pushed branch head `3f59e4559dfe81a5a1514ca41951ef005ef981d7`.
+  - PR `#59` is open draft, head `catalog-legendasdivx` at `3f59e4559dfe81a5a1514ca41951ef005ef981d7`, merge state `CLEAN`, and no checks are reported.
 - Remaining gates:
   - Run SDK live smoke search and download with valid LegendasDivx credentials.
   - Core branch `worktree-provider-hub-builtin-replacements` at `fe1afaeaf` already includes `legendasdivx` in the trusted replacement policy; deploy that core branch before Provider Hub compat proof.
