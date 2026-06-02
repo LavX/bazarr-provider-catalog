@@ -4,6 +4,128 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "a0e98ddf486eb1b38a2e26f4f09a8b8b4214813c1232fe9ca874c5d755eed2d0",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "cookies": {
+              "default": "",
+              "description": "Optional Addic7ed session cookies. Use cookies when login is blocked by captcha.",
+              "secret": true,
+              "title": "Cookies",
+              "type": "string"
+            },
+            "password": {
+              "default": "",
+              "description": "Addic7ed password. Not required when valid cookies are provided.",
+              "secret": true,
+              "title": "Password",
+              "type": "string"
+            },
+            "user_agent": {
+              "default": "",
+              "description": "Optional browser User-Agent paired with the supplied cookies or login session.",
+              "title": "User-Agent",
+              "type": "string"
+            },
+            "username": {
+              "default": "",
+              "description": "Addic7ed username. Not required when valid cookies are provided.",
+              "secret": true,
+              "title": "Username",
+              "type": "string"
+            },
+            "vip": {
+              "default": false,
+              "description": "Use the higher VIP daily download cap.",
+              "title": "VIP",
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Uses Addic7ed for movie and episode subtitles. Requires username and password or valid Addic7ed cookies.",
+        "entry_class": "Addic7edProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "b0cf894ed3809cdf9e768bbc922fcb6ed5b3c8d3a86c9fa3b60c607a8d8d81df"
+        },
+        "languages": [
+          "ara",
+          "aze",
+          "ben",
+          "bos",
+          "bul",
+          "cat",
+          "ces",
+          "dan",
+          "deu",
+          "ell",
+          "eng",
+          "eus",
+          "fas",
+          "fin",
+          "fra",
+          "glg",
+          "heb",
+          "hrv",
+          "hun",
+          "hye",
+          "ind",
+          "ita",
+          "jpn",
+          "kor",
+          "mkd",
+          "msa",
+          "nld",
+          "nor",
+          "pol",
+          "por",
+          "por-BR",
+          "ron",
+          "rus",
+          "slk",
+          "slv",
+          "spa",
+          "sqi",
+          "srp",
+          "swe",
+          "tha",
+          "tur",
+          "ukr",
+          "vie",
+          "zho"
+        ],
+        "name": "Addic7ed",
+        "provider_id": "addic7ed",
+        "schema_version": 1,
+        "secret_fields": [
+          "username",
+          "password",
+          "cookies"
+        ],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/addic7ed",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.1"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "3907a21ae7c419be51fc9daf0ede66a4d05ea18fd0267be7350b1f251eff43b1",
         "config_schema": {
           "additionalProperties": false,
