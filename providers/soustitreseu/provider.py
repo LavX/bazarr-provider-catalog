@@ -355,13 +355,18 @@ def select_subtitle_file(names, payload, language=None):
         index, name = index_name
         normalized = _normalize_release(os.path.basename(name))
         value = max(0, 10 - index)
+        episode_matched = (
+            season is not None
+            and episode is not None
+            and _file_matches_episode(normalized, season, episode)
+        )
+        if episode_matched:
+            value += 1000
         file_language = _language_from_subtitle_filename(name)
         if language and file_language == language:
             value += 100
         elif language and file_language and file_language != language:
             value -= 100
-        if season is not None and episode is not None and _file_matches_episode(normalized, season, episode):
-            value += 70
         if release_info:
             for token in _release_tokens(release_info):
                 if len(token) > 2 and token in normalized:
