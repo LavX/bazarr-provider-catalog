@@ -17,13 +17,13 @@ Clean-room target for `turkcealtyaziorg`.
 
 ## Compatibility quirks
 
-- Cloudflare can block the site without matching browser cookies and User-Agent. The provider now uses `ai-cloudscraper` by default, solves inline Anubis `/.within.website/` challenges, keeps `cookies` optional and secret for manual `cf_clearance`, and can use an optional FlareSolverr `/v1` URL if the native session still receives a Cloudflare challenge.
+- Cloudflare bypass order mirrors `opensubtitles_org`: use `ai-cloudscraper` first, solve inline Anubis `/.within.website/` challenges when present, and use optional FlareSolverr `/v1` only if the native cloudscraper session still receives a Cloudflare challenge. Matching browser cookies and User-Agent remain optional manual fallback inputs.
 - The default User-Agent should stay browser-like. A caller-supplied User-Agent should remain paired with any supplied cookies.
 - A HTTP 403 Cloudflare challenge should raise a clear access error instead of returning empty results when no working cookies or FlareSolverr fallback are configured.
-- FlareSolverr timeouts are capped at `25000` ms to stay inside the Provider Hub worker deadline.
+- Official FlareSolverr 3.5.0 still timed out at `30000` ms on 2026-06-02, but solved Cloudflare challenges in about `29200` to `33400` ms with a `60000` ms request. The provider default and cap are therefore `60000` ms.
 - Search results should preserve IMDb, season, episode, release group, hearing-impaired, uploader, and season-pack match behavior.
 - Season-pack archives must not fall back to a wrong episode member.
-- Live verification on 2026-05-31 from this environment returned a Cloudflare challenge for the homepage and IMDb search without cookies.
+- Live verification on 2026-06-02 from this environment reached the official FlareSolverr solved path, then Cloudflare returned a `522` origin timeout page for both the homepage retry and direct IMDb search probe.
 
 ## License notes
 

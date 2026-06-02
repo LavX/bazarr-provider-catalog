@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "0537917e42cb44fe8dfd58c6814325056202854bac49f1c9feacce5c660cb73d",
+  "bundle_sha256": "dd8e13f30bb6694e185c9a6d68d9f2a8472eb237ea68145566faae6f39d9d1bb",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -12,8 +12,8 @@
         "type": "string"
       },
       "flaresolverr_timeout_ms": {
-        "default": 25000,
-        "description": "Maximum time FlareSolverr may spend solving a Cloudflare challenge. Values above 25000 ms are capped to stay inside the Provider Hub worker deadline.",
+        "default": 60000,
+        "description": "Maximum time FlareSolverr may spend solving a Cloudflare challenge. Values above 60000 ms are capped.",
         "minimum": 1000,
         "title": "FlareSolverr timeout (ms)",
         "type": "integer"
@@ -328,7 +328,7 @@
   "entry_class": "TurkceAltyaziOrgProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "0b6eeb61722f48394acfc29a0bed6c2f21d2b7cb103be37c635485c3a16ec0ad"
+    "provider.py": "793c3996e5821a97fd3c9d5136c36d6e15a9d7031e2a1c2710487f76b15ebdb2"
   },
   "languages": [
     "tur",
@@ -353,5 +353,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.2"
+  "version": "0.1.3"
 }

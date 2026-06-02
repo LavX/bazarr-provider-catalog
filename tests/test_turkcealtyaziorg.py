@@ -165,6 +165,20 @@ class TurkceAltyaziSearchTests(unittest.TestCase):
 
         self.assertEqual(results, [])
 
+    def test_access_check_uses_normal_http_timeout(self):
+        provider = self.mod.TurkceAltyaziOrgProvider()
+        calls = []
+
+        def get_response(url, headers, cookies, timeout=30, allow_redirects=True, config=None):
+            del headers, cookies, allow_redirects, config
+            calls.append((url, timeout))
+            return self.mod.HttpResponse(200, b"home", {})
+
+        provider._http_get = get_response
+        provider._ensure_access({}, {})
+
+        self.assertEqual(calls, [("https://turkcealtyazi.org", self.mod.HTTP_TIMEOUT_SECONDS)])
+
     def test_movie_search_uses_imdb_id_cookies_user_agent_and_parses_rows(self):
         provider = self.mod.TurkceAltyaziOrgProvider()
         calls = []
@@ -436,7 +450,7 @@ class TurkceAltyaziSearchTests(unittest.TestCase):
             flaresolverr_calls[0][1]["url"],
             "https://turkcealtyazi.org/find.php?cat=sub&find=1375666",
         )
-        self.assertEqual(flaresolverr_calls[0][1]["maxTimeout"], 25000)
+        self.assertEqual(flaresolverr_calls[0][1]["maxTimeout"], 45000)
         self.assertEqual(session.cookies["cf_clearance"]["value"], "clear")
 
 

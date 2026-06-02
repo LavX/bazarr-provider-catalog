@@ -36,8 +36,8 @@ DEFAULT_USER_AGENT = (
     "(KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
 )
 HTTP_TIMEOUT_SECONDS = 30
-DEFAULT_FLARESOLVERR_TIMEOUT_MS = 25000
-MAX_FLARESOLVERR_TIMEOUT_MS = 25000
+DEFAULT_FLARESOLVERR_TIMEOUT_MS = 60000
+MAX_FLARESOLVERR_TIMEOUT_MS = 60000
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
 SUPPORTED_LANGUAGE_CODES = {"tur", "eng"}
 _SXXEXX_RE = re.compile(r"\bs(?P<season>\d{1,2})\s*[._ -]?e(?P<episode>\d{1,3})\b", re.I)
@@ -181,7 +181,14 @@ class TurkceAltyaziOrgProvider:
     def _ensure_access(self, config, cookies):
         if self._access_checked:
             return
-        response = self._http_get(BASE_URL, self._headers(config), cookies, timeout=10, allow_redirects=False, config=config)
+        response = self._http_get(
+            BASE_URL,
+            self._headers(config),
+            cookies,
+            timeout=HTTP_TIMEOUT_SECONDS,
+            allow_redirects=False,
+            config=config,
+        )
         _raise_for_status(response, "TurkceAltyazi access check")
         self._access_checked = True
 
