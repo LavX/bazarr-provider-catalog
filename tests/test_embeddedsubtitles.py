@@ -164,12 +164,12 @@ class EmbeddedSubtitlesParserTests(unittest.TestCase):
         finally:
             self.mod.subprocess.run = original_run
 
-    def test_manifest_declares_trusted_builtin_replacement(self):
+    def test_manifest_uses_installable_catalog_id_for_legacy_builtin(self):
         manifest = json.loads((PROVIDER_DIR / "provider.json").read_text())
 
-        self.assertEqual(manifest["provider_id"], "embeddedsubtitles")
+        self.assertEqual(manifest["provider_id"], "embedded_subtitles")
         self.assertEqual(manifest["legacy_provider_id"], "embeddedsubtitles")
-        self.assertTrue(manifest["builtin_provider_replacement"])
+        self.assertNotEqual(manifest["provider_id"], manifest["legacy_provider_id"])
 
 
 class EmbeddedSubtitlesProviderSearchTests(unittest.TestCase):
@@ -247,7 +247,7 @@ class EmbeddedSubtitlesProviderDownloadTests(unittest.TestCase):
 
         result = provider.download(
             {
-                "provider": "embeddedsubtitles",
+                "provider": "embedded_subtitles",
                 "schema": 1,
                 "path": "/media/Example.Show.S01E02.mkv",
                 "stream_index": 2,
