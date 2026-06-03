@@ -156,8 +156,11 @@ class WhisperHttpClient:
         self.response_timeout = int(config["response_timeout_seconds"])
 
     def post_multipart(self, endpoint, params, files, timeout):
-        body, content_type = _multipart_body(params, files)
         url = self.base_url + "/" + str(endpoint).lstrip("/")
+        query = urllib.parse.urlencode(params or {})
+        if query:
+            url = f"{url}?{query}"
+        body, content_type = _multipart_body({}, files)
         request = urllib.request.Request(
             url,
             data=body,
@@ -223,7 +226,8 @@ def plan_transcription(video, language, detected_language=None):
 def extract_audio(path, ffmpeg_path, audio_stream_language=None, timeout_seconds=120):
     command = [str(ffmpeg_path), "-nostdin", "-i", str(path)]
     if audio_stream_language:
-        command.extend(["-map", f"0:a:m:language:{_ffmpeg_language_code(audio_stream_language)}"])
+        stream_index = _audio_stream_index(path, ffmpeg_path, audio_stream_language, timeout_seconds)
+        command.extend(["-map", f"0:{stream_index}"])
     command.extend([
         "-vn",
         "-f",
@@ -392,8 +396,8 @@ def _language_payload(language):
     alpha3 = normalize_language(payload.get("alpha3") or payload.get("alpha2"))
     payload["alpha3"] = alpha3
     payload.setdefault("alpha2", ALPHA3_TO_ALPHA2.get(alpha3))
-    payload.setdefault("hi", False)
-    payload.setdefault("forced", False)
+    payload["hi"] = False
+    payload["forced"] = False
     return payload
 
 
@@ -446,6 +450,48 @@ def _language_name(alpha3):
 def _ffmpeg_language_code(alpha3):
     normalized = normalize_language(alpha3) or str(alpha3 or "")
     return FFMPEG_LANGUAGE_CODES.get(normalized, normalized)
+
+
+def _audio_stream_index(path, ffmpeg_path, audio_stream_language, timeout_seconds):
+    ffprobe_path = _ffprobe_path(ffmpeg_path)
+    command = [
+        ffprobe_path,
+        "-v",
+        "error",
+        "-select_streams",
+        "a",
+        "-show_entries",
+        "stream=index:stream_tags=language",
+        "-of",
+        "json",
+        str(path),
+    ]
+    result = subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=int(timeout_seconds),
+    )
+    if result.returncode != 0:
+        message = result.stderr.decode("utf-8", errors="replace").strip()
+        raise WhisperAIError(message or "ffprobe failed to inspect audio streams")
+    try:
+        payload = json.loads(result.stdout.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise WhisperAIError("ffprobe returned invalid audio stream JSON") from exc
+    requested = normalize_language(audio_stream_language)
+    for stream in payload.get("streams") or []:
+        tags = stream.get("tags") if isinstance(stream, dict) else {}
+        if normalize_language((tags or {}).get("language")) == requested:
+            return int(stream["index"])
+    raise WhisperAIError(f"no {_language_name(requested)} audio stream found")
+
+
+def _ffprobe_path(ffmpeg_path):
+    directory, filename = os.path.split(str(ffmpeg_path))
+    executable = "ffprobe.exe" if filename.lower().endswith(".exe") else "ffprobe"
+    return os.path.join(directory, executable) if directory else executable
 
 
 def _download_response(content):

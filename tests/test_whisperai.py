@@ -2,8 +2,10 @@ import base64
 import hashlib
 import importlib.util
 import json
+import urllib.parse
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "whisperai"
@@ -52,6 +54,21 @@ class FakeHttpClient:
         if endpoint == "/asr":
             return self.asr_body, "text/plain"
         raise AssertionError(f"unexpected endpoint: {endpoint}")
+
+
+class FakeUrlopenResponse:
+    def __init__(self, body=b"ok", content_type="text/plain"):
+        self._body = body
+        self.headers = {"Content-Type": content_type}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def read(self):
+        return self._body
 
 
 class WhisperAILanguageTests(unittest.TestCase):
@@ -103,6 +120,20 @@ class WhisperAIProviderSearchTests(unittest.TestCase):
         self.assertEqual(candidate["provider_payload"]["input_language"], "jpn")
         self.assertEqual(candidate["provider_payload"]["output_language"], "eng")
         self.assertEqual(candidate["matches"], ["title"])
+
+    def test_search_returns_normal_subtitle_variant_for_hi_or_forced_request(self):
+        provider = self.mod.WhisperAIProvider(path_exists=lambda path: True)
+
+        results = provider.search(
+            VIDEO,
+            [{"alpha3": "eng", "alpha2": "en", "hi": True, "forced": True}],
+            CONFIG,
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0]["language"]["hi"])
+        self.assertFalse(results[0]["language"]["forced"])
+        self.assertFalse(results[0]["hearing_impaired"])
 
     def test_search_detects_language_when_video_has_no_audio_tags(self):
         audio = FakeAudioRunner()
@@ -161,11 +192,66 @@ class WhisperAIProviderDownloadTests(unittest.TestCase):
         self.assertIn(b"Whisper", decoded)
         self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
 
+    def test_http_client_sends_whisper_options_in_query_string(self):
+        client = self.mod.WhisperHttpClient(CONFIG)
+
+        with mock.patch.object(
+            self.mod.urllib.request,
+            "urlopen",
+            return_value=FakeUrlopenResponse(),
+        ) as urlopen:
+            client.post_multipart(
+                "/asr",
+                {"task": "translate", "language": "ja", "output": "srt", "encode": "false"},
+                {"audio_file": ("audio.raw", b"audio", self.mod.PCM_MIME_TYPE)},
+                timeout=30,
+            )
+
+        request = urlopen.call_args.args[0]
+        parsed = urllib.parse.urlparse(request.full_url)
+        query = dict(urllib.parse.parse_qsl(parsed.query))
+        self.assertEqual(parsed.path, "/asr")
+        self.assertEqual(query, {"task": "translate", "language": "ja", "output": "srt", "encode": "false"})
+        self.assertNotIn(b'name="task"', request.data)
+        self.assertIn(b'name="audio_file"; filename="audio.raw"', request.data)
+
     def test_download_rejects_wrong_provider_payload(self):
         provider = self.mod.WhisperAIProvider(audio_runner=FakeAudioRunner())
 
         with self.assertRaises(ValueError):
             provider.download({"provider": "other"}, {"alpha3": "eng"}, CONFIG)
+
+
+class WhisperAIAudioTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_extract_audio_maps_first_matching_language_stream_index(self):
+        calls = []
+
+        def run(command, **kwargs):
+            calls.append(command)
+            if command[0].endswith("ffprobe"):
+                return mock.Mock(
+                    returncode=0,
+                    stdout=json.dumps(
+                        {
+                            "streams": [
+                                {"index": 0, "tags": {"language": "eng"}},
+                                {"index": 1, "tags": {"language": "jpn"}},
+                                {"index": 2, "tags": {"language": "jpn"}},
+                            ]
+                        }
+                    ).encode("utf-8"),
+                    stderr=b"",
+                )
+            return mock.Mock(returncode=0, stdout=b"pcm", stderr=b"")
+
+        with mock.patch.object(self.mod.subprocess, "run", side_effect=run):
+            audio = self.mod.extract_audio("/media/movie.mkv", "/usr/bin/ffmpeg", "jpn", 120)
+
+        self.assertEqual(audio, b"pcm")
+        self.assertEqual(calls[1][calls[1].index("-map") + 1], "0:1")
 
 
 if __name__ == "__main__":
