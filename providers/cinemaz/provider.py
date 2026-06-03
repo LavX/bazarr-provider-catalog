@@ -5,6 +5,7 @@ import hashlib
 import html
 import io
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -26,6 +27,7 @@ RULES_URL = urllib.parse.urljoin(BASE_URL, "rules")
 DEFAULT_USER_AGENT = "BazarrProviderHub/1.0"
 HTTP_TIMEOUT_SECONDS = 30
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
+_SXXEXX_RE = re.compile(r"\bs(?P<season>\d{1,2})\s*[._ -]?e(?P<episode>\d{1,3})\b", re.I)
 
 LANGUAGE_NAME_TO_ALPHA3 = {
     "abkhazian": "abk",
@@ -270,8 +272,10 @@ class CinemaZProvider:
         download_url = payload.get("download_url")
         if not download_url:
             raise ValueError("cinemaz download requires download_url")
-        response = self._http_get(download_url, self._headers(config), cookies, timeout=HTTP_TIMEOUT_SECONDS)
+        response = self._http_get(download_url, self._headers(config), cookies, timeout=HTTP_TIMEOUT_SECONDS, allow_redirects=False)
         _raise_for_status(response, "CinemaZ subtitle download")
+        if _looks_like_html(response):
+            raise PermissionError("CinemaZ subtitle download returned a login page")
         body, filename = extract_download(response.body, payload.get("filename") or download_url, payload)
         body = _normalize_line_endings(body)
         return _content_payload(body, _format_from_filename(filename))
@@ -354,6 +358,8 @@ def _is_cinemaz_url(url):
 
 
 def _raise_for_status(response, context):
+    if 300 <= response.status < 400:
+        raise PermissionError(f"{context} redirected to login")
     if response.status >= 400:
         raise RuntimeError(f"{context} failed with HTTP {response.status}")
 
@@ -374,7 +380,10 @@ def _normalize_language_name(value):
 
 def _candidate(release, subtitle, alpha3, video):
     download_url = subtitle["download_url"]
-    filename = download_url.rstrip("/").split("/")[-1] or f"cinemaz-{alpha3}.srt"
+    filename = subtitle.get("filename") or download_url.rstrip("/").split("/")[-1] or f"cinemaz-{alpha3}.srt"
+    if not _subtitle_extension(filename) and subtitle.get("extension"):
+        subtitle_id = _subtitle_id(download_url) or alpha3
+        filename = f"cinemaz-{subtitle_id}.{alpha3}.{subtitle['extension']}"
     release_info = release["title"]
     return {
         "provider": PROVIDER_ID,
@@ -411,7 +420,7 @@ def parse_release_page(body, page_url):
     root = _parse_html(body)
     table = _find_release_table(root)
     if table is None:
-        raise RuntimeError("Unexpected CinemaZ release page layout")
+        return _parse_unit3d_release_page(root, page_url)
     rows = _release_rows(table)
     title_cell = rows.get("title")
     subtitles_cell = rows.get("subtitles")
@@ -427,6 +436,17 @@ def parse_release_page(body, page_url):
         "page_url": page_url,
         "subtitles": _subtitle_rows(subtitle_table, page_url),
     }
+
+
+def _parse_unit3d_release_page(root, page_url):
+    title = root.first_descendant("h1")
+    if title is None:
+        raise RuntimeError("Unexpected CinemaZ release page layout")
+    for table in root.descendants("table"):
+        subtitles = _subtitle_rows(table, page_url)
+        if subtitles:
+            return {"title": title.text(), "page_url": page_url, "subtitles": subtitles}
+    return {"title": title.text(), "page_url": page_url, "subtitles": []}
 
 
 def _find_release_table(root):
@@ -472,14 +492,32 @@ def _subtitle_rows(table, page_url):
         if not href:
             continue
         uploader_cell = mapped.get("uploader")
+        extension = _extension_from_cell(mapped.get("extension") or mapped.get("format") or mapped.get("type"))
         rows.append(
             {
                 "language": language_cell.text(),
                 "download_url": urllib.parse.urljoin(page_url, href),
                 "uploader": uploader_cell.text() if uploader_cell is not None else None,
+                "extension": extension,
             }
         )
     return rows
+
+
+def _extension_from_cell(cell):
+    if cell is None:
+        return ""
+    value = cell.text().strip().lower().lstrip(".")
+    return value if f".{value}" in SUBTITLE_EXTENSIONS else ""
+
+
+def _subtitle_id(download_url):
+    parts = [part for part in urllib.parse.urlparse(download_url).path.split("/") if part]
+    if "subtitles" in parts:
+        index = parts.index("subtitles")
+        if index + 1 < len(parts):
+            return parts[index + 1]
+    return ""
 
 
 def _header_cells(table):
@@ -599,14 +637,37 @@ def extract_download(body, filename, payload=None):
 
 
 def _best_archive_member(names, payload):
-    episode = payload.get("episode")
+    episode = _int_or_none(payload.get("episode"))
     if episode is not None:
-        episode_token = f"e{int(episode):02d}"
+        season = _int_or_none(payload.get("season"))
+        saw_episode_marker = False
         for name in names:
-            if episode_token in name.lower():
-                return name
+            match = _SXXEXX_RE.search(name)
+            if not match:
+                continue
+            saw_episode_marker = True
+            if int(match.group("episode")) != episode:
+                continue
+            if season is not None and int(match.group("season")) != season:
+                continue
+            return name
+        if saw_episode_marker:
+            raise ValueError("cinemaz archive does not contain the requested episode")
     names.sort(key=lambda name: (not name.lower().endswith(".srt"), len(name), name.lower()))
     return names[0]
+
+
+def _int_or_none(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _looks_like_html(response):
+    content_type = str((response.headers or {}).get("content-type") or (response.headers or {}).get("Content-Type") or "").lower()
+    sample = (response.body or b"").lstrip()[:2048].decode("utf-8", errors="ignore").lower()
+    return "text/html" in content_type or sample.startswith("<!doctype html") or sample.startswith("<html")
 
 
 def _subtitle_extension(name):
