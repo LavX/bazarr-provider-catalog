@@ -18,7 +18,8 @@ Clean-room target for `yavkanet`.
 - FlareSolverr solutions can supply a User-Agent and cookies, which must be reused for later requests in the same provider instance.
 - Current Cloudflare solves can take longer than 10 seconds, so the optional FlareSolverr timeout is capped at 30000 ms while the HTTP client wait stays within the Provider Hub worker budget.
 - Current direct download links can still return Yavka.net's own HTTP 403 page for unavailable titles even after Cloudflare clearance.
-- A Yavka.net banner dated June 2 says some titles are no longer available for downloads and recommends using `bultor.net` or `nanoset.biz` instead. Treat this as a source-side download availability limit, not an anti-bot bug, and do not spend more live validation cycles on YavkaNet until a title or session is found where the site currently permits downloads.
+- A Yavka.net banner dated June 2 says some titles are no longer available for downloads and recommends using `bultor.net` or `nanoset.biz` instead. Treat this as a per-title source-side availability limit, not an anti-bot bug or provider-wide outage.
+- A June 3 recheck of `https://yavka.net/subs/32811/BG` confirmed the current flow works when official FlareSolverr v3.5.0 clears Cloudflare: the page exposes `id="down"` with a direct `/download?q=...` link, and the provider extracts a non-empty SRT payload.
 - IMDb-specific movie pages are trusted even when the displayed row title is localized or does not contain the requested title.
 - Archive selection uses the requested video metadata. Episode archives with explicit episode markers must not return a wrong episode member.
 - Unsupported languages return no results without touching the network.
