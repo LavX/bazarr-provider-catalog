@@ -546,6 +546,7 @@ class OpenSubtitlesComDownloadTests(unittest.TestCase):
         self.assertEqual(result["content_sha256"], hashlib.sha256(body).hexdigest())
         self.assertEqual(result["format"], "srt")
         self.assertEqual(calls[1][1], "https://api.opensubtitles.com/api/v1/download")
+        self.assertEqual(calls[2][2]["User-Agent"], self.mod.USER_AGENT)
 
 
 if __name__ == "__main__":

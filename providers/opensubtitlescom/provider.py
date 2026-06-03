@@ -457,7 +457,7 @@ class OpenSubtitlesComProvider:
         link = download_data.get("link")
         if not link:
             raise RuntimeError("OpenSubtitles.com download response did not include link")
-        body = self._http_get_bytes(link, {}, timeout=HTTP_TIMEOUT_SECONDS)
+        body = self._http_get_bytes(link, {"User-Agent": USER_AGENT}, timeout=HTTP_TIMEOUT_SECONDS)
         body, fmt = extract_download(body, payload.get("filename") or link)
         body = _normalize_line_endings(body)
         return _content_payload(body, fmt)
