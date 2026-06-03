@@ -5,6 +5,7 @@ import hashlib
 import html
 import io
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -26,6 +27,7 @@ RULES_URL = urllib.parse.urljoin(BASE_URL, "rules")
 DEFAULT_USER_AGENT = "BazarrProviderHub/1.0"
 HTTP_TIMEOUT_SECONDS = 30
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
+_SXXEXX_RE = re.compile(r"\bs(?P<season>\d{1,2})\s*[._ -]?e(?P<episode>\d{1,3})\b", re.I)
 
 LANGUAGE_NAME_TO_ALPHA3 = {
     "abkhazian": "abk",
@@ -256,10 +258,11 @@ class AvistazProvider:
         release = parse_release_page(response.body, info_url)
         results = []
         for subtitle in release["subtitles"]:
-            alpha3 = language_alpha3(subtitle["language"])
-            if not alpha3 or (alpha3, False) not in requested:
+            alpha3, country = _language_code_parts(language_alpha3(subtitle["language"]))
+            hi = bool(subtitle.get("hi"))
+            if not alpha3 or not _language_matches(alpha3, country, hi, requested):
                 continue
-            results.append(_candidate(release, subtitle, alpha3, video))
+            results.append(_candidate(release, subtitle, alpha3, country, hi, video))
         return results
 
     def download(self, provider_payload, language, config):
@@ -270,9 +273,12 @@ class AvistazProvider:
         download_url = payload.get("download_url")
         if not download_url:
             raise ValueError("avistaz download requires download_url")
-        response = self._http_get(download_url, self._headers(config), cookies, timeout=HTTP_TIMEOUT_SECONDS)
+        response = self._http_get(download_url, self._headers(config), cookies, timeout=HTTP_TIMEOUT_SECONDS, allow_redirects=False)
         _raise_for_status(response, "AvistaZ subtitle download")
-        body, filename = extract_download(response.body, payload.get("filename") or download_url, payload)
+        if _looks_like_html(response):
+            raise PermissionError("AvistaZ subtitle download returned a login page")
+        filename = _response_filename(response) or payload.get("filename") or download_url
+        body, filename = extract_download(response.body, filename, payload)
         body = _normalize_line_endings(body)
         return _content_payload(body, _format_from_filename(filename))
 
@@ -333,19 +339,29 @@ def _requested_languages(languages):
     for item in languages or []:
         if not isinstance(item, dict):
             continue
-        alpha3 = _language_id(item)
+        alpha3, country = _language_id(item)
         if not alpha3:
             continue
-        requested.add((alpha3, bool(item.get("hi"))))
+        requested.add((alpha3, country, bool(item.get("hi"))))
     return requested
 
 
 def _language_id(language):
-    alpha3 = str(language.get("alpha3") or "").strip()
-    country = str(language.get("country") or "").strip().upper()
-    if alpha3 and country and "-" not in alpha3:
-        return f"{alpha3}-{country}"
-    return alpha3
+    alpha3, country = _language_code_parts(language.get("alpha3"))
+    country = str(language.get("country_alpha2") or language.get("country") or country or "").strip().upper() or None
+    return alpha3, country
+
+
+def _language_code_parts(value):
+    code = str(value or "").strip()
+    if "-" in code:
+        alpha3, country = code.split("-", 1)
+        return alpha3.lower(), country.upper()
+    return code.lower(), None
+
+
+def _language_matches(alpha3, country, hi, requested):
+    return (alpha3, country, hi) in requested or (alpha3, None, hi) in requested
 
 
 def _is_avistaz_url(url):
@@ -354,6 +370,8 @@ def _is_avistaz_url(url):
 
 
 def _raise_for_status(response, context):
+    if 300 <= response.status < 400:
+        raise PermissionError(f"{context} redirected to login")
     if response.status >= 400:
         raise RuntimeError(f"{context} failed with HTTP {response.status}")
 
@@ -372,21 +390,28 @@ def _normalize_language_name(value):
     return text
 
 
-def _candidate(release, subtitle, alpha3, video):
+def _candidate(release, subtitle, alpha3, country, hi, video):
     download_url = subtitle["download_url"]
-    filename = download_url.rstrip("/").split("/")[-1] or f"avistaz-{alpha3}.srt"
+    filename = subtitle.get("filename") or download_url.rstrip("/").split("/")[-1] or f"avistaz-{alpha3}.srt"
+    if not _subtitle_extension(filename) and subtitle.get("extension"):
+        subtitle_id = _subtitle_id(download_url) or alpha3
+        filename = f"avistaz-{subtitle_id}.{alpha3}.{subtitle['extension']}"
     release_info = release["title"]
+    matches = _release_matches(release_info, video)
+    score = _score(matches)
     return {
         "provider": PROVIDER_ID,
         "id": f"avistaz-{filename}-{alpha3}",
-        "language": {"alpha3": alpha3, "hi": False, "forced": False},
+        "language": _language_payload(alpha3, country, hi),
         "release_info": release_info,
         "filename": filename,
-        "matches": ["hash"],
-        "score": 100,
-        "score_without_hash": 100,
+        "matches": matches,
+        "score": score,
+        "score_without_hash": score,
         "score_out_of": 100,
-        "hash_verifiable": True,
+        "hash_verifiable": False,
+        "hearing_impaired_verifiable": False,
+        "hearing_impaired": bool(hi),
         "page_link": release["page_url"],
         "display": {
             "source": "avistaz.to",
@@ -407,11 +432,53 @@ def _candidate(release, subtitle, alpha3, video):
     }
 
 
+def _language_payload(alpha3, country, hi):
+    payload = {"alpha3": alpha3, "hi": bool(hi), "forced": False}
+    if country:
+        payload["country_alpha2"] = country
+    return payload
+
+
+def _release_matches(release_info, video):
+    matches = []
+    video = video or {}
+    release_key = _clean_key(release_info)
+    title = video.get("series") if video.get("kind") == "episode" else video.get("title")
+    title_key = _clean_key(title)
+    if title_key and title_key in release_key:
+        matches.append("series" if video.get("kind") == "episode" else "title")
+    year = video.get("year")
+    if year and str(year) in str(release_info):
+        matches.append("year")
+    if video.get("kind") == "episode":
+        wanted_season = _int_or_none(video.get("season"))
+        wanted_episode = _int_or_none(video.get("episode"))
+        match = _SXXEXX_RE.search(str(release_info or ""))
+        if match and wanted_season is not None and int(match.group("season")) == wanted_season:
+            matches.append("season")
+            if wanted_episode is not None and int(match.group("episode")) == wanted_episode:
+                matches.append("episode")
+    release_group = _clean_key(video.get("release_group"))
+    if release_group and release_group in release_key:
+        matches.append("release_group")
+    return matches
+
+
+def _clean_key(value):
+    return " ".join(re.findall(r"[a-z0-9]+", html.unescape(str(value or "")).lower()))
+
+
+def _score(matches):
+    if not matches:
+        return 50
+    return min(95, 20 * len(matches))
+
+
 def parse_release_page(body, page_url):
     root = _parse_html(body)
     table = _find_release_table(root)
     if table is None:
-        raise RuntimeError("Unexpected AvistaZ release page layout")
+        return _parse_unit3d_release_page(root, page_url)
     rows = _release_rows(table)
     title_cell = rows.get("title")
     subtitles_cell = rows.get("subtitles")
@@ -427,6 +494,17 @@ def parse_release_page(body, page_url):
         "page_url": page_url,
         "subtitles": _subtitle_rows(subtitle_table, page_url),
     }
+
+
+def _parse_unit3d_release_page(root, page_url):
+    title = root.first_descendant("h1")
+    if title is None:
+        raise RuntimeError("Unexpected AvistaZ release page layout")
+    for table in root.descendants("table"):
+        subtitles = _subtitle_rows(table, page_url)
+        if subtitles:
+            return {"title": title.text(), "page_url": page_url, "subtitles": subtitles}
+    return {"title": title.text(), "page_url": page_url, "subtitles": []}
 
 
 def _find_release_table(root):
@@ -472,14 +550,44 @@ def _subtitle_rows(table, page_url):
         if not href:
             continue
         uploader_cell = mapped.get("uploader")
+        extension = _extension_from_cell(mapped.get("extension") or mapped.get("format") or mapped.get("type"))
         rows.append(
             {
                 "language": language_cell.text(),
                 "download_url": urllib.parse.urljoin(page_url, href),
                 "uploader": uploader_cell.text() if uploader_cell is not None else None,
+                "filename": _filename_from_text(download_cell.text()),
+                "extension": extension,
             }
         )
     return rows
+
+
+def _extension_from_cell(cell):
+    if cell is None:
+        return ""
+    value = cell.text().strip().lower().lstrip(".")
+    return value if f".{value}" in SUBTITLE_EXTENSIONS else ""
+
+
+def _filename_from_text(value):
+    text = html.unescape(str(value or "")).strip()
+    candidates = [text]
+    candidates.extend(text.split())
+    for candidate in candidates:
+        cleaned = candidate.strip().strip("\"'()[]{}")
+        if _subtitle_extension(cleaned):
+            return os.path.basename(cleaned.replace("\\", "/"))
+    return ""
+
+
+def _subtitle_id(download_url):
+    parts = [part for part in urllib.parse.urlparse(download_url).path.split("/") if part]
+    if "subtitles" in parts:
+        index = parts.index("subtitles")
+        if index + 1 < len(parts):
+            return parts[index + 1]
+    return ""
 
 
 def _header_cells(table):
@@ -599,14 +707,73 @@ def extract_download(body, filename, payload=None):
 
 
 def _best_archive_member(names, payload):
-    episode = payload.get("episode")
+    episode = _int_or_none(payload.get("episode"))
     if episode is not None:
-        episode_token = f"e{int(episode):02d}"
+        season = _int_or_none(payload.get("season"))
+        saw_episode_marker = False
+        for name in names:
+            match = _SXXEXX_RE.search(name)
+            if not match:
+                continue
+            saw_episode_marker = True
+            if int(match.group("episode")) != episode:
+                continue
+            if season is not None and int(match.group("season")) != season:
+                continue
+            return name
+        if saw_episode_marker:
+            raise ValueError("avistaz archive does not contain the requested episode")
+        episode_token = f"e{episode:02d}"
         for name in names:
             if episode_token in name.lower():
                 return name
     names.sort(key=lambda name: (not name.lower().endswith(".srt"), len(name), name.lower()))
     return names[0]
+
+
+def _int_or_none(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _looks_like_html(response):
+    content_type = _header_value(response.headers, "content-type").lower()
+    sample = (response.body or b"").lstrip()[:2048].decode("utf-8", errors="ignore").lower()
+    return "text/html" in content_type or sample.startswith("<!doctype html") or sample.startswith("<html")
+
+
+def _response_filename(response):
+    value = _header_value(response.headers, "content-disposition")
+    if not value:
+        return ""
+    filename = ""
+    for part in value.split(";"):
+        part = part.strip()
+        if part.lower().startswith("filename*="):
+            filename = part.split("=", 1)[1].strip().strip("\"'")
+            if "''" in filename:
+                filename = filename.split("''", 1)[1]
+            filename = urllib.parse.unquote(filename)
+            break
+    if not filename:
+        for part in value.split(";"):
+            part = part.strip()
+            if part.lower().startswith("filename="):
+                filename = part.split("=", 1)[1].strip().strip("\"'")
+                break
+    if not filename:
+        return ""
+    return os.path.basename(filename.replace("\\", "/"))
+
+
+def _header_value(headers, name):
+    wanted = name.lower()
+    for key, value in (headers or {}).items():
+        if str(key).lower() == wanted:
+            return str(value or "")
+    return ""
 
 
 def _subtitle_extension(name):

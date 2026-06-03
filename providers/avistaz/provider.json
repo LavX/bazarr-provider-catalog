@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "ff4a92299b42143b5e253a8013fa7f56e8fea247e0588627e183f7eb609d4281",
+  "bundle_sha256": "9f4ad8a792d50e803a561ca69c99dd5c42fcb648e0a6cf53f3d107067dc6695a",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -83,6 +83,8 @@
       },
       {
         "hashes": [
+          "sha256:e6394b5ba89d61ceca780e6d67b89896fd58f0606c9b07227446496b52e8d0ae",
+          "sha256:6ae5d0516a1a1d43d905e40799ff75aedbbac431374dff740481f548a51d538f",
           "sha256:cd3d911976c184e61c641baf4e26a80f4ac474c830bf12cc8e541490c229bfd6"
         ],
         "name": "py7zz",
@@ -136,7 +138,7 @@
   "entry_class": "AvistazProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "b6f4b2553441a1cedd2980481b2126d289798603001fde6c8b4929e14804167c"
+    "provider.py": "ef87761da12d67d5912a9e77e199862cb5c6a12603f9d6f6808e9e9a212d8d11"
   },
   "languages": [
     "aar",
@@ -332,5 +334,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.0"
+  "version": "0.1.1"
 }
