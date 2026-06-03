@@ -297,6 +297,7 @@ class WizdomProviderTests(unittest.TestCase):
 
         self.assertEqual(body, b'{"subs":[]}')
         self.assertEqual(len(session.calls), 2)
+        self.assertEqual(session.calls[1][2]["User-Agent"], "Solved UA")
         self.assertEqual(session.headers["User-Agent"], "Solved UA")
         self.assertEqual(flaresolverr_calls[0][0], "http://127.0.0.1:8191/v1")
         self.assertEqual(flaresolverr_calls[0][1]["cmd"], "request.get")
@@ -501,6 +502,18 @@ class WizdomProviderTests(unittest.TestCase):
         self.assertEqual(decoded, b"1\n00:00:01,000 --> 00:00:02,000\nHello\n")
         self.assertEqual(result["format"], "srt")
         self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
+
+    def test_content_payload_detects_windows_1255_hebrew(self):
+        body = "1\n00:00:01,000 --> 00:00:02,000\nשלום\n".encode("cp1255")
+
+        result = self.mod._content_payload(body, "srt")
+
+        self.assertEqual(base64.b64decode(result["content_b64"]), body)
+        self.assertEqual(result["encoding"], "windows-1255")
+
+    def test_solve_pow_obeys_deadline(self):
+        with self.assertRaisesRegex(self.mod.ServiceUnavailable, "Anubis"):
+            self.mod._solve_pow("random-data", 64, deadline=self.mod.time.monotonic())
 
     def test_download_tries_next_archive_member_when_first_is_not_subtitle_text(self):
         provider = self.mod.WizdomProvider()

@@ -155,7 +155,7 @@ class WizdomProvider:
             timeout = HTTP_TIMEOUT_SECONDS
         config = dict(config or self._request_config or {})
         session = self._get_session()
-        headers = _headers(referer)
+        headers = _headers(referer, session.headers.get("User-Agent") or USER_AGENT)
         try:
             response = session.get(url, headers=headers, timeout=timeout, allow_redirects=True)
         except Exception as exc:
@@ -168,6 +168,7 @@ class WizdomProvider:
             response = session.get(url, headers=headers, timeout=timeout, allow_redirects=True)
         if _is_cloudflare_challenge(response):
             self._fallback_to_flaresolverr(url, config)
+            headers = _headers(referer, session.headers.get("User-Agent") or USER_AGENT)
             response = session.get(url, headers=headers, timeout=timeout, allow_redirects=True)
             if _is_cloudflare_challenge(response):
                 raise ServiceUnavailable("Wizdom Cloudflare challenge remained after FlareSolverr fallback")
@@ -329,9 +330,9 @@ class WizdomProvider:
             return None
 
 
-def _headers(referer=None):
+def _headers(referer=None, user_agent=None):
     headers = {
-        "User-Agent": USER_AGENT,
+        "User-Agent": user_agent or USER_AGENT,
         "Accept": "application/json,text/plain,*/*",
         "Accept-Language": "en-US,en;q=0.9",
     }
@@ -417,10 +418,12 @@ def _extract_anubis_challenge(html_text):
     }
 
 
-def _solve_pow(random_data, difficulty):
+def _solve_pow(random_data, difficulty, deadline=None):
     prefix = "0" * difficulty
     nonce = 0
     while True:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise ServiceUnavailable("Wizdom Anubis proof-of-work timed out")
         digest = hashlib.sha256(f"{random_data}{nonce}".encode("utf-8")).hexdigest()
         if digest.startswith(prefix):
             return nonce, digest
@@ -439,6 +442,7 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=HTTP_TI
     base = f"{parsed.scheme}://{parsed.netloc}"
     challenge_page_url = challenge_url if challenge_url.startswith("http") else base + challenge_url
     started = time.monotonic()
+    deadline = started + max(float(timeout or HTTP_TIMEOUT_SECONDS), 0.1)
 
     response = session.get(challenge_page_url, timeout=(10, timeout), allow_redirects=True)
     challenge = _extract_anubis_challenge(getattr(response, "text", ""))
@@ -471,7 +475,7 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=HTTP_TI
         if solved.cookies:
             session.cookies.update(solved.cookies)
     else:
-        nonce, digest = _solve_pow(challenge["randomData"], challenge["difficulty"])
+        nonce, digest = _solve_pow(challenge["randomData"], challenge["difficulty"], deadline=deadline)
         params = {
             "id": challenge["id"],
             "response": digest,
@@ -741,11 +745,7 @@ def _content_payload(content, subtitle_format, empty=False):
             "encoding": "utf-8",
             "empty": True,
         }
-    encoding = "utf-8"
-    try:
-        content.decode("utf-8")
-    except UnicodeDecodeError:
-        encoding = "latin-1"
+    encoding = _detect_encoding(content)
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
@@ -754,6 +754,21 @@ def _content_payload(content, subtitle_format, empty=False):
         "encoding": encoding,
         "empty": False,
     }
+
+
+def _detect_encoding(content):
+    try:
+        (content or b"").decode("utf-8")
+        return "utf-8"
+    except UnicodeDecodeError:
+        pass
+    try:
+        decoded = (content or b"").decode("cp1255")
+        if re.search(r"[\u0590-\u05ff]", decoded):
+            return "windows-1255"
+    except UnicodeDecodeError:
+        pass
+    return "latin-1"
 
 
 def _content_type(subtitle_format):
