@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import importlib.util
+import json
 import time
 import unittest
 from pathlib import Path
@@ -87,6 +88,10 @@ class OpenSubtitlesComHelperTests(unittest.TestCase):
             self.mod.api_language_code({"alpha3": "spa", "alpha2": "es", "country": "MX"}),
             "ea",
         )
+        self.assertEqual(
+            self.mod.api_language_code({"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR"}),
+            "pt-BR",
+        )
 
     def test_api_language_code_accepts_catalog_regional_language_ids(self):
         self.assertEqual(self.mod.api_language_code({"alpha3": "por-BR"}), "pt-BR")
@@ -129,6 +134,11 @@ class OpenSubtitlesComHelperTests(unittest.TestCase):
         self.assertEqual(self.mod.language_payload_from_api_code("en")["alpha3"], "eng")
         self.assertEqual(self.mod.language_payload_from_api_code("az-az")["alpha3"], "aze")
         self.assertEqual(self.mod.language_payload_from_api_code("tm-td")["alpha3"], "tet")
+
+    def test_manifest_languages_are_limited_to_api_supported_codes(self):
+        manifest = json.loads((PROVIDER_DIR / "provider.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(manifest["languages"], sorted(self.mod.ALPHA3_TO_API))
 
 
 class OpenSubtitlesComSearchTests(unittest.TestCase):
@@ -270,6 +280,69 @@ class OpenSubtitlesComSearchTests(unittest.TestCase):
         self.assertEqual(logins, ["login"])
         self.assertEqual(calls, ["Bearer old-token", "Bearer new-token"])
 
+    def test_feature_lookup_retries_after_expired_token(self):
+        provider = self.mod.OpenSubtitlesComProvider()
+        provider.token = "old-token"
+        provider.base_host = "vip-api.opensubtitles.com"
+        provider.token_started = time.time()
+        logins = []
+        calls = []
+
+        def post_json(path, payload, headers, timeout=30):
+            del path, payload, headers, timeout
+            logins.append("login")
+            return {"token": "new-token", "base_url": "vip-api.opensubtitles.com", "status": 200}
+
+        def get_json(path, params, headers, timeout=30):
+            del params, timeout
+            calls.append((path, headers["Authorization"]))
+            if len(calls) == 1:
+                raise self.mod.AuthenticationRequired("expired token")
+            if path.endswith("/features"):
+                return {
+                    "data": [
+                        {"id": "514811", "attributes": {"title": "inception", "year": "2010", "feature_type": "Movie"}}
+                    ]
+                }
+            return {"data": []}
+
+        provider._http_post_json = post_json
+        provider._http_get_json = get_json
+        results = provider.search(
+            {"kind": "movie", "title": "Inception", "year": 2010},
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"username": "user", "password": "pass", "api_key": "api-key", "use_hash": False},
+        )
+
+        self.assertEqual(results, [])
+        self.assertEqual(logins, ["login"])
+        self.assertEqual(calls[0][1], "Bearer old-token")
+        self.assertEqual(calls[1][1], "Bearer new-token")
+
+    def test_hash_only_movie_search_reaches_subtitles_api(self):
+        provider = self.mod.OpenSubtitlesComProvider()
+        calls = []
+        provider._http_post_json = lambda path, payload, headers, timeout=30: {
+            "token": "jwt-token",
+            "base_url": "api.opensubtitles.com",
+            "status": 200,
+        }
+
+        def get_json(path, params, headers, timeout=30):
+            del path, headers, timeout
+            calls.append(params)
+            return {"data": []}
+
+        provider._http_get_json = get_json
+        provider.search(
+            {"kind": "movie", "hashes": {"opensubtitlescom": "8e245d9679d31e12"}},
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"username": "user", "password": "pass", "api_key": "api-key", "use_hash": True},
+        )
+
+        self.assertIn(("moviehash", "8e245d9679d31e12"), calls[0])
+        self.assertNotIn("id", {key for key, _value in calls[0]})
+
     def test_movie_search_uses_title_feature_fallback_when_no_imdb_id_exists(self):
         provider = self.mod.OpenSubtitlesComProvider()
         calls = []
@@ -310,6 +383,59 @@ class OpenSubtitlesComSearchTests(unittest.TestCase):
         self.assertIn(("languages", "pt-BR"), calls[1][1])
         self.assertEqual(results[0]["language"]["country"], "BR")
 
+    def test_feature_fallback_filters_to_requested_media_type(self):
+        provider = self.mod.OpenSubtitlesComProvider()
+        calls = []
+        provider._http_post_json = lambda path, payload, headers, timeout=30: {
+            "token": "jwt-token",
+            "base_url": "api.opensubtitles.com",
+            "status": 200,
+        }
+
+        def get_json(path, params, headers, timeout=30):
+            del headers, timeout
+            calls.append((path, params))
+            if path.endswith("/features"):
+                return {
+                    "data": [
+                        {"id": "1", "attributes": {"title": "dark", "year": "2017", "feature_type": "Movie"}},
+                        {"id": "2", "attributes": {"title": "dark", "year": "2017", "feature_type": "Tvshow"}},
+                    ]
+                }
+            return {"data": []}
+
+        provider._http_get_json = get_json
+        provider.search(
+            {"kind": "episode", "series": "Dark", "year": 2017, "season": 1, "episode": 1},
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"username": "user", "password": "pass", "api_key": "api-key", "use_hash": False},
+        )
+
+        self.assertIn(("parent_feature_id", 2), calls[1][1])
+
+    def test_episode_search_accepts_list_valued_episode(self):
+        provider = self.mod.OpenSubtitlesComProvider()
+        calls = []
+        provider._http_post_json = lambda path, payload, headers, timeout=30: {
+            "token": "jwt-token",
+            "base_url": "api.opensubtitles.com",
+            "status": 200,
+        }
+
+        def get_json(path, params, headers, timeout=30):
+            del path, headers, timeout
+            calls.append(params)
+            return {"data": []}
+
+        provider._http_get_json = get_json
+        provider.search(
+            {"kind": "episode", "series_imdb_id": "tt0903747", "season": 3, "episode": [13, 14]},
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"username": "user", "password": "pass", "api_key": "api-key", "use_hash": False},
+        )
+
+        self.assertIn(("episode_number", 13), calls[0])
+
     def test_forced_request_returns_only_real_forced_subtitles(self):
         provider = self.mod.OpenSubtitlesComProvider()
         provider._http_post_json = lambda path, payload, headers, timeout=30: {
@@ -333,6 +459,49 @@ class OpenSubtitlesComSearchTests(unittest.TestCase):
 
         self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["forced"])
         self.assertTrue(results[0]["language"]["forced"])
+
+    def test_mixed_forced_request_preserves_per_language_preferences(self):
+        provider = self.mod.OpenSubtitlesComProvider()
+        provider._http_post_json = lambda path, payload, headers, timeout=30: {
+            "token": "jwt-token",
+            "base_url": "api.opensubtitles.com",
+            "status": 200,
+        }
+        provider._http_get_json = lambda path, params, headers, timeout=30: {
+            "data": [
+                _subtitle_item(subtitle_id="regular-en", language="en"),
+                _subtitle_item(subtitle_id="forced-en", file_id=2, language="en", foreign_parts_only=True),
+                _subtitle_item(subtitle_id="regular-es", file_id=3, language="es"),
+                _subtitle_item(subtitle_id="forced-es", file_id=4, language="es", foreign_parts_only=True),
+            ]
+        }
+
+        results = provider.search(
+            {"kind": "movie", "title": "Inception", "imdb_id": "tt1375666"},
+            [
+                {"alpha3": "eng", "alpha2": "en", "forced": True},
+                {"alpha3": "spa", "alpha2": "es", "forced": False},
+            ],
+            {"username": "user", "password": "pass", "api_key": "api-key", "use_hash": False},
+        )
+
+        self.assertEqual(
+            {item["provider_payload"]["subtitle_id"] for item in results},
+            {"forced-en", "regular-es"},
+        )
+
+    def test_score_without_hash_excludes_hash_points(self):
+        provider = self.mod.OpenSubtitlesComProvider()
+        result = provider._result(
+            {"kind": "episode", "series_imdb_id": "tt0903747", "season": 3, "episode": 13},
+            _subtitle_item(moviehash_match=True),
+            _subtitle_item(moviehash_match=True)["attributes"],
+            _subtitle_item(moviehash_match=True)["attributes"]["files"][0],
+            forced=False,
+        )
+
+        self.assertIn("hash", result["matches"])
+        self.assertLess(result["score_without_hash"], result["score"])
 
 
 class OpenSubtitlesComDownloadTests(unittest.TestCase):

@@ -146,6 +146,8 @@ def api_language_code(language):
     alpha3 = str(language.get("alpha3") if isinstance(language, dict) else language or "").strip()
     alpha2 = language.get("alpha2") if isinstance(language, dict) else None
     country = (language.get("country") if isinstance(language, dict) else None) or ""
+    if not country and isinstance(language, dict):
+        country = language.get("country_alpha2") or ""
     if not country and "-" in alpha3:
         alpha3, country = alpha3.split("-", 1)
     alpha3 = alpha3.lower()
@@ -160,9 +162,9 @@ def api_language_code(language):
         if country.upper() == "TW":
             return "zh-TW"
         return "zh-CN"
-    if alpha2:
-        return ALPHA3_TO_API.get(alpha3, alpha2)
-    return ALPHA3_TO_API.get(alpha3, str(alpha3 or "").lower())
+    if alpha2 and not alpha3:
+        return str(alpha2).lower()
+    return ALPHA3_TO_API.get(alpha3)
 
 
 def language_payload_from_api_code(api_code, hearing_impaired=False, forced=False):
@@ -210,6 +212,18 @@ def _requested_language_codes(languages):
         if code and code not in codes:
             codes.append(code)
     return sorted(codes, key=lambda item: item.lower())
+
+
+def _requested_language_variants(languages):
+    variants = {}
+    for language in languages or []:
+        code = api_language_code(language)
+        if not code:
+            continue
+        hi = bool((language or {}).get("hi")) if isinstance(language, dict) else False
+        forced = bool((language or {}).get("forced")) if isinstance(language, dict) else False
+        variants.setdefault(code.lower(), set()).add((hi, forced))
+    return variants
 
 
 def _all_requested(languages, flag):
@@ -269,6 +283,8 @@ class OpenSubtitlesComProvider:
         moviehash = _moviehash(video) if _bool_config(config, "use_hash", True) else None
         if moviehash:
             params.append(("moviehash", moviehash))
+        episode_number = _int_or_none(video.get("episode"))
+        season_number = _int_or_none(video.get("season"))
         imdb_id = _imdb_id(video.get("imdb_id"))
         if video.get("kind") == "episode":
             series_imdb_id = _imdb_id(video.get("series_imdb_id"))
@@ -276,22 +292,29 @@ class OpenSubtitlesComProvider:
                 params.append(("imdb_id", imdb_id))
             elif series_imdb_id:
                 params.append(("parent_imdb_id", series_imdb_id))
-                if video.get("episode") is not None:
-                    params.append(("episode_number", int(video["episode"])))
-                if video.get("season") is not None:
-                    params.append(("season_number", int(video["season"])))
+                if episode_number is not None:
+                    params.append(("episode_number", episode_number))
+                if season_number is not None:
+                    params.append(("season_number", season_number))
+            elif moviehash:
+                if episode_number is not None:
+                    params.append(("episode_number", episode_number))
+                if season_number is not None:
+                    params.append(("season_number", season_number))
             else:
                 title_id = self._search_title_id(video, config, episode=True)
                 if title_id is None:
                     return []
                 params.append(("parent_feature_id", title_id))
-                if video.get("episode") is not None:
-                    params.append(("episode_number", int(video["episode"])))
-                if video.get("season") is not None:
-                    params.append(("season_number", int(video["season"])))
+                if episode_number is not None:
+                    params.append(("episode_number", episode_number))
+                if season_number is not None:
+                    params.append(("season_number", season_number))
         elif video.get("kind") == "movie":
             if imdb_id:
                 params.append(("imdb_id", imdb_id))
+            elif moviehash:
+                pass
             else:
                 title_id = self._search_title_id(video, config, episode=False)
                 if title_id is None:
@@ -312,18 +335,25 @@ class OpenSubtitlesComProvider:
         title = str(title).strip()
         if not title:
             return None
-        data = self._http_get_json(
-            self._api_url("features"),
-            [("query", title.lower())],
-            self._search_headers(config),
-            timeout=HTTP_TIMEOUT_SECONDS,
+        data = self._with_auth_retry(
+            lambda: self._http_get_json(
+                self._api_url("features"),
+                [("query", title.lower())],
+                self._search_headers(config),
+                timeout=HTTP_TIMEOUT_SECONDS,
+            ),
+            config,
         )
         wanted_year = _int_or_none(video.get("year"))
         wanted_title = title.lower()
+        wanted_types = {"movie"} if not episode else {"series", "tvshow", "tv show", "show"}
         for item in data.get("data") or []:
             attrs = item.get("attributes") or {}
             item_title = str(attrs.get("title") or "").lower()
             item_year = _int_or_none(attrs.get("year"))
+            feature_type = _feature_type(attrs)
+            if feature_type and feature_type not in wanted_types:
+                continue
             if item_title == wanted_title and (wanted_year is None or item_year == wanted_year):
                 return sanitize_external_id(item.get("id") or attrs.get("feature_id"))
         return None
@@ -331,23 +361,21 @@ class OpenSubtitlesComProvider:
     def _results_from_response(self, video, languages, result, config):
         include_ai = _bool_config(config, "include_ai_translated", False)
         include_machine = _bool_config(config, "include_machine_translated", False)
-        only_forced = _all_requested(languages, "forced")
-        also_forced = _any_requested(languages, "forced")
         requested_codes = {code.lower() for code in _requested_language_codes(languages)}
+        requested_variants = _requested_language_variants(languages)
         results = []
         seen = set()
         for item in result.get("data") or []:
             attrs = item.get("attributes") or {}
             forced = is_real_forced(attrs)
-            if only_forced and not forced:
-                continue
-            if not also_forced and forced:
-                continue
             if attrs.get("ai_translated") and not include_ai:
                 continue
             if attrs.get("machine_translated") and not include_machine:
                 continue
-            if str(attrs.get("language") or "").lower() not in requested_codes:
+            language_code = str(attrs.get("language") or "").lower()
+            if language_code not in requested_codes:
+                continue
+            if (bool(attrs.get("hearing_impaired")), forced) not in requested_variants.get(language_code, set()):
                 continue
             files = attrs.get("files") or []
             if not files:
@@ -369,6 +397,7 @@ class OpenSubtitlesComProvider:
         release = attrs.get("release") or file_info.get("file_name") or feature.get("movie_name") or str(item.get("id"))
         matches = derive_matches(video, attrs, feature)
         score = compute_score(matches)
+        score_without_hash = compute_score([match for match in matches if match != "hash"])
         file_id = file_info["file_id"]
         subtitle_id = attrs.get("subtitle_id") or item.get("id")
         return {
@@ -379,7 +408,7 @@ class OpenSubtitlesComProvider:
             "filename": file_info.get("file_name") or f"opensubtitlescom.{file_id}.srt",
             "matches": matches,
             "score": score,
-            "score_without_hash": score,
+            "score_without_hash": score_without_hash,
             "score_out_of": 100,
             "hash_verifiable": True,
             "hearing_impaired_verifiable": True,
@@ -626,10 +655,21 @@ def _imdb_id(value):
 
 
 def _int_or_none(value):
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            converted = _int_or_none(item)
+            if converted is not None:
+                return converted
+        return None
     try:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _feature_type(attrs):
+    value = str((attrs or {}).get("feature_type") or (attrs or {}).get("type") or "").strip().lower()
+    return re.sub(r"[^a-z0-9]+", " ", value).strip()
 
 
 def extract_download(body, filename):

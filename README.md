@@ -34,7 +34,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`napiprojekt`](providers/napiprojekt/) | 0.1.3 | Searches [NapiProjekt](https://www.napiprojekt.pl) for Polish subtitles using hash lookup and catalog scraping with optional author filters. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback. |
 | [`nekur`](providers/nekur/) | 0.1.1 | Scrapes [Nekur](https://subtitri.nekur.net) for Latvian movie subtitles. No login or API key. |
 | [`opensubtitles_org`](providers/opensubtitles_org/) | 0.1.3 | Scrapes OpenSubtitles.org natively with ai-cloudscraper, inline Anubis solving, and optional FlareSolverr fallback for Cloudflare challenges. |
-| [`opensubtitlescom`](providers/opensubtitlescom/) | 0.1.0 | Uses the official [OpenSubtitles.com](https://www.opensubtitles.com) API for movie and episode subtitles. Requires username, password, and API key. |
+| [`opensubtitlescom`](providers/opensubtitlescom/) | 0.1.1 | Uses the official [OpenSubtitles.com](https://www.opensubtitles.com) API for movie and episode subtitles. Requires username, password, and API key. |
 | [`prijevodionline`](providers/prijevodionline/) | 0.1.1 | Scrapes [Prijevodi-Online](https://www.prijevodi-online.org) for Croatian, Serbian, Montenegrin, and Serbo-Croatian episode subtitles. No login or API key. |
 | [`soustitreseu`](providers/soustitreseu/) | 0.1.2 | Scrapes [Sous-Titres.eu](https://www.sous-titres.eu) for French and English movie and episode subtitles. No login or API key. |
 | [`subcentral`](providers/subcentral/) | 0.1.0 | Scrapes [SubCentral.de](https://www.subcentral.de) forum subtitle threads for German and English episode releases. No login or API key. |
