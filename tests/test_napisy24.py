@@ -38,7 +38,7 @@ class Napisy24ProviderTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
 
-    def test_search_posts_hash_lookup_and_embeds_zip_payload(self):
+    def test_search_posts_hash_lookup_without_embedding_zip_payload(self):
         provider = self.mod.Napisy24Provider()
         archive_body = _zip_body(
             {
@@ -60,7 +60,7 @@ class Napisy24ProviderTests(unittest.TestCase):
             {},
         )
 
-        self.assertEqual(calls[0][0], "http://napisy24.pl/run/CheckSubAgent.php")
+        self.assertEqual(calls[0][0], "https://napisy24.pl/run/CheckSubAgent.php")
         self.assertEqual(
             calls[0][1],
             {
@@ -78,8 +78,28 @@ class Napisy24ProviderTests(unittest.TestCase):
         self.assertEqual(results[0]["provider_payload"]["napis_id"], "987")
         self.assertIn("hash", results[0]["matches"])
         self.assertIn("imdb_id", results[0]["matches"])
+        self.assertNotIn("archive_b64", results[0]["provider_payload"])
+        self.assertEqual(results[0]["provider_payload"]["size"], "1234567890")
+        self.assertEqual(results[0]["provider_payload"]["name"], "Dune.Part.One.2021.1080p.WEB-DL-NTb.mkv")
         self.assertNotIn("subliminal", json.dumps(results[0]))
         self.assertNotIn("lanimilbus", json.dumps(results[0]))
+
+    def test_search_accepts_shared_opensubtitles_hashes(self):
+        provider = self.mod.Napisy24Provider()
+        calls = []
+
+        def post(url, data, headers=None, timeout=10):
+            del url, headers, timeout
+            calls.append(dict(data))
+            return self.mod.HttpResponse(200, b"OK-0", {})
+
+        provider._http_post = post
+        video = _video("napisy24_video_dune_2021.json")
+        video["hashes"] = {"opensubtitles": "feedfacecafebeef"}
+
+        provider.search(video, [{"alpha3": "pol"}], {})
+
+        self.assertEqual(calls[0]["fh"], "feedfacecafebeef")
 
     def test_search_uses_configured_credentials_only_when_both_are_present(self):
         provider = self.mod.Napisy24Provider()
@@ -141,6 +161,8 @@ class Napisy24ProviderTests(unittest.TestCase):
         video = _video("napisy24_video_dune_2021.json")
 
         self.assertEqual(provider.search(video, [{"alpha3": "eng"}], {}), [])
+        self.assertEqual(provider.search(video, [{"alpha3": "pol", "forced": True}], {}), [])
+        self.assertEqual(provider.search(video, [{"alpha3": "pol", "hi": True}], {}), [])
         video["hashes"] = {}
         self.assertEqual(provider.search(video, [{"alpha3": "pol"}], {}), [])
 
@@ -174,6 +196,34 @@ class Napisy24ProviderTests(unittest.TestCase):
         self.assertEqual(calls[0]["fh"], "661cd19248ffe906")
         self.assertEqual(calls[0]["fs"], "150000")
 
+    def test_computed_hash_hit_is_marked_as_hash_match(self):
+        provider = self.mod.Napisy24Provider()
+        body = bytes((index % 251 for index in range(150000)))
+        archive_body = _zip_body({"movie.srt": b"line\n"})
+
+        def post(url, data, headers=None, timeout=10):
+            del url, data, headers, timeout
+            return self.mod.HttpResponse(200, b"OK-2|napisId:1|imdb:1160419||" + archive_body, {})
+
+        provider._http_post = post
+        with tempfile.NamedTemporaryFile(suffix=".mkv") as handle:
+            handle.write(body)
+            handle.flush()
+            results = provider.search(
+                {
+                    "kind": "movie",
+                    "title": "Example",
+                    "year": 2024,
+                    "imdb_id": "tt1160419",
+                    "name": handle.name,
+                    "hashes": {},
+                },
+                [{"alpha3": "pol"}],
+                {},
+            )
+
+        self.assertIn("hash", results[0]["matches"])
+
     def test_download_extracts_embedded_zip_content(self):
         archive_body = _zip_body(
             {
@@ -191,6 +241,36 @@ class Napisy24ProviderTests(unittest.TestCase):
         self.assertEqual(decoded, b"1\n00:00:01,000 --> 00:00:02,000\nLinia\n")
         self.assertEqual(result["format"], "srt")
         self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
+
+    def test_download_refetches_archive_from_lookup_payload(self):
+        provider = self.mod.Napisy24Provider()
+        archive_body = _zip_body({"movie.txt": b"1\r\n00:00:01,000 --> 00:00:02,000\r\nLinia\r\n"})
+        calls = []
+
+        def post(url, data, headers=None, timeout=10):
+            calls.append((url, dict(data), dict(headers or {}), timeout))
+            return self.mod.HttpResponse(200, b"OK-2|napisId:987|imdb:1160419||" + archive_body, {})
+
+        provider._http_post = post
+        result = provider.download(
+            {
+                "provider": "napisy24",
+                "schema": 1,
+                "napis_id": "987",
+                "hash": "0123456789abcdef",
+                "size": "1234567890",
+                "name": "Dune.Part.One.2021.1080p.WEB-DL-NTb.mkv",
+                "filename": "napisy24.987.zip",
+            },
+            {"alpha3": "pol"},
+            {"username": "user", "password": "pass"},
+        )
+
+        self.assertEqual(calls[0][0], "https://napisy24.pl/run/CheckSubAgent.php")
+        self.assertEqual(calls[0][1]["ua"], "user")
+        self.assertEqual(calls[0][1]["ap"], "pass")
+        self.assertEqual(result["format"], "txt")
+        self.assertIn(b"Linia", base64.b64decode(result["content_b64"]))
 
 
 if __name__ == "__main__":

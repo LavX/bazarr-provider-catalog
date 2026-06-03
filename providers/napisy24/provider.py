@@ -14,12 +14,12 @@ import urllib.request
 import zipfile
 
 PROVIDER_ID = "napisy24"
-API_URL = "http://napisy24.pl/run/CheckSubAgent.php"
+API_URL = "https://napisy24.pl/run/CheckSubAgent.php"
 DEFAULT_USERNAME = "subliminal"
 DEFAULT_PASSWORD = "lanimilbus"
 USER_AGENT = "Subliminal/2 BazarrProviderHub"
 HTTP_TIMEOUT_SECONDS = 10
-SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt")
+SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt", ".txt")
 LANGUAGE = {"alpha3": "pol", "alpha2": "pl", "hi": False, "forced": False}
 _NON_ALNUM_RE = re.compile(r"[\W_]+")
 _OPENSUBTITLES_HASH_READ_SIZE = 64 * 1024
@@ -41,15 +41,7 @@ class Napisy24Provider:
         if lookup is None:
             return []
         username, password = _credentials(config)
-        data = {
-            "postAction": "CheckSub",
-            "ua": username,
-            "ap": password,
-            "fs": str(lookup["size"]),
-            "fh": lookup["hash"],
-            "fn": os.path.basename(lookup["name"]),
-            "n24pref": "1",
-        }
+        data = _lookup_request_data(lookup, username, password)
         _sleep(config)
         response = self._http_post(
             API_URL,
@@ -71,15 +63,33 @@ class Napisy24Provider:
         return [_candidate(video, lookup, parsed)]
 
     def download(self, provider_payload, language, config):
-        del language, config
+        del language
         payload = dict(provider_payload or {})
         archive_b64 = payload.get("archive_b64")
-        if not archive_b64:
-            raise ValueError("napisy24 download requires archive_b64")
-        try:
-            archive_body = base64.b64decode(archive_b64)
-        except Exception as error:
-            raise ValueError("napisy24 archive_b64 is invalid") from error
+        if archive_b64:
+            try:
+                archive_body = base64.b64decode(archive_b64)
+            except Exception as error:
+                raise ValueError("napisy24 archive_b64 is invalid") from error
+        else:
+            lookup = _lookup_from_payload(payload)
+            username, password = _credentials(config)
+            response = self._http_post(
+                API_URL,
+                _lookup_request_data(lookup, username, password),
+                headers={
+                    "User-Agent": str((config or {}).get("user_agent") or USER_AGENT),
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                timeout=HTTP_TIMEOUT_SECONDS,
+            )
+            _raise_for_status(response, "Napisy24 download lookup")
+            parsed = parse_response(response.body)
+            if parsed["status"] == "login error":
+                raise PermissionError("Napisy24 Login failed")
+            if parsed["status"] != "OK-2" or not parsed["archive"]:
+                raise ValueError("napisy24 download lookup did not return an archive")
+            archive_body = parsed["archive"]
         return extract_download(archive_body, payload.get("filename") or "")
 
     def _http_post(self, url, data, headers=None, timeout=HTTP_TIMEOUT_SECONDS):
@@ -122,12 +132,9 @@ def _candidate(video, lookup, parsed):
     metadata = parsed["metadata"]
     napis_id = metadata.get("napisId") or lookup["hash"]
     imdb_id = _imdb_id(metadata.get("imdb"))
-    matches = []
-    if lookup["hash"] == ((video.get("hashes") or {}).get("napisy24")):
-        matches.append("hash")
+    matches = ["hash"]
     if imdb_id and _normalize_imdb(video.get("imdb_id")) == imdb_id:
         matches.append("imdb_id")
-    archive_b64 = base64.b64encode(parsed["archive"]).decode("ascii")
     filename = f"napisy24.{napis_id}.zip"
     score = 70 + (20 if "hash" in matches else 0) + (10 if "imdb_id" in matches else 0)
     return {
@@ -154,9 +161,10 @@ def _candidate(video, lookup, parsed):
             "schema": 1,
             "napis_id": napis_id,
             "hash": lookup["hash"],
+            "size": str(lookup["size"]),
+            "name": os.path.basename(lookup["name"]),
             "imdb_id": imdb_id,
             "filename": filename,
-            "archive_b64": archive_b64,
             "language": "pol",
         },
     }
@@ -172,7 +180,12 @@ def _split_response(body):
 
 def _lookup_inputs(video):
     hashes = video.get("hashes") or {}
-    file_hash = str(hashes.get("napisy24") or "").strip()
+    file_hash = str(
+        hashes.get("napisy24")
+        or hashes.get("opensubtitles")
+        or hashes.get("opensubtitlescom")
+        or ""
+    ).strip()
     path = _existing_video_path(video)
     computed_size = None
     if not file_hash:
@@ -191,6 +204,27 @@ def _lookup_inputs(video):
     if size in (None, "") or not name:
         return None
     return {"hash": file_hash, "size": size, "name": str(name)}
+
+
+def _lookup_from_payload(payload):
+    file_hash = str((payload or {}).get("hash") or "").strip()
+    size = (payload or {}).get("size")
+    name = str((payload or {}).get("name") or (payload or {}).get("filename") or "").strip()
+    if not file_hash or size in (None, "") or not name:
+        raise ValueError("napisy24 download requires hash, size, and name")
+    return {"hash": file_hash, "size": size, "name": name}
+
+
+def _lookup_request_data(lookup, username, password):
+    return {
+        "postAction": "CheckSub",
+        "ua": username,
+        "ap": password,
+        "fs": str(lookup["size"]),
+        "fh": lookup["hash"],
+        "fn": os.path.basename(lookup["name"]),
+        "n24pref": "1",
+    }
 
 
 def _existing_video_path(video):
@@ -231,6 +265,8 @@ def _language_requested(languages):
     for language in languages or []:
         if not isinstance(language, dict):
             continue
+        if language.get("hi") or language.get("forced"):
+            continue
         if str(language.get("alpha3") or "").lower() == "pol":
             return True
         if str(language.get("alpha2") or "").lower() == "pl":
@@ -266,7 +302,11 @@ def _raise_for_status(response, context):
 def _first_subtitle_file(names):
     subtitle_names = [name for name in names if _subtitle_extension(name) and not os.path.basename(name).startswith(".")]
     if subtitle_names:
-        return subtitle_names[0]
+        priority = {"srt": 0, "ass": 1, "ssa": 2, "vtt": 3, "sub": 4, "txt": 5}
+        return sorted(
+            subtitle_names,
+            key=lambda name: (priority.get(_subtitle_extension(name), 99), name.lower()),
+        )[0]
     if names:
         return names[0]
     raise ValueError("napisy24 archive contains no files")
