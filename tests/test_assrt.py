@@ -26,6 +26,48 @@ SEARCH_RICK = json.loads((FIXTURE_DIR / "assrt_search_rick_morty.json").read_tex
 SEARCH_PACK = json.loads((FIXTURE_DIR / "assrt_search_season_pack.json").read_text())
 DETAIL_PACK = json.loads((FIXTURE_DIR / "assrt_detail_season_pack.json").read_text())
 DETAIL_SINGLE = json.loads((FIXTURE_DIR / "assrt_detail_single_file.json").read_text())
+SEARCH_BILINGUAL = {
+    "sub": {
+        "subs": [
+            {
+                "id": 73001,
+                "videoname": "Example.Movie.2024.1080p.WEB-DL",
+                "lang": {"langlist": {"langdou": 1}},
+            }
+        ]
+    }
+}
+DETAIL_ASS = {
+    "sub": {
+        "subs": [
+            {
+                "id": 71001,
+                "filelist": [
+                    {"f": "Rick.and.Morty.S07E10.chs.ass", "url": "https://assrt.test/download/rick-s07e10-chs.ass"}
+                ],
+            }
+        ]
+    }
+}
+DETAIL_MULTI_SEASON_PACK = {
+    "sub": {
+        "subs": [
+            {
+                "id": 72002,
+                "filelist": [
+                    {
+                        "f": "Rick.and.Morty.S01E02.1080p.BluRay.x264-STORiES.eng.srt",
+                        "url": "https://assrt.test/download/rick-s01e02-eng.srt",
+                    },
+                    {
+                        "f": "Rick.and.Morty.S06E02.1080p.BluRay.x264-STORiES.eng.srt",
+                        "url": "https://assrt.test/download/rick-s06e02-eng.srt",
+                    },
+                ],
+            }
+        ]
+    }
+}
 
 
 def _query(url):
@@ -68,6 +110,33 @@ class AssrtProviderTests(unittest.TestCase):
         self.assertEqual(search_params["is_file"], "1")
         self.assertEqual({item["language"]["alpha3"] for item in results}, {"zho", "eng"})
         self.assertNotIn("secret-token", json.dumps(results, sort_keys=True))
+
+    def test_search_recognizes_bilingual_language_code(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_BILINGUAL
+        provider._sleep = lambda seconds: None
+
+        results = provider.search(
+            {"kind": "movie", "title": "Example Movie", "year": 2024},
+            [{"alpha3": "zho", "country_alpha2": "CN"}, {"alpha3": "eng"}],
+            {"token": "secret-token"},
+        )
+
+        self.assertEqual({item["language"]["alpha3"] for item in results}, {"zho", "eng"})
+
+    def test_search_honors_country_alpha2_for_chinese_variants(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_RICK
+        provider._sleep = lambda seconds: None
+
+        results = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+            [{"alpha3": "zho", "country_alpha2": "TW"}],
+            {"token": "secret-token"},
+        )
+
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["71002"])
+        self.assertEqual(results[0]["language"]["country"], "TW")
 
     def test_search_uses_native_name_when_videoname_is_meaningless(self):
         provider = self.mod.AssrtProvider()
@@ -126,6 +195,26 @@ class AssrtProviderTests(unittest.TestCase):
         self.assertEqual(result["format"], "srt")
         self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
 
+    def test_download_uses_selected_detail_file_extension(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else DETAIL_ASS
+        provider._http_get_bytes = lambda url, timeout=15, config=None: b"[Script Info]\r\nTitle: Rick\r\n"
+        provider._sleep = lambda seconds: None
+
+        result = provider.download(
+            {
+                "provider": "assrt",
+                "schema": 1,
+                "subtitle_id": "71001",
+                "language_code": "chs",
+                "filename": "rick.srt",
+            },
+            {"alpha3": "zho", "country_alpha2": "CN"},
+            {"token": "secret-token"},
+        )
+
+        self.assertEqual(result["format"], "ass")
+
     def test_download_selects_target_episode_file_from_season_pack(self):
         provider = self.mod.AssrtProvider()
         selected_urls = []
@@ -158,6 +247,34 @@ class AssrtProviderTests(unittest.TestCase):
 
         self.assertEqual(selected_urls[0], "https://assrt.test/download/rick-s06e02-eng.srt")
         self.assertIn(b"Episode two", base64.b64decode(result["content_b64"]))
+
+    def test_download_selects_pack_file_by_season_and_episode(self):
+        provider = self.mod.AssrtProvider()
+        selected_urls = []
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else DETAIL_MULTI_SEASON_PACK
+
+        def bytes_stub(url, timeout=15, config=None):
+            del timeout, config
+            selected_urls.append(url)
+            return b"1\n00:00:01,000 --> 00:00:02,000\nSeason six\n"
+
+        provider._http_get_bytes = bytes_stub
+        provider._sleep = lambda seconds: None
+        provider.download(
+            {
+                "provider": "assrt",
+                "schema": 1,
+                "subtitle_id": "72002",
+                "language_code": "eng",
+                "season": 6,
+                "episode": 2,
+                "filename": "rick-pack.srt",
+            },
+            {"alpha3": "eng"},
+            {"token": "secret-token"},
+        )
+
+        self.assertEqual(selected_urls[0], "https://assrt.test/download/rick-s06e02-eng.srt")
 
 
 if __name__ == "__main__":

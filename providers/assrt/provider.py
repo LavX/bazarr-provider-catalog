@@ -82,7 +82,12 @@ class AssrtProvider:
                 if not video_name:
                     continue
                 result = self._result(video, item, video_name, language_code, requested_language)
-                key = (result["provider_payload"]["subtitle_id"], result["provider_payload"]["language_code"])
+                key = (
+                    result["provider_payload"]["subtitle_id"],
+                    result["provider_payload"]["language_code"],
+                    result["language"]["alpha3"],
+                    result["language"].get("country"),
+                )
                 if key in seen:
                     continue
                 seen.add(key)
@@ -103,13 +108,15 @@ class AssrtProvider:
             config=config,
         )
         check_api_status(detail)
-        download_url = select_download_url(detail, payload)
+        selected_file = select_download_file(detail, payload)
+        download_url = selected_file.get("url") if selected_file else None
         if not download_url:
             raise ValueError(f"assrt detail did not contain a download URL for {subtitle_id}")
         self._sleep(request_delay_seconds(quota))
         body = self._http_get_bytes(download_url, config=config)
         body = _normalize_line_endings(body)
-        return _content_payload(body, _subtitle_extension(payload.get("filename")) or "srt")
+        filename = selected_file.get("f") if selected_file else None
+        return _content_payload(body, _subtitle_extension(filename or payload.get("filename")) or "srt")
 
     def _quota(self, token, config):
         if token not in self._quota_by_token:
@@ -148,7 +155,10 @@ class AssrtProvider:
         matches = derive_matches(video, video_name)
         score = 95 if "episode" in matches or "title" in matches else 80
         subtitle_id = str(item.get("id"))
-        filename = f"assrt.{_slug(video_name)}.{language_code}.{subtitle_id}.srt"
+        language_id = requested_language["alpha3"]
+        if requested_language.get("country"):
+            language_id = f"{language_id}-{requested_language['country']}"
+        filename = f"assrt.{_slug(video_name)}.{language_code}.{language_id}.{subtitle_id}.srt"
         language = {
             "alpha3": requested_language["alpha3"],
             "alpha2": requested_language["alpha2"],
@@ -159,7 +169,7 @@ class AssrtProvider:
             language["country"] = requested_language["country"]
         return {
             "provider": PROVIDER_ID,
-            "id": f"assrt-{subtitle_id}-{language_code}",
+            "id": f"assrt-{subtitle_id}-{language_code}-{language_id}",
             "language": language,
             "release_info": video_name,
             "filename": filename,
@@ -246,27 +256,55 @@ def derive_matches(video, video_name):
 
 
 def select_download_url(detail, payload):
+    selected_file = select_download_file(detail, payload)
+    return selected_file.get("url") if selected_file else None
+
+
+def select_download_file(detail, payload):
     subs = ((detail or {}).get("sub") or {}).get("subs") or []
     if not subs:
         return None
     sub = subs[0]
     files = sub.get("filelist") if isinstance(sub.get("filelist"), list) else []
     if not files:
-        return sub.get("url")
-    target_episode = _safe_int((payload or {}).get("episode"))
-    if target_episode is not None:
-        episode_files = [item for item in files if _file_episode(item.get("f")) == target_episode]
-        if episode_files:
-            files = episode_files
+        return {"url": sub.get("url"), "f": (payload or {}).get("filename")}
+    files = [item for item in files if item.get("url")]
+    if not files:
+        return None
+    files = _filter_download_files_by_episode(files, payload)
+    if not files:
+        return None
     language_code = str((payload or {}).get("language_code") or "").lower()
+    if language_code:
+        for item in files:
+            filename = str(item.get("f") or "").lower()
+            if language_code in filename:
+                return item
+    return files[0]
+
+
+def _filter_download_files_by_episode(files, payload):
+    target_episode = _safe_int((payload or {}).get("episode"))
+    if target_episode is None:
+        return files
+    target_season = _safe_int((payload or {}).get("season"))
+    episode_files = []
+    structured_episode_files = []
     for item in files:
-        filename = str(item.get("f") or "").lower()
-        if language_code and language_code in filename and item.get("url"):
-            return item["url"]
-    for item in files:
-        if item.get("url"):
-            return item["url"]
-    return None
+        season_episode = _file_season_episode(item.get("f"))
+        if season_episode:
+            season, episode = season_episode
+            if episode == target_episode:
+                structured_episode_files.append(item)
+                if target_season is None or season == target_season:
+                    episode_files.append(item)
+        elif _file_episode(item.get("f")) == target_episode:
+            episode_files.append(item)
+    if episode_files:
+        return episode_files
+    if structured_episode_files:
+        return []
+    return files
 
 
 def _requested_languages(languages):
@@ -290,7 +328,7 @@ def _requested_language_meta(language):
         country = None
     elif isinstance(language, dict):
         alpha3 = language.get("alpha3") or language.get("code") or language.get("alpha2")
-        country = language.get("country") or language.get("region")
+        country = language.get("country") or language.get("country_alpha2") or language.get("region")
     else:
         return None
     alpha3 = str(alpha3 or "").lower()
@@ -318,6 +356,10 @@ def _languages_from_search_item(item):
         if not match:
             continue
         code = match.group("code").lower()
+        if code == "dou":
+            yield code, LANGUAGE_CODES["zho-CN"]
+            yield code, LANGUAGE_CODES["eng"]
+            continue
         meta = ASSRT_TO_LANGUAGE.get(code)
         if meta:
             yield code, meta
@@ -375,6 +417,13 @@ def _file_episode(filename):
     if not match:
         return None
     return _safe_int(match.group("episode"))
+
+
+def _file_season_episode(filename):
+    match = _SXXEYY_RE.search(_normalize(filename))
+    if not match:
+        return None
+    return _safe_int(match.group("season")), _safe_int(match.group("episode"))
 
 
 def _normalize_line_endings(body):
