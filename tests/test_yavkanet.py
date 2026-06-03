@@ -307,6 +307,37 @@ class YavkaNetCloudflareTests(unittest.TestCase):
         self.assertEqual(state["flaresolverr_user_agent"], "Mozilla/5.0 solved")
         self.assertEqual(state["flaresolverr_cookies"], {"cf_clearance": "token"})
 
+    def test_http_get_uses_flaresolverr_fallback_after_plain_403(self):
+        scraper = mock.MagicMock()
+        scraper.get.return_value = FakeResponse(b"Forbidden", status=403)
+        payload = {
+            "status": "ok",
+            "solution": {
+                "status": 200,
+                "response": "subtitle-body",
+                "cookies": [{"name": "cf_clearance", "value": "token"}],
+            },
+        }
+
+        with mock.patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), mock.patch.object(
+            self.mod.urllib.request,
+            "urlopen",
+            return_value=FakeUrlopenResponse(json.dumps(payload).encode("utf-8")),
+        ) as urlopen:
+            state = {}
+            body = self.mod.http_get(
+                "https://yavka.net/download?q=token",
+                config={"flaresolverr_url": "http://flaresolverr:8191/v1"},
+                state=state,
+            )
+
+        self.assertEqual(body, b"subtitle-body")
+        request = urlopen.call_args.args[0]
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(payload["cmd"], "request.get")
+        self.assertEqual(payload["url"], "https://yavka.net/download?q=token")
+        self.assertEqual(state["flaresolverr_cookies"], {"cf_clearance": "token"})
+
     def test_http_get_raises_visible_error_without_flaresolverr(self):
         scraper = mock.MagicMock()
         scraper.get.return_value = FakeResponse(CLOUDFLARE_BODY, status=403)

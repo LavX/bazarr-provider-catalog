@@ -471,6 +471,8 @@ def _http_request(method, url, data=None, timeout=HTTP_TIMEOUT_SECONDS, config=N
         status = int(status_code)
     except (TypeError, ValueError):
         status = 0
+    if status == 403 and _flaresolverr_url(config):
+        return _flaresolverr_request(method, url, data=data, timeout=timeout, config=config, state=state)
     if status >= 400:
         raise urllib.error.HTTPError(url, status, f"HTTP {status}", headers, None)
     return body
