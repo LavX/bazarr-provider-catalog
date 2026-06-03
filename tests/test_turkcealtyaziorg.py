@@ -54,6 +54,27 @@ def _movie_search_page():
     """
 
 
+def _title_page_search_page():
+    return b"""
+    <html>
+      <body>
+        <div class="altyazi-list-wrapper">
+          <div>
+            <div class="subtitle-row">
+              <div class="alisim"><div class="fl"><a href="/mov/999/title-page.html">Inception title page row</a></div></div>
+              <div class="aldil"><span class="flagtr"></span></div>
+              <div class="alcevirmen">title-uploader</div>
+              <div class="ta-container">
+                <div class="ripdiv"><span class="rps r12"></span> / TITLE-GROUP</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+
+
 def _episode_search_page():
     return b"""
     <html>
@@ -210,6 +231,23 @@ class TurkceAltyaziSearchTests(unittest.TestCase):
         self.assertEqual(results[0]["provider_payload"]["page_url"], "https://turkcealtyazi.org/mov/123/inception.html")
         self.assertEqual(results[0]["display"]["uploader"], "cevirmen")
         self.assertIn("BluRay", results[0]["release_info"])
+
+    def test_movie_search_parses_title_page_rows_without_latest_list_classes(self):
+        provider = self.mod.TurkceAltyaziOrgProvider()
+        provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True, config=None: self.mod.HttpResponse(
+            200, b"home" if url == "https://turkcealtyazi.org" else _title_page_search_page(), {}
+        )
+
+        results = provider.search(
+            {"kind": "movie", "title": "Inception", "imdb_id": "tt1375666", "release_group": "TITLE"},
+            [{"alpha3": "tur"}],
+            {},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["provider_payload"]["page_url"], "https://turkcealtyazi.org/mov/999/title-page.html")
+        self.assertEqual(results[0]["display"]["uploader"], "title-uploader")
+        self.assertIn("release_group", results[0]["matches"])
 
     def test_episode_search_filters_season_episode_and_keeps_season_pack(self):
         provider = self.mod.TurkceAltyaziOrgProvider()
@@ -453,6 +491,42 @@ class TurkceAltyaziSearchTests(unittest.TestCase):
         self.assertEqual(flaresolverr_calls[0][1]["maxTimeout"], 45000)
         self.assertEqual(session.cookies["cf_clearance"]["value"], "clear")
 
+    def test_http_get_uses_flaresolverr_after_non_403_cloudflare_challenge(self):
+        session = FakeSession(
+            [
+                FakeResponse(
+                    503,
+                    b"<html><title>Just a moment...</title></html>",
+                    {},
+                ),
+                FakeResponse(200, b"<html>solved</html>"),
+            ]
+        )
+
+        class FakeCloudscraper:
+            @staticmethod
+            def create_scraper(**kwargs):
+                return session
+
+        self.mod.cloudscraper = FakeCloudscraper
+        provider = self.mod.TurkceAltyaziOrgProvider()
+        provider._post_flaresolverr = lambda url, payload, timeout: {
+            "solution": {
+                "cookies": [{"name": "cf_clearance", "value": "clear", "domain": ".turkcealtyazi.org"}],
+                "userAgent": "Solved UA",
+            }
+        }
+
+        response = provider._http_get(
+            "https://turkcealtyazi.org/find.php?cat=sub&find=1375666",
+            provider._headers({}),
+            {},
+            config={"flaresolverr_url": "http://127.0.0.1:8191/v1"},
+        )
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(len(session.calls), 2)
+
 
 class TurkceAltyaziDownloadTests(unittest.TestCase):
     def setUp(self):
@@ -519,6 +593,18 @@ class TurkceAltyaziDownloadTests(unittest.TestCase):
         stream = io.BytesIO()
         with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("Example.S01E03.srt", "wrong")
+
+        with self.assertRaisesRegex(ValueError, "requested episode"):
+            self.mod.extract_download(
+                stream.getvalue(),
+                "season-pack.zip",
+                {"season": 1, "episode": 2, "is_pack": True},
+            )
+
+    def test_season_pack_archive_does_not_match_episode_twenty_as_episode_two(self):
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("Example.S01E020.srt", "wrong")
 
         with self.assertRaisesRegex(ValueError, "requested episode"):
             self.mod.extract_download(

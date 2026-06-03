@@ -517,11 +517,10 @@ def _raise_for_status(response, context):
 def _is_cloudflare_challenge(response):
     headers = {str(key).lower(): str(value).lower() for key, value in (response.headers or {}).items()}
     body = (response.body or b"").decode("utf-8", "ignore").lower()
-    return response.status == 403 and (
-        headers.get("cf-mitigated") == "challenge"
-        or "just a moment" in body
-        or "challenges.cloudflare.com" in body
-    )
+    if headers.get("cf-mitigated") == "challenge":
+        return True
+    markers = ("just a moment", "challenges.cloudflare.com", "challenge-platform", "_cf_chl_opt")
+    return response.status in {403, 429, 503} and any(marker in body for marker in markers)
 
 
 def _is_not_found(body):
@@ -535,17 +534,34 @@ def _is_not_found(body):
 def parse_search_page(body, video):
     root = _parse_html(body)
     entries = []
+    seen = set()
     kind = (video or {}).get("kind")
     for node in root.descendants("div"):
+        if not _looks_like_search_entry(node):
+            continue
+        if any(_looks_like_search_entry(child) for child in node.children if child.tag == "div"):
+            continue
         classes = set(node.classes())
         if kind == "episode":
             season = int((video or {}).get("season") or 0)
-            if "altsonsez1" not in classes or f"sezon_{season}" not in classes:
+            if "altsonsez1" in classes and f"sezon_{season}" not in classes:
                 continue
-        elif "altsonsez2" not in classes:
+        elif "altsonsez1" in classes:
             continue
-        entries.append(_parse_entry(node, video))
+        entry = _parse_entry(node, video)
+        if entry is None or entry["page_url"] in seen:
+            continue
+        seen.add(entry["page_url"])
+        entries.append(entry)
     return [entry for entry in entries if entry is not None]
+
+
+def _looks_like_search_entry(node):
+    return (
+        node.first_descendant("div", {"alisim"}) is not None
+        and node.first_descendant("div", {"aldil"}) is not None
+        and node.first_descendant("div", {"ripdiv"}) is not None
+    )
 
 
 def _parse_entry(node, video):
@@ -819,13 +835,16 @@ def _best_archive_member(names, payload):
 
 def _archive_member_matches_episode(name, season, episode):
     lowered = str(name or "").lower()
+    saw_structured_episode = False
     for pattern in (_SXXEXX_RE, _XX_RE):
         for match in pattern.finditer(lowered):
+            saw_structured_episode = True
             if int(match.group("episode")) != episode:
                 continue
             return season is None or int(match.group("season")) == season
-    token = f"e{episode:02d}"
-    return token in lowered
+    if saw_structured_episode:
+        return False
+    return bool(re.search(rf"(?<![a-z0-9])e0*{episode}(?!\d)", lowered))
 
 
 def _subtitle_extension(name):
