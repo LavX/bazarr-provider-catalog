@@ -150,6 +150,7 @@ def parse_imdb_results(body):
                 "year": _year_from_row(row_html),
                 "fps": _fps_from_row(row_html),
                 "uploader": _uploader_from_row(row_html),
+                "language": _language_from_row(attrs, href),
             }
         )
     for item_match in _IMDB_ITEM_RE.finditer(text):
@@ -174,6 +175,7 @@ def parse_imdb_results(body):
                 "year": _year_from_row(row_html),
                 "fps": _fps_from_row(row_html),
                 "uploader": _current_uploader_from_row(row_html),
+                "language": _language_from_row(attrs, href),
             }
         )
     return rows[-50:]
@@ -276,15 +278,23 @@ def select_subtitle_file(names, payload=None):
         raise ValueError("yavkanet archive contains no supported subtitle files")
     video = payload.get("video") or {}
     episode_required = video.get("kind") == "episode" and video.get("episode")
-    has_episode_markers = any(_has_episode_marker(name) for name in candidates)
+    has_episode_markers = any(_has_episode_marker(name) or _is_numeric_episode_name(name) for name in candidates)
 
     def score(name):
         text = name
         value = 0
         if episode_required:
-            if _episode_matches(video.get("episode"), text):
+            if _season_episode_matches(video.get("season"), video.get("episode"), text):
+                value += 120
+            elif _has_season_episode_marker(text):
+                return 0
+            elif _episode_matches(video.get("episode"), text):
+                value += 100
+            elif _numeric_episode_matches(video.get("episode"), text):
                 value += 100
             elif _has_episode_marker(name):
+                return 0
+            elif _is_numeric_episode_name(name):
                 return 0
         if (not episode_required and video.get("kind") == "episode" and _episode_matches(video.get("episode"), text)):
             value += 100
@@ -342,6 +352,8 @@ class YavkaNetProvider:
             except Exception:
                 continue
             for language in requested:
+                if row.get("language") and row["language"] != language["alpha3"]:
+                    continue
                 key = (row["page_url"], language["alpha3"], language["hi"], language["forced"])
                 if key in seen:
                     continue
@@ -725,6 +737,14 @@ def _current_uploader_from_row(row_html):
     return _strip_tags(match.group("text")) if match else ""
 
 
+def _language_from_row(attrs, href):
+    value = (attrs.get("data-lang") or "").strip().lower()
+    if not value:
+        path = urllib.parse.urlparse(_absolute_url(href)).path.rstrip("/")
+        value = path.rsplit("/", 1)[-1].lower() if "/" in path else ""
+    return ALPHA2_TO_ALPHA3.get(value, value if value in SUPPORTED_LANGUAGES else "")
+
+
 def _direct_download_url(text):
     for match in _A_RE.finditer(text):
         attrs = _attrs(match.group("attrs"))
@@ -864,6 +884,41 @@ def _episode_matches(episode, text):
         if int(match.group("episode")) == episode_int:
             return True
     return False
+
+
+def _season_episode_matches(season, episode, text):
+    try:
+        season_int = int(season)
+        episode_int = int(episode)
+    except (TypeError, ValueError):
+        return False
+    for match in _SXXEXX_RE.finditer(text or ""):
+        if int(match.group("season")) == season_int and int(match.group("episode")) == episode_int:
+            return True
+    return False
+
+
+def _has_season_episode_marker(text):
+    return bool(_SXXEXX_RE.search(text or ""))
+
+
+def _numeric_episode_matches(episode, text):
+    try:
+        episode_int = int(episode)
+    except (TypeError, ValueError):
+        return False
+    return _numeric_episode_number(text) == episode_int
+
+
+def _is_numeric_episode_name(text):
+    return _numeric_episode_number(text) is not None
+
+
+def _numeric_episode_number(text):
+    stem = os.path.splitext(os.path.basename(text or ""))[0]
+    if re.fullmatch(r"\d{1,3}", stem or ""):
+        return int(stem)
+    return None
 
 
 def _has_episode_marker(text):

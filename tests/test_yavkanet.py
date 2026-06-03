@@ -123,6 +123,7 @@ class YavkaNetParserTests(unittest.TestCase):
         row = rows[0]
         self.assertEqual(row["page_url"], "https://yavka.net/subs/11894/BG/")
         self.assertEqual(row["title"], "Dune")
+        self.assertEqual(row["language"], "bul")
         self.assertIn("WEB", row["release"])
         self.assertEqual(row["year"], 2021)
         self.assertEqual(row["uploader"], "WebRip")
@@ -386,6 +387,32 @@ class YavkaNetProviderTests(unittest.TestCase):
         self.assertEqual(payload["download_url"], "https://yavka.net/download?q=token")
         self.assertEqual(payload["form_data"], {})
 
+    def test_search_filters_current_imdb_cards_by_row_language(self):
+        provider = self.mod.YavkaNetProvider()
+
+        def stub(url, timeout=15, config=None, state=None, referer=None):
+            del timeout, config, state, referer
+            if url == "https://yavka.net/imdb/tt1160419":
+                return CURRENT_IMDB_HTML
+            if url == "https://yavka.net/subs/11894/BG/":
+                return CURRENT_DETAIL_HTML
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        results = provider.search(
+            {
+                "kind": "movie",
+                "title": "Dune",
+                "year": 2021,
+                "imdb_id": "tt1160419",
+                "source": "Web",
+            },
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(results, [])
+
     def test_movie_search_keeps_imdb_row_with_localized_title(self):
         provider = self.mod.YavkaNetProvider()
         localized_imdb_html = IMDB_HTML.replace(b"Dune.2021.1080p.WEB-DL-FLUX", b"Dyuna.2021.1080p.WEB-DL-FLUX")
@@ -486,6 +513,45 @@ class YavkaNetProviderTests(unittest.TestCase):
                     "video": {"kind": "episode", "series": "Example", "season": 1, "episode": 2},
                 },
             )
+
+    def test_archive_selection_requires_matching_season_for_episode_members(self):
+        body = _zip_with(
+            {
+                "Example.S02E02.srt": b"wrong season",
+                "Example.S01E02.srt": SRT_BODY,
+            }
+        )
+
+        result = self.mod.extract_download(
+            body,
+            {
+                "filename": "Example.S01.zip",
+                "video": {"kind": "episode", "series": "Example", "season": 1, "episode": 2},
+            },
+        )
+
+        data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
+        self.assertEqual(data, SRT_BODY)
+
+    def test_archive_selection_matches_numeric_episode_members(self):
+        body = _zip_with(
+            {
+                "01.srt": b"episode one",
+                "02.srt": SRT_BODY,
+                "03.srt": b"episode three",
+            }
+        )
+
+        result = self.mod.extract_download(
+            body,
+            {
+                "filename": "Example.S01.zip",
+                "video": {"kind": "episode", "series": "Example", "season": 1, "episode": 2},
+            },
+        )
+
+        data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
+        self.assertEqual(data, SRT_BODY)
 
 
 if __name__ == "__main__":
