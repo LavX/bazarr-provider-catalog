@@ -3092,7 +3092,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "9a1982126be04247b7cfe4a09fd48a4d2ea33e642ff87851045fa47278de770f",
+        "bundle_sha256": "d43a91418b82b5a418350f33a8fc8b4651f3d0bf3c60f8f9512445a8537a27e2",
         "config_schema": {
           "additionalProperties": false,
           "properties": {},
@@ -3105,7 +3105,7 @@
         "entry_class": "ShooterProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "3a086b8bde39ad61d350aba699123a4f10a85135f1648b4bd8fc07b8a165d128"
+          "provider.py": "acfc5c8e7d8351541b80dd70838ab19da63da977aad69ac9cb9c14e11f663835"
         },
         "languages": [
           "eng",
@@ -3128,7 +3128,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.1"
+        "version": "0.1.2"
       }
     },
     {

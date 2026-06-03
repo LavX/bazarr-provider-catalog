@@ -80,7 +80,7 @@ def _shooter_hash(video):
 
 
 def _existing_video_path(video):
-    for key in ("name", "original_path", "original_name"):
+    for key in ("path", "name", "original_path", "original_name"):
         value = str((video or {}).get(key) or "").strip()
         if value and os.path.isfile(value):
             return value
@@ -153,14 +153,25 @@ def _normalize_line_endings(body):
 
 def _download_response(body, fmt):
     normalized = _normalize_line_endings(body)
+    fmt = fmt or "srt"
     return {
         "content_b64": base64.b64encode(normalized).decode("ascii"),
         "content_sha256": hashlib.sha256(normalized).hexdigest(),
-        "content_type": "application/x-subrip",
-        "format": fmt or "srt",
+        "content_type": _content_type(fmt),
+        "format": fmt,
         "encoding": None,
         "empty": False,
     }
+
+
+def _content_type(fmt):
+    if fmt in {"ass", "ssa"}:
+        return "text/x-ssa"
+    if fmt == "vtt":
+        return "text/vtt"
+    if fmt == "sub":
+        return "text/plain"
+    return "application/x-subrip"
 
 
 class ShooterProvider:

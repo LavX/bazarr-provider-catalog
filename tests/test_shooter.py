@@ -154,6 +154,21 @@ class ShooterProviderTests(unittest.TestCase):
         self.assertEqual(results, [])
         self.assertEqual(provider.http_client.posts[0][1]["filehash"], expected_hash)
 
+    def test_search_computes_shooter_hash_from_path_field(self):
+        provider = self.make_provider(search_body=b"\xff")
+        body = bytes((index % 197 for index in range(20000)))
+
+        with tempfile.NamedTemporaryFile(suffix=".mkv") as handle:
+            handle.write(body)
+            handle.flush()
+            provider.search(
+                video={"kind": "movie", "path": handle.name, "title": "Example", "year": 2024, "hashes": {}},
+                languages=[{"alpha3": "eng"}],
+                config={},
+            )
+
+        self.assertTrue(provider.http_client.posts)
+
     def test_search_skips_forced_or_hearing_impaired_requests(self):
         provider = self.make_provider()
         video = {"kind": "movie", "name": "Dune.mkv", "hashes": {"shooter": SHOOTER_HASH}}
@@ -201,6 +216,22 @@ class ShooterProviderTests(unittest.TestCase):
         self.assertEqual(result["content_sha256"], hashlib.sha256(body).hexdigest())
         self.assertEqual(result["format"], "srt")
         self.assertFalse(result["empty"])
+
+    def test_download_returns_content_type_for_ass_payload(self):
+        provider = self.make_provider(download_body=b"[Script Info]\r\nTitle: Example\r\n")
+        payload = {
+            "provider": "shooter",
+            "schema": 1,
+            "download_url": "https://www.shooter.cn/download/subtitle.ass",
+            "filehash": SHOOTER_HASH,
+            "language": "eng",
+            "format": "ass",
+        }
+
+        result = provider.download(payload, {"alpha3": "eng"}, {})
+
+        self.assertEqual(result["format"], "ass")
+        self.assertEqual(result["content_type"], "text/x-ssa")
 
     def test_download_requires_shooter_payload(self):
         provider = self.make_provider()
