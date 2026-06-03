@@ -21,7 +21,7 @@ class HttpResponse:
     def __init__(self, status, body, headers):
         self.status = int(status)
         self.body = body or b""
-        self.headers = dict(headers or {})
+        self.headers = headers or {}
 
 
 class KaragargaProvider:
@@ -65,8 +65,10 @@ class KaragargaProvider:
             raise ValueError("karagarga download requires page_url")
         config = dict(config or {})
         cookies = self._ensure_authenticated(config)
-        response = self._http_get(page_url, self._headers(), cookies, timeout=HTTP_TIMEOUT_SECONDS, allow_redirects=True)
+        response = self._http_get(page_url, self._headers(), cookies, timeout=HTTP_TIMEOUT_SECONDS, allow_redirects=False)
         _raise_for_status(response, "Karagarga download")
+        if _looks_like_login_html(response):
+            raise PermissionError("Karagarga request redirected to login")
         body = _normalize_line_endings(response.body)
         if not body:
             raise ValueError("karagarga downloaded empty subtitle")
@@ -90,8 +92,9 @@ class KaragargaProvider:
             self._headers(),
             dict(self._cookies),
             timeout=HTTP_TIMEOUT_SECONDS,
+            allow_redirects=False,
         )
-        _raise_for_status(main_response, "Karagarga tracker login")
+        _raise_for_login_status(main_response, "Karagarga tracker login")
         _store_response_cookies(self._cookies, main_response)
         if "pass" not in self._cookies:
             raise PermissionError("Karagarga tracker username or password is invalid")
@@ -110,6 +113,7 @@ class KaragargaProvider:
             self._headers(),
             dict(self._cookies),
             timeout=HTTP_TIMEOUT_SECONDS,
+            allow_redirects=False,
             params={
                 "app": "core",
                 "module": "global",
@@ -117,7 +121,7 @@ class KaragargaProvider:
                 "do": "process",
             },
         )
-        _raise_for_status(forum_response, "Karagarga forum login")
+        _raise_for_login_status(forum_response, "Karagarga forum login")
         _store_response_cookies(self._cookies, forum_response)
         if not {"session_id", "pass_hash"}.issubset(self._cookies):
             raise PermissionError("Karagarga forum username or password is invalid")
@@ -189,9 +193,9 @@ def _http_request(
         opener = urllib.request.build_opener(_NoRedirectHandler)
     try:
         with opener.open(request, timeout=timeout) as response:
-            return HttpResponse(response.status, response.read(), dict(response.headers.items()))
+            return HttpResponse(response.status, response.read(), response.headers)
     except urllib.error.HTTPError as exc:
-        return HttpResponse(exc.code, exc.read(), dict(exc.headers.items()))
+        return HttpResponse(exc.code, exc.read(), exc.headers)
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Karagarga request failed: {exc.reason}") from exc
 
@@ -204,6 +208,11 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 def _raise_for_status(response, context):
     if response.status == 302:
         raise PermissionError("Karagarga request redirected to login")
+    if response.status >= 400:
+        raise RuntimeError(f"{context} failed with HTTP {response.status}")
+
+
+def _raise_for_login_status(response, context):
     if response.status >= 400:
         raise RuntimeError(f"{context} failed with HTTP {response.status}")
 
@@ -407,17 +416,33 @@ def _parse_html(body):
 
 
 def _store_response_cookies(target, response):
-    header = _header(response.headers, "set-cookie")
-    if not header:
-        return
-    for fragment in _split_set_cookie(header):
-        cookie = SimpleCookie()
-        try:
-            cookie.load(fragment)
-        except Exception:
+    for header in _header_values(response.headers, "set-cookie"):
+        if not header:
             continue
-        for key, morsel in cookie.items():
-            target[key] = morsel.value
+        for fragment in _split_set_cookie(header):
+            cookie = SimpleCookie()
+            try:
+                cookie.load(fragment)
+            except Exception:
+                continue
+            for key, morsel in cookie.items():
+                target[key] = morsel.value
+
+
+def _header_values(headers, name):
+    wanted = name.lower()
+    if hasattr(headers, "get_all"):
+        return [str(value) for value in headers.get_all(name) or headers.get_all(wanted) or []]
+    if isinstance(headers, (list, tuple)):
+        return [str(value) for key, value in headers if str(key).lower() == wanted]
+    value = _header(headers, name)
+    return [value] if value else []
+
+
+def _looks_like_login_html(response):
+    content_type = _header(response.headers, "content-type").lower()
+    sample = (response.body or b"").lstrip()[:2048].decode("utf-8", errors="ignore").lower()
+    return "text/html" in content_type or sample.startswith("<!doctype html") or sample.startswith("<html")
 
 
 def _split_set_cookie(header):
@@ -431,6 +456,15 @@ def _requested_languages(languages):
 
 def _header(headers, name):
     wanted = name.lower()
+    if hasattr(headers, "get"):
+        value = headers.get(name) or headers.get(wanted)
+        if value is not None:
+            return str(value)
+    if isinstance(headers, (list, tuple)):
+        for key, value in headers:
+            if str(key).lower() == wanted:
+                return str(value)
+        return ""
     for key, value in (headers or {}).items():
         if str(key).lower() == wanted:
             return str(value)

@@ -30,7 +30,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`greeksubtitles`](providers/greeksubtitles/) | 0.1.2 | Scrapes [GreekSubtitles](https://gr.greek-subtitles.com) for Greek and English movie and episode subtitles. ZIP and RAR downloads are supported. |
 | [`isubtitles`](providers/isubtitles/) | 0.1.1 | Scrapes [iSubtitles.org](https://isubtitles.org) for movie and episode subtitles in broad multilingual coverage. No login or API key. |
 | [`jimaku`](providers/jimaku/) | 0.1.0 | Uses the [Jimaku](https://jimaku.cc) API for Japanese movie and episode subtitles. Requires API key. |
-| [`karagarga`](providers/karagarga/) | 0.1.0 | Uses [Karagarga](https://karagarga.in) tracker search plus forum attachments for English movie subtitles. Requires tracker and forum credentials. |
+| [`karagarga`](providers/karagarga/) | 0.1.1 | Uses [Karagarga](https://karagarga.in) tracker search plus forum attachments for English movie subtitles. Requires tracker and forum credentials. |
 | [`kitsunekko`](providers/kitsunekko/) | 0.1.0 | Scrapes [Kitsunekko](https://kitsunekko.net) for anime subtitle directories and ZIP packs. No login or API key. |
 | [`legendasnet`](providers/legendasnet/) | 0.1.0 | Uses the [Legendas.net](https://legendas.net) API for Brazilian Portuguese movie and episode subtitles. Requires username and password. |
 | [`moviesubtitles`](providers/moviesubtitles/) | 0.1.0 | Scrapes [Moviesubtitles.org](https://www.moviesubtitles.org) for movie subtitles, including multipart archives. No login or API key. |

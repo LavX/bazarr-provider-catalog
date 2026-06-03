@@ -159,6 +159,34 @@ class KaragargaSearchTests(unittest.TestCase):
         self.assertIn("year", results[0]["matches"])
         self.assertIn("release_group", results[0]["matches"])
 
+    def test_login_accepts_redirect_responses_that_set_auth_cookies(self):
+        provider = self.mod.KaragargaProvider()
+        calls = []
+
+        def post_response(url, data, headers, cookies, timeout=30, params=None, allow_redirects=True):
+            del data, headers, cookies, timeout, params
+            calls.append((url, allow_redirects))
+            if url == "https://karagarga.in/takelogin.php":
+                return self.mod.HttpResponse(302, b"", [("Set-Cookie", "pass=tracker-pass; path=/")])
+            if url == "https://forum.karagarga.in/index.php":
+                return self.mod.HttpResponse(
+                    302,
+                    b"",
+                    [
+                        ("Set-Cookie", "session_id=forum-session; path=/"),
+                        ("Set-Cookie", "pass_hash=forum-pass-hash; path=/"),
+                    ],
+                )
+            raise AssertionError(url)
+
+        provider._http_post = post_response
+        cookies = provider._ensure_authenticated({"username": "main-user", "password": "main-pass"})
+
+        self.assertEqual(cookies["pass"], "tracker-pass")
+        self.assertEqual(cookies["session_id"], "forum-session")
+        self.assertEqual(cookies["pass_hash"], "forum-pass-hash")
+        self.assertEqual(calls, [("https://karagarga.in/takelogin.php", False), ("https://forum.karagarga.in/index.php", False)])
+
     def test_search_returns_empty_for_episode_or_non_english_request(self):
         provider = self.mod.KaragargaProvider()
 
@@ -211,7 +239,50 @@ class KaragargaDownloadTests(unittest.TestCase):
         self.assertEqual(result["content_sha256"], hashlib.sha256(payload).hexdigest())
         self.assertEqual(result["format"], "srt")
         self.assertEqual(calls[0][0], "https://forum.karagarga.in/download/file.php?id=best")
-        self.assertTrue(calls[0][2])
+        self.assertFalse(calls[0][2])
+
+    def test_download_rejects_login_html_response(self):
+        provider = self.mod.KaragargaProvider()
+        provider._authenticated = True
+        provider._cookies = {"pass": "tracker-pass", "session_id": "forum-session", "pass_hash": "hash"}
+
+        provider._http_get = lambda url, headers, cookies, timeout=30, params=None, allow_redirects=True: (
+            self.mod.HttpResponse(
+                200,
+                b"<html><form action='index.php?app=core&module=global&section=login'>login</form></html>",
+                {"content-type": "text/html"},
+            )
+        )
+
+        with self.assertRaises(PermissionError):
+            provider.download(
+                {
+                    "page_url": "https://forum.karagarga.in/download/file.php?id=best",
+                    "filename": "Dune.2021.BluRay-GROUP.srt",
+                },
+                {"alpha3": "eng"},
+                {"username": "main-user", "password": "main-pass"},
+            )
+
+
+class KaragargaCookieTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_store_response_cookies_preserves_duplicate_set_cookie_headers(self):
+        target = {}
+        response = self.mod.HttpResponse(
+            200,
+            b"",
+            [
+                ("Set-Cookie", "session_id=forum-session; path=/"),
+                ("Set-Cookie", "pass_hash=forum-pass-hash; path=/"),
+            ],
+        )
+
+        self.mod._store_response_cookies(target, response)
+
+        self.assertEqual(target, {"session_id": "forum-session", "pass_hash": "forum-pass-hash"})
 
 
 if __name__ == "__main__":
