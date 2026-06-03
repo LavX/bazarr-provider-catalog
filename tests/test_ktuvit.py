@@ -111,7 +111,10 @@ class KtuvitSearchTests(unittest.TestCase):
         self.assertEqual(results[0]["provider_payload"]["ktuvit_id"], "MOV1")
         self.assertEqual(results[0]["provider_payload"]["subtitle_id"], "SUB1")
         self.assertIn("title", results[0]["matches"])
+        self.assertIn("year", results[0]["matches"])
+        self.assertIn("imdb_id", results[0]["matches"])
         self.assertIn("release_group", results[0]["matches"])
+        self.assertIs(results[0]["hash_verifiable"], False)
 
     def test_episode_search_uses_series_imdb_id_and_parses_ajax_rows(self):
         provider = self.mod.KtuvitProvider()
@@ -242,6 +245,32 @@ class KtuvitDownloadTests(unittest.TestCase):
         self.assertEqual(result["content_sha256"], hashlib.sha256(payload).hexdigest())
         self.assertEqual(result["format"], "srt")
         self.assertEqual(calls[1][1], "https://www.ktuvit.me/Services/ContentProvider.svc/RequestSubtitleDownload")
+
+
+class KtuvitHttpTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_headers_do_not_advertise_gzip_without_decoding(self):
+        provider = self.mod.KtuvitProvider()
+
+        self.assertNotIn("Accept-Encoding", provider._headers())
+
+    def test_store_response_cookies_preserves_duplicate_set_cookie_headers(self):
+        cookies = {}
+        response = self.mod.HttpResponse(
+            200,
+            b"",
+            [
+                ("Set-Cookie", "Login=login-token; path=/"),
+                ("Set-Cookie", "Session=session-token; path=/"),
+            ],
+        )
+
+        self.mod._store_response_cookies(cookies, response)
+
+        self.assertEqual(cookies["Login"], "login-token")
+        self.assertEqual(cookies["Session"], "session-token")
 
 
 if __name__ == "__main__":

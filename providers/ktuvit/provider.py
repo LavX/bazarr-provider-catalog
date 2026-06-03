@@ -29,7 +29,7 @@ class HttpResponse:
     def __init__(self, status, body, headers):
         self.status = int(status)
         self.body = body or b""
-        self.headers = dict(headers or {})
+        self.headers = headers or {}
 
 
 class KtuvitProvider:
@@ -216,7 +216,6 @@ class KtuvitProvider:
     def _headers(self):
         return {
             "Accept": "application/json, text/html;q=0.9, */*;q=0.8",
-            "Accept-Encoding": "gzip",
             "Accept-Language": "en-us,en;q=0.5",
             "Cache-Control": "no-cache",
             "Content-Type": "application/json",
@@ -242,9 +241,9 @@ def _http_request(method, url, headers, cookies, json_data=None, timeout=HTTP_TI
     request = urllib.request.Request(url, data=body, headers=request_headers, method=method)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            return HttpResponse(response.status, response.read(), dict(response.headers.items()))
+            return HttpResponse(response.status, response.read(), response.headers)
     except urllib.error.HTTPError as exc:
-        return HttpResponse(exc.code, exc.read(), dict(exc.headers.items()))
+        return HttpResponse(exc.code, exc.read(), exc.headers)
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Ktuvit request failed: {exc.reason}") from exc
 
@@ -314,6 +313,10 @@ def _candidate(item, video, is_movie):
     matches = []
     if is_movie:
         matches.append("title")
+        if item.get("year"):
+            matches.append("year")
+        if item.get("imdb_id"):
+            matches.append("imdb_id")
     else:
         matches.extend(["series", "season", "episode", "series_imdb_id"])
     release_group = _clean_key(video.get("release_group") or "")
@@ -331,6 +334,7 @@ def _candidate(item, video, is_movie):
         "score": score,
         "score_without_hash": score,
         "score_out_of": 100,
+        "hash_verifiable": False,
         "hearing_impaired_verifiable": False,
         "hearing_impaired": False,
         "page_link": item["page_url"],
@@ -424,13 +428,11 @@ def _parse_html(body):
 
 
 def _store_response_cookies(target, response):
-    header = _header(response.headers, "set-cookie")
-    if not header:
-        return
-    cookie = SimpleCookie()
-    cookie.load(header)
-    for key, morsel in cookie.items():
-        target[key] = morsel.value
+    for header in _header_values(response.headers, "set-cookie"):
+        cookie = SimpleCookie()
+        cookie.load(header)
+        for key, morsel in cookie.items():
+            target[key] = morsel.value
 
 
 def _requested_languages(languages):
@@ -463,11 +465,30 @@ def _int_or_none(value):
 
 
 def _header(headers, name):
+    values = _header_values(headers, name)
+    return values[-1] if values else ""
+
+
+def _header_values(headers, name):
     wanted = name.lower()
-    for key, value in (headers or {}).items():
+    if not headers:
+        return []
+    if hasattr(headers, "get_all"):
+        return [str(value) for value in (headers.get_all(name) or headers.get_all(wanted) or [])]
+    if isinstance(headers, dict):
+        values = []
+        for key, value in headers.items():
+            if str(key).lower() == wanted:
+                if isinstance(value, (list, tuple)):
+                    values.extend(str(item) for item in value)
+                else:
+                    values.append(str(value))
+        return values
+    values = []
+    for key, value in headers:
         if str(key).lower() == wanted:
-            return str(value)
-    return ""
+            values.append(str(value))
+    return values
 
 
 def _clean_key(value):

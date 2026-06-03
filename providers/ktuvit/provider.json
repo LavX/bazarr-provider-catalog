@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "0a5bf5a3ba9ce6bd61fce154a79aadb0893672b80d380549bef49dae52ee7f7c",
+  "bundle_sha256": "db26bec142128357344de576639a69ab610268f7cd24bba220f06187eac35703",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -32,7 +32,7 @@
   "entry_class": "KtuvitProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "1c4855968f07563127f6fddc777052acdfa02f84939c253845cfaf17ab0fa121"
+    "provider.py": "ef72cd0874817995a9396bf63b40cc9df1be028b68f7465b4d61321e92ce03ba"
   },
   "languages": [
     "heb"
@@ -57,5 +57,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.0"
+  "version": "0.1.1"
 }
