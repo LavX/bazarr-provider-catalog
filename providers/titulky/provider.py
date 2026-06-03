@@ -146,7 +146,7 @@ class TitulkyProvider:
             self._store_cookies(result.headers)
             return result
         with response:
-            result = HttpResponse(response.getcode(), response.read(), dict(response.headers.items()), response.geturl())
+            result = HttpResponse(response.getcode(), response.read(), response.headers, response.geturl())
             self._store_cookies(result.headers)
             return result
 
@@ -163,7 +163,7 @@ class TitulkyProvider:
             self._store_cookies(result.headers)
             return result
         with response:
-            result = HttpResponse(response.getcode(), response.read(), dict(response.headers.items()), response.geturl())
+            result = HttpResponse(response.getcode(), response.read(), response.headers, response.geturl())
             self._store_cookies(result.headers)
             return result
 
@@ -180,9 +180,7 @@ class TitulkyProvider:
         return headers
 
     def _store_cookies(self, headers):
-        for key, value in (headers or {}).items():
-            if key.lower() != "set-cookie":
-                continue
+        for value in _header_values(headers, "set-cookie"):
             cookie = value.split(";", 1)[0]
             if "=" not in cookie:
                 continue
@@ -431,8 +429,9 @@ def _framerate_equal(first, second):
         return True
     if first == second:
         return True
-    equivalent_fps = ({23.976, 23.98, 24.0},)
-    return any(first in values and second in values for values in equivalent_fps)
+    if 23.97 <= first <= 24.0 and 23.97 <= second <= 24.0:
+        return True
+    return False
 
 
 def _extract_rar_files(body):
@@ -551,11 +550,7 @@ def _direct_subtitle_format(body, payload):
 
 def _content_payload(content, subtitle_format):
     content = _fix_line_endings(content)
-    encoding = "utf-8"
-    try:
-        content.decode("utf-8")
-    except UnicodeDecodeError:
-        encoding = "latin-1"
+    encoding = _detect_encoding(content)
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
@@ -584,7 +579,7 @@ def _looks_like_html(body):
 
 
 def _http_error_response(error, url):
-    headers = dict(error.headers.items()) if getattr(error, "headers", None) else {}
+    headers = error.headers if getattr(error, "headers", None) else {}
     try:
         body = error.read()
     finally:
@@ -608,10 +603,40 @@ def _sleep(config):
 
 
 def _header(headers, name):
-    for key, value in (headers or {}).items():
-        if key.lower() == name.lower():
-            return value
-    return ""
+    values = _header_values(headers, name)
+    return values[-1] if values else ""
+
+
+def _header_values(headers, name):
+    wanted = name.lower()
+    if not headers:
+        return []
+    if hasattr(headers, "get_all"):
+        return [str(value) for value in (headers.get_all(name) or headers.get_all(wanted) or [])]
+    if isinstance(headers, dict):
+        values = []
+        for key, value in headers.items():
+            if str(key).lower() == wanted:
+                if isinstance(value, (list, tuple)):
+                    values.extend(str(item) for item in value)
+                else:
+                    values.append(str(value))
+        return values
+    values = []
+    for key, value in headers:
+        if str(key).lower() == wanted:
+            values.append(str(value))
+    return values
+
+
+def _detect_encoding(content):
+    for encoding in ("utf-8", "cp1250", "latin-1"):
+        try:
+            (content or b"").decode(encoding)
+            return encoding
+        except UnicodeDecodeError:
+            continue
+    return "latin-1"
 
 
 def _strip_tags(value):

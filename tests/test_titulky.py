@@ -160,7 +160,21 @@ class TitulkyProviderTests(unittest.TestCase):
 
     def test_legacy_fps_equivalents_match(self):
         self.assertTrue(self.mod._framerate_equal(23.976, 24.0))
+        self.assertTrue(self.mod._framerate_equal(23.978, 23.976))
         self.assertTrue(self.mod._framerate_equal(23.98, 24.0))
+
+    def test_store_cookies_preserves_duplicate_set_cookie_headers(self):
+        provider = self.mod.TitulkyProvider()
+
+        provider._store_cookies(
+            [
+                ("Set-Cookie", "sid=session-token; Path=/"),
+                ("Set-Cookie", "premium=premium-token; Path=/"),
+            ]
+        )
+
+        self.assertEqual(provider._cookies["sid"], "session-token")
+        self.assertEqual(provider._cookies["premium"], "premium-token")
 
     def test_download_extracts_zip_subtitle(self):
         provider = self.mod.TitulkyProvider()
@@ -194,6 +208,15 @@ class TitulkyProviderTests(unittest.TestCase):
         decoded = base64.b64decode(result["content_b64"])
         self.assertEqual(decoded, b"1\n00:00:01,000 --> 00:00:02,000\nCzech line\n")
         self.assertEqual(result["format"], "srt")
+
+    def test_extract_download_reports_cp1250_encoding(self):
+        body = "1\r\n00:00:01,000 --> 00:00:02,000\r\nŽluťoučký kůň\r\n".encode("cp1250")
+
+        result = self.mod.extract_download(body, {"filename": "titulky.101.cs.srt"})
+
+        decoded = base64.b64decode(result["content_b64"])
+        self.assertEqual(decoded, body.replace(b"\r\n", b"\n"))
+        self.assertEqual(result["encoding"], "cp1250")
 
     def test_single_file_archive_without_subtitle_reports_download_limit(self):
         body = _zip_body({"limit.txt": b"limit exceeded"})

@@ -57,7 +57,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`tvsubtitles`](providers/tvsubtitles/) | 0.1.1 | Scrapes [tvsubtitles.net](https://www.tvsubtitles.net) for episode subtitles in broad multilingual coverage. No login or API key. |
 | [`yifysubtitles`](providers/yifysubtitles/) | 0.1.1 | Scrapes [YIFYSubtitles](https://yifysubtitles.ch) for movie subtitles in broad multilingual coverage. No login or API key. |
 | [`smoke`](providers/smoke/) | 0.2.0 | Deterministic no-network fixture for install / worker sanity checks. Not a real subtitle source. |
-| [`titulky`](providers/titulky/) | 0.1.0 | Scrapes [Titulky.com](https://premium.titulky.com) for Czech and Slovak movie and episode subtitles. VIP login required. |
+| [`titulky`](providers/titulky/) | 0.1.1 | Scrapes [Titulky.com](https://premium.titulky.com) for Czech and Slovak movie and episode subtitles. VIP login required. |
 
 Every provider here ships independently of Bazarr+ releases. [Contribute](#contributing) your own.
 
