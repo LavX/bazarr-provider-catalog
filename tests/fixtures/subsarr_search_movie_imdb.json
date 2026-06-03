@@ -2,7 +2,7 @@
   "items": [
     {
       "id": "sub-1",
-      "language": "english",
+      "language": "English",
       "hi": false,
       "download_url": "https://subsarr.test/download/sub-1.srt",
       "title": "Dune: Part One",
@@ -11,7 +11,7 @@
     },
     {
       "id": "sub-2",
-      "language": "english",
+      "language": "English",
       "hi": true,
       "download_url": "https://subsarr.test/download/sub-2.srt",
       "title": "Dune: Part One",

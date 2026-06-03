@@ -45,7 +45,7 @@ class SubsarrProviderTests(unittest.TestCase):
                 {"base_url": "subsarr.local"},
             )
 
-    def test_search_movie_uses_imdb_year_and_language_slug(self):
+    def test_search_movie_uses_imdb_year_and_language_name(self):
         provider = self.mod.SubsarrProvider()
         calls = []
 
@@ -63,12 +63,14 @@ class SubsarrProviderTests(unittest.TestCase):
 
         params = _query(calls[0])
         self.assertEqual(calls[0].split("?")[0], "https://subsarr.test/api/v1/subtitles/search")
-        self.assertEqual(params["language"], "english")
+        self.assertEqual(params["language"], "English")
+        self.assertEqual(params["hi"], "false")
         self.assertEqual(params["imdb_id"], "tt1160419")
         self.assertEqual(params["year"], "2021")
         self.assertEqual(params["per_page"], "100")
         self.assertEqual([item["provider_payload"]["record_id"] for item in results], ["sub-1"])
         self.assertIn("title", results[0]["matches"])
+        self.assertEqual(results[0]["provider_payload"]["language_name"], "English")
 
     def test_search_falls_back_to_title_query_when_imdb_returns_empty(self):
         provider = self.mod.SubsarrProvider()
@@ -110,6 +112,7 @@ class SubsarrProviderTests(unittest.TestCase):
         self.assertEqual(first_params["season"], "1")
         self.assertEqual(first_params["episode"], "1")
         self.assertEqual(first_params["imdb_id"], "tt7366338")
+        self.assertEqual(first_params["hi"], "false")
         self.assertEqual(fallback_params["query"], "Chernobyl")
         self.assertIn("episode", results[0]["matches"])
 
@@ -125,6 +128,52 @@ class SubsarrProviderTests(unittest.TestCase):
 
         self.assertEqual([item["provider_payload"]["record_id"] for item in results], ["sub-2"])
         self.assertTrue(results[0]["language"]["hi"])
+
+    def test_search_sends_hi_filter_in_query(self):
+        provider = self.mod.SubsarrProvider()
+        calls = []
+
+        def stub(url, timeout=30, config=None):
+            del timeout, config
+            calls.append(url)
+            return MOVIE_IMDB
+
+        provider._http_get_json = stub
+        provider.search(
+            {"kind": "movie", "title": "Dune: Part One", "year": 2021, "imdb_id": "tt1160419"},
+            [{"alpha3": "eng", "alpha2": "en", "hi": True}],
+            {"base_url": "https://subsarr.test", "request_delay_ms": 0},
+        )
+
+        self.assertEqual(_query(calls[0])["hi"], "true")
+
+    def test_search_preserves_base_url_path_prefix_for_downloads(self):
+        provider = self.mod.SubsarrProvider()
+        response = {
+            "items": [
+                {
+                    "id": "sub-1",
+                    "language": "English",
+                    "hi": False,
+                    "download_url": "https://subsarr.test/api/v1/subtitles/sub-1/download",
+                    "title": "Dune: Part One",
+                    "releases": ["Dune.2021.1080p.WEBRip.x264-RARBG"],
+                    "filename": "Dune.2021.1080p.WEBRip.x264-RARBG.srt",
+                }
+            ]
+        }
+        provider._http_get_json = lambda url, timeout=30, config=None: response
+
+        results = provider.search(
+            {"kind": "movie", "title": "Dune: Part One", "year": 2021, "imdb_id": "tt1160419"},
+            [{"alpha3": "eng", "alpha2": "en", "hi": False}],
+            {"base_url": "https://subsarr.test/subsarr", "request_delay_ms": 0},
+        )
+
+        self.assertEqual(
+            results[0]["provider_payload"]["download_url"],
+            "https://subsarr.test/subsarr/api/v1/subtitles/sub-1/download",
+        )
 
     def test_search_maps_brazilian_portuguese_to_subsarr_slug(self):
         self.assertEqual(

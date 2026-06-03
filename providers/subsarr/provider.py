@@ -139,7 +139,7 @@ class SubsarrProvider:
         results = []
         seen = set()
         for requested_language in requested:
-            params = _base_search_params(video, requested_language["slug"])
+            params = _base_search_params(video, requested_language)
             items = []
             imdb_id = _imdb_id(video)
             if imdb_id:
@@ -161,7 +161,7 @@ class SubsarrProvider:
                     continue
                 if not _language_requested(row_language, requested_language, item):
                     continue
-                result = self._result(video, item, row_language)
+                result = self._result(video, item, row_language, base_url)
                 key = (result["provider_payload"]["record_id"], result["language"]["alpha3"], result["language"]["hi"])
                 if key in seen:
                     continue
@@ -214,7 +214,7 @@ class SubsarrProvider:
             raise last_error
         return b""
 
-    def _result(self, video, item, row_language):
+    def _result(self, video, item, row_language, base_url):
         alpha3, meta = row_language
         is_hi = bool(item.get("hi"))
         releases = item.get("releases") if isinstance(item.get("releases"), list) else []
@@ -223,6 +223,7 @@ class SubsarrProvider:
         matches = derive_matches(video, item.get("title"), release_info)
         score = 95 if "episode" in matches or "title" in matches else 80
         display_alpha3 = "por" if alpha3 == "por-BR" else alpha3
+        download_url = _download_url(base_url, item.get("download_url"))
         return {
             "provider": PROVIDER_ID,
             "id": f"subsarr-{item.get('id')}-{display_alpha3}-{'hi' if is_hi else 'normal'}",
@@ -241,7 +242,7 @@ class SubsarrProvider:
             "hash_verifiable": False,
             "hearing_impaired_verifiable": True,
             "hearing_impaired": is_hi,
-            "page_link": item.get("download_url"),
+            "page_link": download_url,
             "display": {
                 "source": "subsarr",
                 "title": item.get("title"),
@@ -251,10 +252,11 @@ class SubsarrProvider:
                 "provider": PROVIDER_ID,
                 "schema": 1,
                 "record_id": str(item.get("id")),
-                "download_url": item.get("download_url"),
+                "download_url": download_url,
                 "filename": filename,
                 "language": display_alpha3,
                 "language_slug": item.get("language"),
+                "language_name": _language_name(alpha3),
                 "hi": is_hi,
             },
         }
@@ -318,13 +320,23 @@ def _requested_languages(languages):
             continue
         seen.add(key)
         meta = dict(LANGUAGE_SLUGS[code])
-        meta.update({"alpha3": code, "hi": hi})
+        meta.update({"alpha3": code, "hi": hi, "name": _language_name(code)})
         requested.append(meta)
     return requested
 
 
 def _language_from_slug(slug):
-    return SLUG_TO_LANGUAGE.get(str(slug or ""))
+    value = str(slug or "").strip()
+    if not value:
+        return None
+    row = SLUG_TO_LANGUAGE.get(value.lower())
+    if row:
+        return row
+    normalized = value.casefold()
+    for code, meta in LANGUAGE_SLUGS.items():
+        if _language_name(code).casefold() == normalized:
+            return code, meta
+    return None
 
 
 def _language_requested(row_language, requested_language, item):
@@ -336,14 +348,38 @@ def _language_requested(row_language, requested_language, item):
     return bool(item.get("hi")) == bool(requested_language.get("hi"))
 
 
-def _base_search_params(video, slug):
-    params = {"language": slug, "per_page": 100}
+def _base_search_params(video, requested_language):
+    params = {
+        "language": requested_language["name"],
+        "hi": "true" if requested_language.get("hi") else "false",
+        "per_page": 100,
+    }
     if video.get("kind") == "episode":
         if video.get("season") is not None:
             params["season"] = video["season"]
         if video.get("episode") is not None:
             params["episode"] = video["episode"]
     return params
+
+
+def _download_url(base_url, download_url):
+    if not download_url:
+        return download_url
+    base = urllib.parse.urlparse(base_url)
+    parsed = urllib.parse.urlparse(str(download_url))
+    if not parsed.scheme:
+        return urllib.parse.urljoin(base_url.rstrip("/") + "/", str(download_url).lstrip("/"))
+    base_path = base.path.rstrip("/")
+    if not base_path or parsed.netloc != base.netloc or parsed.path.startswith(base_path + "/"):
+        return str(download_url)
+    return urllib.parse.urlunparse(parsed._replace(path=base_path + parsed.path))
+
+
+def _language_name(code):
+    if code == "por-BR":
+        return "Brazilian Portuguese"
+    slug = LANGUAGE_SLUGS.get(code, {}).get("slug", str(code or ""))
+    return slug.replace("-", " ").replace("_", " ").title()
 
 
 def _imdb_id(video):
