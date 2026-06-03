@@ -28,7 +28,7 @@ USER_AGENT = "BazarrProviderHub"
 HTTP_TIMEOUT_SECONDS = 15
 ALLOWED_EXTENSIONS = (".ass", ".srt", ".ssa", ".vtt", ".zip", ".rar")
 SUBTITLE_EXTENSIONS = (".ass", ".srt", ".ssa", ".vtt")
-BLOCKED_RE = re.compile(r"extra|commentary|lyrics|forced", re.I)
+BLOCKED_RE = re.compile(r"extra|commentary|lyrics", re.I)
 EPISODE_TAG_RE = re.compile(r"\bs\d{1,3}e(\d{1,3})\b", re.I)
 LOOSE_EPISODE_RE = re.compile(r"(?:^|[^a-z0-9])e(\d{1,3})(?:[^a-z0-9]|$)", re.I)
 
@@ -316,26 +316,46 @@ def hdbits_language_to_alpha3(code):
 
 
 def _requested_alpha3(languages):
-    requested = set()
+    return set(_requested_variant_map(languages))
+
+
+def _requested_variant_map(languages):
+    if isinstance(languages, dict):
+        return {str(key).lower(): set(value) for key, value in languages.items()}
+    requested = {}
     for language in languages or []:
-        if isinstance(language, dict):
-            alpha3 = language.get("alpha3")
-            alpha2 = language.get("alpha2")
-        else:
-            alpha3 = str(language)
-            alpha2 = None
+        alpha3 = _language_alpha3(language)
         if alpha3:
-            requested.add(str(alpha3).lower())
-        elif alpha2:
-            converted = ALPHA2_TO_ALPHA3.get(str(alpha2).lower())
-            if converted:
-                requested.add(converted)
+            forced = bool(language.get("forced")) if isinstance(language, dict) else False
+            hi = bool(language.get("hi")) if isinstance(language, dict) else False
+            requested.setdefault(alpha3, set()).add((hi, forced))
     return requested
+
+
+def _language_alpha3(language):
+    if isinstance(language, dict):
+        alpha3 = language.get("alpha3")
+        alpha2 = language.get("alpha2")
+    else:
+        alpha3 = str(language)
+        alpha2 = None
+    if alpha3:
+        return str(alpha3).lower()
+    if alpha2:
+        return ALPHA2_TO_ALPHA3.get(str(alpha2).lower())
+    return None
 
 
 def _is_allowed(row):
     text = f"{row.get('title') or ''} {row.get('filename') or ''}"
     return BLOCKED_RE.search(text) is None
+
+
+def _subtitle_flags(row):
+    tokens = set(_tokens(f"{row.get('title') or ''} {row.get('filename') or ''}"))
+    forced = "forced" in tokens
+    hearing_impaired = bool({"hi", "sdh"} & tokens) or {"hearing", "impaired"}.issubset(tokens)
+    return hearing_impaired, forced
 
 
 def _subtitle_extension(filename):
@@ -397,7 +417,7 @@ def derive_matches(video, release_info, base_matches=None):
 
 def parse_subtitles(rows, requested_alpha3, video, base_matches, episode=None):
     parsed = []
-    requested = {str(item).lower() for item in requested_alpha3 or []}
+    requested = _requested_variant_map(requested_alpha3)
     for row in rows or []:
         filename = str(row.get("filename") or "")
         if not filename.lower().endswith(ALLOWED_EXTENSIONS):
@@ -406,6 +426,9 @@ def parse_subtitles(rows, requested_alpha3, video, base_matches, episode=None):
             continue
         language = hdbits_language_to_alpha3(row.get("language"))
         if not language or language not in requested:
+            continue
+        hearing_impaired, forced = _subtitle_flags(row)
+        if (hearing_impaired, forced) not in requested[language]:
             continue
         if episode is not None:
             explicit_episodes = _episode_numbers(row.get("title") or filename)
@@ -424,6 +447,8 @@ def parse_subtitles(rows, requested_alpha3, video, base_matches, episode=None):
                 "release_info": release_info,
                 "filename": filename,
                 "matches": derive_matches(video, release_info, base_matches),
+                "hearing_impaired": hearing_impaired,
+                "forced": forced,
             }
         )
     return parsed
@@ -447,9 +472,19 @@ def _content_payload(content, subtitle_format, empty=False):
         "content_sha256": _hashlib.sha256(content).hexdigest(),
         "content_type": "application/x-subrip" if subtitle_format == "srt" else "text/plain",
         "format": subtitle_format,
-        "encoding": "utf-8",
+        "encoding": _detect_encoding(content),
         "empty": bool(empty),
     }
+
+
+def _detect_encoding(content):
+    for encoding in ("utf-8", "cp1250", "latin-1"):
+        try:
+            (content or b"").decode(encoding)
+            return encoding
+        except UnicodeDecodeError:
+            continue
+    return "latin-1"
 
 
 def _delay(config):
@@ -464,7 +499,7 @@ def _delay(config):
 class HDBitsProvider:
     def search(self, video, languages, config):
         username, passkey = _require_config(config)
-        requested = _requested_alpha3(languages)
+        requested = _requested_variant_map(languages)
         if not requested:
             return []
 
@@ -474,13 +509,13 @@ class HDBitsProvider:
 
         auth = {"username": username, "passkey": passkey}
         torrents = self._post_json(TORRENTS_URL, {**auth, **lookup})
-        torrent_ids = [item.get("id") for item in torrents.get("data", []) if item.get("id") is not None]
+        torrent_ids = [item.get("id") for item in _api_data(torrents, "HDBits torrent lookup") if item.get("id") is not None]
         results = []
         for torrent_id in torrent_ids:
             _delay(config)
             subtitles = self._post_json(SUBTITLES_URL, {**auth, "torrent_id": torrent_id})
             rows = parse_subtitles(
-                subtitles.get("data", []),
+                _api_data(subtitles, "HDBits subtitles lookup"),
                 requested_alpha3=requested,
                 video=video,
                 base_matches=base_matches,
@@ -499,6 +534,8 @@ class HDBitsProvider:
             raise ValueError("hdbits download requires subtitle_id")
         query = urllib.parse.urlencode({"id": subtitle_id, "passkey": passkey})
         body = self._http_get(f"{DOWNLOAD_URL}?{query}")
+        if not body:
+            raise RuntimeError("hdbits download returned an empty response")
         return extract_download(body, payload)
 
     def _result(self, video, row, torrent_id, episode):
@@ -512,8 +549,8 @@ class HDBitsProvider:
             "language": {
                 "alpha3": language,
                 "alpha2": alpha2,
-                "hi": False,
-                "forced": False,
+                "hi": row.get("hearing_impaired", False),
+                "forced": row.get("forced", False),
             },
             "release_info": row["release_info"],
             "filename": row["filename"],
@@ -523,7 +560,7 @@ class HDBitsProvider:
             "score_out_of": 100,
             "hash_verifiable": False,
             "hearing_impaired_verifiable": True,
-            "hearing_impaired": False,
+            "hearing_impaired": row.get("hearing_impaired", False),
             "page_link": "https://hdbits.org/",
             "display": {
                 "source": "hdbits",
@@ -539,6 +576,8 @@ class HDBitsProvider:
                 "season": (video or {}).get("season"),
                 "episode": episode,
                 "language": language,
+                "hi": row.get("hearing_impaired", False),
+                "forced": row.get("forced", False),
             },
         }
 
@@ -570,7 +609,7 @@ def extract_download(body, payload):
     payload = payload or {}
     filename = payload.get("filename") or ""
     if not body:
-        return _content_payload(b"", _format_from_filename(filename), empty=True)
+        raise RuntimeError("hdbits download returned an empty response")
     lowered = filename.lower()
     if lowered.endswith(".rar") or _is_rar_archive(body):
         files = _extract_rar_files(body)
@@ -598,19 +637,59 @@ def select_subtitle_file(names, payload):
     except (TypeError, ValueError):
         episode = None
     if episode is None:
-        return candidates[0]
+        return _best_language_candidate(candidates, payload)
 
     def score(name):
         normalized = _normalize(os.path.basename(name))
+        name_tokens = set(_tokens(name))
         if season is not None and re.search(rf"\bs0*{season}e0*{episode}\b", normalized):
-            return 100
-        if re.search(rf"\be0*{episode}\b", normalized):
-            return 90
-        if re.search(rf"(^|[^0-9])0*{episode}([^0-9]|$)", normalized):
-            return 80
-        return 0
+            value = 100
+        elif re.search(rf"\be0*{episode}\b", normalized):
+            value = 90
+        elif re.search(rf"(^|[^0-9])0*{episode}([^0-9]|$)", normalized):
+            value = 80
+        else:
+            value = 0
+        if _language_hints((payload or {}).get("language")) & name_tokens:
+            value += 20
+        return value
 
     return max(candidates, key=score)
+
+
+def _best_language_candidate(candidates, payload):
+    hints = _language_hints((payload or {}).get("language"))
+    if not hints:
+        return candidates[0]
+    for candidate in candidates:
+        if hints & set(_tokens(candidate)):
+            return candidate
+    return candidates[0]
+
+
+def _language_hints(language):
+    alpha3 = str(language or "").lower()
+    if not alpha3:
+        return set()
+    hints = {alpha3}
+    alpha2 = ALPHA3_TO_ALPHA2.get(alpha3)
+    if alpha2:
+        hints.add(alpha2)
+    hints.update(code for code, mapped in SPECIAL_HDBITS_LANGUAGE.items() if mapped == alpha3)
+    return hints
+
+
+def _api_data(payload, context):
+    if not isinstance(payload, dict):
+        raise ValueError(f"{context} did not return a JSON object")
+    if "data" in payload:
+        return payload.get("data") or []
+    message = payload.get("message") or payload.get("error") or payload.get("status_message")
+    status = payload.get("status")
+    if message or status not in (None, 0, 1, "0", "1", "ok", "success"):
+        detail = message or status or "missing data"
+        raise ValueError(f"{context} failed: {detail}")
+    return []
 
 
 def _is_rar_archive(body):

@@ -100,6 +100,53 @@ class HDBitsLanguageAndFilterTests(unittest.TestCase):
         self.assertEqual([row["subtitle_id"] for row in rows], [601, 603])
         self.assertEqual({row["language"] for row in rows}, {"eng", "ell"})
 
+    def test_parse_subtitles_preserves_forced_and_hi_variants(self):
+        rows = [
+            {
+                "filename": "Dune.2021.Forced.en.srt",
+                "id": 701,
+                "language": "uk",
+                "title": "Dune.2021.Forced",
+            },
+            {
+                "filename": "Dune.2021.SDH.en.srt",
+                "id": 702,
+                "language": "uk",
+                "title": "Dune.2021.SDH",
+            },
+            {
+                "filename": "Dune.2021.en.srt",
+                "id": 703,
+                "language": "uk",
+                "title": "Dune.2021",
+            },
+        ]
+
+        normal = self.mod.parse_subtitles(
+            rows,
+            requested_alpha3=[{"alpha3": "eng"}],
+            video=MOVIE_VIDEO,
+            base_matches=["imdb_id", "title", "year"],
+        )
+        forced = self.mod.parse_subtitles(
+            rows,
+            requested_alpha3=[{"alpha3": "eng", "forced": True}],
+            video=MOVIE_VIDEO,
+            base_matches=["imdb_id", "title", "year"],
+        )
+        hi = self.mod.parse_subtitles(
+            rows,
+            requested_alpha3=[{"alpha3": "eng", "hi": True}],
+            video=MOVIE_VIDEO,
+            base_matches=["imdb_id", "title", "year"],
+        )
+
+        self.assertEqual([row["subtitle_id"] for row in normal], [703])
+        self.assertEqual([row["subtitle_id"] for row in forced], [701])
+        self.assertTrue(forced[0]["forced"])
+        self.assertEqual([row["subtitle_id"] for row in hi], [702])
+        self.assertTrue(hi[0]["hearing_impaired"])
+
 
 class HDBitsSearchTests(unittest.TestCase):
     def setUp(self):
@@ -148,6 +195,17 @@ class HDBitsSearchTests(unittest.TestCase):
         self.assertIn("source", first["matches"])
         self.assertEqual(first["provider_payload"]["subtitle_id"], 501)
         self.assertNotIn("passkey", first["provider_payload"])
+
+    def test_search_surfaces_hdbits_api_errors(self):
+        provider = self.mod.HDBitsProvider()
+        provider._post_json = lambda url, payload, timeout=15: {"status": 5, "message": "bad passkey"}
+
+        with self.assertRaisesRegex(ValueError, "bad passkey"):
+            provider.search(
+                MOVIE_VIDEO,
+                [{"alpha3": "eng", "alpha2": "en"}],
+                {"username": "user", "passkey": "secret", "request_delay_ms": 0},
+            )
 
     def test_episode_search_filters_by_episode_and_tvdb_lookup(self):
         provider = self.mod.HDBitsProvider()
@@ -225,6 +283,51 @@ class HDBitsDownloadTests(unittest.TestCase):
         )
 
         self.assertEqual(base64.b64decode(result["content_b64"]), SRT_BODY)
+
+    def test_download_selects_archive_member_by_requested_language(self):
+        provider = self.mod.HDBitsProvider()
+        zip_body = _zip_body(
+            {
+                "Chernobyl.S01E01.en.srt": b"english",
+                "Chernobyl.S01E01.gr.srt": b"greek",
+            }
+        )
+        provider._http_get = lambda url, timeout=15: zip_body
+
+        result = provider.download(
+            {
+                "provider": "hdbits",
+                "schema": 1,
+                "subtitle_id": 603,
+                "filename": "Chernobyl.S01E01.zip",
+                "season": 1,
+                "episode": 1,
+                "language": "ell",
+            },
+            {"alpha3": "ell", "alpha2": "el"},
+            {"username": "user", "passkey": "secret"},
+        )
+
+        self.assertEqual(base64.b64decode(result["content_b64"]), b"greek")
+
+    def test_download_rejects_empty_response(self):
+        provider = self.mod.HDBitsProvider()
+        provider._http_get = lambda url, timeout=15: b""
+
+        with self.assertRaisesRegex(RuntimeError, "empty"):
+            provider.download(
+                {"provider": "hdbits", "schema": 1, "subtitle_id": 501, "filename": "movie.en.srt"},
+                {"alpha3": "eng", "alpha2": "en"},
+                {"username": "user", "passkey": "secret"},
+            )
+
+    def test_content_payload_reports_cp1250_encoding(self):
+        body = "Zażółć gęślą jaźń".encode("cp1250")
+
+        result = self.mod._content_payload(body, "srt")
+
+        self.assertEqual(base64.b64decode(result["content_b64"]), body)
+        self.assertEqual(result["encoding"], "cp1250")
 
     def test_download_extracts_matching_episode_from_rar(self):
         provider = self.mod.HDBitsProvider()
