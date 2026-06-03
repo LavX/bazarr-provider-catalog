@@ -99,6 +99,52 @@ class PipocasProviderTests(unittest.TestCase):
         self.assertIn("year", results[0]["matches"])
         self.assertIn("release_group", results[0]["matches"])
 
+    def test_language_mapping_honors_country_alpha2_for_brazilian_portuguese(self):
+        language = self.mod._language_for_request(
+            {"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR"}
+        )
+
+        self.assertEqual(language["site"], "brasileiro")
+        self.assertEqual(language["country"], "BR")
+
+    def test_search_applies_delay_before_each_detail_fetch(self):
+        provider = self.mod.PipocasProvider()
+        provider._ensure_authenticated = lambda config: None
+        sleeps = []
+        self.mod.time.sleep = sleeps.append
+
+        def get(url, headers=None, timeout=10, params=None):
+            del headers, timeout, params
+            if url.endswith("/legendas"):
+                return self.mod.HttpResponse(200, _fixture("pipocas_search_dune.html"), {})
+            if url.endswith("/legendas/info/501"):
+                return self.mod.HttpResponse(200, _fixture("pipocas_detail_dune.html"), {})
+            if url.endswith("/legendas/info/502"):
+                return self.mod.HttpResponse(200, _fixture("pipocas_detail_dune.html").replace(b"/501", b"/502"), {})
+            raise AssertionError(url)
+
+        provider._http_get = get
+        provider.search(
+            _video("pipocas_video_dune_2021.json"),
+            [{"alpha3": "por", "alpha2": "pt", "country": "BR"}],
+            {"username": "user", "password": "pass", "request_delay_ms": 123},
+        )
+
+        self.assertEqual(sleeps, [0.123, 0.123, 0.123])
+
+    def test_store_cookies_preserves_duplicate_set_cookie_headers(self):
+        provider = self.mod.PipocasProvider()
+
+        provider._store_cookies(
+            [
+                ("Set-Cookie", "session=abc; Path=/"),
+                ("Set-Cookie", "remember=def; Path=/"),
+            ]
+        )
+
+        self.assertEqual(provider._cookies["session"], "abc")
+        self.assertEqual(provider._cookies["remember"], "def")
+
     def test_episode_search_uses_episode_query_and_english_language(self):
         provider = self.mod.PipocasProvider()
 

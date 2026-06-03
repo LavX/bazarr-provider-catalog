@@ -106,6 +106,7 @@ class PipocasProvider:
             if _requires_account(response.body):
                 raise PermissionError("Pipocas login is required for search")
             for detail_url in parse_search_results(response.body):
+                _sleep(config)
                 detail = self._parse_detail_page(video, detail_url, language)
                 if not detail:
                     continue
@@ -209,7 +210,7 @@ class PipocasProvider:
         request = urllib.request.Request(url, headers=self._headers(headers))
         with urllib.request.urlopen(request, timeout=timeout) as response:
             body = response.read()
-            result = HttpResponse(response.getcode(), body, dict(response.headers.items()))
+            result = HttpResponse(response.getcode(), body, response.headers)
             self._store_cookies(result.headers)
             return result
 
@@ -220,7 +221,7 @@ class PipocasProvider:
         request = urllib.request.Request(url, data=encoded, headers=self._headers(merged_headers))
         with urllib.request.urlopen(request, timeout=timeout) as response:
             body = response.read()
-            result = HttpResponse(response.getcode(), body, dict(response.headers.items()))
+            result = HttpResponse(response.getcode(), body, response.headers)
             self._store_cookies(result.headers)
             return result
 
@@ -238,9 +239,7 @@ class PipocasProvider:
         return headers
 
     def _store_cookies(self, headers):
-        for key, value in (headers or {}).items():
-            if key.lower() != "set-cookie":
-                continue
+        for value in _header_values(headers, "set-cookie"):
             cookie = value.split(";", 1)[0]
             if "=" not in cookie:
                 continue
@@ -478,6 +477,8 @@ def _language_for_request(language):
         return None
     alpha3 = (language.get("alpha3") or "").strip()
     country = (language.get("country") or "").upper()
+    if not country and isinstance(language.get("country_alpha2"), str):
+        country = language["country_alpha2"].upper()
     if not country and isinstance(language.get("country_code"), str):
         country = language["country_code"].upper()
     if alpha3 == "por" and country == "BR":
@@ -518,6 +519,28 @@ def _require_credentials(config):
     password = config.get("password")
     if not username or not password:
         raise PermissionError("Pipocas username and password are required")
+
+
+def _header_values(headers, name):
+    wanted = name.lower()
+    if not headers:
+        return []
+    if hasattr(headers, "get_all"):
+        return [str(value) for value in (headers.get_all(name) or headers.get_all(wanted) or [])]
+    if isinstance(headers, dict):
+        values = []
+        for key, value in headers.items():
+            if str(key).lower() == wanted:
+                if isinstance(value, (list, tuple)):
+                    values.extend(str(item) for item in value)
+                else:
+                    values.append(str(value))
+        return values
+    values = []
+    for key, value in headers:
+        if str(key).lower() == wanted:
+            values.append(str(value))
+    return values
 
 
 def _raise_for_status(response, url):
