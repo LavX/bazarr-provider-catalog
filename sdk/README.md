@@ -125,6 +125,25 @@ python3 -m pip download cffi==1.17.1 --only-binary=:all: --no-deps \
 python3 -m pip hash dist/*.whl
 ```
 
+To do this across the whole catalog in one shot, run the maintained helper, which
+pulls the matrix wheel hashes (cp312/cp313/cp314 + abi3, manylinux x86_64 and
+aarch64, plus pure `py3-none-any`) straight from the PyPI JSON API and unions them
+into every `provider.json` (existing hashes are never dropped):
+
+```bash
+python3 scripts/expand_wheel_hashes.py
+python3 -B -m sdk build-catalog
+python3 -B -m sdk validate
+```
+
+`sdk validate` enforces this: a package known to ship ABI-specific wheels
+(`cffi`, `cryptography`, `aiohttp`, `charset-normalizer`, `yarl`, `multidict`,
+`frozenlist`, `propcache`, `brotli`, `psutil`, `pycryptodome`, ...) that pins only
+a single hash is rejected. Packages that publish no aarch64 wheel on PyPI (for
+example `py7zz`, which has no Linux aarch64 build at any version) are a known
+coverage gap, not a manifest error, and are exempted; providers that need archive
+extraction on aarch64 workers require a different dependency.
+
 ## Troubleshooting
 
 - `catalog.json is stale or invalid`: run `python3 -B -m sdk build-catalog`.
@@ -134,4 +153,5 @@ python3 -m pip hash dist/*.whl
 - `unexpected file`: provider bundles allow only `.py` and `provider.json`.
 - `dependency must be pinned`: use exact versions, not ranges or VCS URLs.
 - `dependency has invalid hash`: use `sha256:<hex>` wheel hashes.
+- `ships ABI-specific wheels but pins only N hash`: run `python3 scripts/expand_wheel_hashes.py` to add the full cp312/cp313/cp314 manylinux x86_64+aarch64 (or abi3) wheel hashes.
 - `missing provider class`: check `entry_module` and `entry_class`.
