@@ -164,12 +164,13 @@ class EmbeddedSubtitlesParserTests(unittest.TestCase):
         finally:
             self.mod.subprocess.run = original_run
 
-    def test_manifest_uses_installable_catalog_id_for_legacy_builtin(self):
+    def test_manifest_reuses_builtin_provider_id(self):
         manifest = json.loads((PROVIDER_DIR / "provider.json").read_text())
 
-        self.assertEqual(manifest["provider_id"], "embedded_subtitles")
-        self.assertEqual(manifest["legacy_provider_id"], "embeddedsubtitles")
-        self.assertNotEqual(manifest["provider_id"], manifest["legacy_provider_id"])
+        # The plugin replaces the built-in by reusing its id, so no legacy alias
+        # is needed and Bazarr's same-id registry overwrite takes effect.
+        self.assertEqual(manifest["provider_id"], "embeddedsubtitles")
+        self.assertNotIn("legacy_provider_id", manifest)
 
 
 class EmbeddedSubtitlesProviderSearchTests(unittest.TestCase):
@@ -247,7 +248,7 @@ class EmbeddedSubtitlesProviderDownloadTests(unittest.TestCase):
 
         result = provider.download(
             {
-                "provider": "embedded_subtitles",
+                "provider": "embeddedsubtitles",
                 "schema": 1,
                 "path": "/media/Example.Show.S01E02.mkv",
                 "stream_index": 2,
