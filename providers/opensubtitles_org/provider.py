@@ -19,8 +19,7 @@ try:
 except ImportError:  # pragma: no cover, dependency is declared in provider.json
     cloudscraper = None
 
-PROVIDER_ID = "opensubtitles_org"
-LEGACY_PROVIDER_ID = "opensubtitles"
+PROVIDER_ID = "opensubtitles"
 BASE_URL = "https://www.opensubtitles.org"
 DOWNLOAD_BASE_URL = "https://dl.opensubtitles.org"
 USER_AGENT = (
@@ -524,7 +523,7 @@ def _matches_for_video(
             matches.add("year")
 
     hashes = (video or {}).get("hashes") or {}
-    if subtitle_hash and subtitle_hash in {hashes.get(LEGACY_PROVIDER_ID), hashes.get(PROVIDER_ID)}:
+    if subtitle_hash and subtitle_hash == hashes.get(PROVIDER_ID):
         matches.add("hash")
 
     target_ids = [video.get("imdb_id")]
@@ -588,7 +587,6 @@ def _candidate(
         "score_out_of": 100,
         "provider_payload": {
             "provider": PROVIDER_ID,
-            "legacy_provider_id": LEGACY_PROVIDER_ID,
             "schema": 1,
             "mode": "native",
             "subtitle_id": subtitle_id,
@@ -600,7 +598,6 @@ def _candidate(
             "download_count": int(download_count or 0),
             "fps": fps,
             "matched_by": "imdbid",
-            "legacy_provider_id": LEGACY_PROVIDER_ID,
         },
     }
 

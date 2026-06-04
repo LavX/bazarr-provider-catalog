@@ -487,7 +487,7 @@ class NativeSearchTests(unittest.TestCase):
         self.assertEqual(calls[1], "https://www.opensubtitles.org/en/search/sublanguageid-eng/imdbid-1480055")
         self.assertEqual(len(results), 1)
         first = results[0]
-        self.assertEqual(first["provider"], "opensubtitles_org")
+        self.assertEqual(first["provider"], "opensubtitles")
         self.assertEqual(first["provider_payload"]["mode"], "native")
         self.assertEqual(first["provider_payload"]["subtitle_id"], "1952619105")
         self.assertEqual(first["provider_payload"]["download_url"], "https://www.opensubtitles.org/en/subtitles/1952619105/game-of-thrones-winter-is-coming-en")
@@ -702,7 +702,7 @@ class NativeSearchTests(unittest.TestCase):
 
         result = provider.download(
             {
-                "provider": "opensubtitles_org",
+                "provider": "opensubtitles",
                 "mode": "native",
                 "subtitle_id": "1952619105",
                 "download_url": "https://www.opensubtitles.org/en/subtitles/1952619105/game-of-thrones-winter-is-coming-en",

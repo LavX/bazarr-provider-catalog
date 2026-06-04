@@ -1,0 +1,7 @@
+{
+  "kind": "movie",
+  "title": "Example Movie",
+  "year": 2024,
+  "original_path": "/media/Example.Movie.2024.mkv",
+  "audio_languages": ["jpn"]
+}
