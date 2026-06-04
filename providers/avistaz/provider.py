@@ -342,7 +342,7 @@ def _requested_languages(languages):
         alpha3, country = _language_id(item)
         if not alpha3:
             continue
-        requested.add((alpha3, country, bool(item.get("hi"))))
+        requested.add((alpha3, country, bool(item.get("hi")), bool(item.get("forced"))))
     return requested
 
 
@@ -361,7 +361,8 @@ def _language_code_parts(value):
 
 
 def _language_matches(alpha3, country, hi, requested):
-    return (alpha3, country, hi) in requested or (alpha3, None, hi) in requested
+    forced = False
+    return (alpha3, country, hi, forced) in requested or (alpha3, None, hi, forced) in requested
 
 
 def _is_avistaz_url(url):
@@ -392,16 +393,17 @@ def _normalize_language_name(value):
 
 def _candidate(release, subtitle, alpha3, country, hi, video):
     download_url = subtitle["download_url"]
+    subtitle_id = _subtitle_id(download_url) or alpha3
     filename = subtitle.get("filename") or download_url.rstrip("/").split("/")[-1] or f"avistaz-{alpha3}.srt"
     if not _subtitle_extension(filename) and subtitle.get("extension"):
-        subtitle_id = _subtitle_id(download_url) or alpha3
         filename = f"avistaz-{subtitle_id}.{alpha3}.{subtitle['extension']}"
     release_info = release["title"]
     matches = _release_matches(release_info, video)
     score = _score(matches)
+    result_id = filename if _subtitle_extension(filename) else f"{subtitle_id}-{filename}"
     return {
         "provider": PROVIDER_ID,
-        "id": f"avistaz-{filename}-{alpha3}",
+        "id": f"avistaz-{result_id}-{alpha3}",
         "language": _language_payload(alpha3, country, hi),
         "release_info": release_info,
         "filename": filename,

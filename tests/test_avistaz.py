@@ -103,6 +103,48 @@ def _variant_release_page():
     """
 
 
+def _duplicate_language_release_page():
+    return b"""
+    <html>
+      <body>
+        <section id="content-area">
+          <div class="block">
+            <div class="table-responsive">
+              <table>
+                <tbody>
+                  <tr><td>Title</td><td>Decision to Leave 2022 1080p BluRay x264-GROUP</td></tr>
+                  <tr>
+                    <td>Subtitles</td>
+                    <td>
+                      <table>
+                        <thead>
+                          <tr><th>Language</th><th>Download</th><th>Uploader</th></tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td>English</td>
+                            <td><a href="/subtitles/12345/download">English ZIP</a></td>
+                            <td>alice</td>
+                          </tr>
+                          <tr>
+                            <td>English</td>
+                            <td><a href="/subtitles/23456/download">English ZIP</a></td>
+                            <td>bob</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </body>
+    </html>
+    """
+
+
 def _zip_body(name="Decision.to.Leave.2022.English.srt"):
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -232,6 +274,56 @@ class AvistazSearchTests(unittest.TestCase):
                 [{"alpha3": "eng"}],
                 {"cookies": "avistazx_session=expired"},
             )
+
+    def test_search_rejects_forced_language_requests(self):
+        provider = self.mod.AvistazProvider()
+
+        def get_bytes(url, headers, cookies, timeout=30, allow_redirects=True):
+            del headers, cookies, timeout, allow_redirects
+            if url.endswith("/rules"):
+                return self.mod.HttpResponse(200, b"<html>rules</html>", {})
+            return self.mod.HttpResponse(200, _release_page(), {})
+
+        provider._http_get = get_bytes
+        results = provider.search(
+            {
+                "kind": "movie",
+                "title": "Decision to Leave",
+                "year": 2022,
+                "info_url": "https://avistaz.to/torrent/123-decision-to-leave",
+            },
+            [{"alpha3": "eng", "forced": True}],
+            {"cookies": "avistazx_session=valid"},
+        )
+
+        self.assertEqual(results, [])
+
+    def test_search_gives_same_language_rows_distinct_ids(self):
+        provider = self.mod.AvistazProvider()
+
+        def get_bytes(url, headers, cookies, timeout=30, allow_redirects=True):
+            del headers, cookies, timeout, allow_redirects
+            if url.endswith("/rules"):
+                return self.mod.HttpResponse(200, b"<html>rules</html>", {})
+            return self.mod.HttpResponse(200, _duplicate_language_release_page(), {})
+
+        provider._http_get = get_bytes
+        results = provider.search(
+            {
+                "kind": "movie",
+                "title": "Decision to Leave",
+                "year": 2022,
+                "info_url": "https://avistaz.to/torrent/123-decision-to-leave",
+            },
+            [{"alpha3": "eng"}],
+            {"cookies": "avistazx_session=valid"},
+        )
+
+        self.assertEqual(len(results), 2)
+        ids = [item["id"] for item in results]
+        self.assertEqual(len(set(ids)), 2)
+        self.assertIn("12345", ids[0])
+        self.assertIn("23456", ids[1])
 
 
 class AvistazDownloadTests(unittest.TestCase):
