@@ -15,6 +15,7 @@ BASE_URL = "https://karagarga.in"
 FORUM_URL = "https://forum.karagarga.in"
 DEFAULT_USER_AGENT = "BazarrProviderHub/1.0"
 HTTP_TIMEOUT_SECONDS = 30
+_DEFAULT_AUTH_KEY = "880ea6a14ea49e853634fbdc5015a024"
 
 
 class HttpResponse:
@@ -33,7 +34,7 @@ class KaragargaProvider:
         video = video or {}
         if video.get("kind") != "movie":
             return []
-        if "eng" not in _requested_languages(languages):
+        if not _wants_plain_english(languages):
             return []
         config = dict(config or {})
         cookies = self._ensure_authenticated(config)
@@ -43,8 +44,11 @@ class KaragargaProvider:
             cookies,
             timeout=HTTP_TIMEOUT_SECONDS,
             params={"search": video.get("title") or "", "status": "completed"},
+            allow_redirects=False,
         )
         _raise_for_status(response, "Karagarga movie search")
+        if _looks_like_login_html(response):
+            raise PermissionError("Karagarga request redirected to login")
         subtitles = []
         scans = 0
         for forum_url in parse_search_page(response.body, video.get("year")):
@@ -75,8 +79,12 @@ class KaragargaProvider:
         return _content_payload(body, _format_from_filename(payload.get("filename") or page_url))
 
     def _parse_forum(self, forum_url, cookies):
-        response = self._http_get(forum_url, self._headers(), cookies, timeout=HTTP_TIMEOUT_SECONDS)
+        response = self._http_get(
+            forum_url, self._headers(), cookies, timeout=HTTP_TIMEOUT_SECONDS, allow_redirects=False
+        )
         _raise_for_status(response, "Karagarga forum scan")
+        if _looks_like_login_html(response):
+            raise PermissionError("Karagarga request redirected to login")
         return parse_forum_page(response.body)
 
     def _ensure_authenticated(self, config):
@@ -100,10 +108,11 @@ class KaragargaProvider:
             raise PermissionError("Karagarga tracker username or password is invalid")
         forum_username = str(config.get("f_username") or username).strip()
         forum_password = str(config.get("f_password") or password)
+        auth_key = self._forum_auth_key()
         forum_response = self._http_post(
             f"{FORUM_URL}/index.php",
             {
-                "auth_key": "880ea6a14ea49e853634fbdc5015a024",
+                "auth_key": auth_key,
                 "referer": f"{FORUM_URL}/",
                 "ips_username": forum_username,
                 "ips_password": forum_password,
@@ -127,6 +136,19 @@ class KaragargaProvider:
             raise PermissionError("Karagarga forum username or password is invalid")
         self._authenticated = True
         return dict(self._cookies)
+
+    def _forum_auth_key(self):
+        response = self._http_get(
+            f"{FORUM_URL}/index.php",
+            self._headers(),
+            dict(self._cookies),
+            timeout=HTTP_TIMEOUT_SECONDS,
+            allow_redirects=False,
+            params={"app": "core", "module": "global", "section": "login"},
+        )
+        _raise_for_login_status(response, "Karagarga forum login page")
+        _store_response_cookies(self._cookies, response)
+        return _parse_auth_key(response.body) or _DEFAULT_AUTH_KEY
 
     def _headers(self):
         return {
@@ -243,6 +265,16 @@ def parse_search_page(body, year):
     return forum_urls
 
 
+def _parse_auth_key(body):
+    root = _parse_html(body)
+    for node in root.descendants("input"):
+        if node.attrs.get("name") == "auth_key":
+            value = node.attrs.get("value")
+            if value:
+                return value
+    return ""
+
+
 def parse_forum_page(body):
     root = _parse_html(body)
     subtitles = []
@@ -262,17 +294,22 @@ def parse_forum_page(body):
             item = potential.first_link_with_strong()
             if item is None:
                 continue
-            url = item.attrs.get("href")
-            if not url or url in seen:
+            href = item.attrs.get("href")
+            if not href:
+                continue
+            url = urllib.parse.urljoin(f"{FORUM_URL}/", href)
+            if url in seen:
                 continue
             strong = item.first_descendant("strong")
             release_info = strong.text() if strong is not None else ""
             if not release_info:
                 continue
             seen.add(url)
+            attachment_format = _attachment_format(item.text(), href)
             subtitles.append(
                 {
                     "page_url": url,
+                    "attachment_format": attachment_format,
                     "release_info": release_info,
                     "downloads": download_count,
                     "language": {"alpha3": "eng", "hi": False, "forced": False},
@@ -281,13 +318,22 @@ def parse_forum_page(body):
     return subtitles
 
 
+def _attachment_format(text, href):
+    for source in (text, href):
+        match = re.search(r"\.(srt|ass|ssa|vtt|sub)\b", str(source or ""), re.IGNORECASE)
+        if match:
+            return match.group(1).lower()
+    return "srt"
+
+
 def _candidate(item, video):
     matches = ["title", "year"]
     release_group = _clean_key(video.get("release_group") or "")
     if release_group and release_group in _clean_key(item.get("release_info") or ""):
         matches.append("release_group")
     score = min(100, 25 * len(matches))
-    filename = _clean_filename(item["release_info"]) + ".srt"
+    attachment_format = item.get("attachment_format") or "srt"
+    filename = _clean_filename(item["release_info"]) + "." + attachment_format
     return {
         "provider": PROVIDER_ID,
         "id": item["page_url"],
@@ -439,10 +485,16 @@ def _header_values(headers, name):
     return [value] if value else []
 
 
+_LOGIN_MARKERS = (
+    "section=login",
+    "takelogin.php",
+    "ips_username",
+)
+
+
 def _looks_like_login_html(response):
-    content_type = _header(response.headers, "content-type").lower()
-    sample = (response.body or b"").lstrip()[:2048].decode("utf-8", errors="ignore").lower()
-    return "text/html" in content_type or sample.startswith("<!doctype html") or sample.startswith("<html")
+    sample = (response.body or b"").decode("utf-8", errors="ignore").lower()
+    return any(marker in sample for marker in _LOGIN_MARKERS)
 
 
 def _split_set_cookie(header):
@@ -452,6 +504,17 @@ def _split_set_cookie(header):
 
 def _requested_languages(languages):
     return {str(item.get("alpha3")) for item in languages or [] if isinstance(item, dict) and item.get("alpha3")}
+
+
+def _wants_plain_english(languages):
+    for item in languages or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("alpha3")) != "eng":
+            continue
+        if not item.get("hi") and not item.get("forced"):
+            return True
+    return False
 
 
 def _header(headers, name):

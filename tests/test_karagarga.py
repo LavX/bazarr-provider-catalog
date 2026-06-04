@@ -111,6 +111,7 @@ class KaragargaSearchTests(unittest.TestCase):
             if url == "https://forum.karagarga.in/index.php":
                 self.assertEqual(data["ips_username"], "forum-user")
                 self.assertEqual(data["ips_password"], "forum-pass")
+                self.assertEqual(data["auth_key"], "session-key")
                 self.assertEqual(params["do"], "process")
                 return self.mod.HttpResponse(
                     200,
@@ -122,6 +123,13 @@ class KaragargaSearchTests(unittest.TestCase):
         def get_response(url, headers, cookies, timeout=30, params=None, allow_redirects=True):
             del headers, timeout, allow_redirects
             calls.append(("GET", url, cookies, params))
+            if url == "https://forum.karagarga.in/index.php" and (params or {}).get("section") == "login":
+                self.assertNotIn("do", params)
+                return self.mod.HttpResponse(
+                    200,
+                    b"<html><form><input type='hidden' name='auth_key' value='session-key'></form></html>",
+                    {},
+                )
             if url == "https://karagarga.in/pots.php":
                 self.assertEqual(params, {"search": "Dune", "status": "completed"})
                 self.assertEqual(cookies["pass"], "tracker-pass")
@@ -179,7 +187,17 @@ class KaragargaSearchTests(unittest.TestCase):
                 )
             raise AssertionError(url)
 
+        def get_response(url, headers, cookies, timeout=30, params=None, allow_redirects=True):
+            del headers, cookies, timeout, params, allow_redirects
+            self.assertEqual(url, "https://forum.karagarga.in/index.php")
+            return self.mod.HttpResponse(
+                200,
+                b"<form><input name='auth_key' value='session-key'></form>",
+                {},
+            )
+
         provider._http_post = post_response
+        provider._http_get = get_response
         cookies = provider._ensure_authenticated({"username": "main-user", "password": "main-pass"})
 
         self.assertEqual(cookies["pass"], "tracker-pass")
@@ -215,7 +233,13 @@ class KaragargaDownloadTests(unittest.TestCase):
         )
 
         def get_response(url, headers, cookies, timeout=30, params=None, allow_redirects=True):
-            del headers, timeout, params
+            del headers, timeout
+            if url == "https://forum.karagarga.in/index.php" and (params or {}).get("section") == "login":
+                return self.mod.HttpResponse(
+                    200,
+                    b"<form><input name='auth_key' value='session-key'></form>",
+                    {},
+                )
             calls.append((url, cookies, allow_redirects))
             return self.mod.HttpResponse(
                 200,
@@ -283,6 +307,163 @@ class KaragargaCookieTests(unittest.TestCase):
         self.mod._store_response_cookies(target, response)
 
         self.assertEqual(target, {"session_id": "forum-session", "pass_hash": "forum-pass-hash"})
+
+
+class KaragargaForumAuthKeyTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_forum_login_uses_scraped_auth_key_from_login_page(self):
+        provider = self.mod.KaragargaProvider()
+        order = []
+
+        def post_response(url, data, headers, cookies, timeout=30, params=None, allow_redirects=True):
+            del headers, timeout, params, allow_redirects
+            order.append(("POST", url))
+            if url == "https://karagarga.in/takelogin.php":
+                return self.mod.HttpResponse(200, b"ok", {"set-cookie": "pass=tracker-pass; path=/"})
+            if url == "https://forum.karagarga.in/index.php":
+                # Without scraping the per-session key this would still be the hardcoded default.
+                self.assertEqual(data["auth_key"], "fresh-session-key")
+                return self.mod.HttpResponse(
+                    200,
+                    b"ok",
+                    {"set-cookie": "session_id=s; path=/, pass_hash=h; path=/"},
+                )
+            raise AssertionError(url)
+
+        def get_response(url, headers, cookies, timeout=30, params=None, allow_redirects=True):
+            del headers, cookies, timeout, allow_redirects
+            order.append(("GET", url))
+            self.assertEqual(url, "https://forum.karagarga.in/index.php")
+            self.assertEqual(params.get("section"), "login")
+            self.assertNotIn("do", params)
+            return self.mod.HttpResponse(
+                200,
+                b"<form><input type='hidden' name='auth_key' value='fresh-session-key'></form>",
+                {},
+            )
+
+        provider._http_post = post_response
+        provider._http_get = get_response
+        provider._ensure_authenticated({"username": "u", "password": "p"})
+
+        # The login page must be fetched before the forum credentials are posted.
+        self.assertEqual(
+            order,
+            [
+                ("POST", "https://karagarga.in/takelogin.php"),
+                ("GET", "https://forum.karagarga.in/index.php"),
+                ("POST", "https://forum.karagarga.in/index.php"),
+            ],
+        )
+
+    def test_parse_auth_key_reads_hidden_input(self):
+        body = b"<form><input type='hidden' name='auth_key' value='abc123'></form>"
+        self.assertEqual(self.mod._parse_auth_key(body), "abc123")
+        self.assertEqual(self.mod._parse_auth_key(b"<form></form>"), "")
+
+
+class KaragargaForumParsingTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_relative_attachment_urls_are_resolved_against_forum(self):
+        body = b"""
+        <div class="post entry-content">
+          <p>
+            <span class="desc lighter">5 downloads</span>
+            <a href="index.php?app=core&module=attach&attach_id=42"><strong>Dune.2021.BluRay-GROUP.srt</strong></a>
+          </p>
+        </div>
+        """
+
+        subtitles = self.mod.parse_forum_page(body)
+
+        self.assertEqual(len(subtitles), 1)
+        self.assertEqual(
+            subtitles[0]["page_url"],
+            "https://forum.karagarga.in/index.php?app=core&module=attach&attach_id=42",
+        )
+
+    def test_non_srt_attachment_format_is_preserved(self):
+        body = b"""
+        <div class="post entry-content">
+          <p>
+            <span class="desc lighter">8 downloads</span>
+            <a href="index.php?app=core&module=attach&attach_id=7"><strong>Dune.2021.BluRay-GROUP.ass</strong></a>
+          </p>
+        </div>
+        """
+
+        subtitles = self.mod.parse_forum_page(body)
+        candidate = self.mod._candidate(subtitles[0], {"title": "Dune", "year": 2021})
+
+        self.assertEqual(subtitles[0]["attachment_format"], "ass")
+        self.assertTrue(candidate["filename"].endswith(".ass"))
+        self.assertEqual(self.mod._format_from_filename(candidate["filename"]), "ass")
+
+
+class KaragargaProtectedGetTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_search_raises_when_protected_get_returns_login_page(self):
+        provider = self.mod.KaragargaProvider()
+        provider._authenticated = True
+        provider._cookies = {"pass": "p", "session_id": "s", "pass_hash": "h"}
+
+        def get_response(url, headers, cookies, timeout=30, params=None, allow_redirects=True):
+            del headers, cookies, timeout, params
+            self.assertFalse(allow_redirects)
+            return self.mod.HttpResponse(
+                200,
+                b"<html><form action='index.php?app=core&module=global&section=login'>sign in</form></html>",
+                {"content-type": "text/html"},
+            )
+
+        provider._http_get = get_response
+
+        with self.assertRaises(PermissionError):
+            provider.search(
+                {"kind": "movie", "title": "Dune", "year": 2021},
+                [{"alpha3": "eng"}],
+                {"username": "u", "password": "p"},
+            )
+
+
+class KaragargaLanguageFilterTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_hi_or_forced_only_english_request_is_rejected(self):
+        provider = self.mod.KaragargaProvider()
+
+        def fail(*args, **kwargs):
+            raise AssertionError("should not authenticate or fetch for unsupported variants")
+
+        provider._http_post = fail
+        provider._http_get = fail
+        config = {"username": "u", "password": "p"}
+
+        self.assertEqual(
+            provider.search({"kind": "movie", "title": "Dune"}, [{"alpha3": "eng", "hi": True}], config),
+            [],
+        )
+        self.assertEqual(
+            provider.search({"kind": "movie", "title": "Dune"}, [{"alpha3": "eng", "forced": True}], config),
+            [],
+        )
+
+    def test_wants_plain_english_helper(self):
+        self.assertTrue(self.mod._wants_plain_english([{"alpha3": "eng"}]))
+        self.assertTrue(self.mod._wants_plain_english([{"alpha3": "eng", "hi": False, "forced": False}]))
+        self.assertTrue(
+            self.mod._wants_plain_english([{"alpha3": "eng", "hi": True}, {"alpha3": "eng"}])
+        )
+        self.assertFalse(self.mod._wants_plain_english([{"alpha3": "eng", "hi": True}]))
+        self.assertFalse(self.mod._wants_plain_english([{"alpha3": "eng", "forced": True}]))
+        self.assertFalse(self.mod._wants_plain_english([{"alpha3": "fra"}]))
 
 
 if __name__ == "__main__":
