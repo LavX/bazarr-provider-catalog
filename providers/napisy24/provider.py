@@ -327,7 +327,15 @@ def _content_payload(content, subtitle_format, empty=False):
     try:
         content.decode("utf-8")
     except UnicodeDecodeError:
-        encoding = "latin-1"
+        # Napisy24 only serves Polish subtitles; legacy archives are Windows-1250.
+        # Prefer cp1250 so downstream consumers honoring the encoding avoid mojibake,
+        # falling back to latin-1 only for byte sequences cp1250 cannot decode.
+        try:
+            content.decode("cp1250")
+        except UnicodeDecodeError:
+            encoding = "latin-1"
+        else:
+            encoding = "cp1250"
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),

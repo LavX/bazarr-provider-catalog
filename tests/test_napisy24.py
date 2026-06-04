@@ -272,6 +272,27 @@ class Napisy24ProviderTests(unittest.TestCase):
         self.assertEqual(result["format"], "txt")
         self.assertIn(b"Linia", base64.b64decode(result["content_b64"]))
 
+    def test_content_payload_prefers_cp1250_for_legacy_polish_subtitles(self):
+        polish = "1\n00:00:01,000 --> 00:00:02,000\nZabażółć gęślą jaźń\n".encode("cp1250")
+        # The Polish diacritics are valid cp1250 but invalid UTF-8.
+        with self.assertRaises(UnicodeDecodeError):
+            polish.decode("utf-8")
+
+        payload = self.mod._content_payload(polish, "srt")
+
+        self.assertEqual(payload["encoding"], "cp1250")
+        self.assertEqual(base64.b64decode(payload["content_b64"]), polish)
+
+    def test_content_payload_falls_back_to_latin1_for_non_cp1250_bytes(self):
+        # 0x81 is undefined in cp1250, so the fallback must drop to latin-1.
+        content = b"1\n00:00:01,000 --> 00:00:02,000\n\x81 line\n"
+        with self.assertRaises(UnicodeDecodeError):
+            content.decode("cp1250")
+
+        payload = self.mod._content_payload(content, "srt")
+
+        self.assertEqual(payload["encoding"], "latin-1")
+
 
 if __name__ == "__main__":
     unittest.main()
