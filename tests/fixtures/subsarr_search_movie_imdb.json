@@ -1,0 +1,22 @@
+{
+  "items": [
+    {
+      "id": "sub-1",
+      "language": "English",
+      "hi": false,
+      "download_url": "https://subsarr.test/download/sub-1.srt",
+      "title": "Dune: Part One",
+      "releases": ["Dune.2021.1080p.WEBRip.x264-RARBG"],
+      "filename": "Dune.2021.1080p.WEBRip.x264-RARBG.srt"
+    },
+    {
+      "id": "sub-2",
+      "language": "English",
+      "hi": true,
+      "download_url": "https://subsarr.test/download/sub-2.srt",
+      "title": "Dune: Part One",
+      "releases": ["Dune.2021.1080p.WEBRip.x264-RARBG.HI"],
+      "filename": "Dune.2021.1080p.WEBRip.x264-RARBG.HI.srt"
+    }
+  ]
+}
