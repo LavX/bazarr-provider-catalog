@@ -32,6 +32,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`isubtitles`](providers/isubtitles/) | 0.1.1 | Scrapes [iSubtitles.org](https://isubtitles.org) for movie and episode subtitles in broad multilingual coverage. No login or API key. |
 | [`jimaku`](providers/jimaku/) | 0.1.0 | Uses the [Jimaku](https://jimaku.cc) API for Japanese movie and episode subtitles. Requires API key. |
 | [`kitsunekko`](providers/kitsunekko/) | 0.1.0 | Scrapes [Kitsunekko](https://kitsunekko.net) for anime subtitle directories and ZIP packs. No login or API key. |
+| [`ktuvit`](providers/ktuvit/) | 0.1.1 | Uses [Ktuvit.me](https://www.ktuvit.me) services for Hebrew movie and episode subtitles. Requires email and hashed password. |
 | [`legendasnet`](providers/legendasnet/) | 0.1.0 | Uses the [Legendas.net](https://legendas.net) API for Brazilian Portuguese movie and episode subtitles. Requires username and password. |
 | [`moviesubtitles`](providers/moviesubtitles/) | 0.1.0 | Scrapes [Moviesubtitles.org](https://www.moviesubtitles.org) for movie subtitles, including multipart archives. No login or API key. |
 | [`napisy24`](providers/napisy24/) | 0.1.2 | Uses the [Napisy24](https://napisy24.pl) hash API for Polish movie and episode subtitles. Optional username and password. |
@@ -39,8 +40,10 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`napiprojekt`](providers/napiprojekt/) | 0.1.3 | Searches [NapiProjekt](https://www.napiprojekt.pl) for Polish subtitles using hash lookup and catalog scraping with optional author filters. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback. |
 | [`nekur`](providers/nekur/) | 0.1.1 | Scrapes [Nekur](https://subtitri.nekur.net) for Latvian movie subtitles. No login or API key. |
 | [`opensubtitles`](providers/opensubtitles_org/) | 0.1.3 | Scrapes OpenSubtitles.org natively with ai-cloudscraper, inline Anubis solving, and optional FlareSolverr fallback for Cloudflare challenges. |
+| [`opensubtitlescom`](providers/opensubtitlescom/) | 0.1.2 | Uses the official [OpenSubtitles.com](https://www.opensubtitles.com) API for movie and episode subtitles. Requires username, password, and API key. |
 | [`prijevodionline`](providers/prijevodionline/) | 0.1.1 | Scrapes [Prijevodi-Online](https://www.prijevodi-online.org) for Croatian, Serbian, Montenegrin, and Serbo-Croatian episode subtitles. No login or API key. |
 | [`regielive`](providers/regielive/) | 0.1.1 | Uses the RegieLive Bazarr API for Romanian movie and episode subtitles, with public HTML search fallback when the API rejects a request. No login or user API key. |
+| [`shooter`](providers/shooter/) | 0.1.2 | Queries [Shooter.cn](https://www.shooter.cn) hash-based subtitle API for English and Chinese movie and episode subtitles. No login or API key. |
 | [`soustitreseu`](providers/soustitreseu/) | 0.1.2 | Scrapes [Sous-Titres.eu](https://www.sous-titres.eu) for French and English movie and episode subtitles. No login or API key. |
 | [`subcentral`](providers/subcentral/) | 0.1.0 | Scrapes [SubCentral.de](https://www.subcentral.de) forum subtitle threads for German and English episode releases. No login or API key. |
 | [`subclub`](providers/subclub/) | 0.1.0 | Scrapes [Subclub.eu](https://www.subclub.eu) for Estonian movie and episode subtitles. No login or API key. |
@@ -63,10 +66,13 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`subsunacs`](providers/subsunacs/) | 0.1.1 | Scrapes [subsunacs.net](https://subsunacs.net) for Bulgarian and English movie and episode subtitles. Direct entry pages plus ZIP, RAR, and 7Z downloads are supported. |
 | [`subx`](providers/subx/) | 0.1.0 | Uses the [SubX](https://subx-api.duckdns.org/docs/getting-started/quickstart/) API for Spanish movie and episode subtitles. Requires an API key. ZIP and RAR downloads are supported. |
 | [`subtitlecat`](providers/subtitlecat/) | 0.1.5 | Scrapes [subtitlecat.com](https://www.subtitlecat.com) (no login, no API key). Worked example for the [scraper authoring guide](docs/writing-a-scraper-provider.md). |
+| [`yavkanet`](providers/yavkanet/) | 0.1.4 | Scrapes [Yavka.net](https://yavka.net) for Bulgarian, English, Russian, Spanish, and Italian subtitles by IMDb id. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback. |
 | [`supersubtitles`](providers/supersubtitles/) | 0.1.1 | Scrapes [feliratok.eu](https://feliratok.eu) for Hungarian and English movie and episode subtitles. No login or API key. |
 | [`titrari`](providers/titrari/) | 0.1.1 | Scrapes [Titrari.ro](https://www.titrari.ro) for Romanian and English movie and episode subtitles. No login or API key. |
 | [`titlovi`](providers/titlovi/) | 0.1.1 | Uses the [Titlovi](https://kodi.titlovi.com/api/subtitles) Kodi API for movie and episode subtitles. Login required. |
+| [`turkcealtyaziorg`](providers/turkcealtyaziorg/) | 0.1.4 | Scrapes [TurkceAltyazi.org](https://turkcealtyazi.org) by IMDb id for Turkish and English movie and episode subtitles. Uses ai-cloudscraper by default with inline Anubis solving and optional FlareSolverr fallback for Cloudflare challenges. |
 | [`tvsubtitles`](providers/tvsubtitles/) | 0.1.1 | Scrapes [tvsubtitles.net](https://www.tvsubtitles.net) for episode subtitles in broad multilingual coverage. No login or API key. |
+| [`wizdom`](providers/wizdom/) | 0.1.3 | Uses [wizdom.xyz](https://wizdom.xyz) for Hebrew movie and episode subtitles, with TMDB lookup when an IMDb id is not supplied. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback for Cloudflare browser challenges. |
 | [`whisperai`](providers/whisperai/) | 0.1.1 | Generates subtitles through a user-supplied Whisper web service by extracting local audio with ffmpeg. Requires endpoint configuration. |
 | [`yifysubtitles`](providers/yifysubtitles/) | 0.1.1 | Scrapes [YIFYSubtitles](https://yifysubtitles.ch) for movie subtitles in broad multilingual coverage. No login or API key. |
 | [`zimuku`](providers/zimuku/) | 0.1.3 | Scrapes [Zimuku / srtku.com](https://srtku.com) for Chinese and English movie and episode subtitles. Includes native Yunsuo image verification with optional helper fallback. |
@@ -105,6 +111,7 @@ Every provider here ships independently of Bazarr+ releases. [Contribute](#contr
 - `providers/isubtitles/`: scrapes iSubtitles movie and episode subtitle pages.
 - `providers/jimaku/`: uses the Jimaku API for Japanese movie and episode subtitles.
 - `providers/kitsunekko/`: scrapes Kitsunekko anime subtitle directories and ZIP packs.
+- `providers/ktuvit/`: uses Ktuvit.me services for Hebrew movie and episode subtitles.
 - `providers/legendasnet/`: uses the Legendas.net API for Brazilian Portuguese movie and episode subtitles.
 - `providers/moviesubtitles/`: scrapes Moviesubtitles.org movie subtitle listings and multipart downloads.
 - `providers/napisy24/`: uses the Napisy24 hash API for Polish movie and episode subtitles.
@@ -112,8 +119,10 @@ Every provider here ships independently of Bazarr+ releases. [Contribute](#contr
 - `providers/napiprojekt/`: searches NapiProjekt Polish subtitles by hash and catalog pages, with ai-cloudscraper, inline Anubis solving, and optional FlareSolverr fallback for catalog Cloudflare challenges.
 - `providers/nekur/`: scrapes Nekur Latvian movie subtitle listings and archive downloads.
 - `providers/opensubtitles_org/`: scrapes OpenSubtitles.org natively with ai-cloudscraper, inline Anubis solving, and optional FlareSolverr fallback.
+- `providers/opensubtitlescom/`: uses the official OpenSubtitles.com API for movie and episode subtitles.
 - `providers/prijevodionline/`: scrapes Prijevodi-Online episode subtitle listings and archive downloads.
 - `providers/regielive/`: uses the RegieLive Bazarr API for Romanian movie and episode subtitles, with public HTML search fallback when the API rejects a request.
+- `providers/shooter/`: queries Shooter.cn's hash-based API for English and Chinese movie and episode subtitles.
 - `providers/smoke/`: deterministic no-network smoke provider for install and worker checks.
 - `providers/soustitreseu/`: scrapes Sous-Titres.eu movie and episode subtitle listings and archive downloads.
 - `providers/subcentral/`: scrapes SubCentral.de forum threads for German and English episode subtitles.
@@ -137,10 +146,13 @@ Every provider here ships independently of Bazarr+ releases. [Contribute](#contr
 - `providers/subsunacs/`: scrapes subsunacs.net for Bulgarian and English movie and episode subtitles with direct entry pages plus ZIP, RAR, and 7Z downloads.
 - `providers/subx/`: uses the SubX API for Spanish movie and episode subtitles with API-key authentication.
 - `providers/subtitlecat/`: first production community provider, scrapes subtitlecat.com using stdlib only. Worked example referenced by [docs/writing-a-scraper-provider.md](docs/writing-a-scraper-provider.md).
+- `providers/yavkanet/`: scrapes Yavka.net by IMDb id, including ai-cloudscraper, inline Anubis solving, Cloudflare fallback, and archive downloads.
 - `providers/supersubtitles/`: scrapes feliratok.eu Hungarian and English movie and episode subtitle listings.
 - `providers/titrari/`: scrapes Titrari.ro movie and episode subtitle listings, including ZIP and RAR downloads.
 - `providers/titlovi/`: uses the Titlovi Kodi API for authenticated movie and episode subtitle search and downloads.
+- `providers/turkcealtyaziorg/`: scrapes TurkceAltyazi.org movie and episode subtitle listings by IMDb id.
 - `providers/tvsubtitles/`: scrapes tvsubtitles.net episode subtitle listings and ZIP downloads.
+- `providers/wizdom/`: uses wizdom.xyz for Hebrew movie and episode subtitles, with TMDB lookup when an IMDb id is missing. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback for Cloudflare browser challenges.
 - `providers/whisperai/`: generates subtitles through a configured Whisper web service after extracting local audio with ffmpeg.
 - `providers/yifysubtitles/`: scrapes YIFYSubtitles movie subtitle pages and ZIP downloads.
 - `providers/zimuku/`: scrapes Zimuku / srtku.com for Chinese and English movie and episode subtitles, with native Yunsuo image verification and optional helper settings.
