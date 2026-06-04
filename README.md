@@ -24,7 +24,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`betaseries`](providers/betaseries/) | 0.1.1 | Searches the [BetaSeries](https://www.betaseries.com) API for French and English episode subtitles. Requires an API key. |
 | [`bollynook`](providers/bollynook/) | 0.1.1 | Scrapes [BollyNook](https://www.bollynook.com) for movie subtitles across Indian and international languages. No login or API key. |
 | [`bsplayer`](providers/bsplayer/) | 0.1.0 | Uses the BSPlayer subtitles SOAP API for hash and size based movie and episode subtitle lookup. No login or API key. |
-| [`embedded_subtitles`](providers/embeddedsubtitles/) | 0.1.2 | Extracts subtitle streams embedded in local movie and episode media files with ffprobe and ffmpeg. No login or API key. |
+| [`embeddedsubtitles`](providers/embeddedsubtitles/) | 0.1.2 | Extracts subtitle streams embedded in local movie and episode media files with ffprobe and ffmpeg. No login or API key. |
 | [`fansubs`](providers/fansubs/) | 0.1.3 | Scrapes [fansubs.ru](http://fansubs.ru) for Russian anime and Asian cinema subtitles. No login or API key. |
 | [`gestdown`](providers/gestdown/) | 0.1.0 | Uses the public Gestdown API for episode subtitles by TVDB show id, season, episode, and language. No login or API key. |
 | [`greeksubs`](providers/greeksubs/) | 0.1.0 | Scrapes [GreekSubs](https://greeksubs.net) for Greek movie and episode subtitles by IMDb id. No login or API key. |
@@ -37,7 +37,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`my_subs`](providers/my_subs/) | 0.1.1 | Scrapes [My-Subs.co](https://my-subs.co) for movie and episode subtitles in many languages. No login or API key. |
 | [`napiprojekt`](providers/napiprojekt/) | 0.1.3 | Searches [NapiProjekt](https://www.napiprojekt.pl) for Polish subtitles using hash lookup and catalog scraping with optional author filters. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback. |
 | [`nekur`](providers/nekur/) | 0.1.1 | Scrapes [Nekur](https://subtitri.nekur.net) for Latvian movie subtitles. No login or API key. |
-| [`opensubtitles_org`](providers/opensubtitles_org/) | 0.1.3 | Scrapes OpenSubtitles.org natively with ai-cloudscraper, inline Anubis solving, and optional FlareSolverr fallback for Cloudflare challenges. |
+| [`opensubtitles`](providers/opensubtitles_org/) | 0.1.3 | Scrapes OpenSubtitles.org natively with ai-cloudscraper, inline Anubis solving, and optional FlareSolverr fallback for Cloudflare challenges. |
 | [`prijevodionline`](providers/prijevodionline/) | 0.1.1 | Scrapes [Prijevodi-Online](https://www.prijevodi-online.org) for Croatian, Serbian, Montenegrin, and Serbo-Croatian episode subtitles. No login or API key. |
 | [`regielive`](providers/regielive/) | 0.1.1 | Uses the RegieLive Bazarr API for Romanian movie and episode subtitles, with public HTML search fallback when the API rejects a request. No login or user API key. |
 | [`soustitreseu`](providers/soustitreseu/) | 0.1.2 | Scrapes [Sous-Titres.eu](https://www.sous-titres.eu) for French and English movie and episode subtitles. No login or API key. |
