@@ -1,58 +1,57 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "e8d5839c9f3df5f032d30bc9cb111613e139da2e64daad6e6b9c7352d49ad9c8",
+  "bundle_sha256": "26a3ebab794e8fc91fdf9fd77e670ba5bade8cd311527fcef5c79e14a490559a",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
-      "fallback_lang": {
-        "default": "eng",
-        "description": "Language to use when unknown embedded language tags are allowed as fallback.",
-        "title": "Fallback language",
+      "endpoint": {
+        "description": "Base URL of the Whisper web service.",
+        "title": "Whisper endpoint",
         "type": "string"
       },
       "ffmpeg_path": {
         "default": "ffmpeg",
-        "description": "Path to the ffmpeg binary used to extract embedded subtitle streams.",
+        "description": "Path to the ffmpeg binary used to extract audio.",
         "title": "ffmpeg path",
         "type": "string"
       },
-      "ffprobe_path": {
-        "default": "ffprobe",
-        "description": "Path to the ffprobe binary used to inspect embedded subtitle streams.",
-        "title": "ffprobe path",
-        "type": "string"
+      "pass_video_name": {
+        "default": false,
+        "description": "Pass the source video path to the Whisper web service as video_file.",
+        "title": "Pass video name",
+        "type": "boolean"
       },
-      "included_codecs": {
-        "default": "ass,subrip,webvtt,mov_text",
-        "description": "Comma-separated subtitle codecs to expose from media containers.",
-        "title": "Included codecs",
-        "type": "string"
-      },
-      "timeout_seconds": {
-        "default": 600,
-        "description": "Timeout for ffprobe and ffmpeg operations.",
+      "response_timeout_seconds": {
+        "default": 30,
+        "description": "Connection and language-detection response timeout.",
         "maximum": 3600,
         "minimum": 1,
-        "title": "Timeout (seconds)",
+        "title": "Response timeout (seconds)",
         "type": "integer"
       },
-      "unknown_as_fallback": {
-        "default": false,
-        "description": "Treat unknown embedded subtitle language tags as the fallback language.",
-        "title": "Unknown as fallback",
-        "type": "boolean"
+      "transcription_timeout_seconds": {
+        "default": 600,
+        "description": "Timeout for ffmpeg audio extraction and Whisper transcription or translation.",
+        "maximum": 86400,
+        "minimum": 1,
+        "title": "Transcription timeout (seconds)",
+        "type": "integer"
       }
     },
+    "required": [
+      "endpoint",
+      "ffmpeg_path"
+    ],
     "type": "object"
   },
   "dependencies": {
     "requirements": []
   },
-  "description": "Extracts subtitle streams embedded in local movie and episode media files with ffprobe and ffmpeg.",
-  "entry_class": "EmbeddedSubtitlesProvider",
+  "description": "Generates subtitles through a user-supplied Whisper web service by extracting local audio with ffmpeg.",
+  "entry_class": "WhisperAIProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "44fdd44989621f7bf477e6aae63b43c49bfa65121e6f8348e1a35f2decfd889b"
+    "provider.py": "5c78cf8d085ffecf77c674b2e9f5a0c8bae03c9957a3087185b8bd660b0be5d2"
   },
   "languages": [
     "afr",
@@ -155,14 +154,14 @@
     "yor",
     "zho"
   ],
-  "name": "Embedded Subtitles",
-  "provider_id": "embeddedsubtitles",
+  "name": "WhisperAI",
+  "provider_id": "whisperai",
   "schema_version": 1,
   "secret_fields": [],
   "source": {
     "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
     "commit": "0000000000000000000000000000000000000000",
-    "path": "providers/embeddedsubtitles",
+    "path": "providers/whisperai",
     "ref": "main",
     "repo": "LavX/bazarr-provider-catalog",
     "trusted": true,
