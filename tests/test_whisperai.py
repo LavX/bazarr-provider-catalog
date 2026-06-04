@@ -36,8 +36,8 @@ class FakeAudioRunner:
         self.body = body
         self.calls = []
 
-    def __call__(self, path, ffmpeg_path, audio_stream_language=None, timeout_seconds=120):
-        self.calls.append((path, ffmpeg_path, audio_stream_language, timeout_seconds))
+    def __call__(self, path, ffmpeg_path, audio_stream_language=None, timeout_seconds=120, max_duration_seconds=None):
+        self.calls.append((path, ffmpeg_path, audio_stream_language, timeout_seconds, max_duration_seconds))
         return self.body
 
 
@@ -183,7 +183,7 @@ class WhisperAIProviderDownloadTests(unittest.TestCase):
         }
         result = provider.download(payload, {"alpha3": "eng"}, CONFIG)
 
-        self.assertEqual(audio.calls, [("/media/Example.Movie.2024.mkv", "ffmpeg", "jpn", 120)])
+        self.assertEqual(audio.calls, [("/media/Example.Movie.2024.mkv", "ffmpeg", "jpn", 120, None)])
         self.assertEqual(http.calls[0][0], "/asr")
         self.assertEqual(http.calls[0][1]["task"], "translate")
         self.assertEqual(http.calls[0][1]["language"], "ja")
@@ -220,6 +220,39 @@ class WhisperAIProviderDownloadTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             provider.download({"provider": "other"}, {"alpha3": "eng"}, CONFIG)
+
+    def test_detect_language_extracts_only_a_short_sample(self):
+        audio = FakeAudioRunner()
+        http = FakeHttpClient({"language_code": "en", "detected_language": "English"})
+        provider = self.mod.WhisperAIProvider(
+            audio_runner=audio,
+            http_client_factory=lambda config: http,
+            path_exists=lambda path: True,
+        )
+        video = {**VIDEO, "audio_languages": []}
+
+        provider.search(video, [{"alpha3": "eng"}], CONFIG)
+
+        # Detection must cap extraction to the head of the file, not decode the whole movie.
+        path, _ffmpeg, stream_lang, _timeout, max_duration = audio.calls[0]
+        self.assertIsNone(stream_lang)
+        self.assertEqual(max_duration, self.mod.DETECT_SAMPLE_SECONDS)
+        self.assertEqual(http.calls[0][0], "/detect-language")
+
+    def test_extract_audio_caps_duration_when_requested(self):
+        captured = []
+
+        def run(command, **kwargs):
+            captured.append(command)
+            return mock.Mock(returncode=0, stdout=b"pcm", stderr=b"")
+
+        with mock.patch.object(self.mod.subprocess, "run", side_effect=run):
+            self.mod.extract_audio("/media/movie.mkv", "/usr/bin/ffmpeg", max_duration_seconds=30)
+
+        command = captured[0]
+        self.assertIn("-t", command)
+        self.assertEqual(command[command.index("-t") + 1], "30")
+        self.assertEqual(command[-1], "-")
 
 
 class WhisperAIAudioTests(unittest.TestCase):

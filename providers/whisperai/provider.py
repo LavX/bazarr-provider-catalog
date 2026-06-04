@@ -12,6 +12,9 @@ import uuid
 
 PROVIDER_ID = "whisperai"
 PCM_MIME_TYPE = "application/octet-stream"
+# Whisper /detect-language only inspects the start of the clip, so cap the
+# detection extraction instead of decoding/uploading the whole file.
+DETECT_SAMPLE_SECONDS = 30
 LANGUAGE_DATA = [
     ("en", "eng", "English"),
     ("zh", "zho", "Chinese"),
@@ -223,7 +226,7 @@ def plan_transcription(video, language, detected_language=None):
     return None
 
 
-def extract_audio(path, ffmpeg_path, audio_stream_language=None, timeout_seconds=120):
+def extract_audio(path, ffmpeg_path, audio_stream_language=None, timeout_seconds=120, max_duration_seconds=None):
     command = [str(ffmpeg_path), "-nostdin", "-i", str(path)]
     if audio_stream_language:
         stream_index = _audio_stream_index(path, ffmpeg_path, audio_stream_language, timeout_seconds)
@@ -238,8 +241,12 @@ def extract_audio(path, ffmpeg_path, audio_stream_language=None, timeout_seconds
         "1",
         "-ar",
         "16000",
-        "-",
     ])
+    if max_duration_seconds:
+        # Cap extraction so a missing-audio-tag detection pass does not decode a
+        # multi-hour file into memory; Whisper /detect-language only reads the head.
+        command.extend(["-t", str(int(max_duration_seconds))])
+    command.append("-")
     result = subprocess.run(
         command,
         stdout=subprocess.PIPE,
@@ -319,7 +326,8 @@ class WhisperAIProvider:
             path,
             config["ffmpeg_path"],
             None,
-            int(config["transcription_timeout_seconds"]),
+            int(config["response_timeout_seconds"]),
+            max_duration_seconds=DETECT_SAMPLE_SECONDS,
         )
         params = {"encode": "false"}
         if _as_bool(config.get("pass_video_name")):

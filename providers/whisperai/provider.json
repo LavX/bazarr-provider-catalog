@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "57f88e246d49d0a94861c26af99dfccade102fe8ee56b0af9f8d804352a2820c",
+  "bundle_sha256": "26a3ebab794e8fc91fdf9fd77e670ba5bade8cd311527fcef5c79e14a490559a",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -51,7 +51,7 @@
   "entry_class": "WhisperAIProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "44c6b3cf698d6151e8c96f6ae3929faf9cf94ff4d3b0ec99d35e482aaa6d150a"
+    "provider.py": "5c78cf8d085ffecf77c674b2e9f5a0c8bae03c9957a3087185b8bd660b0be5d2"
   },
   "languages": [
     "afr",
@@ -171,5 +171,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.1"
+  "version": "0.1.2"
 }
