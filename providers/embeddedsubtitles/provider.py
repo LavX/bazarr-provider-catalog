@@ -7,7 +7,7 @@ import os
 import re
 import subprocess
 
-PROVIDER_ID = "embedded_subtitles"
+PROVIDER_ID = "embeddedsubtitles"
 DEFAULT_CODECS = ("ass", "subrip", "webvtt", "mov_text")
 SUPPORTED_CODECS = set(DEFAULT_CODECS)
 CONTENT_TYPES = {

@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "de111d855ea19987bf2b83d44f7fcb9c4c1c0641d2ef1877dd2557d2a51c4a42",
+  "bundle_sha256": "92ed6f88da95e23d5cf65eeae1f7c2cbcd75afd4ad53093323214daad0147d7f",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -271,7 +271,7 @@
   "entry_class": "OpenSubtitlesOrgProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "11857094e53dfc45fade3e6150192f0de03a936d2dc0920c154984b45ea6247a"
+    "provider.py": "b25925dda28baf4b8cfa099f59b15b006f4bd8bded28d1c32911b3d430d56a74"
   },
   "languages": [
     "aar",
@@ -696,9 +696,8 @@
     "zxx",
     "zza"
   ],
-  "legacy_provider_id": "opensubtitles",
   "name": "OpenSubtitles.org",
-  "provider_id": "opensubtitles_org",
+  "provider_id": "opensubtitles",
   "schema_version": 1,
   "secret_fields": [],
   "source": {
