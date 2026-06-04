@@ -191,9 +191,187 @@ class LegendasDivxSearchTests(unittest.TestCase):
             )
 
 
+    def test_brazilian_country_alpha2_uses_brazilian_filter(self):
+        # Bazarr can pass Brazilian Portuguese with the country_alpha2 shape.
+        self.assertEqual(
+            self.mod._requested_languages([{"alpha3": "por", "country_alpha2": "BR"}]),
+            ["por-BR"],
+        )
+        # A plain "por" without a country still maps to the Portugal filter.
+        self.assertEqual(self.mod._requested_languages([{"alpha3": "por"}]), ["por"])
+
+    def test_episode_search_tries_season_pack_fallback_per_language(self):
+        # Episode without series_imdb_id, two languages requested. The first language (por)
+        # finds a result on its first URL, so the global results list is truthy. A later
+        # language (por-BR) whose SxxEyy URL is empty must still try its season-pack fallback
+        # URL instead of being short-circuited by the earlier language's hit.
+        video = {
+            "kind": "episode",
+            "series": "Example Show",
+            "season": 2,
+            "episode": 4,
+            "fps": 25.0,
+        }
+
+        def _box(lid, lang_alt, desc):
+            return (
+                "<div class=\"sub_box\">"
+                "<div class=\"sub_header\"><a href=\"/forum/x\">u</a></div>"
+                "<table>"
+                "<tr><th>Hits:</th><td>5</td></tr>"
+                f"<tr><th>Idioma:</th><td><img alt=\"{lang_alt}\" src=\"/x.png\"></td></tr>"
+                f"<tr><td class=\"td_desc brd_up\">{desc}</td></tr>"
+                "</table>"
+                "<div class=\"sub_footer\">"
+                f"<a class=\"sub_download\" href=\"/modules.php?d_op=getit&amp;lid={lid}\">Download</a>"
+                "</div></div>"
+            )
+
+        por_episode_page = (
+            "<html><body><!--pesquisas: 1-->" + _box("1001", "Portuguese", "Example.Show.S02E04.1080p-GRP")
+            + "</body></html>"
+        ).encode("utf-8")
+        br_season_pack_page = (
+            "<html><body><!--pesquisas: 1-->" + _box("2002", "Brazilian Portuguese", "Example.Show.S02.COMPLETE-BR")
+            + "</body></html>"
+        ).encode("utf-8")
+        empty_page = b"<html><body><!--pesquisas: 0--></body></html>"
+        provider = self.mod.LegendasDivxProvider()
+        searched = []
+
+        def get_response(url, headers, cookies, timeout=30, allow_redirects=True):
+            del headers, cookies, timeout, allow_redirects
+            if url.endswith("/forum/ucp.php?mode=login"):
+                return self.mod.HttpResponse(200, _fixture("legendasdivx_login.html"), {})
+            if "modules.php" in url:
+                searched.append(url)
+                query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+                form_cat = query.get("form_cat", [""])[0]
+                has_episode = "s02e04" in query.get("query", [""])[0].lower()
+                if form_cat == "28":  # Portugal: first query has the episode.
+                    return self.mod.HttpResponse(200, por_episode_page, {})
+                # Brazil (29): SxxEyy query is empty, the season fallback has the pack.
+                if has_episode:
+                    return self.mod.HttpResponse(200, empty_page, {})
+                return self.mod.HttpResponse(200, br_season_pack_page, {})
+            raise AssertionError(url)
+
+        provider._http_get = get_response
+        provider._http_post = lambda url, data, headers, cookies, timeout=30, allow_redirects=True: self.mod.HttpResponse(
+            302, b"", {"set-cookie": "PHPSESSID=auth; path=/"}
+        )
+
+        results = provider.search(
+            video,
+            [{"alpha3": "por"}, {"alpha3": "por", "country": "BR"}],
+            {"username": "user", "password": "pass", "request_delay_ms": 0},
+        )
+
+        lids = sorted(item["provider_payload"]["lid"] for item in results)
+        self.assertEqual(lids, ["1001", "2002"])
+        # The Brazilian season-pack fallback URL must have been requested.
+        self.assertTrue(any("form_cat=29" in url and "s02e04" not in url.lower() for url in searched))
+
+    def test_reversed_description_class_order_is_parsed(self):
+        body = (
+            "<html><body><div class=\"sub_box\">"
+            "<div class=\"sub_header\"><a href=\"/forum/x\">uploader</a></div>"
+            "<table>"
+            "<tr><th>Idioma:</th><td><img alt=\"Portuguese\" src=\"/portugal.png\"></td></tr>"
+            "<tr><td class=\"brd_up td_desc\">Some.Movie.2020.1080p-GRP</td></tr>"
+            "</table>"
+            "<div class=\"sub_footer\">"
+            "<a class=\"sub_download\" href=\"/modules.php?d_op=getit&amp;lid=7777\">Download</a>"
+            "</div></div></body></html>"
+        ).encode("utf-8")
+        rows = self.mod.parse_search_results(body)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["lid"], "7777")
+        self.assertEqual(rows[0]["description"], "Some.Movie.2020.1080p-GRP")
+
+    def test_duplicate_set_cookie_headers_are_preserved(self):
+        # phpBB logins emit several Set-Cookie headers; the response header
+        # container must keep every one instead of collapsing to a single value.
+        import email.message
+
+        message = email.message.Message()
+        message["Set-Cookie"] = "phpbb3_user=bob; path=/"
+        message["Set-Cookie"] = "phpbb3_k=key123; path=/; HttpOnly"
+        message["Set-Cookie"] = "phpbb3_sid=session456; path=/"
+        message["Content-Type"] = "text/html"
+
+        collected = self.mod._collect_headers(message)
+        cookies = list(self.mod._header_values(collected, "set-cookie"))
+        self.assertEqual(len(cookies), 3)
+
+        provider = self.mod.LegendasDivxProvider()
+        provider._store_response_cookies(self.mod.HttpResponse(200, b"", collected))
+        self.assertEqual(provider._cookies["phpbb3_user"], "bob")
+        self.assertEqual(provider._cookies["phpbb3_k"], "key123")
+        self.assertEqual(provider._cookies["phpbb3_sid"], "session456")
+
+
 class LegendasDivxDownloadTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
+
+    def test_download_rejects_redirect_to_login(self):
+        provider = self.mod.LegendasDivxProvider()
+
+        def get_response(url, headers, cookies, timeout=30, allow_redirects=True):
+            del headers, cookies, timeout
+            if url.endswith("/forum/ucp.php?mode=login"):
+                return self.mod.HttpResponse(200, _fixture("legendasdivx_login.html"), {})
+            # The download GET must not follow redirects to the login page.
+            self.assertFalse(allow_redirects)
+            return self.mod.HttpResponse(302, b"", {"location": "/forum/ucp.php?mode=login"})
+
+        provider._http_get = get_response
+        provider._http_post = lambda url, data, headers, cookies, timeout=30, allow_redirects=True: self.mod.HttpResponse(
+            302, b"", {"set-cookie": "PHPSESSID=auth; path=/"}
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "not authenticated"):
+            provider.download(
+                {
+                    "provider": "legendasdivx",
+                    "page_link": "https://www.legendasdivx.pt/modules.php?d_op=getit&lid=2201",
+                    "filename": "legendasdivx.chernobyl.s01e01.pt.zip",
+                },
+                {"alpha3": "por"},
+                {"username": "user", "password": "pass", "request_delay_ms": 0},
+            )
+
+    def test_download_rejects_archive_with_only_other_episodes(self):
+        provider = self.mod.LegendasDivxProvider()
+        archive_body = _zip_body(
+            {
+                "Chernobyl.S01E02.pt.srt": b"1\r\n00:00:01,000 --> 00:00:02,000\r\nEpisode two\r\n",
+                "Chernobyl.S01E03.pt.srt": b"1\r\n00:00:01,000 --> 00:00:02,000\r\nEpisode three\r\n",
+            }
+        )
+        provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True: (
+            self.mod.HttpResponse(200, _fixture("legendasdivx_login.html"), {})
+            if url.endswith("/forum/ucp.php?mode=login")
+            else self.mod.HttpResponse(200, archive_body, {"content-type": "application/zip"})
+        )
+        provider._http_post = lambda url, data, headers, cookies, timeout=30, allow_redirects=True: self.mod.HttpResponse(
+            302, b"", {"set-cookie": "PHPSESSID=auth; path=/"}
+        )
+
+        with self.assertRaisesRegex(ValueError, "no subtitle for S01E01"):
+            provider.download(
+                {
+                    "provider": "legendasdivx",
+                    "page_link": "https://www.legendasdivx.pt/modules.php?d_op=getit&lid=2201",
+                    "filename": "legendasdivx.chernobyl.s01e01.pt.zip",
+                    "season": 1,
+                    "episode": 1,
+                    "release_info": "Chernobyl.S01E01.1080p.WEB.H264-MEMENTO",
+                },
+                {"alpha3": "por-BR", "alpha2": "pt", "country": "BR"},
+                {"username": "user", "password": "pass", "request_delay_ms": 0},
+            )
 
     def test_download_extracts_matching_episode_file_from_zip(self):
         provider = self.mod.LegendasDivxProvider()

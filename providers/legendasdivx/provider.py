@@ -49,7 +49,7 @@ _SUB_BOX_SPLIT_RE = re.compile(r"<div\b[^>]*class=['\"][^'\"]*\bsub_box\b[^'\"]*
 _HITS_RE = re.compile(r"<th[^>]*>\s*Hits:\s*</th>\s*<td[^>]*>(?P<value>.*?)</td>", re.I | re.S)
 _FPS_RE = re.compile(r"<th[^>]*>\s*Frame\s*Rate:\s*</th>\s*<td[^>]*>(?P<value>.*?)</td>", re.I | re.S)
 _DESC_RE = re.compile(
-    r"<td\b[^>]*class=['\"][^'\"]*\btd_desc\b[^'\"]*\bbrd_up\b[^'\"]*['\"][^>]*>(?P<value>.*?)</td>",
+    r"<td\b(?=[^>]*\bclass=['\"][^'\"]*\btd_desc\b)(?=[^>]*\bclass=['\"][^'\"]*\bbrd_up\b)[^>]*>(?P<value>.*?)</td>",
     re.I | re.S,
 )
 _DOWNLOAD_RE = re.compile(
@@ -92,6 +92,7 @@ class LegendasDivxProvider:
         seen = set()
         skip_wrong_fps = bool(config.get("skip_wrong_fps", False))
         for language_code in requested:
+            language_hits = 0
             for search_url in build_search_urls(video, language_code):
                 response = self._get_search_response(search_url, config)
                 _assert_search_available(response)
@@ -107,7 +108,8 @@ class LegendasDivxProvider:
                         continue
                     seen.add(key)
                     results.append(_candidate(video, item))
-                if results:
+                    language_hits += 1
+                if language_hits:
                     break
         return sorted(results, key=lambda item: (-item["score"], -int(item["display"].get("hits", 0))))
 
@@ -120,17 +122,30 @@ class LegendasDivxProvider:
         config = dict(config or {})
         self._ensure_authenticated(config)
         _sleep(config)
-        response = self._http_get(
-            page_link,
-            self._headers(config, referer=BASE_URL),
-            self._cookies,
-            timeout=HTTP_TIMEOUT_SECONDS,
-        )
+        response = self._download_get(page_link, config)
+        if response.status in (301, 302, 303, 307, 308):
+            self._authenticated = False
+            self._ensure_authenticated(config)
+            _sleep(config)
+            response = self._download_get(page_link, config)
+        if response.status in (301, 302, 303, 307, 308):
+            raise RuntimeError("LegendasDivx download redirected to login, session is not authenticated")
         _raise_for_status(response, "LegendasDivx download")
         text = _normalize(_decode_html(response.body))
         if "limite de downloads" in text and "atingido" in text:
             raise RuntimeError("LegendasDivx daily download limit reached")
+        if not _is_subtitle_payload(response.body):
+            raise RuntimeError("LegendasDivx download returned an HTML page instead of a subtitle archive")
         return extract_download(response.body, payload.get("filename", ""), payload)
+
+    def _download_get(self, page_link, config):
+        return self._http_get(
+            page_link,
+            self._headers(config, referer=BASE_URL),
+            self._cookies,
+            timeout=HTTP_TIMEOUT_SECONDS,
+            allow_redirects=False,
+        )
 
     def _load_more_pages(self, search_url, first_body, config):
         total = _page_count(first_body)
@@ -237,9 +252,9 @@ class LegendasDivxProvider:
         try:
             with opener.open(request, timeout=timeout) as response:
                 body = response.read()
-                result = HttpResponse(response.status, body, dict(response.headers.items()))
+                result = HttpResponse(response.status, body, _collect_headers(response.headers))
         except urllib.error.HTTPError as error:
-            result = HttpResponse(error.code, error.read(), dict(error.headers.items()))
+            result = HttpResponse(error.code, error.read(), _collect_headers(error.headers))
         self._store_response_cookies(result)
         return result
 
@@ -264,9 +279,9 @@ class LegendasDivxProvider:
         opener = urllib.request.build_opener() if allow_redirects else urllib.request.build_opener(_NoRedirect)
         try:
             with opener.open(request, timeout=timeout) as response:
-                result = HttpResponse(response.status, response.read(), dict(response.headers.items()))
+                result = HttpResponse(response.status, response.read(), _collect_headers(response.headers))
         except urllib.error.HTTPError as error:
-            result = HttpResponse(error.code, error.read(), dict(error.headers.items()))
+            result = HttpResponse(error.code, error.read(), _collect_headers(error.headers))
         self._store_response_cookies(result)
         return result
 
@@ -347,6 +362,16 @@ def select_subtitle_file(names, payload):
     except (TypeError, ValueError):
         season = episode = None
 
+    if season is not None and episode is not None:
+        episode_marked = [name for name in candidates if _SXXEYY_RE.search(os.path.basename(name))]
+        if episode_marked:
+            matching = [name for name in episode_marked if _file_matches_episode(name, season, episode)]
+            if not matching:
+                raise ValueError(
+                    f"legendasdivx archive has no subtitle for S{season:02d}E{episode:02d}"
+                )
+            candidates = matching
+
     def score(name):
         normalized = _normalize_release(os.path.basename(name))
         value = 0
@@ -361,6 +386,13 @@ def select_subtitle_file(names, payload):
         return value
 
     return max(candidates, key=score)
+
+
+def _file_matches_episode(name, season, episode):
+    for match in _SXXEYY_RE.finditer(os.path.basename(name)):
+        if int(match.group("season")) == season and int(match.group("episode")) == episode:
+            return True
+    return False
 
 
 def _build_movie_search_url(video, language_code):
@@ -555,7 +587,7 @@ def _requested_languages(languages):
         if not isinstance(language, dict):
             continue
         alpha3 = str(language.get("alpha3") or "").strip()
-        country = str(language.get("country") or "").upper()
+        country = str(language.get("country") or language.get("country_alpha2") or "").upper()
         if alpha3 == "por-BR" or (alpha3 == "por" and country == "BR"):
             code = "por-BR"
         elif alpha3 == "pob":
@@ -690,6 +722,24 @@ def _headers_with_cookies(headers, cookies):
     return merged
 
 
+def _collect_headers(message):
+    """Flatten a response header set, keeping every Set-Cookie value intact."""
+    if message is None:
+        return {}
+    if hasattr(message, "get_all"):
+        collected = {}
+        cookies = []
+        for name, value in message.items():
+            if name.lower() == "set-cookie":
+                cookies.append(value)
+            else:
+                collected[name] = value
+        if cookies:
+            collected["Set-Cookie"] = cookies if len(cookies) > 1 else cookies[0]
+        return collected
+    return dict(message)
+
+
 def _header_values(headers, key):
     wanted = key.lower()
     for header, value in (headers or {}).items():
@@ -812,6 +862,19 @@ def _collect_extracted_subtitle_files(output_dir):
 
 def _is_rar_archive(body):
     return bool(body) and (body.startswith(_RAR4_MAGIC) or body.startswith(_RAR5_MAGIC))
+
+
+def _is_subtitle_payload(body):
+    if not body:
+        return False
+    if _is_rar_archive(body):
+        return True
+    if zipfile.is_zipfile(io.BytesIO(body)):
+        return True
+    head = _normalize(_decode_html(body[:2048]))
+    if "html" in head or "doctype" in head:
+        return False
+    return True
 
 
 def _subtitle_extension(name):

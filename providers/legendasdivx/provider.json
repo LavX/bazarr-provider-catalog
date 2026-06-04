@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "b64bede17ddff5b85a39a720d24a14c643adfa10284d1193cd0df7c50af8e3d2",
+  "bundle_sha256": "2c885ce22eb83299cad2c4cf135eb6884cb49d8476d983db403458ae4b79cad3",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -149,7 +149,7 @@
   "entry_class": "LegendasDivxProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "8ba1005a79067b0ad8decea9d577c4f5531fb318a89245feb4a4eac43d42f8c3"
+    "provider.py": "1de1d80aeeafaa822aedab092c7a0cafed93fb68f3bc8d9b66baf97d656d75bc"
   },
   "languages": [
     "por",
@@ -175,5 +175,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.0"
+  "version": "0.1.1"
 }
