@@ -3131,6 +3131,188 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "f8d2c17dd045b1155d01ba3fbf107d2e5d5b4da16b47446a8795a638a011ffdd",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "api_key": {
+              "description": "OpenSubtitles.com API key.",
+              "minLength": 1,
+              "secret": true,
+              "title": "API key",
+              "type": "string"
+            },
+            "include_ai_translated": {
+              "default": false,
+              "description": "Include API results marked as AI translated.",
+              "title": "Include AI translated subtitles",
+              "type": "boolean"
+            },
+            "include_machine_translated": {
+              "default": false,
+              "description": "Include API results marked as machine translated.",
+              "title": "Include machine translated subtitles",
+              "type": "boolean"
+            },
+            "password": {
+              "description": "OpenSubtitles.com password.",
+              "minLength": 1,
+              "secret": true,
+              "title": "Password",
+              "type": "string"
+            },
+            "use_hash": {
+              "default": true,
+              "description": "Search with OpenSubtitles moviehash when Bazarr has one available.",
+              "title": "Use hash matching",
+              "type": "boolean"
+            },
+            "username": {
+              "description": "OpenSubtitles.com username.",
+              "minLength": 1,
+              "secret": true,
+              "title": "Username",
+              "type": "string"
+            }
+          },
+          "required": [
+            "username",
+            "password",
+            "api_key"
+          ],
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Uses the official OpenSubtitles.com API for movie and episode subtitles. Requires username, password, and API key.",
+        "entry_class": "OpenSubtitlesComProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "4e3626b635afdb56fd2fd3d896d93339b4684230fbf96c5f9167a287789841d5"
+        },
+        "languages": [
+          "abk",
+          "afr",
+          "amh",
+          "ara",
+          "arg",
+          "asm",
+          "ast",
+          "aze",
+          "bel",
+          "ben",
+          "bos",
+          "bre",
+          "bul",
+          "cat",
+          "ces",
+          "cym",
+          "dan",
+          "deu",
+          "ell",
+          "eng",
+          "epo",
+          "est",
+          "eus",
+          "fas",
+          "fin",
+          "fra",
+          "gla",
+          "gle",
+          "glg",
+          "heb",
+          "hin",
+          "hrv",
+          "hun",
+          "hye",
+          "ibo",
+          "ina",
+          "ind",
+          "isl",
+          "ita",
+          "jpn",
+          "kan",
+          "kat",
+          "kaz",
+          "khm",
+          "kor",
+          "kur",
+          "lav",
+          "lit",
+          "ltz",
+          "mal",
+          "mar",
+          "mkd",
+          "mni",
+          "mon",
+          "msa",
+          "mya",
+          "nav",
+          "nep",
+          "nld",
+          "nor",
+          "oci",
+          "ori",
+          "pol",
+          "por",
+          "pus",
+          "ron",
+          "rus",
+          "sat",
+          "sin",
+          "slk",
+          "slv",
+          "sme",
+          "snd",
+          "som",
+          "spa",
+          "sqi",
+          "srp",
+          "swa",
+          "swe",
+          "syr",
+          "tam",
+          "tat",
+          "tel",
+          "tet",
+          "tgl",
+          "tha",
+          "tuk",
+          "tur",
+          "ukr",
+          "urd",
+          "uzb",
+          "vie",
+          "zho"
+        ],
+        "name": "OpenSubtitles.com",
+        "provider_id": "opensubtitlescom",
+        "schema_version": 1,
+        "secret_fields": [
+          "username",
+          "password",
+          "api_key"
+        ],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/opensubtitlescom",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.2"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "8e42f25a1976c33b487c2c6366d8bcdde463626dca6173bcf16b552deafdbcef",
         "config_schema": {
           "additionalProperties": false,
