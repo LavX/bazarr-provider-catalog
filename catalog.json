@@ -1631,6 +1631,69 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "c5b6fd1971a077d8554567bec5daab029d54cc7130dc138d3aa39b66aafae1b4",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "email": {
+              "description": "Ktuvit account email.",
+              "minLength": 1,
+              "secret": true,
+              "title": "Email",
+              "type": "string"
+            },
+            "hashed_password": {
+              "description": "Ktuvit hashed password from the Bazarr settings flow.",
+              "minLength": 1,
+              "secret": true,
+              "title": "Hashed password",
+              "type": "string"
+            }
+          },
+          "required": [
+            "email",
+            "hashed_password"
+          ],
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Uses Ktuvit.me services for Hebrew movie and episode subtitles. Requires Ktuvit email and hashed password.",
+        "entry_class": "KtuvitProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "ce20e2abb24fad0dfc5ce47b36484490e32b6d8e0b0e50be71bb6218339ac3cc"
+        },
+        "languages": [
+          "heb"
+        ],
+        "name": "Ktuvit",
+        "provider_id": "ktuvit",
+        "schema_version": 1,
+        "secret_fields": [
+          "email",
+          "hashed_password"
+        ],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/ktuvit",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.2"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "4db5605361d9bcf7331a4d0db1e6e4d28f2f85d46713b8857a13ed9af5d535ef",
         "config_schema": {
           "additionalProperties": false,
@@ -3271,6 +3334,48 @@
           "episode"
         ],
         "version": "0.1.1"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "d4cbab73d3d8ef7d5b30c835bd922a44eb9918595b0dc95c912cbe8ab14be5f0",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {},
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Queries Shooter.cn's hash-based subtitle API for English and Chinese movie and episode subtitles. Requires Bazarr to provide a Shooter file hash.",
+        "entry_class": "ShooterProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "0e96f301d7d592f4c5d4a9f3e97ae692f02f31ae5c9aaf29b4d746f429b23810"
+        },
+        "languages": [
+          "eng",
+          "zho"
+        ],
+        "name": "Shooter",
+        "provider_id": "shooter",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/shooter",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.3"
       }
     },
     {
@@ -7677,6 +7782,272 @@
           "episode"
         ],
         "version": "0.1.2"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "78ccd2b7f29b9b55a35867a7ccc0eb6a0a8f58a03dfe1aa49cfe729fa310345a",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "flaresolverr_timeout_ms": {
+              "default": 45000,
+              "description": "Maximum time FlareSolverr may spend solving a Cloudflare challenge. Values above 45000 ms are capped to stay inside the Provider Hub worker deadline.",
+              "minimum": 1000,
+              "title": "FlareSolverr timeout (ms)",
+              "type": "integer"
+            },
+            "flaresolverr_url": {
+              "default": "",
+              "description": "Optional FlareSolverr /v1 endpoint used only when ai-cloudscraper still receives a Cloudflare browser challenge.",
+              "title": "FlareSolverr URL",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:a94627e4c065d4de21cb8ca5b357c523d97158084fc5f67777d1c5d86630e0e9"
+              ],
+              "name": "ai-cloudscraper",
+              "version": "3.8.4"
+            },
+            {
+              "hashes": [
+                "sha256:bc6b9d7ba62045542265ef954c260e1d903516ab9364b5be1466f969c887d138"
+              ],
+              "name": "ai-urllib4",
+              "version": "2.2.0"
+            },
+            {
+              "hashes": [
+                "sha256:4708045e2d7a6c6bdf8aafa8ed39649eaf926a4543b54560659129e3365953c4"
+              ],
+              "name": "aiohappyeyeballs",
+              "version": "2.6.2"
+            },
+            {
+              "hashes": [
+                "sha256:241a94f7de7c0c3b616627aaad530fe2cb620084a8b144d3be7b6ecfe95bae3b"
+              ],
+              "name": "aiohttp",
+              "version": "3.13.5"
+            },
+            {
+              "hashes": [
+                "sha256:053243f8b92b990551949e63930a839ff0cf0b0ebbe0597b0f3fb19e1a0fe82e"
+              ],
+              "name": "aiosignal",
+              "version": "1.4.0"
+            },
+            {
+              "hashes": [
+                "sha256:4d4c1eb3250f735f59ce842d8d92cd2927c008bd52008797ba030b5787c41f3b"
+              ],
+              "name": "asyncio-throttle",
+              "version": "1.0.2"
+            },
+            {
+              "hashes": [
+                "sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309"
+              ],
+              "name": "attrs",
+              "version": "26.1.0"
+            },
+            {
+              "hashes": [
+                "sha256:cf9cba6f5b78a2071ec6fb1e7bd39acf35071d90a81231d67e92d637776a6a63"
+              ],
+              "name": "brotli",
+              "version": "1.2.0"
+            },
+            {
+              "hashes": [
+                "sha256:3c52e209ba0a4ad7aebe60436a4ab349c39e1e602e8c134221e546902ad25897"
+              ],
+              "name": "certifi",
+              "version": "2026.5.20"
+            },
+            {
+              "hashes": [
+                "sha256:afb8db5439b81cf9c9d0c80404b60c3cc9c3add93e114dcae767f1477cb53775"
+              ],
+              "name": "cffi",
+              "version": "2.0.0"
+            },
+            {
+              "hashes": [
+                "sha256:bd6c2a1c7573c64738d716488d2cdd3c00e340e4835707d8fdb8dc1a66ef164e"
+              ],
+              "name": "charset-normalizer",
+              "version": "3.4.7"
+            },
+            {
+              "hashes": [
+                "sha256:bd72e68b06bb1e96913f97dd4901119bc17f39d4586a5adf2d3e47bc2b9d58b5"
+              ],
+              "name": "cryptography",
+              "version": "48.0.0"
+            },
+            {
+              "hashes": [
+                "sha256:cba69cb73723c3f329622e34bdbf5ce1f80c21c290ff04256cff1cd3c2036ed2"
+              ],
+              "name": "frozenlist",
+              "version": "1.8.0"
+            },
+            {
+              "hashes": [
+                "sha256:466e48829084efe2548012b855df21540b96f2e20e51bd124c851536556a592c"
+              ],
+              "name": "idna",
+              "version": "3.17"
+            },
+            {
+              "hashes": [
+                "sha256:40a508a79e2f8d624e3f2e604f90a1e6f46ac75b416d7f4745939ff4a2e95e09"
+              ],
+              "name": "Js2Py",
+              "version": "0.74"
+            },
+            {
+              "hashes": [
+                "sha256:7eee46ccb30ff48a1e35bb818cc90846c6be2b68240e42a78599166722cea709"
+              ],
+              "name": "multidict",
+              "version": "6.7.1"
+            },
+            {
+              "hashes": [
+                "sha256:e00820e192c8dbebcafb383ebbf99030895f09905e7a0eb2e0340a0bcc2bc825"
+              ],
+              "name": "propcache",
+              "version": "0.5.2"
+            },
+            {
+              "hashes": [
+                "sha256:076a2d2f923fd4821644f5ba89f059523da90dc9014e85f8e45a5774ca5bc6f9"
+              ],
+              "name": "psutil",
+              "version": "7.2.2"
+            },
+            {
+              "hashes": [
+                "sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992"
+              ],
+              "name": "pycparser",
+              "version": "3.0"
+            },
+            {
+              "hashes": [
+                "sha256:c8987bd3307a39bc03df5c8e0e3d8be0c4c3518b7f044b0f4c15d1aa78f52575"
+              ],
+              "name": "pycryptodome",
+              "version": "3.23.0"
+            },
+            {
+              "hashes": [
+                "sha256:be60da6b778cc5a5296a69d8e7d614f1f870faf94e1b1b6ac591f2ad5d729579"
+              ],
+              "name": "pyjsparser",
+              "version": "2.7.1"
+            },
+            {
+              "hashes": [
+                "sha256:4f9d971bc5298b8bc1fab282803da04bf000c755d4ad9d99b52de2569ca19a70"
+              ],
+              "name": "pyOpenSSL",
+              "version": "26.2.0"
+            },
+            {
+              "hashes": [
+                "sha256:850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d"
+              ],
+              "name": "pyparsing",
+              "version": "3.3.2"
+            },
+            {
+              "hashes": [
+                "sha256:2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0"
+              ],
+              "name": "requests",
+              "version": "2.34.2"
+            },
+            {
+              "hashes": [
+                "sha256:cccfdd665f0a24fcf4726e690f65639d272bb0637b9b92dfd91a5568ccf6bd06"
+              ],
+              "name": "requests-toolbelt",
+              "version": "1.0.0"
+            },
+            {
+              "hashes": [
+                "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"
+              ],
+              "name": "six",
+              "version": "1.17.0"
+            },
+            {
+              "hashes": [
+                "sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548"
+              ],
+              "name": "typing_extensions",
+              "version": "4.15.0"
+            },
+            {
+              "hashes": [
+                "sha256:eb1a66c3ef5847adf7a834f1be0800581b683b5608e74f86ecbcef8ab91bb85d"
+              ],
+              "name": "tzlocal",
+              "version": "5.3.1"
+            },
+            {
+              "hashes": [
+                "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
+              ],
+              "name": "urllib3",
+              "version": "2.7.0"
+            },
+            {
+              "hashes": [
+                "sha256:e51b2cf5ec89a8b8470177641ed62a3ba22d74e1e898e06ad53aa77972487208"
+              ],
+              "name": "yarl",
+              "version": "1.24.2"
+            }
+          ]
+        },
+        "description": "Uses wizdom.xyz for Hebrew movie and episode subtitles, with TMDB lookup when an IMDb id is not supplied. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback for Cloudflare browser challenges.",
+        "entry_class": "WizdomProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "11bdf5bdd768e4df395e9d5758f0f6b56201293d78ea00352b42dbbf123d7b70"
+        },
+        "languages": [
+          "heb"
+        ],
+        "name": "Wizdom",
+        "provider_id": "wizdom",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/wizdom",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.3"
       }
     },
     {
