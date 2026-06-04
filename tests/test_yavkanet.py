@@ -384,7 +384,10 @@ class YavkaNetProviderTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         result = results[0]
         self.assertEqual(result["provider"], "yavkanet")
-        self.assertEqual(result["language"], {"alpha3": "bul", "alpha2": "bg", "hi": True, "forced": False})
+        # Yavka rows are never verified as hearing impaired, so the emitted
+        # variant is always non-HI even when the request asked for HI.
+        self.assertEqual(result["language"], {"alpha3": "bul", "alpha2": "bg", "hi": False, "forced": False})
+        self.assertFalse(result["hearing_impaired"])
         self.assertEqual(result["provider_payload"]["form_data"], {"subtitle_id": "123", "token": "abc"})
         self.assertIn("release_group", result["matches"])
 
@@ -583,6 +586,188 @@ class YavkaNetProviderTests(unittest.TestCase):
 
         data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
         self.assertEqual(data, SRT_BODY)
+
+
+class YavkaNetCodexFixTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_parse_download_form_rejects_search_only_page(self):
+        search_only_html = b"""
+        <form id="search" name="search" action="/search" method="post">
+          <input type="text" name="sea" value="">
+        </form>
+        """
+
+        with self.assertRaisesRegex(ValueError, "did not expose a download form"):
+            self.mod.parse_download_form(search_only_html)
+
+    def test_parse_download_form_skips_search_form_before_download_form(self):
+        mixed_html = b"""
+        <form id="search" name="search" action="/search" method="post">
+          <input type="text" name="sea" value="">
+        </form>
+        <form method="POST" action="/subtitle/dune-2021/">
+          <input type="hidden" name="subtitle_id" value="123">
+          <input type="hidden" name="token" value="abc">
+        </form>
+        """
+
+        form = self.mod.parse_download_form(mixed_html)
+
+        self.assertEqual(form["method"], "POST")
+        self.assertEqual(form["action_url"], "https://yavka.net/subtitle/dune-2021/")
+        self.assertEqual(form["data"], {"subtitle_id": "123", "token": "abc"})
+
+    def test_flaresolverr_post_sets_form_content_type(self):
+        scraper = mock.MagicMock()
+        scraper.post.return_value = FakeResponse(CLOUDFLARE_BODY, status=403)
+        payload = {
+            "status": "ok",
+            "solution": {"status": 200, "response": "subtitle-body"},
+        }
+
+        with mock.patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), mock.patch.object(
+            self.mod.urllib.request,
+            "urlopen",
+            return_value=FakeUrlopenResponse(json.dumps(payload).encode("utf-8")),
+        ) as urlopen:
+            body = self.mod.http_post(
+                "https://yavka.net/subtitle/dune-2021/",
+                data={"subtitle_id": "123", "token": "abc"},
+                config={"flaresolverr_url": "http://flaresolverr:8191/v1"},
+                state={},
+            )
+
+        self.assertEqual(body, b"subtitle-body")
+        request = urlopen.call_args.args[0]
+        sent = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(sent["cmd"], "request.post")
+        self.assertEqual(sent["postData"], "subtitle_id=123&token=abc")
+        self.assertEqual(sent["headers"], {"Content-Type": "application/x-www-form-urlencoded"})
+
+    def test_row_match_requires_season_when_row_declares_other_season(self):
+        video = {"kind": "episode", "series": "Example", "season": 3, "episode": 2}
+        other_season_row = {
+            "title": "Example",
+            "release": "Example.S04E02.1080p.WEB-DL",
+            "notes": "Example.S04E02.1080p.WEB-DL",
+        }
+        right_season_row = {
+            "title": "Example",
+            "release": "Example.S03E02.1080p.WEB-DL",
+            "notes": "Example.S03E02.1080p.WEB-DL",
+        }
+
+        self.assertFalse(self.mod._row_matches_video(video, other_season_row))
+        self.assertTrue(self.mod._row_matches_video(video, right_season_row))
+
+    def test_search_drops_other_season_episode_rows(self):
+        imdb_html = b"""
+        <table>
+          <tr>
+            <td>
+              <a class="balon" href="/subtitle/example-s04e02" content="Example.S04E02.1080p.WEB-DL">
+                Example.S04E02.1080p.WEB-DL
+              </a>
+            </td>
+          </tr>
+        </table>
+        """
+        provider = self.mod.YavkaNetProvider()
+
+        def stub(url, timeout=15, config=None, state=None, referer=None):
+            del timeout, config, state, referer
+            if url == "https://yavka.net/imdb/tt1160419":
+                return imdb_html
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "Example",
+                "season": 3,
+                "episode": 2,
+                "series_imdb_id": "tt1160419",
+            },
+            [{"alpha3": "bul", "alpha2": "bg"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(results, [])
+
+    def test_solve_pow_counts_difficulty_in_bits(self):
+        # Difficulty 12 means 12 leading zero bits, i.e. only three leading zero
+        # hex characters. The previous implementation treated difficulty as a
+        # count of leading zero hex characters and would never accept this digest
+        # (it would loop until the worker timed out). A fast, finite solve that
+        # yields fewer leading zero hex chars than the difficulty proves the bit
+        # interpretation is used.
+        nonce, digest = self.mod._solve_pow("randomdata", 12)
+
+        digest_bytes = bytes.fromhex(digest)
+        self.assertGreaterEqual(self.mod._leading_zero_bits(digest_bytes), 12)
+        leading_zero_hex_chars = len(digest) - len(digest.lstrip("0"))
+        self.assertLess(leading_zero_hex_chars, 12)
+        expected = hashlib.sha256(f"randomdata{nonce}".encode("utf-8")).hexdigest()
+        self.assertEqual(digest, expected)
+
+    def test_leading_zero_bits_counts_bits_not_hex_chars(self):
+        self.assertEqual(self.mod._leading_zero_bits(bytes([0x0f, 0xff])), 4)
+        self.assertEqual(self.mod._leading_zero_bits(bytes([0x00, 0x0f])), 12)
+        self.assertEqual(self.mod._leading_zero_bits(bytes([0x00, 0x00, 0xff])), 16)
+
+    def test_requested_languages_drops_forced_only_requests(self):
+        rows = self.mod._requested_languages([{"alpha3": "bul", "alpha2": "bg", "forced": True}])
+
+        self.assertEqual(rows, [])
+
+    def test_requested_languages_never_marks_hi_or_forced(self):
+        rows = self.mod._requested_languages([{"alpha3": "bul", "alpha2": "bg", "hi": True}])
+
+        self.assertEqual(rows, [{"alpha3": "bul", "alpha2": "bg", "hi": False, "forced": False}])
+
+    def test_search_skips_forced_only_request_without_network(self):
+        provider = self.mod.YavkaNetProvider()
+        provider._http_get = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unexpected network"))
+
+        results = provider.search(
+            {"kind": "movie", "title": "Dune", "imdb_id": "tt1160419"},
+            [{"alpha3": "bul", "alpha2": "bg", "forced": True}],
+            {},
+        )
+
+        self.assertEqual(results, [])
+
+    def test_content_payload_reports_windows_1251_encoding(self):
+        cyrillic = "Здравей свят".encode("cp1251")
+        body = _zip_with({"Dune.2021.WEB.srt": cyrillic})
+
+        result = self.mod.extract_download(
+            body,
+            {
+                "filename": "Dune.2021.WEB.zip",
+                "video": {"kind": "movie", "title": "Dune", "year": 2021},
+            },
+        )
+
+        self.assertEqual(result["encoding"], "cp1251")
+        data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
+        self.assertEqual(data, cyrillic)
+
+    def test_content_payload_reports_utf8_for_ascii_subtitle(self):
+        body = _zip_with({"Dune.2021.WEB.srt": SRT_BODY})
+
+        result = self.mod.extract_download(
+            body,
+            {
+                "filename": "Dune.2021.WEB.zip",
+                "video": {"kind": "movie", "title": "Dune", "year": 2021},
+            },
+        )
+
+        self.assertEqual(result["encoding"], "utf-8")
 
 
 if __name__ == "__main__":

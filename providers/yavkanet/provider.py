@@ -186,21 +186,23 @@ def parse_download_form(body, page_url=None):
     direct_url = _direct_download_url(text)
     if direct_url:
         return {"method": "GET", "action_url": direct_url, "data": {}}
-    match = _FORM_RE.search(text)
-    if not match:
-        raise ValueError("yavkanet detail page did not expose a download form")
-    attrs = _attrs(match.group("attrs"))
-    method = (attrs.get("method") or "GET").upper()
-    action_url = _absolute_url(attrs.get("action") or page_url or HOME_URL).rstrip("/") + "/"
-    data = {}
-    for input_match in _INPUT_RE.finditer(match.group("body")):
-        input_attrs = _attrs(input_match.group("attrs"))
-        name = input_attrs.get("name")
-        if name:
-            data[name] = input_attrs.get("value", "")
-    if not data:
-        raise ValueError("yavkanet detail form had no POST fields")
-    return {"method": method, "action_url": action_url, "data": data}
+    for match in _FORM_RE.finditer(text):
+        attrs = _attrs(match.group("attrs"))
+        action = attrs.get("action") or ""
+        if _is_search_form(action, match.group("body")):
+            continue
+        method = (attrs.get("method") or "GET").upper()
+        action_url = _absolute_url(action or page_url or HOME_URL).rstrip("/") + "/"
+        data = {}
+        for input_match in _INPUT_RE.finditer(match.group("body")):
+            input_attrs = _attrs(input_match.group("attrs"))
+            name = input_attrs.get("name")
+            if name:
+                data[name] = input_attrs.get("value", "")
+        if not data:
+            continue
+        return {"method": method, "action_url": action_url, "data": data}
+    raise ValueError("yavkanet detail page did not expose a download form")
 
 
 def derive_matches(video, row):
@@ -527,13 +529,23 @@ def _extract_anubis_challenge(html_text):
     }
 
 
+def _leading_zero_bits(digest_bytes):
+    bits = 0
+    for byte in digest_bytes:
+        if byte == 0:
+            bits += 8
+            continue
+        bits += 8 - byte.bit_length()
+        break
+    return bits
+
+
 def _solve_pow(random_data, difficulty):
-    prefix = "0" * difficulty
     nonce = 0
     while True:
-        digest = hashlib.sha256(f"{random_data}{nonce}".encode("utf-8")).hexdigest()
-        if digest.startswith(prefix):
-            return nonce, digest
+        digest = hashlib.sha256(f"{random_data}{nonce}".encode("utf-8")).digest()
+        if _leading_zero_bits(digest) >= difficulty:
+            return nonce, digest.hex()
         nonce += 1
 
 
@@ -618,6 +630,7 @@ def _flaresolverr_request(method, url, data=None, timeout=HTTP_TIMEOUT_SECONDS, 
     }
     if method == "POST":
         payload["postData"] = urllib.parse.urlencode(data or {})
+        payload["headers"] = {"Content-Type": "application/x-www-form-urlencoded"}
     cookies = (state or {}).get("flaresolverr_cookies")
     if cookies:
         payload["cookies"] = [{"name": name, "value": value} for name, value in cookies.items()]
@@ -756,6 +769,17 @@ def _direct_download_url(text):
     return ""
 
 
+def _is_search_form(action, form_body):
+    if "/search" in (action or "").lower():
+        return True
+    names = set()
+    for input_match in _INPUT_RE.finditer(form_body or ""):
+        name = _attrs(input_match.group("attrs")).get("name")
+        if name:
+            names.add(name.lower())
+    return bool(names) and names <= {"sea"}
+
+
 def _row_matches_video(video, row):
     matches = set(derive_matches(video, row))
     if video.get("kind") == "movie":
@@ -763,7 +787,15 @@ def _row_matches_video(video, row):
             return False
         return True
     if video.get("kind") == "episode":
-        return "series" in matches and (not video.get("episode") or "episode" in matches)
+        if "series" not in matches:
+            return False
+        if video.get("episode") and "episode" not in matches:
+            return False
+        if video.get("season") and "season" not in matches:
+            row_text = " ".join(_coerce_text(row.get(key)) for key in ("title", "release", "notes"))
+            if _has_season_episode_marker(row_text):
+                return False
+        return True
     return False
 
 
@@ -793,17 +825,20 @@ def _requested_languages(languages):
             continue
         if isinstance(item, dict):
             alpha2 = item.get("alpha2") or SUPPORTED_LANGUAGES[alpha3]
-            hi = bool(item.get("hi", False))
             forced = bool(item.get("forced", False))
         else:
             alpha2 = SUPPORTED_LANGUAGES[alpha3]
-            hi = False
             forced = False
-        key = (alpha3, hi, forced)
-        if key in seen:
+        # Yavka rows are never tagged as forced or hearing impaired, so a
+        # forced-only request cannot be honoured. Drop it instead of returning a
+        # full subtitle mislabeled as forced, and always emit the variant we can
+        # actually verify: non-forced, non-HI.
+        if forced:
             continue
-        seen.add(key)
-        rows.append({"alpha3": alpha3, "alpha2": alpha2, "hi": hi, "forced": forced})
+        if alpha3 in seen:
+            continue
+        seen.add(alpha3)
+        rows.append({"alpha3": alpha3, "alpha2": alpha2, "hi": False, "forced": False})
     return rows
 
 
@@ -968,9 +1003,22 @@ def _content_payload(content, fmt, empty=False):
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(fmt),
         "format": fmt,
-        "encoding": "utf-8",
+        "encoding": _detect_encoding(content),
         "empty": bool(empty),
     }
+
+
+def _detect_encoding(content):
+    # Yavka serves Cyrillic Bulgarian releases that are often Windows-1251
+    # rather than UTF-8, so report the encoding that actually decodes the bytes
+    # instead of always claiming UTF-8.
+    for candidate in ("utf-8", "cp1251", "windows-1251", "latin-1"):
+        try:
+            (content or b"").decode(candidate)
+            return candidate
+        except UnicodeDecodeError:
+            continue
+    return "utf-8"
 
 
 def _content_type(fmt):
