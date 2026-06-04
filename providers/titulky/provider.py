@@ -80,7 +80,7 @@ class TitulkyProvider:
             return []
         url = build_url({"action": "serial", "step": season, "id": imdb_id[2:]})
         _sleep(config)
-        html_body = self._fetch_page(url, allow_redirects=True)
+        html_body = self._fetch_page(url, allow_redirects=True, config=config)
         rows = parse_browse_page(html_body, requested, episode, config)
         results = []
         for row in rows:
@@ -124,17 +124,36 @@ class TitulkyProvider:
 
     def _retrieve_subtitles_fps(self, subtitle_id, config):
         _sleep(config)
-        html_body = self._fetch_page(build_url({"action": "detail", "id": subtitle_id}), allow_redirects=True)
+        html_body = self._fetch_page(
+            build_url({"action": "detail", "id": subtitle_id}), allow_redirects=True, config=config
+        )
         return parse_fps(html_body)
 
-    def _fetch_page(self, url, allow_redirects=False):
+    @staticmethod
+    def _is_auth_redirect(response):
+        # Titulky bounces unauthenticated/expired sessions to a message page
+        # (?msg_type=...), the same marker _ensure_logged_in keys on. With
+        # allow_redirects=True the final URL carries it.
+        return "msg_type=" in (response.url or "")
+
+    def _fetch_page(self, url, allow_redirects=False, config=None):
+        response = self._fetch_response(url, allow_redirects)
+        if config is not None and self._logged_in and self._is_auth_redirect(response):
+            # Session cookie expired on a reused worker: drop stale auth, re-login, retry once.
+            self._logged_in = False
+            self._cookies = {}
+            self._ensure_logged_in(config)
+            response = self._fetch_response(url, allow_redirects)
+        if not response.body:
+            raise RuntimeError("Titulky returned an empty response")
+        return response.body
+
+    def _fetch_response(self, url, allow_redirects=False):
         response = self._http_get(url, allow_redirects=allow_redirects)
         if response.status_code == 429:
             raise RuntimeError("Too many requests")
         _raise_for_status(response, url)
-        if not response.body:
-            raise RuntimeError("Titulky returned an empty response")
-        return response.body
+        return response
 
     def _http_get(self, url, headers=None, timeout=HTTP_TIMEOUT_SECONDS, allow_redirects=False):
         opener = urllib.request.build_opener() if allow_redirects else urllib.request.build_opener(_NoRedirectHandler)

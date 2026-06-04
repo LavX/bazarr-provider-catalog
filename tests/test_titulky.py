@@ -163,6 +163,48 @@ class TitulkyProviderTests(unittest.TestCase):
         self.assertTrue(self.mod._framerate_equal(23.978, 23.976))
         self.assertTrue(self.mod._framerate_equal(23.98, 24.0))
 
+    def test_search_reauthenticates_after_session_cookie_expires(self):
+        provider = self.mod.TitulkyProvider()
+        provider._logged_in = True  # reused worker that still believes it is logged in
+        posts = []
+        serial_gets = []
+
+        def post(url, data=None, headers=None, timeout=30):
+            del headers, timeout
+            posts.append((url, dict(data or {})))
+            return self.mod.HttpResponse(
+                302, b"", {"Location": "/?msg_type=i&msg=ok", "set-cookie": "sid=fresh"}, url
+            )
+
+        def get(url, headers=None, timeout=30, allow_redirects=False):
+            del headers, timeout, allow_redirects
+            if "action=serial" not in url:
+                raise AssertionError(url)
+            serial_gets.append(url)
+            if len(serial_gets) == 1:
+                # Expired session: Titulky bounced the browse request to a message page.
+                return self.mod.HttpResponse(
+                    200,
+                    b"<html>session expired</html>",
+                    {},
+                    "https://premium.titulky.com/?msg_type=e&msg=login",
+                )
+            return self.mod.HttpResponse(200, _fixture("titulky_browse_dune.html"), {}, url)
+
+        provider._http_post = post
+        provider._http_get = get
+        results = provider.search(
+            _video("titulky_video_dune_2021.json"),
+            [{"alpha3": "ces", "alpha2": "cs"}],
+            {"username": "user", "password": "pass", "approved_only": False, "skip_wrong_fps": False},
+        )
+
+        self.assertEqual(len(posts), 1)  # re-login happened exactly once
+        self.assertEqual(posts[0][1], {"LoginName": "user", "LoginPassword": "pass"})
+        self.assertEqual(len(serial_gets), 2)  # retried the browse request after re-auth
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0]["provider_payload"]["subtitle_id"], "101")
+
     def test_store_cookies_preserves_duplicate_set_cookie_headers(self):
         provider = self.mod.TitulkyProvider()
 
