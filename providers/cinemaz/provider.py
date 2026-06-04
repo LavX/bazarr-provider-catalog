@@ -55,7 +55,7 @@ LANGUAGE_NAME_TO_ALPHA3 = {
     "bokmal, norwegian": "nor",
     "bokmål, norwegian": "nor",
     "bosnian": "bos",
-    "brazilian portuguese": "por-BR",
+    "brazilian portuguese": "por",
     "breton": "bre",
     "bulgarian": "bul",
     "burmese": "mya",
@@ -229,6 +229,14 @@ LANGUAGE_NAME_TO_ALPHA3 = {
     "zulu": "zul",
 }
 
+# Country variants for language names that map to a base alpha3 but carry a
+# region. The catalog advertises only the base alpha3 (for example por), so the
+# region is tracked separately as a country code and matched against requests
+# that carry a country field such as country_alpha2: BR.
+LANGUAGE_NAME_TO_COUNTRY = {
+    "brazilian portuguese": "BR",
+}
+
 
 class HttpResponse:
     def __init__(self, status, body, headers):
@@ -259,9 +267,13 @@ class CinemaZProvider:
         results = []
         for subtitle in release["subtitles"]:
             alpha3 = language_alpha3(subtitle["language"])
-            if not alpha3 or (alpha3, False) not in requested:
+            if not alpha3:
                 continue
-            results.append(_candidate(release, subtitle, alpha3, video))
+            country = language_country(subtitle["language"])
+            key = f"{alpha3}-{country}" if country else alpha3
+            if (key, False) not in requested:
+                continue
+            results.append(_candidate(release, subtitle, alpha3, country, video))
         return results
 
     def download(self, provider_payload, language, config):
@@ -337,6 +349,10 @@ def _requested_languages(languages):
     for item in languages or []:
         if not isinstance(item, dict):
             continue
+        # CinemaZ does not parse or mark forced rows, so a forced-only request
+        # must be skipped instead of surfacing regular subtitles.
+        if item.get("forced"):
+            continue
         alpha3 = _language_id(item)
         if not alpha3:
             continue
@@ -346,7 +362,7 @@ def _requested_languages(languages):
 
 def _language_id(language):
     alpha3 = str(language.get("alpha3") or "").strip()
-    country = str(language.get("country") or "").strip().upper()
+    country = str(language.get("country") or language.get("country_alpha2") or "").strip().upper()
     if alpha3 and country and "-" not in alpha3:
         return f"{alpha3}-{country}"
     return alpha3
@@ -371,6 +387,11 @@ def language_alpha3(language_name):
     return LANGUAGE_NAME_TO_ALPHA3.get(normalized)
 
 
+def language_country(language_name):
+    normalized = _normalize_language_name(language_name)
+    return LANGUAGE_NAME_TO_COUNTRY.get(normalized)
+
+
 def _normalize_language_name(value):
     text = html.unescape(str(value or "")).strip().lower()
     text = " ".join(text.replace("\xa0", " ").split())
@@ -378,17 +399,21 @@ def _normalize_language_name(value):
     return text
 
 
-def _candidate(release, subtitle, alpha3, video):
+def _candidate(release, subtitle, alpha3, country, video):
     download_url = subtitle["download_url"]
     filename = subtitle.get("filename") or download_url.rstrip("/").split("/")[-1] or f"cinemaz-{alpha3}.srt"
     if not _subtitle_extension(filename) and subtitle.get("extension"):
         subtitle_id = _subtitle_id(download_url) or alpha3
         filename = f"cinemaz-{subtitle_id}.{alpha3}.{subtitle['extension']}"
     release_info = release["title"]
+    language = {"alpha3": alpha3, "hi": False, "forced": False}
+    if country:
+        language["country_alpha2"] = country
+    candidate_id = f"cinemaz-{filename}-{alpha3}-{country}" if country else f"cinemaz-{filename}-{alpha3}"
     return {
         "provider": PROVIDER_ID,
-        "id": f"cinemaz-{filename}-{alpha3}",
-        "language": {"alpha3": alpha3, "hi": False, "forced": False},
+        "id": candidate_id,
+        "language": language,
         "release_info": release_info,
         "filename": filename,
         "matches": ["hash"],
@@ -485,10 +510,13 @@ def _subtitle_rows(table, page_url):
             continue
         mapped = {headers[index]: cells[index] for index in range(len(headers))}
         language_cell = mapped.get("language")
-        download_cell = mapped.get("download")
+        # Current UNIT3D subtitles partials place the download link inside the
+        # Actions column rather than a dedicated Download column, so accept the
+        # Actions cell as a fallback source for the link.
+        download_cell = mapped.get("download") or mapped.get("actions")
         if language_cell is None or download_cell is None:
             continue
-        href = download_cell.first_link()
+        href = _download_href(download_cell)
         if not href:
             continue
         uploader_cell = mapped.get("uploader")
@@ -502,6 +530,18 @@ def _subtitle_rows(table, page_url):
             }
         )
     return rows
+
+
+def _download_href(cell):
+    # The Actions column can hold several links (view, report, download), so
+    # prefer the subtitle download endpoint and fall back to the first link.
+    links = cell.links()
+    if not links:
+        return None
+    for href in links:
+        if href.rstrip("/").lower().endswith("/download"):
+            return href
+    return links[0]
 
 
 def _extension_from_cell(cell):
@@ -578,6 +618,9 @@ class _Node:
         if link is None:
             return None
         return link.attrs.get("href")
+
+    def links(self):
+        return [anchor.attrs.get("href") for anchor in self.descendants("a") if anchor.attrs.get("href")]
 
 
 class _TreeBuilder(HTMLParser):

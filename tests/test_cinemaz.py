@@ -90,6 +90,54 @@ def _unit3d_release_page():
     """
 
 
+def _unit3d_actions_release_page():
+    return b"""
+    <html>
+      <body>
+        <h1>The Cabinet of Dr Caligari 1920 1080p BluRay x264-GROUP</h1>
+        <section id="subtitles">
+          <table>
+            <thead>
+              <tr>
+                <th>Language</th><th>Note</th><th>Extension</th><th>Size</th>
+                <th>Downloads</th><th>Uploaded</th><th>Uploader</th><th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>English</td>
+                <td>full</td>
+                <td>SRT</td>
+                <td>12 KiB</td>
+                <td>42</td>
+                <td>2026-01-01</td>
+                <td>dana</td>
+                <td>
+                  <a href="/subtitles/555">View</a>
+                  <a href="/subtitles/555/download">Download</a>
+                </td>
+              </tr>
+              <tr>
+                <td>Brazilian Portuguese</td>
+                <td>full</td>
+                <td>SRT</td>
+                <td>11 KiB</td>
+                <td>7</td>
+                <td>2026-01-02</td>
+                <td>bruno</td>
+                <td>
+                  <a href="/subtitles/666">View</a>
+                  <a href="/subtitles/666/download">Download</a>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+      </body>
+    </html>
+    """
+
+
 def _zip_body(name="caligari.english.srt"):
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -198,6 +246,83 @@ class CinemaZSearchTests(unittest.TestCase):
                 [{"alpha3": "eng"}],
                 {"cookies": "cinemazx_session=expired"},
             )
+
+    def test_search_reads_download_link_from_unit3d_actions_column(self):
+        provider = self.mod.CinemaZProvider()
+
+        def get_bytes(url, headers, cookies, timeout=30, allow_redirects=True):
+            del headers, cookies, timeout, allow_redirects
+            if url.endswith("/rules"):
+                return self.mod.HttpResponse(200, b"<html>rules</html>", {})
+            return self.mod.HttpResponse(200, _unit3d_actions_release_page(), {})
+
+        provider._http_get = get_bytes
+        results = provider.search(
+            {
+                "kind": "movie",
+                "title": "The Cabinet of Dr Caligari",
+                "info_url": "https://cinemaz.to/torrent/123-caligari",
+            },
+            [{"alpha3": "eng"}],
+            {"cookies": "cinemazx_session=valid"},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["language"]["alpha3"], "eng")
+        # The download endpoint is preferred over the sibling view link.
+        self.assertEqual(
+            results[0]["provider_payload"]["download_url"],
+            "https://cinemaz.to/subtitles/555/download",
+        )
+        self.assertEqual(results[0]["display"]["uploader"], "dana")
+
+    def test_search_returns_brazilian_portuguese_as_por_variant(self):
+        provider = self.mod.CinemaZProvider()
+
+        def get_bytes(url, headers, cookies, timeout=30, allow_redirects=True):
+            del headers, cookies, timeout, allow_redirects
+            if url.endswith("/rules"):
+                return self.mod.HttpResponse(200, b"<html>rules</html>", {})
+            return self.mod.HttpResponse(200, _unit3d_actions_release_page(), {})
+
+        provider._http_get = get_bytes
+        results = provider.search(
+            {
+                "kind": "movie",
+                "title": "The Cabinet of Dr Caligari",
+                "info_url": "https://cinemaz.to/torrent/123-caligari",
+            },
+            [{"alpha3": "por", "country_alpha2": "BR"}],
+            {"cookies": "cinemazx_session=valid"},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["language"]["alpha3"], "por")
+        self.assertEqual(results[0]["language"]["country_alpha2"], "BR")
+        self.assertEqual(
+            results[0]["provider_payload"]["download_url"],
+            "https://cinemaz.to/subtitles/666/download",
+        )
+
+    def test_search_skips_forced_only_language_requests(self):
+        provider = self.mod.CinemaZProvider()
+        calls = []
+
+        def get_bytes(url, headers, cookies, timeout=30, allow_redirects=True):
+            del headers, cookies, timeout, allow_redirects
+            calls.append(url)
+            return self.mod.HttpResponse(200, b"<html>rules</html>", {})
+
+        provider._http_get = get_bytes
+        results = provider.search(
+            {"kind": "movie", "info_url": "https://cinemaz.to/torrent/123-caligari"},
+            [{"alpha3": "eng", "forced": True}],
+            {"cookies": "cinemazx_session=valid"},
+        )
+
+        self.assertEqual(results, [])
+        # A forced-only request must short-circuit before any network calls.
+        self.assertEqual(calls, [])
 
 
 class CinemaZDownloadTests(unittest.TestCase):

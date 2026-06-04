@@ -640,7 +640,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "b8d8ccfa3e61d947d51f7e2aa3289f98143d6beac5b1d63045491007dd5c94e1",
+        "bundle_sha256": "029f0210c9135a39ba4d7010aa80ad2619ec7b34819520cd686b319f36a779b9",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -674,10 +674,31 @@
             },
             {
               "hashes": [
+                "sha256:3c52e209ba0a4ad7aebe60436a4ab349c39e1e602e8c134221e546902ad25897"
+              ],
+              "name": "certifi",
+              "version": "2026.5.20"
+            },
+            {
+              "hashes": [
+                "sha256:bd6c2a1c7573c64738d716488d2cdd3c00e340e4835707d8fdb8dc1a66ef164e"
+              ],
+              "name": "charset-normalizer",
+              "version": "3.4.7"
+            },
+            {
+              "hashes": [
                 "sha256:482be17c6991b8c19c5429a1e995d9b0efdbb63172824c41f99965dc0ade8ec2"
               ],
               "name": "click",
               "version": "8.4.1"
+            },
+            {
+              "hashes": [
+                "sha256:cc246e3a3f89580c3a951b5ad298ca4638078b2cdd4f115654332b5c26daded5"
+              ],
+              "name": "idna",
+              "version": "3.16"
             },
             {
               "hashes": [
@@ -716,6 +737,13 @@
             },
             {
               "hashes": [
+                "sha256:2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0"
+              ],
+              "name": "requests",
+              "version": "2.34.2"
+            },
+            {
+              "hashes": [
                 "sha256:33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb"
               ],
               "name": "rich",
@@ -734,6 +762,13 @@
               ],
               "name": "typer",
               "version": "0.25.1"
+            },
+            {
+              "hashes": [
+                "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
+              ],
+              "name": "urllib3",
+              "version": "2.7.0"
             }
           ]
         },
@@ -741,7 +776,7 @@
         "entry_class": "CinemaZProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "33dd399559732c96f3a2f4549839073db1ed109b32775e5445028ba25627cc99"
+          "provider.py": "034feb0987bd2f5489fbc0e3653d999256c44553036e8062c7e0307304cb9b75"
         },
         "languages": [
           "aar",
@@ -937,7 +972,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.1"
+        "version": "0.1.2"
       }
     },
     {
