@@ -39,7 +39,7 @@ class KtuvitProvider:
 
     def search(self, video, languages, config):
         video = video or {}
-        if "heb" not in _requested_languages(languages):
+        if not _wants_plain_hebrew(languages):
             return []
         config = dict(config or {})
         cookies = self._ensure_authenticated(config)
@@ -81,6 +81,8 @@ class KtuvitProvider:
         )
         _raise_for_status(response, "Ktuvit download identifier")
         download_identifier = _parse_d_response(response, "DownloadIdentifier")
+        if not download_identifier:
+            raise ValueError("ktuvit download did not return a DownloadIdentifier")
         file_response = self._http_get(
             f"{DOWNLOAD_URL}{urllib.parse.quote(str(download_identifier))}",
             self._headers(),
@@ -166,7 +168,7 @@ class KtuvitProvider:
                         "ktuvit_id": ktuvit_id,
                         "subtitle_id": sub["subtitle_id"],
                         "release_info": sub["release_info"],
-                        "language": {"alpha3": "heb", "hi": False, "forced": False},
+                        "language": {"alpha3": "heb", "alpha2": "he", "hi": False, "forced": False},
                         "page_url": f"{MOVIE_INFO_URL}{ktuvit_id}",
                     }
                 )
@@ -197,7 +199,7 @@ class KtuvitProvider:
         }
         if year:
             params["year"] = str(year)
-        search_url = f"http://api.tmdb.org/3/search/{category}?{urllib.parse.urlencode(params)}"
+        search_url = f"https://api.tmdb.org/3/search/{category}?{urllib.parse.urlencode(params)}"
         response = self._http_get(search_url, self._headers(), {}, timeout=10)
         _raise_for_status(response, "TMDB search")
         results = json.loads(response.body.decode("utf-8", "ignore")).get("results") or []
@@ -207,7 +209,7 @@ class KtuvitProvider:
         if not tmdb_id:
             return None
         suffix = "" if is_movie else "/external_ids"
-        detail_url = f"http://api.tmdb.org/3/{category}/{tmdb_id}{suffix}?{urllib.parse.urlencode({'api_key': TMDB_API_KEY, 'language': 'en'})}"
+        detail_url = f"https://api.tmdb.org/3/{category}/{tmdb_id}{suffix}?{urllib.parse.urlencode({'api_key': TMDB_API_KEY, 'language': 'en'})}"
         detail_response = self._http_get(detail_url, self._headers(), {}, timeout=10)
         _raise_for_status(detail_response, "TMDB detail")
         imdb_id = json.loads(detail_response.body.decode("utf-8", "ignore")).get("imdb_id")
@@ -439,6 +441,19 @@ def _requested_languages(languages):
     return {str(item.get("alpha3")) for item in languages or [] if isinstance(item, dict) and item.get("alpha3")}
 
 
+def _wants_plain_hebrew(languages):
+    # Ktuvit only serves regular Hebrew subtitles (hi=False, forced=False), so a
+    # request for only a forced or hearing-impaired Hebrew variant cannot be satisfied.
+    for item in languages or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("alpha3")) != "heb":
+            continue
+        if not item.get("hi") and not item.get("forced"):
+            return True
+    return False
+
+
 def _titles(video, is_movie):
     if is_movie:
         values = [video.get("title")] + list(video.get("alternative_titles") or [])
@@ -512,12 +527,27 @@ def _normalize_line_endings(body):
     return body.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
 
 
-def _content_payload(body, fmt):
+def _detect_encoding(body):
     try:
         body.decode("utf-8")
-        encoding = "utf-8"
+        return "utf-8"
     except UnicodeDecodeError:
-        encoding = "latin-1"
+        pass
+    # Hebrew SRTs are commonly encoded as Windows-1255 or ISO-8859-8. latin-1 accepts
+    # any byte sequence, so try the Hebrew legacy encodings first and only fall back to
+    # latin-1 when the bytes do not decode to actual Hebrew text.
+    for encoding in ("windows-1255", "iso-8859-8"):
+        try:
+            decoded = body.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+        if any("֐" <= char <= "׿" for char in decoded):
+            return encoding
+    return "latin-1"
+
+
+def _content_payload(body, fmt):
+    encoding = _detect_encoding(body)
     return {
         "content_b64": base64.b64encode(body).decode("ascii"),
         "content_sha256": hashlib.sha256(body).hexdigest(),

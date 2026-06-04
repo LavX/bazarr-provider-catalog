@@ -106,7 +106,7 @@ class KtuvitSearchTests(unittest.TestCase):
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["provider"], "ktuvit")
-        self.assertEqual(results[0]["language"], {"alpha3": "heb", "hi": False, "forced": False})
+        self.assertEqual(results[0]["language"], {"alpha3": "heb", "alpha2": "he", "hi": False, "forced": False})
         self.assertEqual(results[0]["release_info"], "Dune.2021.BluRay-GROUP")
         self.assertEqual(results[0]["provider_payload"]["ktuvit_id"], "MOV1")
         self.assertEqual(results[0]["provider_payload"]["subtitle_id"], "SUB1")
@@ -271,6 +271,132 @@ class KtuvitHttpTests(unittest.TestCase):
 
         self.assertEqual(cookies["Login"], "login-token")
         self.assertEqual(cookies["Session"], "session-token")
+
+    def test_tmdb_fallback_uses_https_for_both_lookups(self):
+        provider = self.mod.KtuvitProvider()
+        tmdb_urls = []
+
+        provider._http_post = lambda url, json_data, headers, cookies, timeout=30: (
+            self.mod.HttpResponse(200, _json_d({"IsSuccess": True}), {"set-cookie": "Login=login-token; path=/"})
+            if url.endswith("/Login")
+            else self.mod.HttpResponse(
+                200,
+                _json_d({"Films": [{"IMDB_Link": "https://www.imdb.com/title/tt1160419/", "ID": "MOV1"}]}),
+                {},
+            )
+        )
+
+        def get_response(url, headers, cookies, timeout=30):
+            del headers, cookies, timeout
+            if "api.tmdb.org" in url:
+                tmdb_urls.append(url)
+            if "api.tmdb.org/3/search/movie" in url:
+                return self.mod.HttpResponse(200, b'{"results":[{"id":438631}]}', {})
+            if "api.tmdb.org/3/movie/438631" in url:
+                return self.mod.HttpResponse(200, b'{"imdb_id":"tt1160419"}', {})
+            if url.endswith("/MovieInfo.aspx?ID=MOV1"):
+                return self.mod.HttpResponse(200, _movie_page(), {})
+            raise AssertionError(url)
+
+        provider._http_get = get_response
+        provider.search(
+            {"kind": "movie", "title": "Dune", "year": 2021},
+            [{"alpha3": "heb"}],
+            {"email": "user@example.com", "hashed_password": "hash"},
+        )
+
+        self.assertEqual(len(tmdb_urls), 2)
+        for url in tmdb_urls:
+            self.assertTrue(url.startswith("https://"), url)
+
+
+class KtuvitLanguageFilterTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_search_skips_when_only_forced_hebrew_requested(self):
+        provider = self.mod.KtuvitProvider()
+
+        def fail(*args, **kwargs):
+            raise AssertionError("search must not authenticate for unsupported variants")
+
+        provider._ensure_authenticated = fail
+        self.assertEqual(
+            provider.search(
+                {"kind": "movie", "title": "Dune"},
+                [{"alpha3": "heb", "forced": True}],
+                {"email": "user@example.com", "hashed_password": "hash"},
+            ),
+            [],
+        )
+
+    def test_search_skips_when_only_hi_hebrew_requested(self):
+        provider = self.mod.KtuvitProvider()
+
+        def fail(*args, **kwargs):
+            raise AssertionError("search must not authenticate for unsupported variants")
+
+        provider._ensure_authenticated = fail
+        self.assertEqual(
+            provider.search(
+                {"kind": "movie", "title": "Dune"},
+                [{"alpha3": "heb", "hi": True}],
+                {"email": "user@example.com", "hashed_password": "hash"},
+            ),
+            [],
+        )
+
+    def test_search_runs_when_plain_hebrew_also_requested(self):
+        self.assertTrue(
+            self.mod._wants_plain_hebrew([{"alpha3": "heb", "hi": True}, {"alpha3": "heb"}])
+        )
+
+
+class KtuvitEncodingTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_windows_1255_hebrew_detected_before_latin1(self):
+        body = "שלום עולם".encode("windows-1255")
+        self.assertEqual(self.mod._detect_encoding(body), "windows-1255")
+
+    def test_utf8_still_preferred(self):
+        self.assertEqual(self.mod._detect_encoding("שלום".encode("utf-8")), "utf-8")
+
+    def test_non_hebrew_undecodable_bytes_fall_back_to_latin1(self):
+        self.assertEqual(self.mod._detect_encoding(b"\xff\xfe\x00\x01"), "latin-1")
+
+
+class KtuvitDownloadIdentifierTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_missing_download_identifier_raises_before_fetching(self):
+        provider = self.mod.KtuvitProvider()
+        get_calls = []
+
+        def post_response(url, json_data, headers, cookies, timeout=30):
+            del json_data, headers, cookies, timeout
+            if url.endswith("/Login"):
+                return self.mod.HttpResponse(200, _json_d({"IsSuccess": True}), {"set-cookie": "Login=login-token; path=/"})
+            if url.endswith("/RequestSubtitleDownload"):
+                return self.mod.HttpResponse(200, _json_d({"DownloadIdentifier": None}), {})
+            raise AssertionError(url)
+
+        def get_response(url, headers, cookies, timeout=30):
+            del headers, cookies, timeout
+            get_calls.append(url)
+            raise AssertionError("must not fetch download without an identifier")
+
+        provider._http_post = post_response
+        provider._http_get = get_response
+        with self.assertRaisesRegex(ValueError, "DownloadIdentifier"):
+            provider.download(
+                {"ktuvit_id": "MOV1", "subtitle_id": "SUB1", "filename": "x.srt"},
+                {"alpha3": "heb"},
+                {"email": "user@example.com", "hashed_password": "hash"},
+            )
+        self.assertEqual(get_calls, [])
 
 
 if __name__ == "__main__":
