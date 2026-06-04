@@ -28,7 +28,7 @@ USER_AGENT = "BazarrProviderHub"
 HTTP_TIMEOUT_SECONDS = 15
 ALLOWED_EXTENSIONS = (".ass", ".srt", ".ssa", ".vtt", ".zip", ".rar")
 SUBTITLE_EXTENSIONS = (".ass", ".srt", ".ssa", ".vtt")
-BLOCKED_RE = re.compile(r"extra|commentary|lyrics", re.I)
+BLOCKED_TOKENS = frozenset({"extra", "extras", "commentary", "lyrics"})
 EPISODE_TAG_RE = re.compile(r"\bs\d{1,3}e(\d{1,3})\b", re.I)
 LOOSE_EPISODE_RE = re.compile(r"(?:^|[^a-z0-9])e(\d{1,3})(?:[^a-z0-9]|$)", re.I)
 
@@ -223,9 +223,9 @@ ALPHA3_TO_ALPHA2.update({"eng": "en", "ell": "el", "por": "pt"})
 HDBITS_LANGUAGES = sorted(set(ALPHA2_TO_ALPHA3.values()) | {"eng", "ell", "por"})
 
 SPECIAL_HDBITS_LANGUAGE = {
-    "br": "por",
-    "gr": "ell",
-    "uk": "eng",
+    "br": ("por", "BR"),
+    "gr": ("ell", None),
+    "uk": ("eng", None),
 }
 
 SOURCE_TOKENS = {
@@ -301,60 +301,93 @@ def build_lookup(video):
     video = video or {}
     kind = video.get("kind")
     if kind == "movie":
-        imdb_id = str(video.get("imdb_id") or video.get("imdb") or "").strip()
-        return {"imdb": {"id": imdb_id.removeprefix("tt")}}, ["imdb_id", "title", "year"], None
+        imdb_id = str(video.get("imdb_id") or video.get("imdb") or "").strip().removeprefix("tt")
+        if not imdb_id:
+            return {}, [], None
+        return {"imdb": {"id": imdb_id}}, ["imdb_id", "title", "year"], None
     if kind == "episode":
         tvdb_id = video.get("series_tvdb_id") or video.get("tvdb_id") or video.get("tvdb")
+        if tvdb_id in (None, "", 0):
+            return {}, [], None
         lookup = {"tvdb": {"id": tvdb_id, "season": video.get("season")}}
         return lookup, ["tvdb_id", "imdb_id", "series", "title", "season", "episode"], video.get("episode")
     return {}, [], None
 
 
-def hdbits_language_to_alpha3(code):
+def hdbits_language(code):
+    """Resolve an HDBits language code to ``(alpha3, country_alpha2)``."""
     normalized = str(code or "").lower().strip()
-    return SPECIAL_HDBITS_LANGUAGE.get(normalized) or ALPHA2_TO_ALPHA3.get(normalized)
+    special = SPECIAL_HDBITS_LANGUAGE.get(normalized)
+    if special is not None:
+        return special
+    alpha3 = ALPHA2_TO_ALPHA3.get(normalized)
+    if alpha3:
+        return (alpha3, None)
+    return (None, None)
+
+
+def hdbits_language_to_alpha3(code):
+    return hdbits_language(code)[0]
 
 
 def _requested_alpha3(languages):
-    return set(_requested_variant_map(languages))
+    return {key[0] for key in _requested_variant_map(languages)}
 
 
 def _requested_variant_map(languages):
     if isinstance(languages, dict):
-        return {str(key).lower(): set(value) for key, value in languages.items()}
+        return {_variant_key(key): set(value) for key, value in languages.items()}
     requested = {}
     for language in languages or []:
-        alpha3 = _language_alpha3(language)
-        if alpha3:
+        key = _language_key(language)
+        if key[0]:
             forced = bool(language.get("forced")) if isinstance(language, dict) else False
             hi = bool(language.get("hi")) if isinstance(language, dict) else False
-            requested.setdefault(alpha3, set()).add((hi, forced))
+            requested.setdefault(key, set()).add((hi, forced))
     return requested
 
 
-def _language_alpha3(language):
+def _variant_key(key):
+    if isinstance(key, tuple):
+        alpha3 = str(key[0]).lower() if key[0] else None
+        country = str(key[1]).upper() if len(key) > 1 and key[1] else None
+        return (alpha3, country)
+    return (str(key).lower(), None)
+
+
+def _language_key(language):
     if isinstance(language, dict):
         alpha3 = language.get("alpha3")
         alpha2 = language.get("alpha2")
+        country = language.get("country_alpha2") or language.get("country")
     else:
         alpha3 = str(language)
         alpha2 = None
-    if alpha3:
-        return str(alpha3).lower()
-    if alpha2:
-        return ALPHA2_TO_ALPHA3.get(str(alpha2).lower())
-    return None
+        country = None
+    if not alpha3 and alpha2:
+        alpha3 = ALPHA2_TO_ALPHA3.get(str(alpha2).lower())
+    if not alpha3:
+        return (None, None)
+    return (str(alpha3).lower(), str(country).upper() if country else None)
+
+
+def _language_alpha3(language):
+    return _language_key(language)[0]
 
 
 def _is_allowed(row):
-    text = f"{row.get('title') or ''} {row.get('filename') or ''}"
-    return BLOCKED_RE.search(text) is None
+    tokens = set(_tokens(f"{row.get('title') or ''} {row.get('filename') or ''}"))
+    return not (tokens & BLOCKED_TOKENS)
 
 
-def _subtitle_flags(row):
+def _subtitle_flags(row, language=None):
     tokens = set(_tokens(f"{row.get('title') or ''} {row.get('filename') or ''}"))
     forced = "forced" in tokens
-    hearing_impaired = bool({"hi", "sdh"} & tokens) or {"hearing", "impaired"}.issubset(tokens)
+    hi_tokens = {"sdh"}
+    # For Hindi rows the "hi" token is the language code, not an accessibility flag.
+    if language != "hin":
+        hi_tokens.add("hi")
+    hearing_impaired = bool(hi_tokens & tokens) or {"hearing", "impaired"}.issubset(tokens)
     return hearing_impaired, forced
 
 
@@ -424,14 +457,15 @@ def parse_subtitles(rows, requested_alpha3, video, base_matches, episode=None):
             continue
         if not _is_allowed(row):
             continue
-        language = hdbits_language_to_alpha3(row.get("language"))
-        if not language or language not in requested:
+        language, country = hdbits_language(row.get("language"))
+        key = (language, country)
+        if not language or key not in requested:
             continue
-        hearing_impaired, forced = _subtitle_flags(row)
-        if (hearing_impaired, forced) not in requested[language]:
+        hearing_impaired, forced = _subtitle_flags(row, language)
+        if (hearing_impaired, forced) not in requested[key]:
             continue
         if episode is not None:
-            explicit_episodes = _episode_numbers(row.get("title") or filename)
+            explicit_episodes = _episode_numbers(f"{row.get('title') or ''} {filename}")
             try:
                 wanted_episode = int(episode)
             except (TypeError, ValueError):
@@ -444,6 +478,7 @@ def parse_subtitles(rows, requested_alpha3, video, base_matches, episode=None):
             {
                 "subtitle_id": subtitle_id,
                 "language": language,
+                "country_alpha2": country,
                 "release_info": release_info,
                 "filename": filename,
                 "matches": derive_matches(video, release_info, base_matches),
@@ -541,17 +576,21 @@ class HDBitsProvider:
     def _result(self, video, row, torrent_id, episode):
         language = row["language"]
         alpha2 = ALPHA3_TO_ALPHA2.get(language, language[:2])
+        country = row.get("country_alpha2")
         matches = row["matches"]
         score = min(100, 70 + len(matches) * 5)
+        language_payload = {
+            "alpha3": language,
+            "alpha2": alpha2,
+            "hi": row.get("hearing_impaired", False),
+            "forced": row.get("forced", False),
+        }
+        if country:
+            language_payload["country_alpha2"] = country
         return {
             "provider": PROVIDER_ID,
             "id": f"hdbits-{row['subtitle_id']}",
-            "language": {
-                "alpha3": language,
-                "alpha2": alpha2,
-                "hi": row.get("hearing_impaired", False),
-                "forced": row.get("forced", False),
-            },
+            "language": language_payload,
             "release_info": row["release_info"],
             "filename": row["filename"],
             "matches": matches,
@@ -576,6 +615,7 @@ class HDBitsProvider:
                 "season": (video or {}).get("season"),
                 "episode": episode,
                 "language": language,
+                "country_alpha2": country,
                 "hi": row.get("hearing_impaired", False),
                 "forced": row.get("forced", False),
             },
@@ -639,22 +679,36 @@ def select_subtitle_file(names, payload):
     if episode is None:
         return _best_language_candidate(candidates, payload)
 
-    def score(name):
+    hints = _language_hints((payload or {}).get("language"))
+
+    def episode_score(name):
         normalized = _normalize(os.path.basename(name))
-        name_tokens = set(_tokens(name))
         if season is not None and re.search(rf"\bs0*{season}e0*{episode}\b", normalized):
-            value = 100
-        elif re.search(rf"\be0*{episode}\b", normalized):
-            value = 90
-        elif re.search(rf"(^|[^0-9])0*{episode}([^0-9]|$)", normalized):
-            value = 80
-        else:
-            value = 0
-        if _language_hints((payload or {}).get("language")) & name_tokens:
+            return 100
+        if re.search(rf"\be0*{episode}\b", normalized):
+            return 90
+        # Loose fallback: a standalone episode-number token (for example
+        # "Show 1 en srt"). It must be its own token so the season digits in
+        # "s01e02" never satisfy an S01E01 request.
+        if re.search(rf"(?:^|\s)0*{episode}(?:\s|$)", normalized):
+            return 80
+        return 0
+
+    def score(name):
+        value = episode_score(name)
+        if hints & set(_tokens(name)):
             value += 20
         return value
 
-    return max(candidates, key=score)
+    # Only keep files that actually carry the requested episode so a season pack
+    # missing that episode raises instead of returning an arbitrary wrong file.
+    matching = [name for name in candidates if episode_score(name) > 0]
+    if not matching:
+        raise ValueError(
+            f"hdbits archive does not contain the requested episode {episode}"
+        )
+
+    return max(matching, key=score)
 
 
 def _best_language_candidate(candidates, payload):
@@ -675,7 +729,7 @@ def _language_hints(language):
     alpha2 = ALPHA3_TO_ALPHA2.get(alpha3)
     if alpha2:
         hints.add(alpha2)
-    hints.update(code for code, mapped in SPECIAL_HDBITS_LANGUAGE.items() if mapped == alpha3)
+    hints.update(code for code, (mapped, _country) in SPECIAL_HDBITS_LANGUAGE.items() if mapped == alpha3)
     return hints
 
 

@@ -65,6 +65,42 @@ class HDBitsLookupTests(unittest.TestCase):
             ["tvdb_id", "imdb_id", "series", "title", "season", "episode"],
         )
 
+    def test_movie_lookup_empty_without_imdb_id(self):
+        video = {**MOVIE_VIDEO, "imdb_id": "", "imdb": ""}
+
+        lookup, matches, episode = self.mod.build_lookup(video)
+
+        self.assertEqual(lookup, {})
+        self.assertEqual(matches, [])
+        self.assertIsNone(episode)
+
+    def test_episode_lookup_empty_without_tvdb_id(self):
+        video = {**EPISODE_VIDEO}
+        video.pop("series_tvdb_id", None)
+        video.pop("tvdb_id", None)
+        video.pop("tvdb", None)
+
+        lookup, matches, episode = self.mod.build_lookup(video)
+
+        self.assertEqual(lookup, {})
+        self.assertEqual(matches, [])
+        self.assertIsNone(episode)
+
+    def test_search_skips_api_when_required_id_missing(self):
+        provider = self.mod.HDBitsProvider()
+
+        def fail(*_args, **_kwargs):
+            raise AssertionError("search must not call the HDBits API without an id")
+
+        provider._post_json = fail
+        results = provider.search(
+            {**MOVIE_VIDEO, "imdb_id": "", "imdb": ""},
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"username": "user", "passkey": "secret"},
+        )
+
+        self.assertEqual(results, [])
+
 
 class HDBitsLanguageAndFilterTests(unittest.TestCase):
     def setUp(self):
@@ -79,14 +115,50 @@ class HDBitsLanguageAndFilterTests(unittest.TestCase):
     def test_parse_subtitles_filters_extension_language_and_blocked_keywords(self):
         rows = self.mod.parse_subtitles(
             MOVIE_SUBS_1001["data"] + MOVIE_SUBS_1002["data"],
-            requested_alpha3={"eng", "por"},
+            requested_alpha3=[
+                {"alpha3": "eng", "alpha2": "en"},
+                {"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR"},
+            ],
             video=MOVIE_VIDEO,
             base_matches=["imdb_id", "title", "year"],
         )
 
+        # 502 is an HDBits "br" row, so it only matches a Brazilian Portuguese request.
         self.assertEqual([row["subtitle_id"] for row in rows], [501, 502])
         self.assertEqual([row["language"] for row in rows], ["eng", "por"])
+        self.assertEqual([row["country_alpha2"] for row in rows], [None, "BR"])
         self.assertTrue(all("commentary" not in row["release_info"].lower() for row in rows))
+
+    def test_parse_subtitles_keeps_brazilian_rows_out_of_plain_portuguese(self):
+        rows = self.mod.parse_subtitles(
+            MOVIE_SUBS_1001["data"] + MOVIE_SUBS_1002["data"],
+            requested_alpha3=[
+                {"alpha3": "eng", "alpha2": "en"},
+                {"alpha3": "por", "alpha2": "pt"},
+            ],
+            video=MOVIE_VIDEO,
+            base_matches=["imdb_id", "title", "year"],
+        )
+
+        # Plain Portuguese must not pick up the Brazilian-only "br" row (502).
+        self.assertEqual([row["subtitle_id"] for row in rows], [501])
+
+    def test_parse_subtitles_allows_extraction_titles(self):
+        rows = self.mod.parse_subtitles(
+            [
+                {
+                    "filename": "Extraction.2020.1080p.en.srt",
+                    "id": 801,
+                    "language": "uk",
+                    "title": "Extraction.2020.1080p",
+                }
+            ],
+            requested_alpha3=[{"alpha3": "eng", "alpha2": "en"}],
+            video=MOVIE_VIDEO,
+            base_matches=["imdb_id", "title", "year"],
+        )
+
+        self.assertEqual([row["subtitle_id"] for row in rows], [801])
 
     def test_episode_subtitles_skip_explicit_different_episode(self):
         rows = self.mod.parse_subtitles(
@@ -147,6 +219,49 @@ class HDBitsLanguageAndFilterTests(unittest.TestCase):
         self.assertEqual([row["subtitle_id"] for row in hi], [702])
         self.assertTrue(hi[0]["hearing_impaired"])
 
+    def test_parse_subtitles_does_not_flag_hindi_as_hearing_impaired(self):
+        rows = [
+            {
+                "filename": "Movie.2021.hi.srt",
+                "id": 711,
+                "language": "hi",
+                "title": "Movie.2021",
+            }
+        ]
+
+        parsed = self.mod.parse_subtitles(
+            rows,
+            requested_alpha3=[{"alpha3": "hin", "alpha2": "hi"}],
+            video=MOVIE_VIDEO,
+            base_matches=["imdb_id", "title", "year"],
+        )
+
+        self.assertEqual([row["subtitle_id"] for row in parsed], [711])
+        self.assertEqual(parsed[0]["language"], "hin")
+        self.assertFalse(parsed[0]["hearing_impaired"])
+
+    def test_parse_subtitles_rejects_episode_from_filename_tag(self):
+        rows = [
+            {
+                "filename": "Chernobyl.S01E02.en.srt",
+                "id": 721,
+                "language": "uk",
+                "title": "Chernobyl.S01.1080p.WEB-DL-GROUP",
+            }
+        ]
+
+        parsed = self.mod.parse_subtitles(
+            rows,
+            requested_alpha3=[{"alpha3": "eng", "alpha2": "en"}],
+            video=EPISODE_VIDEO,
+            base_matches=["tvdb_id", "imdb_id", "series", "title", "season", "episode"],
+            episode=1,
+        )
+
+        # Season-pack title hides the episode, but the filename tags S01E02 so an
+        # S01E01 request must drop the row.
+        self.assertEqual(parsed, [])
+
 
 class HDBitsSearchTests(unittest.TestCase):
     def setUp(self):
@@ -180,7 +295,10 @@ class HDBitsSearchTests(unittest.TestCase):
         provider._post_json = post_stub
         results = provider.search(
             MOVIE_VIDEO,
-            [{"alpha3": "eng", "alpha2": "en"}, {"alpha3": "por", "alpha2": "pt"}],
+            [
+                {"alpha3": "eng", "alpha2": "en"},
+                {"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR"},
+            ],
             {"username": "user", "passkey": "secret", "request_delay_ms": 0},
         )
 
@@ -195,6 +313,9 @@ class HDBitsSearchTests(unittest.TestCase):
         self.assertIn("source", first["matches"])
         self.assertEqual(first["provider_payload"]["subtitle_id"], 501)
         self.assertNotIn("passkey", first["provider_payload"])
+        brazilian = next(item for item in results if item["provider_payload"]["subtitle_id"] == 502)
+        self.assertEqual(brazilian["language"]["alpha3"], "por")
+        self.assertEqual(brazilian["language"]["country_alpha2"], "BR")
 
     def test_search_surfaces_hdbits_api_errors(self):
         provider = self.mod.HDBitsProvider()
@@ -309,6 +430,25 @@ class HDBitsDownloadTests(unittest.TestCase):
         )
 
         self.assertEqual(base64.b64decode(result["content_b64"]), b"greek")
+
+    def test_download_rejects_archive_missing_requested_episode(self):
+        provider = self.mod.HDBitsProvider()
+        zip_body = _zip_body({"Chernobyl.S01E02.en.srt": SRT_BODY})
+        provider._http_get = lambda url, timeout=15: zip_body
+
+        with self.assertRaisesRegex(ValueError, "episode"):
+            provider.download(
+                {
+                    "provider": "hdbits",
+                    "schema": 1,
+                    "subtitle_id": 601,
+                    "filename": "Chernobyl.S01.en.zip",
+                    "season": 1,
+                    "episode": 1,
+                },
+                {"alpha3": "eng", "alpha2": "en"},
+                {"username": "user", "passkey": "secret"},
+            )
 
     def test_download_rejects_empty_response(self):
         provider = self.mod.HDBitsProvider()
