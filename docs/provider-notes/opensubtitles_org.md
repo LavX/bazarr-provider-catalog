@@ -2,7 +2,7 @@
 
 Historical provider id: `opensubtitles`.
 
-Catalog provider id: `opensubtitles_org`. Current Bazarr+ Provider Hub rejects plugins whose `provider_id` shadows a built-in provider, so the catalog plugin uses an installable id and records the legacy id in result payloads.
+Catalog provider id: `opensubtitles`. The plugin reuses the built-in id; a trusted catalog install on the Provider Hub migration allow-list overwrites the built-in in place, so there is no duplicate provider and the existing `settings.opensubtitles` config and compat moviehash routing keep working.
 
 ## Public behavior
 
@@ -26,7 +26,7 @@ Catalog provider id: `opensubtitles_org`. Current Bazarr+ Provider Hub rejects p
 
 ## Core promotion gate
 
-To replace the built-in `opensubtitles` provider directly, Bazarr+ core needs a trust-gated built-in shadowing or migration rule. Until that exists, install this catalog provider as `opensubtitles_org`.
+`opensubtitles` is on the Provider Hub built-in migration allow-list (`MIGRATED_BUILT_IN_PROVIDER_IDS`), so a trusted catalog plugin that reuses the id replaces the built-in directly via the same-id registry overwrite. No separate legacy alias is required.
 
 ## Live smoke status
 

@@ -1,0 +1,61 @@
+{
+  "api_version": "bazarr.provider-hub.v1",
+  "bundle_sha256": "c5b6fd1971a077d8554567bec5daab029d54cc7130dc138d3aa39b66aafae1b4",
+  "config_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "email": {
+        "description": "Ktuvit account email.",
+        "minLength": 1,
+        "secret": true,
+        "title": "Email",
+        "type": "string"
+      },
+      "hashed_password": {
+        "description": "Ktuvit hashed password from the Bazarr settings flow.",
+        "minLength": 1,
+        "secret": true,
+        "title": "Hashed password",
+        "type": "string"
+      }
+    },
+    "required": [
+      "email",
+      "hashed_password"
+    ],
+    "type": "object"
+  },
+  "dependencies": {
+    "requirements": []
+  },
+  "description": "Uses Ktuvit.me services for Hebrew movie and episode subtitles. Requires Ktuvit email and hashed password.",
+  "entry_class": "KtuvitProvider",
+  "entry_module": "provider",
+  "files": {
+    "provider.py": "ce20e2abb24fad0dfc5ce47b36484490e32b6d8e0b0e50be71bb6218339ac3cc"
+  },
+  "languages": [
+    "heb"
+  ],
+  "name": "Ktuvit",
+  "provider_id": "ktuvit",
+  "schema_version": 1,
+  "secret_fields": [
+    "email",
+    "hashed_password"
+  ],
+  "source": {
+    "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+    "commit": "0000000000000000000000000000000000000000",
+    "path": "providers/ktuvit",
+    "ref": "main",
+    "repo": "LavX/bazarr-provider-catalog",
+    "trusted": true,
+    "type": "github"
+  },
+  "supported_media": [
+    "movie",
+    "episode"
+  ],
+  "version": "0.1.2"
+}
