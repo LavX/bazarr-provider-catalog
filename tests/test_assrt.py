@@ -37,6 +37,28 @@ SEARCH_BILINGUAL = {
         ]
     }
 }
+SEARCH_BILINGUAL_NON_ENGLISH = {
+    "sub": {
+        "subs": [
+            {
+                "id": 73002,
+                "videoname": "Korean.Movie.2024.1080p.WEB-DL",
+                "lang": {"langlist": {"langdou": 1, "langkor": 1}},
+            }
+        ]
+    }
+}
+SEARCH_BILINGUAL_WITH_ENGLISH = {
+    "sub": {
+        "subs": [
+            {
+                "id": 73003,
+                "videoname": "Example.Movie.2024.1080p.WEB-DL",
+                "lang": {"langlist": {"langdou": 1, "langeng": 1}},
+            }
+        ]
+    }
+}
 DETAIL_ASS = {
     "sub": {
         "subs": [
@@ -122,6 +144,38 @@ class AssrtProviderTests(unittest.TestCase):
             {"token": "secret-token"},
         )
 
+        # "langdou" only reliably implies the Chinese half of a bilingual
+        # subtitle, so an English request must not be satisfied by it.
+        self.assertEqual({item["language"]["alpha3"] for item in results}, {"zho"})
+
+    def test_search_does_not_treat_bilingual_as_english(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_BILINGUAL_NON_ENGLISH
+        provider._sleep = lambda seconds: None
+
+        results = provider.search(
+            {"kind": "movie", "title": "Korean Movie", "year": 2024},
+            [{"alpha3": "eng"}],
+            {"token": "secret-token"},
+        )
+
+        # A Chinese/Korean bilingual entry carries no English track, so an
+        # English-only request must return nothing.
+        self.assertEqual(results, [])
+
+    def test_search_advertises_english_when_explicitly_present(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_BILINGUAL_WITH_ENGLISH
+        provider._sleep = lambda seconds: None
+
+        results = provider.search(
+            {"kind": "movie", "title": "Example Movie", "year": 2024},
+            [{"alpha3": "zho", "country_alpha2": "CN"}, {"alpha3": "eng"}],
+            {"token": "secret-token"},
+        )
+
+        # An explicit "langeng" entry alongside "langdou" must still surface both
+        # Chinese and English.
         self.assertEqual({item["language"]["alpha3"] for item in results}, {"zho", "eng"})
 
     def test_search_honors_country_alpha2_for_chinese_variants(self):
@@ -275,6 +329,80 @@ class AssrtProviderTests(unittest.TestCase):
         )
 
         self.assertEqual(selected_urls[0], "https://assrt.test/download/rick-s06e02-eng.srt")
+
+    def test_search_accepts_declared_chinese_variant_codes(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_RICK
+        provider._sleep = lambda seconds: None
+
+        # Provider Hub smoke tests can pass the exact manifest code "zho-TW".
+        results = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+            [{"alpha3": "zho-TW"}],
+            {"token": "secret-token"},
+        )
+
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["71002"])
+        self.assertEqual(results[0]["language"]["country"], "TW")
+
+    def test_search_declared_variant_code_excludes_other_variant(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_RICK
+        provider._sleep = lambda seconds: None
+
+        # "zho-CN" must not accept the Traditional-only (langcht / 71002) result.
+        results = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+            [{"alpha3": "zho-CN"}],
+            {"token": "secret-token"},
+        )
+
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["71001"])
+        self.assertEqual(results[0]["language"]["country"], "CN")
+
+    def test_download_payload_includes_content_type_and_encoding(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else DETAIL_ASS
+        provider._http_get_bytes = lambda url, timeout=15, config=None: "[Script Info]\nTitle: 你好\n".encode("utf-8")
+        provider._sleep = lambda seconds: None
+
+        result = provider.download(
+            {
+                "provider": "assrt",
+                "schema": 1,
+                "subtitle_id": "71001",
+                "language_code": "chs",
+                "filename": "rick.srt",
+            },
+            {"alpha3": "zho", "country_alpha2": "CN"},
+            {"token": "secret-token"},
+        )
+
+        self.assertEqual(result["format"], "ass")
+        self.assertEqual(result["content_type"], "text/x-ssa")
+        self.assertEqual(result["encoding"], "utf-8")
+
+    def test_download_payload_detects_gbk_encoding(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else DETAIL_SINGLE
+        provider._http_get_bytes = lambda url, timeout=15, config=None: "1\n00:00:01,000 --> 00:00:02,000\n你好世界\n".encode("gbk")
+        provider._sleep = lambda seconds: None
+
+        result = provider.download(
+            {
+                "provider": "assrt",
+                "schema": 1,
+                "subtitle_id": "71001",
+                "language_code": "chs",
+                "filename": "rick.srt",
+            },
+            {"alpha3": "zho", "country_alpha2": "CN"},
+            {"token": "secret-token"},
+        )
+
+        self.assertEqual(result["format"], "srt")
+        self.assertEqual(result["content_type"], "application/x-subrip")
+        self.assertEqual(result["encoding"], "gbk")
 
 
 if __name__ == "__main__":

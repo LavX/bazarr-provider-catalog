@@ -332,6 +332,15 @@ def _requested_language_meta(language):
     else:
         return None
     alpha3 = str(alpha3 or "").lower()
+    # The manifest advertises the declared variant codes "zho-CN"/"zho-TW", so
+    # callers may pass them verbatim as the alpha3 value. Split off the region
+    # suffix here so they resolve to the correct Simplified/Traditional meta.
+    if "-" in alpha3:
+        base, _, suffix = alpha3.partition("-")
+        if base in {"zh", "zho"}:
+            alpha3 = base
+            if not country:
+                country = suffix
     if alpha3 in {"zh", "zho"}:
         country = str(country or "").upper() or None
         if country == "TW":
@@ -357,8 +366,12 @@ def _languages_from_search_item(item):
             continue
         code = match.group("code").lower()
         if code == "dou":
+            # "langdou" (双语) marks a bilingual subtitle. Assrt always pairs the
+            # second language with Chinese, so only the Chinese half is reliable
+            # here. The other half is not guaranteed to be English (it can be
+            # Korean, Japanese, etc.), so we advertise English only when an
+            # explicit "langeng" entry is present below.
             yield code, LANGUAGE_CODES["zho-CN"]
-            yield code, LANGUAGE_CODES["eng"]
             continue
         meta = ASSRT_TO_LANGUAGE.get(code)
         if meta:
@@ -432,12 +445,37 @@ def _normalize_line_endings(body):
 
 def _content_payload(body, extension, empty=False):
     data = body or b""
+    subtitle_format = (extension or "srt").lstrip(".").lower()
     return {
         "content_b64": base64.b64encode(data).decode("ascii"),
         "content_sha256": hashlib.sha256(data).hexdigest(),
-        "format": (extension or "srt").lstrip(".").lower(),
+        "content_type": _content_type(subtitle_format),
+        "format": subtitle_format,
+        "encoding": _detect_encoding(data),
         "empty": bool(empty),
     }
+
+
+def _content_type(subtitle_format):
+    if subtitle_format in {"ass", "ssa"}:
+        return "text/x-ssa"
+    if subtitle_format == "vtt":
+        return "text/vtt"
+    if subtitle_format == "sub":
+        return "text/plain"
+    return "application/x-subrip"
+
+
+def _detect_encoding(body):
+    # Assrt serves Chinese subtitles, so fall back through the common Simplified
+    # (GBK) and Traditional (Big5) charsets before latin-1 catches the rest.
+    for candidate in ("utf-8", "gbk", "big5", "latin-1"):
+        try:
+            (body or b"").decode(candidate)
+            return candidate
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return "latin-1"
 
 
 def _subtitle_extension(name):
