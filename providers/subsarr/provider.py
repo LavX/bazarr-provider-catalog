@@ -14,6 +14,8 @@ import urllib.request
 PROVIDER_ID = "subsarr"
 HTTP_TIMEOUT_SECONDS = 30
 MAX_RESULTS = 100
+PER_PAGE = 100
+MAX_SEARCH_PAGES = 5
 USER_AGENT = "Subliminal/2 Bazarr/1"
 
 LANGUAGE_SLUGS = {
@@ -140,27 +142,20 @@ class SubsarrProvider:
         seen = set()
         for requested_language in requested:
             params = _base_search_params(video, requested_language)
-            items = []
+            matched = []
             imdb_id = _imdb_id(video)
             if imdb_id:
                 imdb_params = dict(params)
                 imdb_params["imdb_id"] = imdb_id
                 if video.get("kind") == "movie" and video.get("year") is not None:
                     imdb_params["year"] = video["year"]
-                _sleep(config)
-                items = self._search(base_url, imdb_params, config)
+                matched = self._collect_matches(base_url, imdb_params, requested_language, config)
             title = _title(video)
-            if not items and title:
+            if not matched and title:
                 title_params = dict(params)
                 title_params["query"] = title
-                _sleep(config)
-                items = self._search(base_url, title_params, config)
-            for item in items:
-                row_language = _language_from_slug(item.get("language"))
-                if row_language is None:
-                    continue
-                if not _language_requested(row_language, requested_language, item):
-                    continue
+                matched = self._collect_matches(base_url, title_params, requested_language, config)
+            for item, row_language in matched:
                 result = self._result(video, item, row_language, base_url)
                 key = (result["provider_payload"]["record_id"], result["language"]["alpha3"], result["language"]["hi"])
                 if key in seen:
@@ -181,6 +176,28 @@ class SubsarrProvider:
         body = self._http_get_bytes(url, config=config)
         body = _normalize_line_endings(body)
         return _content_payload(body, _subtitle_extension(payload.get("filename")) or "srt")
+
+    def _collect_matches(self, base_url, params, requested_language, config):
+        # Subsarr only filters server-side when hi=true, so non-HI requests get a
+        # mixed result set. Paginate before applying the local HI filter so rows of
+        # the requested variant on later pages are not lost when the first page is
+        # dominated by the other variant.
+        matched = []
+        for page in range(1, MAX_SEARCH_PAGES + 1):
+            page_params = dict(params)
+            page_params["page"] = page
+            _sleep(config)
+            items = self._search(base_url, page_params, config)
+            for item in items:
+                row_language = _language_from_slug(item.get("language"))
+                if row_language is None:
+                    continue
+                if not _language_requested(row_language, requested_language, item):
+                    continue
+                matched.append((item, row_language))
+            if len(items) < PER_PAGE:
+                break
+        return matched
 
     def _search(self, base_url, params, config):
         url = f"{base_url}/api/v1/subtitles/search?{urllib.parse.urlencode(params)}"
@@ -223,16 +240,20 @@ class SubsarrProvider:
         matches = derive_matches(video, item.get("title"), release_info)
         score = 95 if "episode" in matches or "title" in matches else 80
         display_alpha3 = "por" if alpha3 == "por-BR" else alpha3
+        country = meta.get("country")
         download_url = _download_url(base_url, item.get("download_url"))
+        language_block = {
+            "alpha3": display_alpha3,
+            "alpha2": meta["alpha2"],
+            "hi": is_hi,
+            "forced": False,
+        }
+        if country:
+            language_block["country_alpha2"] = country
         return {
             "provider": PROVIDER_ID,
-            "id": f"subsarr-{item.get('id')}-{display_alpha3}-{'hi' if is_hi else 'normal'}",
-            "language": {
-                "alpha3": display_alpha3,
-                "alpha2": meta["alpha2"],
-                "hi": is_hi,
-                "forced": False,
-            },
+            "id": f"subsarr-{item.get('id')}-{display_alpha3}-{country.lower() if country else 'xx'}-{'hi' if is_hi else 'normal'}",
+            "language": language_block,
             "release_info": release_info,
             "filename": filename,
             "matches": matches,
@@ -255,6 +276,7 @@ class SubsarrProvider:
                 "download_url": download_url,
                 "filename": filename,
                 "language": display_alpha3,
+                "country_alpha2": country,
                 "language_slug": item.get("language"),
                 "language_name": _language_name(alpha3),
                 "hi": is_hi,
@@ -308,6 +330,10 @@ def _requested_languages(languages):
     requested = []
     seen = set()
     for language in languages or []:
+        # Subsarr returns full subtitles and cannot verify forced status, so a
+        # forced-only request must be skipped instead of surfacing regular subs.
+        if isinstance(language, dict) and language.get("forced"):
+            continue
         slug = language_slug(language)
         code = _language_code(language)
         if code == "por" and _country(language) == "BR":
@@ -350,7 +376,7 @@ def _language_requested(row_language, requested_language, item):
 
 def _base_search_params(video, requested_language):
     params = {
-        "language": requested_language["name"],
+        "language": requested_language["slug"],
         "hi": "true" if requested_language.get("hi") else "false",
         "per_page": 100,
     }
@@ -367,12 +393,19 @@ def _download_url(base_url, download_url):
         return download_url
     base = urllib.parse.urlparse(base_url)
     parsed = urllib.parse.urlparse(str(download_url))
-    if not parsed.scheme:
-        return urllib.parse.urljoin(base_url.rstrip("/") + "/", str(download_url).lstrip("/"))
     base_path = base.path.rstrip("/")
-    if not base_path or parsed.netloc != base.netloc or parsed.path.startswith(base_path + "/"):
-        return str(download_url)
-    return urllib.parse.urlunparse(parsed._replace(path=base_path + parsed.path))
+    if not parsed.scheme and not parsed.netloc:
+        # Relative URL: anchor on the configured base_url (scheme, host, prefix).
+        return urllib.parse.urljoin(base_url.rstrip("/") + "/", str(download_url).lstrip("/"))
+    # Absolute URL from the Subsarr response. Subsarr builds it from only scheme and
+    # host (from the upstream request), so behind a TLS-terminating or path-prefixing
+    # reverse proxy it can drop the configured scheme and prefix. Rebuild the scheme,
+    # host, and prefix from the configured base_url while keeping the response path and
+    # query (which may carry download tokens).
+    path = parsed.path
+    if base_path and not path.startswith(base_path + "/") and path != base_path:
+        path = base_path + path
+    return urllib.parse.urlunparse((base.scheme, base.netloc, path, parsed.params, parsed.query, parsed.fragment))
 
 
 def _language_name(code):
@@ -412,7 +445,7 @@ def _language_code(language):
 def _country(language):
     if not isinstance(language, dict):
         return None
-    value = language.get("country") or language.get("region")
+    value = language.get("country") or language.get("country_alpha2") or language.get("region")
     if not value and str(language.get("alpha3") or "").lower() in {"por-br", "pt-br"}:
         value = "BR"
     return str(value).upper() if value else None
