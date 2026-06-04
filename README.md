@@ -66,6 +66,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`titrari`](providers/titrari/) | 0.1.1 | Scrapes [Titrari.ro](https://www.titrari.ro) for Romanian and English movie and episode subtitles. No login or API key. |
 | [`titlovi`](providers/titlovi/) | 0.1.1 | Uses the [Titlovi](https://kodi.titlovi.com/api/subtitles) Kodi API for movie and episode subtitles. Login required. |
 | [`tvsubtitles`](providers/tvsubtitles/) | 0.1.1 | Scrapes [tvsubtitles.net](https://www.tvsubtitles.net) for episode subtitles in broad multilingual coverage. No login or API key. |
+| [`wizdom`](providers/wizdom/) | 0.1.3 | Uses [wizdom.xyz](https://wizdom.xyz) for Hebrew movie and episode subtitles, with TMDB lookup when an IMDb id is not supplied. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback for Cloudflare browser challenges. |
 | [`whisperai`](providers/whisperai/) | 0.1.1 | Generates subtitles through a user-supplied Whisper web service by extracting local audio with ffmpeg. Requires endpoint configuration. |
 | [`yifysubtitles`](providers/yifysubtitles/) | 0.1.1 | Scrapes [YIFYSubtitles](https://yifysubtitles.ch) for movie subtitles in broad multilingual coverage. No login or API key. |
 | [`zimuku`](providers/zimuku/) | 0.1.3 | Scrapes [Zimuku / srtku.com](https://srtku.com) for Chinese and English movie and episode subtitles. Includes native Yunsuo image verification with optional helper fallback. |
@@ -139,6 +140,7 @@ Every provider here ships independently of Bazarr+ releases. [Contribute](#contr
 - `providers/titrari/`: scrapes Titrari.ro movie and episode subtitle listings, including ZIP and RAR downloads.
 - `providers/titlovi/`: uses the Titlovi Kodi API for authenticated movie and episode subtitle search and downloads.
 - `providers/tvsubtitles/`: scrapes tvsubtitles.net episode subtitle listings and ZIP downloads.
+- `providers/wizdom/`: uses wizdom.xyz for Hebrew movie and episode subtitles, with TMDB lookup when an IMDb id is missing. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback for Cloudflare browser challenges.
 - `providers/whisperai/`: generates subtitles through a configured Whisper web service after extracting local audio with ffmpeg.
 - `providers/yifysubtitles/`: scrapes YIFYSubtitles movie subtitle pages and ZIP downloads.
 - `providers/zimuku/`: scrapes Zimuku / srtku.com for Chinese and English movie and episode subtitles, with native Yunsuo image verification and optional helper settings.
