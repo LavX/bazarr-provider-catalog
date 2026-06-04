@@ -12,6 +12,7 @@ _LANGUAGE_TO_SHOOTER = {
     "zho": "chn",
 }
 _SUPPORTED_MEDIA = {"movie", "episode"}
+_SUPPORTED_FORMATS = {"srt", "ass", "ssa", "sub", "vtt"}
 _DEFAULT_TIMEOUT = 10
 _SHOOTER_HASH_READ_SIZE = 4096
 
@@ -57,7 +58,10 @@ def _language_payload(language):
 
 def _video_name(video):
     video = video or {}
-    name = video.get("name") or video.get("original_path") or video.get("original_name")
+    path = _existing_video_path(video)
+    if path:
+        return path
+    name = video.get("name") or video.get("path") or video.get("original_path") or video.get("original_name")
     if name:
         return str(name)
     if video.get("kind") == "episode":
@@ -108,17 +112,35 @@ def _candidate_id(download_url, filehash, language_code):
     return f"shooter-{digest[:16]}"
 
 
-def _filename_from_url(download_url, language_code):
+def _filename_from_url(download_url, language_code, fmt="srt"):
+    fmt = fmt or "srt"
     path = parse.urlparse(download_url).path
-    basename = os.path.basename(path) or f"shooter.{language_code}.srt"
+    basename = os.path.basename(path) or f"shooter.{language_code}.{fmt}"
     if "." not in basename:
-        return f"{basename}.{language_code}.srt"
+        return f"{basename}.{language_code}.{fmt}"
+    # Opaque endpoints such as subapi.php carry the real type in Shooter's Ext
+    # field, so trust the resolved format over the request path's extension.
+    current_ext = basename.rsplit(".", 1)[-1].lower()
+    if current_ext not in _SUPPORTED_FORMATS:
+        return f"{basename}.{language_code}.{fmt}"
     return basename
 
 
 def _format_from_filename(filename):
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "srt"
-    return ext if ext in {"srt", "ass", "ssa", "sub", "vtt"} else "srt"
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return ext if ext in _SUPPORTED_FORMATS else None
+
+
+def _resolve_format(ext, download_url):
+    fmt = str(ext or "").strip().lstrip(".").lower()
+    if fmt in _SUPPORTED_FORMATS:
+        return fmt
+    if fmt:
+        # An explicit but unsupported Ext (such as VobSub idx companions) is not
+        # a usable single subtitle file, so drop it instead of mislabeling it.
+        return None
+    basename = os.path.basename(parse.urlparse(download_url).path)
+    return _format_from_filename(basename)
 
 
 def _parse_search_response(body):
@@ -131,7 +153,7 @@ def _parse_search_response(body):
     if not isinstance(payload, list):
         raise ValueError("Shooter response must be a list")
 
-    links = []
+    results = []
     for group in payload:
         if not isinstance(group, dict):
             continue
@@ -143,8 +165,8 @@ def _parse_search_response(body):
                 continue
             link = item.get("Link")
             if isinstance(link, str) and link.startswith(("http://", "https://")):
-                links.append(link)
-    return links
+                results.append((link, item.get("Ext")))
+    return results
 
 
 def _normalize_line_endings(body):
@@ -204,8 +226,12 @@ class ShooterProvider:
                 "lang": shooter_language,
             }
             body = self.http_client.post(SHOOTER_API_URL, params)
-            for download_url in _parse_search_response(body):
-                filename = _filename_from_url(download_url, alpha3)
+            for download_url, ext in _parse_search_response(body):
+                fmt = _resolve_format(ext, download_url)
+                if not fmt:
+                    # Drop companion or unknown files we cannot serve as one subtitle.
+                    continue
+                filename = _filename_from_url(download_url, alpha3, fmt)
                 candidates.append(
                     {
                         "provider": PROVIDER_ID,
@@ -230,7 +256,7 @@ class ShooterProvider:
                             "download_url": download_url,
                             "filehash": filehash,
                             "language": alpha3,
-                            "format": _format_from_filename(filename),
+                            "format": fmt,
                         },
                     }
                 )

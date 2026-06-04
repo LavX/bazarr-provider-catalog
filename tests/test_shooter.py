@@ -169,6 +169,69 @@ class ShooterProviderTests(unittest.TestCase):
 
         self.assertTrue(provider.http_client.posts)
 
+    def test_search_uses_real_media_path_for_pathinfo(self):
+        provider = self.make_provider(search_body=b"\xff")
+        body = bytes((index % 197 for index in range(20000)))
+
+        with tempfile.NamedTemporaryFile(suffix=".mkv") as handle:
+            handle.write(body)
+            handle.flush()
+            provider.search(
+                video={"kind": "movie", "path": handle.name, "title": "Example", "year": 2024, "hashes": {}},
+                languages=[{"alpha3": "eng"}],
+                config={},
+            )
+            self.assertEqual(
+                provider.http_client.posts[0][1]["pathinfo"],
+                os.path.realpath(handle.name),
+            )
+
+    def test_search_preserves_ext_for_opaque_fetch_links(self):
+        body = json.dumps(
+            [
+                {
+                    "Desc": "Dune 2021",
+                    "Files": [
+                        {"Ext": "ass", "Link": "https://www.shooter.cn/api/subapi.php?fetch=abc123"},
+                    ],
+                }
+            ]
+        ).encode("utf-8")
+        provider = self.make_provider(search_body=body)
+
+        results = provider.search(
+            video={"kind": "movie", "name": "Dune.mkv", "hashes": {"shooter": SHOOTER_HASH}},
+            languages=[{"alpha3": "eng"}],
+            config={},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["provider_payload"]["format"], "ass")
+
+    def test_search_filters_unsupported_companion_files(self):
+        body = json.dumps(
+            [
+                {
+                    "Desc": "VobSub pair",
+                    "Files": [
+                        {"Ext": "idx", "Link": "https://www.shooter.cn/download/movie.idx"},
+                        {"Ext": "srt", "Link": "https://www.shooter.cn/download/movie.srt"},
+                    ],
+                }
+            ]
+        ).encode("utf-8")
+        provider = self.make_provider(search_body=body)
+
+        results = provider.search(
+            video={"kind": "movie", "name": "Dune.mkv", "hashes": {"shooter": SHOOTER_HASH}},
+            languages=[{"alpha3": "eng"}],
+            config={},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["provider_payload"]["format"], "srt")
+        self.assertNotIn("idx", [c["provider_payload"]["format"] for c in results])
+
     def test_search_skips_forced_or_hearing_impaired_requests(self):
         provider = self.make_provider()
         video = {"kind": "movie", "name": "Dune.mkv", "hashes": {"shooter": SHOOTER_HASH}}
