@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import time
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -35,7 +36,7 @@ USER_AGENT = (
 LANGUAGES = {
     "eng": {"alpha3": "eng", "alpha2": "en", "site": "ingles"},
     "por": {"alpha3": "por", "alpha2": "pt", "site": "portugues"},
-    "por-BR": {"alpha3": "por-BR", "alpha2": "pt", "country": "BR", "site": "brasileiro"},
+    "por-BR": {"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR", "site": "brasileiro"},
     "spa": {"alpha3": "spa", "alpha2": "es", "site": "espanhol"},
 }
 
@@ -78,10 +79,29 @@ class HttpResponse:
         self.headers = headers or {}
 
 
+class _CookieCapturingRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Capture Set-Cookie headers from intermediate redirect responses.
+
+    urllib follows 30x redirects transparently, so a session cookie set on a
+    login redirect would otherwise be dropped before the caller sees the final
+    response headers.
+    """
+
+    def __init__(self, store_cookies):
+        self._store_cookies = store_cookies
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        self._store_cookies(headers)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 class PipocasProvider:
     def __init__(self):
         self._authenticated = False
         self._cookies = {}
+        self._opener = urllib.request.build_opener(
+            _CookieCapturingRedirectHandler(self._store_cookies)
+        )
 
     def search(self, video, languages, config):
         requested = [_language_for_request(language) for language in languages or []]
@@ -110,7 +130,11 @@ class PipocasProvider:
                 detail = self._parse_detail_page(video, detail_url, language)
                 if not detail:
                     continue
-                key = (detail["provider_payload"]["sub_id"], detail["language"]["alpha3"])
+                key = (
+                    detail["provider_payload"]["sub_id"],
+                    detail["language"]["alpha3"],
+                    detail["language"].get("country_alpha2"),
+                )
                 if key in seen:
                     continue
                 seen.add(key)
@@ -133,7 +157,8 @@ class PipocasProvider:
             raise PermissionError("Pipocas login is required for download")
         if not response.body:
             raise RuntimeError("Pipocas download returned an empty response")
-        return extract_download(response.body, payload)
+        response_filename = _response_filename(response.headers)
+        return extract_download(response.body, payload, response_filename)
 
     def _parse_detail_page(self, video, url, language):
         response = self._http_get(_absolute_url(url))
@@ -143,11 +168,12 @@ class PipocasProvider:
             return None
         matches = derive_matches(video, item["release_info"])
         language_payload = _language_payload(language)
-        filename = f"pipocas.{_slug(item['release_info'])}.{language_payload['alpha2']}.zip"
+        filename = f"pipocas.{_slug(item['release_info'])}.{language_payload['alpha2']}"
+        id_suffix = _language_id_suffix(language_payload)
         score = min(100, 45 + len(matches) * 10 + item["score_stars"] * 3 + min(item["hits"], 300) // 30)
         return {
             "provider": PROVIDER_ID,
-            "id": f"pipocas-{item['sub_id']}-{language_payload['alpha3']}",
+            "id": f"pipocas-{item['sub_id']}-{id_suffix}",
             "language": language_payload,
             "release_info": item["release_info"],
             "filename": filename,
@@ -208,7 +234,7 @@ class PipocasProvider:
             separator = "&" if urllib.parse.urlparse(url).query else "?"
             url = f"{url}{separator}{query}"
         request = urllib.request.Request(url, headers=self._headers(headers))
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with self._opener.open(request, timeout=timeout) as response:
             body = response.read()
             result = HttpResponse(response.getcode(), body, response.headers)
             self._store_cookies(result.headers)
@@ -219,7 +245,7 @@ class PipocasProvider:
         merged_headers = {"Content-Type": "application/x-www-form-urlencoded"}
         merged_headers.update(headers or {})
         request = urllib.request.Request(url, data=encoded, headers=self._headers(merged_headers))
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with self._opener.open(request, timeout=timeout) as response:
             body = response.read()
             result = HttpResponse(response.getcode(), body, response.headers)
             self._store_cookies(result.headers)
@@ -331,7 +357,7 @@ def derive_matches(video, release):
     return matches
 
 
-def extract_download(body, payload=None):
+def extract_download(body, payload=None, response_filename=None):
     payload = payload or {}
     if _is_rar_archive(body):
         files = _extract_rar_files(body)
@@ -342,7 +368,10 @@ def extract_download(body, payload=None):
         with zipfile.ZipFile(stream) as archive:
             selected = select_subtitle_file(archive.namelist(), payload)
             return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
-    subtitle_format = _subtitle_extension(payload.get("filename", ""))
+    subtitle_format = (
+        _subtitle_extension(response_filename)
+        or _subtitle_extension(payload.get("filename", ""))
+    )
     if not subtitle_format or _looks_like_html(body):
         raise ValueError("pipocas download did not return a supported subtitle file")
     return _content_payload(body, subtitle_format)
@@ -459,11 +488,17 @@ def _extract_rar_files_with_7z(body):
 
 def _collect_extracted_subtitle_files(output_dir):
     files = []
+    base = os.path.realpath(output_dir)
     for root, _dirs, filenames in os.walk(output_dir):
         for filename in filenames:
             path = os.path.join(root, filename)
             rel = os.path.relpath(path, output_dir)
             if not _subtitle_extension(rel):
+                continue
+            if os.path.islink(path) or not os.path.isfile(path):
+                continue
+            real_path = os.path.realpath(path)
+            if real_path != base and not real_path.startswith(base + os.sep):
                 continue
             with open(path, "rb") as handle:
                 files.append((rel, handle.read()))
@@ -506,11 +541,28 @@ def _language_payload(language):
         "alpha3": language["alpha3"],
         "alpha2": language["alpha2"],
     }
-    if language.get("country"):
-        payload["country"] = language["country"]
+    if language.get("country_alpha2"):
+        payload["country_alpha2"] = language["country_alpha2"]
     payload["hi"] = False
     payload["forced"] = False
     return payload
+
+
+def _language_id_suffix(language_payload):
+    country = language_payload.get("country_alpha2")
+    if country:
+        return f"{language_payload['alpha3']}-{country}"
+    return language_payload["alpha3"]
+
+
+def _response_filename(headers):
+    for value in _header_values(headers, "content-disposition"):
+        match = re.search(r'filename\*?=(?:[^\']*\'\')?"?([^";]+)"?', value, re.I)
+        if match:
+            name = urllib.parse.unquote(match.group(1).strip().strip('"'))
+            if name:
+                return name
+    return None
 
 
 def _require_credentials(config):

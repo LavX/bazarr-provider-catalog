@@ -3,8 +3,11 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
+import tempfile
 import unittest
 import urllib.parse
+import urllib.request
 import zipfile
 from pathlib import Path
 
@@ -92,7 +95,16 @@ class PipocasProviderTests(unittest.TestCase):
         self.assertEqual(calls[1][0], "POST")
         self.assertEqual(len(results), 2)
         self.assertEqual(results[0]["provider"], "pipocas")
-        self.assertEqual(results[0]["language"], {"alpha3": "por-BR", "alpha2": "pt", "country": "BR", "hi": False, "forced": False})
+        self.assertEqual(
+            results[0]["language"],
+            {"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR", "hi": False, "forced": False},
+        )
+        self.assertEqual(results[0]["id"], "pipocas-501-por-BR")
+        self.assertEqual(
+            results[0]["provider_payload"]["filename"],
+            "pipocas.dune-part-one-2021-1080p-web-dl-ddp5-1-h-264-ntb.pt",
+        )
+        self.assertFalse(results[0]["filename"].endswith(".zip"))
         self.assertEqual(results[0]["provider_payload"]["sub_id"], "501")
         self.assertEqual(results[0]["display"]["uploader"], "movie_uploader")
         self.assertIn("title", results[0]["matches"])
@@ -105,7 +117,8 @@ class PipocasProviderTests(unittest.TestCase):
         )
 
         self.assertEqual(language["site"], "brasileiro")
-        self.assertEqual(language["country"], "BR")
+        self.assertEqual(language["alpha3"], "por")
+        self.assertEqual(language["country_alpha2"], "BR")
 
     def test_search_applies_delay_before_each_detail_fetch(self):
         provider = self.mod.PipocasProvider()
@@ -244,6 +257,93 @@ class PipocasProviderTests(unittest.TestCase):
 
         decoded = base64.b64decode(result["content_b64"])
         self.assertIn(b"Direct line", decoded)
+
+    def test_download_infers_direct_format_from_response_filename(self):
+        provider = self.mod.PipocasProvider()
+        provider._authenticated = True
+        provider._http_get = lambda url, headers=None, timeout=10, params=None: self.mod.HttpResponse(
+            200,
+            b"1\r\n00:00:01,000 --> 00:00:02,000\r\nDirect line\r\n",
+            {"Content-Disposition": 'attachment; filename="Dune.Part.One.srt"'},
+        )
+        # provider_payload no longer carries a ".zip" extension after search,
+        # so the direct branch must rely on the response Content-Disposition.
+        result = provider.download(
+            {
+                "download_url": "https://pipocas.tv/legendas/download/501",
+                "filename": "pipocas.dune-part-one.pt",
+            },
+            {"alpha3": "por"},
+            {"username": "user", "password": "pass"},
+        )
+
+        decoded = base64.b64decode(result["content_b64"])
+        self.assertIn(b"Direct line", decoded)
+        self.assertEqual(result["format"], "srt")
+
+    def test_collect_extracted_files_rejects_symlinks(self):
+        with tempfile.TemporaryDirectory() as output_dir:
+            real_sub = os.path.join(output_dir, "movie.srt")
+            with open(real_sub, "wb") as handle:
+                handle.write(b"1\n00:00:01,000 --> 00:00:02,000\nReal subtitle\n")
+
+            secret = os.path.join(output_dir, "secret.txt")
+            with open(secret, "wb") as handle:
+                handle.write(b"top secret host file")
+            evil_link = os.path.join(output_dir, "evil.srt")
+            os.symlink(secret, evil_link)
+
+            files = dict(self.mod._collect_extracted_subtitle_files(output_dir))
+
+        self.assertIn("movie.srt", files)
+        self.assertNotIn("evil.srt", files)
+        self.assertNotIn(b"top secret host file", files["movie.srt"])
+
+    def test_redirect_handler_captures_cookies_before_following(self):
+        provider = self.mod.PipocasProvider()
+        handler = self.mod._CookieCapturingRedirectHandler(provider._store_cookies)
+
+        request = urllib.request.Request("https://pipocas.tv/login")
+        redirect_headers = _FakeHeaders([("Set-Cookie", "session=secret; Path=/; HttpOnly")])
+        new_request = handler.redirect_request(
+            request,
+            io.BytesIO(b""),
+            302,
+            "Found",
+            redirect_headers,
+            "https://pipocas.tv/perfil",
+        )
+
+        # The session cookie set on the redirect response must be stored even
+        # though urllib transparently follows the redirect afterwards.
+        self.assertEqual(provider._cookies.get("session"), "secret")
+        self.assertIsNotNone(new_request)
+        self.assertEqual(new_request.get_full_url(), "https://pipocas.tv/perfil")
+
+
+class _FakeHeaders:
+    """Minimal multi-valued header container mirroring http.client.HTTPMessage."""
+
+    def __init__(self, items):
+        self._items = list(items)
+
+    def get_all(self, name, failobj=None):
+        wanted = name.lower()
+        values = [value for key, value in self._items if key.lower() == wanted]
+        return values or failobj
+
+    def items(self):
+        return list(self._items)
+
+    def get(self, name, failobj=None):
+        wanted = name.lower()
+        for key, value in self._items:
+            if key.lower() == wanted:
+                return value
+        return failobj
+
+    def __iter__(self):
+        return iter(key for key, _value in self._items)
 
 
 if __name__ == "__main__":
