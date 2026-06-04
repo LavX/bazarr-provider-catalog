@@ -352,6 +352,37 @@ def _language_payloads(language_codes):
     return [{"alpha3": code, "hi": False, "forced": False} for code in codes]
 
 
+def _language_code_parts(language):
+    alpha3 = str(language.get("alpha3") or "")
+    country = str(language.get("country_alpha2") or language.get("country") or "").upper()
+    if "-" in alpha3 and not country:
+        alpha3, country = alpha3.split("-", 1)
+        country = country.upper()
+    return alpha3, country
+
+
+def _language_matches_requested(candidate_language, requested_languages):
+    if not isinstance(candidate_language, dict):
+        return False
+    candidate_alpha3 = candidate_language.get("alpha3")
+    for requested_language in requested_languages:
+        if isinstance(requested_language, dict) and candidate_alpha3 == requested_language.get("alpha3"):
+            return True
+
+    candidate_alpha3, candidate_country = _language_code_parts(candidate_language)
+    for requested_language in requested_languages:
+        if not isinstance(requested_language, dict):
+            continue
+        requested_alpha3, requested_country = _language_code_parts(requested_language)
+        if candidate_alpha3 != requested_alpha3:
+            continue
+        if not requested_country:
+            return True
+        if candidate_country == requested_country:
+            return True
+    return False
+
+
 def _assert_secret_not_leaked(config, secret_fields, payload, context):
     serialized = json.dumps(payload, sort_keys=True)
     for field in secret_fields:
@@ -382,7 +413,6 @@ def smoke_test(
     config = dict(config or {})
     videos = videos or [dict(item) for item in DEFAULT_SMOKE_VIDEOS]
     languages = languages or [dict(item) for item in DEFAULT_SMOKE_LANGUAGES]
-    requested_language_codes = {item.get("alpha3") for item in languages if isinstance(item, dict)}
     last_candidate = None
     for video in videos:
         try:
@@ -396,7 +426,7 @@ def smoke_test(
         candidate = results[0]
         if candidate.get("provider") != provider_id:
             raise CatalogError(f"{provider_id} returned wrong provider id")
-        if not isinstance(candidate.get("language"), dict) or candidate["language"].get("alpha3") not in requested_language_codes:
+        if not _language_matches_requested(candidate.get("language"), languages):
             raise CatalogError(f"{provider_id} returned invalid language payload")
         if not isinstance(candidate.get("provider_payload"), dict):
             raise CatalogError(f"{provider_id} returned no provider_payload")
