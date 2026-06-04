@@ -2130,6 +2130,70 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "6a1d6dd74c62d443483172363f3f4ffcda62f77c417456e82b2aae13ab226823",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "password": {
+              "description": "Napisy24 API password. Leave empty to use the default account.",
+              "secret": true,
+              "title": "Password",
+              "type": "string"
+            },
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay before the Napisy24 API call.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            },
+            "username": {
+              "description": "Napisy24 API username. Leave empty to use the default account.",
+              "secret": true,
+              "title": "Username",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "entry_class": "Napisy24Provider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "02fed2cbbab4935522f9074de5c9528d6e3646a47fcee3dd7e62f2f03302b3b6"
+        },
+        "languages": [
+          "pol"
+        ],
+        "name": "Napisy24",
+        "provider_id": "napisy24",
+        "schema_version": 1,
+        "secret_fields": [
+          "username",
+          "password"
+        ],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/napisy24",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.3"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "c70d2aad73e7b06d6eaff834127338379c090a8f57d9daacab4f2934b778a7ab",
         "config_schema": {
           "additionalProperties": false,
