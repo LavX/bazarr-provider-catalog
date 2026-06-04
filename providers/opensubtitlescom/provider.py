@@ -17,6 +17,8 @@ USER_AGENT = "BazarrProviderHub/1.0"
 HTTP_TIMEOUT_SECONDS = 30
 TOKEN_TTL_SECONDS = 12 * 60 * 60
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
+# Format we always ask the OpenSubtitles.com download endpoint to convert to.
+DOWNLOAD_SUB_FORMAT = "srt"
 
 ALPHA3_TO_API = {
     "abk": "ab",
@@ -116,6 +118,9 @@ ALPHA3_TO_API = {
 API_TO_ALPHA3 = {value.lower(): key for key, value in ALPHA3_TO_API.items()}
 API_TO_ALPHA3.update({"ea": "spa", "me": "srp", "pt-br": "por", "pt-pt": "por", "zh-cn": "zho", "zh-tw": "zho", "ze": "zho"})
 NON_ALNUM_RE = re.compile(r"[\W_]+")
+# Search params that scope a /subtitles query to a specific title. Episode and
+# season numbers only narrow an already scoped parent, so they do not count.
+MEDIA_SCOPE_KEYS = {"imdb_id", "parent_imdb_id", "parent_feature_id", "id"}
 
 
 class RateLimited(RuntimeError):
@@ -190,7 +195,20 @@ def language_payload_from_api_code(api_code, hearing_impaired=False, forced=Fals
     return payload
 
 
+# OpenSubtitles.com ships a few custom two-letter codes that are not valid
+# ISO-639-1 language codes (e.g. "ea" for Mexican Spanish, "me" for Montenegrin,
+# "ze" for bilingual Chinese). Map them back to their base language alpha2.
+CUSTOM_API_ALPHA2 = {
+    "ea": "es",
+    "me": "sr",
+    "ze": "zh",
+}
+
+
 def _alpha2_for_alpha3(alpha3, api_code=None):
+    lower = str(api_code or "").lower()
+    if lower in CUSTOM_API_ALPHA2:
+        return CUSTOM_API_ALPHA2[lower]
     if api_code and len(api_code) == 2:
         return api_code
     for key, value in ALPHA3_TO_API.items():
@@ -202,6 +220,8 @@ def _alpha2_for_alpha3(alpha3, api_code=None):
         return "zh"
     if alpha3 == "spa":
         return "es"
+    if alpha3 == "srp":
+        return "sr"
     return None
 
 
@@ -266,16 +286,18 @@ class OpenSubtitlesComProvider:
             config,
         )
         if not (result.get("data") or []) and any(key == "moviehash" for key, _value in params):
-            params = [(key, value) for key, value in params if key != "moviehash"]
-            result = self._with_auth_retry(
-                lambda: self._http_get_json(
-                    self._api_url("subtitles"),
-                    params,
-                    self._search_headers(config),
-                    timeout=HTTP_TIMEOUT_SECONDS,
-                ),
-                config,
-            )
+            params_no_hash = [(key, value) for key, value in params if key != "moviehash"]
+            if any(key in MEDIA_SCOPE_KEYS for key, _value in params_no_hash):
+                params = params_no_hash
+                result = self._with_auth_retry(
+                    lambda: self._http_get_json(
+                        self._api_url("subtitles"),
+                        params,
+                        self._search_headers(config),
+                        timeout=HTTP_TIMEOUT_SECONDS,
+                    ),
+                    config,
+                )
         return self._results_from_response(video, languages, result, config)
 
     def _build_search_params(self, video, languages, language_codes, config):
@@ -328,6 +350,10 @@ class OpenSubtitlesComProvider:
             params.append(("machine_translated", "include"))
         if _all_requested(languages, "hi"):
             params.append(("hearing_impaired", "only"))
+        elif not _any_requested(languages, "hi"):
+            params.append(("hearing_impaired", "exclude"))
+        if _all_requested(languages, "forced"):
+            params.append(("foreign_parts_only", "only"))
         return sorted(params, key=lambda item: item[0])
 
     def _search_title_id(self, video, config, episode=False):
@@ -363,6 +389,7 @@ class OpenSubtitlesComProvider:
         include_machine = _bool_config(config, "include_machine_translated", False)
         requested_codes = {code.lower() for code in _requested_language_codes(languages)}
         requested_variants = _requested_language_variants(languages)
+        wanted_feature_types = _wanted_feature_types(video.get("kind"))
         results = []
         seen = set()
         for item in result.get("data") or []:
@@ -371,6 +398,9 @@ class OpenSubtitlesComProvider:
             if attrs.get("ai_translated") and not include_ai:
                 continue
             if attrs.get("machine_translated") and not include_machine:
+                continue
+            feature_type = _feature_type(attrs.get("feature_details") or {})
+            if wanted_feature_types and feature_type and feature_type not in wanted_feature_types:
                 continue
             language_code = str(attrs.get("language") or "").lower()
             if language_code not in requested_codes:
@@ -410,7 +440,7 @@ class OpenSubtitlesComProvider:
             "score": score,
             "score_without_hash": score_without_hash,
             "score_out_of": 100,
-            "hash_verifiable": True,
+            "hash_verifiable": bool(attrs.get("moviehash_match")),
             "hearing_impaired_verifiable": True,
             "hearing_impaired": bool(attrs.get("hearing_impaired")),
             "page_link": attrs.get("url"),
@@ -448,7 +478,7 @@ class OpenSubtitlesComProvider:
         download_data = self._with_auth_retry(
             lambda: self._http_post_json(
                 self._api_url("download"),
-                {"file_id": int(file_id), "sub_format": "srt"},
+                {"file_id": int(file_id), "sub_format": DOWNLOAD_SUB_FORMAT},
                 self._auth_headers(config, include_token=True),
                 timeout=HTTP_TIMEOUT_SECONDS,
             ),
@@ -458,7 +488,7 @@ class OpenSubtitlesComProvider:
         if not link:
             raise RuntimeError("OpenSubtitles.com download response did not include link")
         body = self._http_get_bytes(link, {"User-Agent": USER_AGENT}, timeout=HTTP_TIMEOUT_SECONDS)
-        body, fmt = extract_download(body, payload.get("filename") or link)
+        body, fmt = extract_download(body, link, requested_format=DOWNLOAD_SUB_FORMAT)
         body = _normalize_line_endings(body)
         return _content_payload(body, fmt)
 
@@ -564,13 +594,19 @@ def derive_matches(video, attrs, feature):
             add("season")
         if _int_or_none(video.get("episode")) == _int_or_none(feature.get("episode_number")):
             add("episode")
-        if _imdb_id(video.get("series_imdb_id")) and _imdb_id(video.get("series_imdb_id")) == _int_or_none(feature.get("parent_imdb_id")):
+        series_imdb_id = _imdb_id(video.get("series_imdb_id"))
+        if series_imdb_id and series_imdb_id == _int_or_none(feature.get("parent_imdb_id")):
             add("series_imdb_id")
+        episode_imdb_id = _imdb_id(video.get("imdb_id"))
+        if episode_imdb_id and episode_imdb_id == _imdb_id(feature.get("imdb_id")):
+            add("imdb_id")
     else:
         add("title")
         if _imdb_id(video.get("imdb_id")) and _imdb_id(video.get("imdb_id")) == _int_or_none(feature.get("imdb_id")):
             add("imdb_id")
-    if _int_or_none(video.get("year")) == _int_or_none(feature.get("year")):
+    video_year = _int_or_none(video.get("year"))
+    feature_year = _int_or_none(feature.get("year"))
+    if video_year is not None and video_year == feature_year:
         add("year")
     if attrs.get("moviehash_match"):
         add("hash")
@@ -642,7 +678,11 @@ def _bool_config(config, key, default):
 
 def _moviehash(video):
     hashes = (video or {}).get("hashes") or {}
-    return hashes.get("opensubtitlescom") or (video or {}).get("moviehash")
+    return (
+        hashes.get("opensubtitlescom")
+        or hashes.get("opensubtitles")
+        or (video or {}).get("moviehash")
+    )
 
 
 def _imdb_id(value):
@@ -672,7 +712,15 @@ def _feature_type(attrs):
     return re.sub(r"[^a-z0-9]+", " ", value).strip()
 
 
-def extract_download(body, filename):
+def _wanted_feature_types(kind):
+    if kind == "episode":
+        return {"episode"}
+    if kind == "movie":
+        return {"movie"}
+    return set()
+
+
+def extract_download(body, filename, requested_format=None):
     if not body:
         raise ValueError("opensubtitlescom downloaded empty subtitle")
     stream = io.BytesIO(body)
@@ -684,6 +732,10 @@ def extract_download(body, filename):
             names.sort(key=lambda name: (not name.lower().endswith(".srt"), len(name), name.lower()))
             name = names[0]
             return archive.read(name), _subtitle_extension(name) or "srt"
+    # The API converts plain (non-archive) downloads to the requested format, so
+    # report that instead of any stale extension from the original filename.
+    if requested_format:
+        return body, str(requested_format).lower()
     return body, _format_from_filename(filename)
 
 

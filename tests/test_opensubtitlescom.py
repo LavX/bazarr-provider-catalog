@@ -28,6 +28,7 @@ def _subtitle_item(
     ai_translated=False,
     machine_translated=False,
     moviehash_match=False,
+    feature_type="Episode",
 ):
     return {
         "id": subtitle_id,
@@ -48,7 +49,7 @@ def _subtitle_item(
             "release": "Breaking.Bad.S03E13.1080p.WEB-DL-GROUP",
             "uploader": {"name": "uploader"},
             "feature_details": {
-                "feature_type": "Episode",
+                "feature_type": feature_type,
                 "year": 2010,
                 "movie_name": "Breaking Bad - S03E13 Full Measure",
                 "imdb_id": 1628687,
@@ -139,6 +140,61 @@ class OpenSubtitlesComHelperTests(unittest.TestCase):
         manifest = json.loads((PROVIDER_DIR / "provider.json").read_text(encoding="utf-8"))
 
         self.assertEqual(manifest["languages"], sorted(self.mod.ALPHA3_TO_API))
+
+    def test_custom_api_codes_map_alpha2_to_base_language(self):
+        mexican = self.mod.language_payload_from_api_code("ea")
+        self.assertEqual(mexican["alpha3"], "spa")
+        self.assertEqual(mexican["alpha2"], "es")
+
+        montenegrin = self.mod.language_payload_from_api_code("me")
+        self.assertEqual(montenegrin["alpha3"], "srp")
+        self.assertEqual(montenegrin["alpha2"], "sr")
+
+        bilingual_chinese = self.mod.language_payload_from_api_code("ze")
+        self.assertEqual(bilingual_chinese["alpha3"], "zho")
+        self.assertEqual(bilingual_chinese["alpha2"], "zh")
+
+    def test_legacy_opensubtitles_hash_key_is_used(self):
+        self.assertEqual(
+            self.mod._moviehash({"hashes": {"opensubtitles": "8e245d9679d31e12"}}),
+            "8e245d9679d31e12",
+        )
+
+    def test_year_match_requires_a_real_year(self):
+        matches = self.mod.derive_matches(
+            {"kind": "movie", "title": "Inception"},
+            {},
+            {"movie_name": "Inception"},
+        )
+        self.assertNotIn("year", matches)
+
+        matched = self.mod.derive_matches(
+            {"kind": "movie", "title": "Inception", "year": 2010},
+            {},
+            {"movie_name": "Inception", "year": 2010},
+        )
+        self.assertIn("year", matched)
+
+    def test_episode_imdb_id_match_is_scored(self):
+        video = {
+            "kind": "episode",
+            "series": "Breaking Bad",
+            "season": 3,
+            "episode": 13,
+            "imdb_id": "tt1628687",
+        }
+        feature = {
+            "feature_type": "Episode",
+            "imdb_id": 1628687,
+            "season_number": 3,
+            "episode_number": 13,
+        }
+        matches = self.mod.derive_matches(video, {}, feature)
+        self.assertIn("imdb_id", matches)
+        self.assertEqual(
+            self.mod.compute_score(matches),
+            self.mod.compute_score([m for m in matches if m != "imdb_id"]) + 30,
+        )
 
 
 class OpenSubtitlesComSearchTests(unittest.TestCase):
@@ -234,6 +290,7 @@ class OpenSubtitlesComSearchTests(unittest.TestCase):
             [
                 ("ai_translated", "exclude"),
                 ("episode_number", 13),
+                ("hearing_impaired", "exclude"),
                 ("languages", "en"),
                 ("parent_imdb_id", 903747),
                 ("season_number", 3),
@@ -368,7 +425,7 @@ class OpenSubtitlesComSearchTests(unittest.TestCase):
                         }
                     ]
                 }
-            return {"data": [_subtitle_item(language="pt-BR")]}
+            return {"data": [_subtitle_item(language="pt-BR", feature_type="Movie")]}
 
         provider._http_get_json = get_json
         results = provider.search(
@@ -445,9 +502,15 @@ class OpenSubtitlesComSearchTests(unittest.TestCase):
         }
         provider._http_get_json = lambda path, params, headers, timeout=30: {
             "data": [
-                _subtitle_item(subtitle_id="regular"),
-                _subtitle_item(subtitle_id="forced", file_id=2, foreign_parts_only=True),
-                _subtitle_item(subtitle_id="hi", file_id=3, foreign_parts_only=True, hearing_impaired=True),
+                _subtitle_item(subtitle_id="regular", feature_type="Movie"),
+                _subtitle_item(subtitle_id="forced", file_id=2, foreign_parts_only=True, feature_type="Movie"),
+                _subtitle_item(
+                    subtitle_id="hi",
+                    file_id=3,
+                    foreign_parts_only=True,
+                    hearing_impaired=True,
+                    feature_type="Movie",
+                ),
             ]
         }
 
@@ -469,10 +532,14 @@ class OpenSubtitlesComSearchTests(unittest.TestCase):
         }
         provider._http_get_json = lambda path, params, headers, timeout=30: {
             "data": [
-                _subtitle_item(subtitle_id="regular-en", language="en"),
-                _subtitle_item(subtitle_id="forced-en", file_id=2, language="en", foreign_parts_only=True),
-                _subtitle_item(subtitle_id="regular-es", file_id=3, language="es"),
-                _subtitle_item(subtitle_id="forced-es", file_id=4, language="es", foreign_parts_only=True),
+                _subtitle_item(subtitle_id="regular-en", language="en", feature_type="Movie"),
+                _subtitle_item(
+                    subtitle_id="forced-en", file_id=2, language="en", foreign_parts_only=True, feature_type="Movie"
+                ),
+                _subtitle_item(subtitle_id="regular-es", file_id=3, language="es", feature_type="Movie"),
+                _subtitle_item(
+                    subtitle_id="forced-es", file_id=4, language="es", foreign_parts_only=True, feature_type="Movie"
+                ),
             ]
         }
 
@@ -489,6 +556,157 @@ class OpenSubtitlesComSearchTests(unittest.TestCase):
             {item["provider_payload"]["subtitle_id"] for item in results},
             {"forced-en", "regular-es"},
         )
+
+    def test_hash_only_miss_does_not_run_unscoped_fallback(self):
+        provider = self.mod.OpenSubtitlesComProvider()
+        calls = []
+        provider._http_post_json = lambda path, payload, headers, timeout=30: {
+            "token": "jwt-token",
+            "base_url": "api.opensubtitles.com",
+            "status": 200,
+        }
+
+        def get_json(path, params, headers, timeout=30):
+            del path, headers, timeout
+            calls.append(params)
+            return {"data": []}
+
+        provider._http_get_json = get_json
+        provider.search(
+            {"kind": "movie", "hashes": {"opensubtitlescom": "8e245d9679d31e12"}},
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"username": "user", "password": "pass", "api_key": "api-key", "use_hash": True},
+        )
+
+        self.assertEqual(len(calls), 1)
+        self.assertIn(("moviehash", "8e245d9679d31e12"), calls[0])
+
+    def test_hash_miss_with_imdb_id_still_runs_fallback(self):
+        provider = self.mod.OpenSubtitlesComProvider()
+        calls = []
+        provider._http_post_json = lambda path, payload, headers, timeout=30: {
+            "token": "jwt-token",
+            "base_url": "api.opensubtitles.com",
+            "status": 200,
+        }
+
+        def get_json(path, params, headers, timeout=30):
+            del path, headers, timeout
+            calls.append(params)
+            return {"data": []}
+
+        provider._http_get_json = get_json
+        provider.search(
+            {
+                "kind": "movie",
+                "imdb_id": "tt1375666",
+                "hashes": {"opensubtitlescom": "8e245d9679d31e12"},
+            },
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"username": "user", "password": "pass", "api_key": "api-key", "use_hash": True},
+        )
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn(("moviehash", "8e245d9679d31e12"), calls[0])
+        self.assertNotIn(("moviehash", "8e245d9679d31e12"), calls[1])
+        self.assertIn(("imdb_id", 1375666), calls[1])
+
+    def test_all_forced_request_pushes_foreign_parts_only_filter(self):
+        provider = self.mod.OpenSubtitlesComProvider()
+        calls = []
+        provider._http_post_json = lambda path, payload, headers, timeout=30: {
+            "token": "jwt-token",
+            "base_url": "api.opensubtitles.com",
+            "status": 200,
+        }
+
+        def get_json(path, params, headers, timeout=30):
+            del path, headers, timeout
+            calls.append(params)
+            return {"data": []}
+
+        provider._http_get_json = get_json
+        provider.search(
+            {"kind": "movie", "title": "Inception", "imdb_id": "tt1375666"},
+            [{"alpha3": "eng", "alpha2": "en", "forced": True}],
+            {"username": "user", "password": "pass", "api_key": "api-key", "use_hash": False},
+        )
+
+        self.assertIn(("foreign_parts_only", "only"), calls[0])
+
+    def test_regular_only_request_excludes_hi_upstream(self):
+        provider = self.mod.OpenSubtitlesComProvider()
+        calls = []
+        provider._http_post_json = lambda path, payload, headers, timeout=30: {
+            "token": "jwt-token",
+            "base_url": "api.opensubtitles.com",
+            "status": 200,
+        }
+
+        def get_json(path, params, headers, timeout=30):
+            del path, headers, timeout
+            calls.append(params)
+            return {"data": []}
+
+        provider._http_get_json = get_json
+        provider.search(
+            {"kind": "movie", "title": "Inception", "imdb_id": "tt1375666"},
+            [{"alpha3": "eng", "alpha2": "en", "hi": False}],
+            {"username": "user", "password": "pass", "api_key": "api-key", "use_hash": False},
+        )
+
+        self.assertIn(("hearing_impaired", "exclude"), calls[0])
+
+    def test_episode_search_drops_movie_typed_rows(self):
+        provider = self.mod.OpenSubtitlesComProvider()
+        provider._http_post_json = lambda path, payload, headers, timeout=30: {
+            "token": "jwt-token",
+            "base_url": "api.opensubtitles.com",
+            "status": 200,
+        }
+        provider._http_get_json = lambda path, params, headers, timeout=30: {
+            "data": [
+                _subtitle_item(subtitle_id="movie-row", file_id=2, feature_type="Movie"),
+                _subtitle_item(subtitle_id="episode-row", file_id=3, feature_type="Episode"),
+            ]
+        }
+
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "Breaking Bad",
+                "season": 3,
+                "episode": 13,
+                "series_imdb_id": "tt0903747",
+            },
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"username": "user", "password": "pass", "api_key": "api-key", "use_hash": False},
+        )
+
+        self.assertEqual(
+            [item["provider_payload"]["subtitle_id"] for item in results],
+            ["episode-row"],
+        )
+
+    def test_hash_verifiable_flag_tracks_moviehash_match(self):
+        provider = self.mod.OpenSubtitlesComProvider()
+        hashed = provider._result(
+            {"kind": "episode", "series_imdb_id": "tt0903747", "season": 3, "episode": 13},
+            _subtitle_item(moviehash_match=True),
+            _subtitle_item(moviehash_match=True)["attributes"],
+            _subtitle_item(moviehash_match=True)["attributes"]["files"][0],
+            forced=False,
+        )
+        plain = provider._result(
+            {"kind": "episode", "series_imdb_id": "tt0903747", "season": 3, "episode": 13},
+            _subtitle_item(moviehash_match=False),
+            _subtitle_item(moviehash_match=False)["attributes"],
+            _subtitle_item(moviehash_match=False)["attributes"]["files"][0],
+            forced=False,
+        )
+
+        self.assertTrue(hashed["hash_verifiable"])
+        self.assertFalse(plain["hash_verifiable"])
 
     def test_score_without_hash_excludes_hash_points(self):
         provider = self.mod.OpenSubtitlesComProvider()
@@ -547,6 +765,34 @@ class OpenSubtitlesComDownloadTests(unittest.TestCase):
         self.assertEqual(result["format"], "srt")
         self.assertEqual(calls[1][1], "https://api.opensubtitles.com/api/v1/download")
         self.assertEqual(calls[2][2]["User-Agent"], self.mod.USER_AGENT)
+
+    def test_download_reports_srt_format_for_converted_ass_payload(self):
+        provider = self.mod.OpenSubtitlesComProvider()
+        content = b"1\r\n00:00:01,000 --> 00:00:02,000\r\nHello\r\n"
+
+        def post_json(path, payload, headers, timeout=30):
+            del headers, timeout
+            if path.endswith("/login"):
+                return {"token": "jwt-token", "base_url": "api.opensubtitles.com", "status": 200}
+            self.assertEqual(payload, {"file_id": 11047023, "sub_format": "srt"})
+            return {"link": "https://dl.opensubtitles.com/download/subtitle.srt"}
+
+        provider._http_post_json = post_json
+        provider._http_get_bytes = lambda url, headers, timeout=30: content
+        result = provider.download(
+            {
+                "provider": "opensubtitlescom",
+                "schema": 1,
+                "subtitle_id": "10139516",
+                "file_id": 11047023,
+                "filename": "Breaking.Bad.S03E13.ass",
+            },
+            {"alpha3": "eng", "alpha2": "en"},
+            {"username": "user", "password": "pass", "api_key": "api-key"},
+        )
+
+        self.assertEqual(result["format"], "srt")
+        self.assertEqual(result["content_type"], "application/x-subrip")
 
 
 if __name__ == "__main__":
