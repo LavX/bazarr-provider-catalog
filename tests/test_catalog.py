@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -62,6 +63,20 @@ class CatalogStructureTests(unittest.TestCase):
 
         self.assertTrue(manifest["provider_id"])
         self.assertTrue(manifest["version"])
+
+    def test_py7zz_providers_pin_requests_dependency_closure(self):
+        required = {"certifi", "charset-normalizer", "idna", "requests", "urllib3"}
+
+        for manifest_path in sorted((ROOT / "providers").glob("*/provider.json")):
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            dependencies = {
+                item["name"]
+                for item in manifest.get("dependencies", {}).get("requirements", [])
+            }
+            if "py7zz" not in dependencies:
+                continue
+            missing = sorted(required - dependencies)
+            self.assertEqual(missing, [], f"{manifest_path} is missing py7zz transitive pins")
 
 
 @unittest.skipUnless(importlib.util.find_spec("humanfriendly"), "requires smokehub provider dependencies")
@@ -178,6 +193,40 @@ class SdkCliTests(unittest.TestCase):
         )
 
         self.assertIn("smokehub ok", result.stdout)
+
+    def test_smoke_test_accepts_normalized_regional_language_payload(self):
+        from sdk import cli as sdk_cli
+
+        class RegionalProvider:
+            def search(self, video, languages, config):
+                del video, languages, config
+                return [
+                    {
+                        "provider": "regional",
+                        "language": {"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR", "hi": False, "forced": False},
+                        "provider_payload": {"download_link": "fixture"},
+                    }
+                ]
+
+        catalog = {
+            "providers": [
+                {
+                    "manifest": {
+                        "provider_id": "regional",
+                        "source": {"path": "providers/regional"},
+                        "secret_fields": [],
+                    }
+                }
+            ]
+        }
+        languages = [{"alpha3": "por-BR", "hi": False, "forced": False}]
+
+        with mock.patch.object(sdk_cli, "validate_catalog", return_value=catalog), mock.patch.object(
+            sdk_cli, "load_provider_class", return_value=RegionalProvider
+        ):
+            provider_id = sdk_cli.smoke_test(ROOT, "regional", videos=[{}], languages=languages, skip_download=True)
+
+        self.assertEqual(provider_id, "regional")
 
 
 if __name__ == "__main__":

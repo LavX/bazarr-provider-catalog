@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+  <head>
+    <script type="text/javascript">
+      function stringToHex(str){var val="";for(var i = 0; i < str.length; i++){if(val == "")val = str.charCodeAt(i).toString(16);else val += str.charCodeAt(i).toString(16);}return val;}
+      function YunsuoAutoJump() {
+        var text = document.getElementById("intext").value;
+        self.location = "/search?q=Dune 2021&security_verify_img=" + stringToHex(text);
+      }
+    </script>
+  </head>
+  <body>
+    <input id="intext" type="text" />
+    <img class="verifyimg" alt="verify_img" src="data:image/bmp;base64,Qk1GQUtFQk1Q" />
+  </body>
+</html>
