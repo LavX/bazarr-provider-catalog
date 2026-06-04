@@ -130,6 +130,43 @@ class WizdomParserTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["subtitle_id"], "301")
 
+    def test_parse_episode_releases_allows_season_zero_specials(self):
+        rows = self.mod.parse_releases(
+            {
+                "subs": {
+                    "0": {
+                        "1": [{"id": 401, "version": "Fauda.S00E01.SPECIAL.HEBREW"}],
+                    }
+                }
+            },
+            media_type="episode",
+            imdb_id="tt4565380",
+            title="Fauda",
+            season=0,
+            episode=1,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["subtitle_id"], "401")
+
+    def test_parse_episode_releases_list_does_not_mix_adjacent_seasons(self):
+        rows = self.mod.parse_releases(
+            {
+                "subs": [
+                    {},
+                    {"3": [{"id": 501, "version": "Fauda.S01E03.HEBREW"}]},
+                    {"3": [{"id": 502, "version": "Fauda.S02E03.HEBREW"}]},
+                ]
+            },
+            media_type="episode",
+            imdb_id="tt4565380",
+            title="Fauda",
+            season=2,
+            episode=3,
+        )
+
+        self.assertEqual([row["subtitle_id"] for row in rows], ["502"])
+
 
 class WizdomProviderTests(unittest.TestCase):
     def setUp(self):
@@ -553,3 +590,60 @@ class WizdomProviderTests(unittest.TestCase):
 
         self.assertTrue(result["empty"])
         self.assertEqual(result["content_b64"], "")
+
+    def test_download_rejects_archive_with_no_valid_subtitle_text(self):
+        provider = self.mod.WizdomProvider()
+        body = _zip_files(
+            {
+                "error.srt": b"<html>upstream error page</html>",
+                "placeholder.srt": b"not a subtitle either",
+            }
+        )
+        provider._http_get = lambda url, timeout=10, referer=None: body
+
+        with self.assertRaisesRegex(ValueError, "no valid subtitle text"):
+            provider.download(
+                {
+                    "provider": "wizdom",
+                    "schema": 1,
+                    "subtitle_id": "101",
+                    "page_link": "https://wizdom.xyz/movies/tt1375666",
+                    "filename": "wizdom.inception.he.zip",
+                },
+                {"alpha3": "heb", "alpha2": "he"},
+                {},
+            )
+
+    def test_search_skips_title_when_tmdb_lookup_times_out(self):
+        provider = self.mod.WizdomProvider()
+
+        def stub(url, timeout=15, referer=None):
+            del timeout, referer
+            raise self.mod.ServiceUnavailable("Wizdom request failed: timed out")
+
+        provider._http_get = stub
+        results = provider.search(
+            {"kind": "movie", "title": "Inception", "year": 2010},
+            [{"alpha3": "heb", "alpha2": "he"}],
+            {},
+        )
+
+        self.assertEqual(results, [])
+
+    def test_solve_anubis_preact_times_out_when_sleep_exceeds_budget(self):
+        challenge = (
+            '<script id="anubis_challenge" type="application/json">'
+            '{"challenge":{"id":"abc","randomData":"seed",'
+            '"difficulty":4000,"method":"preact"}}</script>'
+        )
+        session = FakeSession(
+            [FakeResponse("https://wizdom.xyz/.within.website/", text=challenge)]
+        )
+
+        with self.assertRaisesRegex(self.mod.ServiceUnavailable, "preact"):
+            self.mod.solve_anubis_challenge(
+                session,
+                "https://wizdom.xyz/.within.website/?redir=/api/releases/tt1",
+                "https://wizdom.xyz/api/releases/tt1",
+                timeout=5,
+            )

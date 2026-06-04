@@ -326,7 +326,7 @@ class WizdomProvider:
             if not isinstance(detail_data, dict):
                 return None
             return _normalize_imdb_id(detail_data.get("imdb_id"))
-        except (ValueError, urllib.error.URLError):
+        except (ValueError, urllib.error.URLError, ServiceUnavailable):
             return None
 
 
@@ -460,7 +460,11 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=HTTP_TI
             session.cookies.update(solved.cookies)
     elif method == "preact":
         result, delay = _solve_preact(challenge["randomData"], challenge["difficulty"])
-        time.sleep(delay)
+        remaining = deadline - time.monotonic()
+        if delay > remaining:
+            raise ServiceUnavailable("Wizdom Anubis preact challenge timed out")
+        if delay > 0:
+            time.sleep(delay)
         params = {
             "id": challenge["id"],
             "result": result,
@@ -532,7 +536,7 @@ def _release_items(data, media_type, season, episode):
         return subs if isinstance(subs, list) else []
     season_number = _safe_int(season)
     episode_number = _safe_int(episode)
-    if not season_number or not episode_number:
+    if season_number is None or episode_number is None:
         return []
     episode_key = str(episode_number)
     season_nodes = []
@@ -541,9 +545,6 @@ def _release_items(data, media_type, season, episode):
     elif isinstance(subs, list):
         if 0 <= season_number < len(subs):
             season_nodes.append(subs[season_number])
-        zero_based = season_number - 1
-        if 0 <= zero_based < len(subs) and zero_based != season_number:
-            season_nodes.append(subs[zero_based])
     rows = []
     seen = set()
     for node in season_nodes:
@@ -704,14 +705,11 @@ def _select_archive_subtitle(archive):
     names = [name for name in archive.namelist() if _subtitle_extension(name)]
     if not names:
         raise ValueError("wizdom archive contains no supported subtitle files")
-    first = None
     for name in names:
         content = archive.read(name)
-        if first is None:
-            first = (name, content)
         if _looks_like_subtitle_text(content, _subtitle_extension(name)):
             return name, content
-    return first
+    raise ValueError("wizdom archive contains no valid subtitle text")
 
 
 def _looks_like_subtitle_text(content, subtitle_format):
