@@ -232,6 +232,46 @@ class TurkceAltyaziSearchTests(unittest.TestCase):
         self.assertEqual(results[0]["display"]["uploader"], "cevirmen")
         self.assertIn("BluRay", results[0]["release_info"])
 
+    def test_movie_search_preserves_leading_zero_imdb_id(self):
+        provider = self.mod.TurkceAltyaziOrgProvider()
+        calls = []
+
+        def get_response(url, headers, cookies, timeout=30, allow_redirects=True, config=None):
+            del headers, cookies, timeout, allow_redirects, config
+            calls.append(url)
+            if url == "https://turkcealtyazi.org":
+                return self.mod.HttpResponse(200, b"home", {})
+            return self.mod.HttpResponse(200, _movie_search_page(), {})
+
+        provider._http_get = get_response
+        provider.search(
+            {"kind": "movie", "title": "Brazil", "imdb_id": "tt0088846"},
+            [{"alpha3": "tur"}],
+            {},
+        )
+
+        self.assertEqual(calls[1], "https://turkcealtyazi.org/find.php?cat=sub&find=0088846")
+
+    def test_candidate_includes_alpha2_and_hash_verifiable(self):
+        provider = self.mod.TurkceAltyaziOrgProvider()
+        provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True, config=None: self.mod.HttpResponse(
+            200, b"home" if url == "https://turkcealtyazi.org" else _movie_search_page(), {}
+        )
+
+        results = provider.search(
+            {"kind": "movie", "title": "Inception", "imdb_id": "tt1375666"},
+            [{"alpha3": "tur"}, {"alpha3": "eng"}],
+            {},
+        )
+
+        self.assertEqual(results[0]["language"]["alpha2"], "tr")
+        self.assertEqual(results[1]["language"]["alpha2"], "en")
+        self.assertEqual(results[0]["language"]["alpha3"], "tur")
+        for result in results:
+            self.assertIn("hash_verifiable", result)
+            self.assertFalse(result["hash_verifiable"])
+            self.assertIn("alpha2", result["language"])
+
     def test_movie_search_parses_title_page_rows_without_latest_list_classes(self):
         provider = self.mod.TurkceAltyaziOrgProvider()
         provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True, config=None: self.mod.HttpResponse(
@@ -491,6 +531,48 @@ class TurkceAltyaziSearchTests(unittest.TestCase):
         self.assertEqual(flaresolverr_calls[0][1]["maxTimeout"], 45000)
         self.assertEqual(session.cookies["cf_clearance"]["value"], "clear")
 
+    def test_flaresolverr_retry_drops_stale_request_cookies(self):
+        session = FakeSession(
+            [
+                FakeResponse(
+                    403,
+                    b"<html><title>Just a moment...</title></html>",
+                    {"cf-mitigated": "challenge"},
+                ),
+                FakeResponse(200, b"<html>solved</html>"),
+            ]
+        )
+
+        class FakeCloudscraper:
+            @staticmethod
+            def create_scraper(**kwargs):
+                return session
+
+        self.mod.cloudscraper = FakeCloudscraper
+        provider = self.mod.TurkceAltyaziOrgProvider()
+        provider._post_flaresolverr = lambda url, payload, timeout: {
+            "solution": {
+                "cookies": [
+                    {"name": "cf_clearance", "value": "fresh", "domain": ".turkcealtyazi.org"}
+                ],
+                "userAgent": "Solved UA",
+            }
+        }
+
+        provider._http_get(
+            "https://turkcealtyazi.org/find.php?cat=sub&find=1375666",
+            provider._headers({}),
+            {"cf_clearance": "stale", "PHPSESSID": "keep"},
+            config={"flaresolverr_url": "http://127.0.0.1:8191/v1"},
+        )
+
+        retry_cookies = session.calls[1][3]
+        # The refreshed FlareSolverr cookie must not be masked by the stale value.
+        self.assertNotIn("cf_clearance", retry_cookies or {})
+        # Cookies FlareSolverr did not touch are still forwarded.
+        self.assertEqual((retry_cookies or {}).get("PHPSESSID"), "keep")
+        self.assertEqual(session.cookies["cf_clearance"]["value"], "fresh")
+
     def test_http_get_uses_flaresolverr_after_non_403_cloudflare_challenge(self):
         session = FakeSession(
             [
@@ -600,6 +682,23 @@ class TurkceAltyaziDownloadTests(unittest.TestCase):
                 "season-pack.zip",
                 {"season": 1, "episode": 2, "is_pack": True},
             )
+
+    def test_content_payload_detects_turkish_cp1254_encoding(self):
+        body = "1\n00:00:01,000 --> 00:00:02,000\nMerhaba dünya şş\n".encode("cp1254")
+
+        payload = self.mod._content_payload(body, "srt")
+
+        self.assertEqual(payload["encoding"], "cp1254")
+        # latin-1 would mojibake the Turkish characters, cp1254 round-trips them.
+        decoded = base64.b64decode(payload["content_b64"]).decode(payload["encoding"])
+        self.assertIn("şş", decoded)
+
+    def test_content_payload_keeps_utf8_for_utf8_bytes(self):
+        body = "Merhaba şş".encode("utf-8")
+
+        payload = self.mod._content_payload(body, "srt")
+
+        self.assertEqual(payload["encoding"], "utf-8")
 
     def test_season_pack_archive_does_not_match_episode_twenty_as_episode_two(self):
         stream = io.BytesIO()

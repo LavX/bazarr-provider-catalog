@@ -86,6 +86,14 @@ LANGUAGE_CLASSES = {
     "flagger": "deu",
     "flagita": "ita",
 }
+ALPHA3_TO_ALPHA2 = {
+    "tur": "tr",
+    "eng": "en",
+    "spa": "es",
+    "fra": "fr",
+    "deu": "de",
+    "ita": "it",
+}
 
 
 class HttpResponse:
@@ -242,10 +250,18 @@ class TurkceAltyaziOrgProvider:
                 raise PermissionError("TurkceAltyazi Anubis challenge could not be solved")
             response = self._send(method, url, headers, cookies, data, timeout, allow_redirects)
         if _is_cloudflare_challenge(response) and _flaresolverr_url(config):
-            self._fallback_to_flaresolverr(url, config)
+            solved_names = self._fallback_to_flaresolverr(url, config)
             retry_headers = dict(headers or {})
             retry_headers["User-Agent"] = self._get_session().headers.get("User-Agent", DEFAULT_USER_AGENT)
-            response = self._send(method, url, retry_headers, cookies, data, timeout, allow_redirects)
+            # Drop any per-request cookies FlareSolverr just refreshed so the
+            # stale configured values cannot mask the freshly solved session
+            # cookies during the retry.
+            retry_cookies = {
+                name: value
+                for name, value in (cookies or {}).items()
+                if name not in solved_names
+            }
+            response = self._send(method, url, retry_headers, retry_cookies or None, data, timeout, allow_redirects)
         return response
 
     def _send(self, method, url, headers, cookies, data, timeout, allow_redirects):
@@ -287,12 +303,12 @@ class TurkceAltyaziOrgProvider:
     def _fallback_to_flaresolverr(self, url, config):
         endpoint = _flaresolverr_url(config)
         if not endpoint:
-            return
+            return set()
         max_timeout = _flaresolverr_timeout_ms(config)
         payload = {"cmd": "request.get", "url": url, "maxTimeout": max_timeout}
         data = self._post_flaresolverr(endpoint, payload, timeout=max(max_timeout / 1000 + 5, 15))
         solution = data.get("solution") or {}
-        self._inject_solution(solution)
+        return self._inject_solution(solution)
 
     def _post_flaresolverr(self, url, payload, timeout):
         body = json.dumps(payload).encode("utf-8")
@@ -320,6 +336,7 @@ class TurkceAltyaziOrgProvider:
         user_agent = solution.get("userAgent")
         if user_agent:
             session.headers["User-Agent"] = user_agent
+        injected = set()
         for cookie in solution.get("cookies") or []:
             name = cookie.get("name")
             value = cookie.get("value")
@@ -331,6 +348,8 @@ class TurkceAltyaziOrgProvider:
                 domain=cookie.get("domain") or ".turkcealtyazi.org",
                 path=cookie.get("path") or "/",
             )
+            injected.add(name)
+        return injected
 
 
 def _parse_cookies(config):
@@ -501,7 +520,6 @@ def _video_imdb_id(video):
     text = str(value).strip().lower()
     if text.startswith("tt"):
         text = text[2:]
-    text = text.lstrip("0") or "0"
     return text if text.isdigit() else None
 
 
@@ -656,13 +674,19 @@ def _candidate(entry, video):
     return {
         "provider": PROVIDER_ID,
         "id": _result_id(entry),
-        "language": {"alpha3": entry["language"], "hi": bool(entry["hearing_impaired"]), "forced": False},
+        "language": {
+            "alpha3": entry["language"],
+            "alpha2": ALPHA3_TO_ALPHA2.get(entry["language"], ""),
+            "hi": bool(entry["hearing_impaired"]),
+            "forced": False,
+        },
         "release_info": entry["release_info"],
         "filename": filename,
         "matches": matches,
         "score": score,
         "score_without_hash": score,
         "score_out_of": 100,
+        "hash_verifiable": False,
         "hearing_impaired_verifiable": True,
         "hearing_impaired": bool(entry["hearing_impaired"]),
         "page_link": entry["page_url"],
@@ -945,14 +969,27 @@ def _normalize_line_endings(body):
     return body.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
 
 
+# Turkish subtitles are usually saved as UTF-8, but legacy releases still ship
+# as Windows-1254 or ISO-8859-9. latin-1 decodes every byte without error, so it
+# must come last or Turkish characters are returned as mojibake (for example the
+# cp1254 byte for "s" with cedilla would surface as "thorn").
+_SUBTITLE_ENCODINGS = ("utf-8", "cp1254", "iso-8859-9", "latin-1")
+
+
+def _detect_encoding(body):
+    for encoding in _SUBTITLE_ENCODINGS:
+        try:
+            body.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+        return encoding
+    return "latin-1"
+
+
 def _content_payload(body, fmt):
     if not body:
         raise ValueError("turkcealtyaziorg downloaded empty subtitle")
-    try:
-        body.decode("utf-8")
-        encoding = "utf-8"
-    except UnicodeDecodeError:
-        encoding = "latin-1"
+    encoding = _detect_encoding(body)
     return {
         "content_b64": base64.b64encode(body).decode("ascii"),
         "content_sha256": hashlib.sha256(body).hexdigest(),
