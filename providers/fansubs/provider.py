@@ -4,25 +4,11 @@ import base64
 import hashlib
 import html
 import io
-import os
 import re
-import shutil
-import subprocess
-import tempfile
 import time
 import urllib.parse
 import urllib.request
 import zipfile
-
-try:
-    import rarfile
-except ImportError:  # pragma: no cover, optional system fallback
-    rarfile = None
-
-try:
-    import py7zz
-except ImportError:  # pragma: no cover, dependency is declared in manifest
-    py7zz = None
 
 PROVIDER_ID = "fansubs"
 BASE_URL = "http://fansubs.ru"
@@ -235,27 +221,6 @@ def _season_in_text(text, season):
     return False if found else None
 
 
-def select_subtitle_file(names, video):
-    candidates = [name for name in names if _subtitle_extension(name)]
-    if not candidates:
-        raise ValueError("fansubs archive contains no supported subtitle files")
-    episode = (video or {}).get("episode")
-    try:
-        episode_int = int(episode)
-    except (TypeError, ValueError):
-        episode_int = None
-    if episode_int is None:
-        return candidates[0]
-
-    def score(name):
-        base = os.path.basename(name)
-        if re.search(rf"(?<!\d)0*{episode_int}(?!\d)", base):
-            return 100
-        return 0
-
-    return max(candidates, key=score)
-
-
 def _subtitle_extension(name):
     lowered = (name or "").lower()
     for extension in SUBTITLE_EXTENSIONS:
@@ -273,168 +238,40 @@ def _is_rar_archive(body):
     )
 
 
-def _setup_rar_tools():
-    if rarfile is None:
-        raise RuntimeError("rarfile dependency is required for Fansubs RAR downloads")
-    unar = shutil.which("unar")
-    unrar = shutil.which("unrar")
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if unar:
-        rarfile.UNAR_TOOL = unar
-        rarfile.UNRAR_TOOL = None
-        rarfile.SEVENZIP_TOOL = None
-        rarfile.tool_setup(unrar=False, unar=True, bsdtar=False, sevenzip=False, force=True)
-        return
-    if unrar:
-        rarfile.UNRAR_TOOL = unrar
-        rarfile.UNAR_TOOL = None
-        rarfile.SEVENZIP_TOOL = None
-        rarfile.tool_setup(unrar=True, unar=False, bsdtar=False, sevenzip=False, force=True)
-        return
-    if sevenzip:
-        rarfile.UNRAR_TOOL = None
-        rarfile.UNAR_TOOL = None
-        rarfile.SEVENZIP_TOOL = sevenzip
-        rarfile.tool_setup(unrar=False, unar=False, bsdtar=False, sevenzip=True, force=True)
-        return
-    raise RuntimeError("Fansubs RAR download requires unar, unrar, or 7z")
-
-
-def _extract_rar_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if rarfile is not None:
-        try:
-            return _extract_rar_files_with_rarfile(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"Fansubs RAR extraction failed: {details}") from errors[-1]
-    raise RuntimeError("Fansubs RAR extraction requires py7zz, unar, unrar, or 7z")
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if not _subtitle_extension(rel):
-                continue
-            with open(path, "rb") as handle:
-                files.append((rel, handle.read()))
-    if not files:
-        raise ValueError("fansubs RAR contains no supported subtitle files")
-    return files
-
-
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("Fansubs bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "fansubs.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_rarfile(body):
-    _setup_rar_tools()
-    stream = io.BytesIO(body)
-    with rarfile.RarFile(stream) as archive:
-        return [
-            (name, archive.read(name))
-            for name in archive.namelist()
-            if _subtitle_extension(name)
-        ]
-
-
-def _extract_rar_files_with_unar(body):
-    unar = shutil.which("unar")
-    if not unar:
-        raise RuntimeError("Fansubs RAR fallback requires unar")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "fansubs.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [unar, "-quiet", "-o", output_dir, archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"unar failed to extract Fansubs RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("Fansubs RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "fansubs.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [sevenzip, "x", "-y", f"-o{output_dir}", archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract Fansubs RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def extract_download(body, filename="", content_type="", video=None):
-    del content_type
+def _is_html_body(body):
     if not body:
-        return _content_payload(b"", _format_from_filename(filename), empty=True)
+        return False
+    head = body[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or b"<head" in head
+        or b"<body" in head
+    )
+
+
+def _archive_payload(body, episode):
+    return {
+        "archive_b64": base64.b64encode(body).decode("ascii"),
+        "archive_sha256": hashlib.sha256(body).hexdigest(),
+        "episode": episode,
+    }
+
+
+def extract_download(body, filename="", content_type="", episode=None):
+    del content_type
+    if not body or not body.strip():
+        raise ValueError("fansubs download returned an empty body")
 
     stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            names = archive.namelist()
-            selected = select_subtitle_file(names, video or {})
-            return _content_payload(
-                archive.read(selected),
-                _subtitle_extension(selected) or _format_from_filename(selected),
-            )
+    if zipfile.is_zipfile(stream) or _is_rar_archive(body):
+        # Hand the raw archive to the host, which extracts the member and detects
+        # the encoding (Provider Hub v1.1 host-side archive extraction).
+        return _archive_payload(body, episode)
 
-    if _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        names = [name for name, _data in files]
-        selected = select_subtitle_file(names, video or {})
-        content_by_name = dict(files)
-        return _content_payload(
-            content_by_name[selected],
-            _subtitle_extension(selected) or _format_from_filename(selected),
-        )
+    if _is_html_body(body):
+        raise ValueError("fansubs download returned an HTML/error page")
 
     return _content_payload(body, _format_from_filename(filename))
 
@@ -444,27 +281,13 @@ def _format_from_filename(filename):
     return extension or "srt"
 
 
-def _content_payload(content, subtitle_format, empty=False):
-    if empty:
-        return {
-            "content_b64": "",
-            "content_sha256": "",
-            "content_type": _content_type(subtitle_format),
-            "format": subtitle_format,
-            "encoding": "utf-8",
-            "empty": True,
-        }
-    encoding = "utf-8"
-    try:
-        content.decode("utf-8")
-    except UnicodeDecodeError:
-        encoding = "windows-1251"
+def _content_payload(content, subtitle_format):
+    # Leave encoding unset; the host normalizes via chardet (Subtitle.normalize()).
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 
@@ -659,6 +482,8 @@ class FansubsProvider:
                                 "subtitle_id": subtitle["subtitle_id"],
                                 "format": subtitle["format"],
                                 "media_id": subtitle["media_id"],
+                                "season": (video or {}).get("season"),
+                                "episode": (video or {}).get("episode"),
                                 "video": _video_payload(video),
                             },
                         }
@@ -693,11 +518,14 @@ class FansubsProvider:
         filename = _filename_from_headers(headers) or (
             f"fansubs.{subtitle_id}.{payload.get('format') or 'srt'}"
         )
+        episode = payload.get("episode")
+        if episode is None:
+            episode = (payload.get("video") or {}).get("episode")
         return extract_download(
             body,
             filename=filename,
             content_type=headers.get("content-type", ""),
-            video=payload.get("video") or {},
+            episode=episode,
         )
 
 

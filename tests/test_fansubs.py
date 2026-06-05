@@ -2,7 +2,6 @@ import base64
 import hashlib
 import importlib.util
 import io
-import os
 import unittest
 import zipfile
 from pathlib import Path
@@ -84,19 +83,6 @@ class FansubsParsingTests(unittest.TestCase):
         self.assertTrue(self.mod.episode_range_matches("TV 08", 8))
         self.assertFalse(self.mod.episode_range_matches("ONA 13-16", 8))
 
-    def test_select_subtitle_file_prefers_requested_episode(self):
-        names = [
-            "Devil May Cry - 01.ass",
-            "Devil May Cry - 08.ass",
-            "Devil May Cry - 09.ass",
-        ]
-
-        selected = self.mod.select_subtitle_file(
-            names, {"kind": "episode", "episode": 8}
-        )
-
-        self.assertEqual(selected, "Devil May Cry - 08.ass")
-
     def test_episode_year_match_lifts_score_above_episode_only_match(self):
         matches = self.mod.derive_matches(
             {"kind": "episode", "series": "Devil May Cry", "year": 2025, "episode": 8},
@@ -150,6 +136,37 @@ class FansubsProviderSearchTests(unittest.TestCase):
         self.assertEqual(candidate["provider_payload"]["format"], "ass")
         self.assertIn("episode", candidate["matches"])
         self.assertEqual(candidate["page_link"], "http://fansubs.ru/base.php?id=7297")
+
+    def test_search_stores_season_and_episode_in_provider_payload(self):
+        provider = self.mod.FansubsProvider()
+
+        def post(url, data, timeout=15):
+            return SEARCH_FIXTURE, {}
+
+        def get(url, timeout=15):
+            if url == "http://fansubs.ru/base.php?id=1505":
+                return b"<html></html>"
+            if url == "http://fansubs.ru/base.php?id=7297":
+                return DETAIL_FIXTURE
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_post = post
+        provider._http_get = get
+
+        results = provider.search(
+            video={
+                "kind": "episode",
+                "series": "Devil May Cry",
+                "season": 1,
+                "episode": 8,
+            },
+            languages=[{"alpha3": "rus", "alpha2": "ru"}],
+            config={},
+        )
+
+        payload = results[0]["provider_payload"]
+        self.assertEqual(payload["season"], 1)
+        self.assertEqual(payload["episode"], 8)
 
     def test_search_skips_unsupported_languages_without_network(self):
         provider = self.mod.FansubsProvider()
@@ -243,11 +260,45 @@ class FansubsProviderDownloadTests(unittest.TestCase):
         self.assertEqual(data, body)
         self.assertEqual(result["format"], "ass")
         self.assertEqual(result["content_sha256"], hashlib.sha256(body).hexdigest())
+        # The host normalizes encoding; the worker must not guess a codepage.
+        self.assertNotIn("encoding", result)
 
-    def test_download_extracts_matching_file_from_zip(self):
+    def test_download_returns_zip_archive_for_host_extraction(self):
         archive = io.BytesIO()
         with zipfile.ZipFile(archive, "w") as zf:
             zf.writestr("Devil May Cry - 01.ass", b"episode one")
+            zf.writestr("Devil May Cry - 08.ass", b"episode eight")
+        archive_bytes = archive.getvalue()
+        provider = self._provider_with_download_body(
+            archive_bytes,
+            {"content-disposition": 'attachment; filename="devil_may_cry.zip"'},
+        )
+
+        result = provider.download(
+            {
+                "provider": "fansubs",
+                "schema": 1,
+                "subtitle_id": "13605",
+                "format": "ass",
+                "season": 1,
+                "episode": 8,
+            },
+            {"alpha3": "rus", "alpha2": "ru"},
+            {},
+        )
+
+        self.assertNotIn("content_b64", result)
+        data = base64.b64decode(result["archive_b64"].encode("ascii"), validate=True)
+        self.assertEqual(data, archive_bytes)
+        self.assertEqual(
+            result["archive_sha256"], hashlib.sha256(archive_bytes).hexdigest()
+        )
+        self.assertEqual(result["episode"], 8)
+        self.assertNotIn("encoding", result)
+
+    def test_download_carries_episode_from_nested_video_payload(self):
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as zf:
             zf.writestr("Devil May Cry - 08.ass", b"episode eight")
         provider = self._provider_with_download_body(
             archive.getvalue(),
@@ -266,115 +317,93 @@ class FansubsProviderDownloadTests(unittest.TestCase):
             {},
         )
 
-        data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
-        self.assertEqual(data, b"episode eight")
-        self.assertEqual(result["format"], "ass")
+        self.assertEqual(result["episode"], 8)
 
-    def test_download_extracts_matching_file_from_rar_reader(self):
+    def test_download_returns_rar_archive_for_host_extraction(self):
+        rar_bytes = b"Rar!\x1a\x07\x00" + b"payload bytes that are not a real archive"
         provider = self._provider_with_download_body(
-            b"rar bytes",
+            rar_bytes,
             {"content-disposition": 'attachment; filename="devil_may_cry.rar"'},
         )
 
-        with mock.patch.object(self.mod, "_is_rar_archive", return_value=True):
-            with mock.patch.object(
-                self.mod,
-                "_extract_rar_files",
-                return_value=[
-                    ("Devil May Cry - 01.ass", b"episode one"),
-                    ("Devil May Cry - 08.ass", b"episode eight"),
-                ],
-            ):
-                result = provider.download(
-                    {
-                        "provider": "fansubs",
-                        "schema": 1,
-                        "subtitle_id": "13605",
-                        "format": "ass",
-                        "video": {"kind": "episode", "episode": 8},
-                    },
-                    {"alpha3": "rus", "alpha2": "ru"},
-                    {},
-                )
+        result = provider.download(
+            {
+                "provider": "fansubs",
+                "schema": 1,
+                "subtitle_id": "13605",
+                "format": "ass",
+                "episode": 8,
+            },
+            {"alpha3": "rus", "alpha2": "ru"},
+            {},
+        )
 
-        data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
-        self.assertEqual(data, b"episode eight")
-        self.assertEqual(result["format"], "ass")
+        self.assertNotIn("content_b64", result)
+        data = base64.b64decode(result["archive_b64"].encode("ascii"), validate=True)
+        self.assertEqual(data, rar_bytes)
+        self.assertEqual(
+            result["archive_sha256"], hashlib.sha256(rar_bytes).hexdigest()
+        )
+        self.assertEqual(result["episode"], 8)
 
-    def test_rar_extraction_falls_back_to_unar_when_rarfile_read_fails(self):
-        def which(command):
-            return "/usr/bin/unar" if command == "unar" else None
+    def test_download_archive_episode_is_none_when_absent(self):
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("Ghost in the Shell.srt", b"movie subtitle")
+        provider = self._provider_with_download_body(
+            archive.getvalue(),
+            {"content-disposition": 'attachment; filename="ghost.zip"'},
+        )
 
-        with mock.patch.object(self.mod, "py7zz", None):
-            with mock.patch.object(self.mod, "rarfile", object()):
-                with mock.patch.object(self.mod.shutil, "which", side_effect=which):
-                    with mock.patch.object(
-                        self.mod,
-                        "_extract_rar_files_with_rarfile",
-                        side_effect=OSError("bad rar"),
-                    ):
-                        with mock.patch.object(
-                            self.mod,
-                            "_extract_rar_files_with_unar",
-                            return_value=[("Devil May Cry - 08.srt", b"episode eight")],
-                        ) as fallback:
-                            files = self.mod._extract_rar_files(b"rar bytes")
+        result = provider.download(
+            {
+                "provider": "fansubs",
+                "schema": 1,
+                "subtitle_id": "13605",
+                "format": "srt",
+            },
+            {"alpha3": "rus", "alpha2": "ru"},
+            {},
+        )
 
-        self.assertEqual(files, [("Devil May Cry - 08.srt", b"episode eight")])
-        fallback.assert_called_once_with(b"rar bytes")
+        self.assertIn("archive_b64", result)
+        self.assertIsNone(result["episode"])
 
-    def test_rar_extraction_prefers_bundled_py7zz_when_available(self):
-        with mock.patch.object(self.mod, "py7zz", object()):
-            with mock.patch.object(
-                self.mod,
-                "_extract_rar_files_with_py7zz",
-                return_value=[("Devil May Cry - 08.ass", b"episode eight")],
-                create=True,
-            ) as bundled:
-                with mock.patch.object(
-                    self.mod,
-                    "_extract_rar_files_with_rarfile",
-                    side_effect=AssertionError("system rarfile should not be used"),
-                ):
-                    files = self.mod._extract_rar_files(b"rar bytes")
+    def test_download_rejects_empty_body(self):
+        provider = self._provider_with_download_body(
+            b"",
+            {"content-disposition": 'attachment; filename="devil_may_cry.srt"'},
+        )
 
-        self.assertEqual(files, [("Devil May Cry - 08.ass", b"episode eight")])
-        bundled.assert_called_once_with(b"rar bytes")
+        with self.assertRaises(ValueError):
+            provider.download(
+                {"provider": "fansubs", "schema": 1, "subtitle_id": "13605"},
+                {"alpha3": "rus", "alpha2": "ru"},
+                {},
+            )
 
-    def test_bundled_py7zz_extractor_collects_subtitle_files(self):
-        class FakePy7zz:
-            @staticmethod
-            def extract_archive(_archive_path, output_dir):
-                path = os.path.join(output_dir, "Devil May Cry - 08.ass")
-                with open(path, "wb") as handle:
-                    handle.write(b"episode eight")
-                with open(os.path.join(output_dir, "readme.txt"), "wb") as handle:
-                    handle.write(b"ignore me")
+    def test_download_rejects_html_error_page(self):
+        provider = self._provider_with_download_body(
+            b"<!DOCTYPE html><html><body>not found</body></html>",
+            {"content-type": "text/html"},
+        )
 
-        with mock.patch.object(self.mod, "py7zz", FakePy7zz):
-            files = self.mod._extract_rar_files_with_py7zz(b"rar bytes")
+        with self.assertRaises(ValueError):
+            provider.download(
+                {"provider": "fansubs", "schema": 1, "subtitle_id": "13605"},
+                {"alpha3": "rus", "alpha2": "ru"},
+                {},
+            )
 
-        self.assertEqual(files, [("Devil May Cry - 08.ass", b"episode eight")])
+    def test_download_requires_subtitle_id(self):
+        provider = self.mod.FansubsProvider()
 
-    def test_rar_extraction_falls_back_to_7z_when_only_7z_is_available(self):
-        def which(command):
-            return "/usr/bin/7z" if command == "7z" else None
-
-        with mock.patch.object(self.mod, "py7zz", None):
-            with mock.patch.object(
-                self.mod, "_extract_rar_files_with_rarfile", side_effect=OSError("bad rar")
-            ):
-                with mock.patch.object(self.mod.shutil, "which", side_effect=which):
-                    with mock.patch.object(
-                        self.mod,
-                        "_extract_rar_files_with_7z",
-                        return_value=[("Devil May Cry - 08.srt", b"episode eight")],
-                        create=True,
-                    ) as fallback:
-                        files = self.mod._extract_rar_files(b"rar bytes")
-
-        self.assertEqual(files, [("Devil May Cry - 08.srt", b"episode eight")])
-        fallback.assert_called_once_with(b"rar bytes")
+        with self.assertRaises(ValueError):
+            provider.download(
+                {"provider": "fansubs", "schema": 1},
+                {"alpha3": "rus", "alpha2": "ru"},
+                {},
+            )
 
 
 if __name__ == "__main__":
