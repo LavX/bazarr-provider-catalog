@@ -5,11 +5,7 @@ import hashlib
 import html
 import io
 import json
-import os
 import re
-import shutil
-import subprocess
-import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -23,11 +19,6 @@ try:
 except ImportError:  # pragma: no cover, dependency is declared in provider.json
     cloudscraper = None
 
-try:
-    import py7zz
-except ImportError:
-    py7zz = None
-
 PROVIDER_ID = "turkcealtyaziorg"
 BASE_URL = "https://turkcealtyazi.org"
 DOWNLOAD_URL = f"{BASE_URL}/ind"
@@ -40,8 +31,6 @@ DEFAULT_FLARESOLVERR_TIMEOUT_MS = 60000
 MAX_FLARESOLVERR_TIMEOUT_MS = 60000
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
 SUPPORTED_LANGUAGE_CODES = {"tur", "eng"}
-_SXXEXX_RE = re.compile(r"\bs(?P<season>\d{1,2})\s*[._ -]?e(?P<episode>\d{1,3})\b", re.I)
-_XX_RE = re.compile(r"\b(?P<season>\d{1,2})x(?P<episode>\d{1,3})\b", re.I)
 _META_REFRESH_RE = re.compile(
     r"""<meta\s+http-equiv=["']refresh["']\s+content=["'](?P<delay>\d+);\s*url=(?P<url>[^"']+)["']""",
     re.I,
@@ -178,13 +167,7 @@ class TurkceAltyaziOrgProvider:
         post_headers["Referer"] = page_url
         archive_response = self._http_post(DOWNLOAD_URL, form, post_headers, cookies, timeout=10, config=config)
         _raise_for_status(archive_response, "TurkceAltyazi archive download")
-        body, filename = extract_download(
-            archive_response.body,
-            payload.get("filename") or page_url,
-            payload,
-        )
-        body = _normalize_line_endings(body)
-        return _content_payload(body, _format_from_filename(filename))
+        return _download_payload(archive_response.body, payload, page_url)
 
     def _ensure_access(self, config, cookies):
         if self._access_checked:
@@ -821,54 +804,48 @@ def _parse_html(body):
     return parser.root
 
 
-def extract_download(body, filename, payload=None):
+def _download_payload(body, payload, page_url):
     payload = payload or {}
-    stream = io.BytesIO(body or b"")
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            names = [name for name in archive.namelist() if _subtitle_extension(name)]
-            if not names:
-                raise ValueError("turkcealtyaziorg archive contains no supported subtitle files")
-            name = _best_archive_member(names, payload)
-            return archive.read(name), name
-    if _looks_like_rar(body, filename):
-        files = _extract_rar_files(body)
-        if not files:
-            raise ValueError("turkcealtyaziorg RAR archive contains no supported subtitle files")
-        name = _best_archive_member([name for name, _content in files], payload)
-        for file_name, content in files:
-            if file_name == name:
-                return content, file_name
-    if not body:
+    # Reject broken responses up front: the download endpoint can answer with an
+    # empty stream or an HTML/error page that would otherwise look successful.
+    if not body or not body.strip():
         raise ValueError("turkcealtyaziorg downloaded empty subtitle")
-    return body, filename
+    if _is_html_body(body):
+        raise ValueError("turkcealtyaziorg returned an HTML/error page instead of a subtitle")
+    if _is_archive_body(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back
+        # to the host, which lists it, picks the member by episode, and detects
+        # encoding. The worker no longer extracts or guesses an encoding.
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "episode": _int_or_none(payload.get("episode")),
+        }
+    # Direct, non-archive subtitle body.
+    filename = payload.get("filename") or page_url
+    return _content_payload(_normalize_line_endings(body), _format_from_filename(filename))
 
 
-def _best_archive_member(names, payload):
-    episode = _int_or_none(payload.get("episode"))
-    if episode is not None:
-        season = _int_or_none(payload.get("season"))
-        for name in names:
-            if _archive_member_matches_episode(name, season, episode):
-                return name
-        if payload.get("is_pack"):
-            raise ValueError("turkcealtyaziorg archive does not contain the requested episode")
-    names.sort(key=lambda name: (not name.lower().endswith(".srt"), len(name), name.lower()))
-    return names[0]
+def _is_archive_body(body):
+    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
 
 
-def _archive_member_matches_episode(name, season, episode):
-    lowered = str(name or "").lower()
-    saw_structured_episode = False
-    for pattern in (_SXXEXX_RE, _XX_RE):
-        for match in pattern.finditer(lowered):
-            saw_structured_episode = True
-            if int(match.group("episode")) != episode:
-                continue
-            return season is None or int(match.group("season")) == season
-    if saw_structured_episode:
+def _is_rar_archive(body):
+    return bool(body) and (body or b"").startswith(b"Rar!\x1a\x07")
+
+
+def _is_html_body(body):
+    if not body:
         return False
-    return bool(re.search(rf"(?<![a-z0-9])e0*{episode}(?!\d)", lowered))
+    head = body[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or head.startswith(b"<!--")
+        or b"<body" in head
+        or b"<head" in head
+    )
 
 
 def _subtitle_extension(name):
@@ -879,88 +856,6 @@ def _subtitle_extension(name):
     return None
 
 
-def _looks_like_rar(body, filename):
-    lower = str(filename or "").lower()
-    return lower.endswith(".rar") or (body or b"").startswith(b"Rar!\x1a\x07")
-
-
-def _extract_rar_files(body):
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception:
-            pass
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception:
-            pass
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception:
-            pass
-    raise RuntimeError("TurkceAltyazi RAR extraction requires py7zz, unar, or 7z")
-
-
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("TurkceAltyazi bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "turkcealtyazi.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_unar(body):
-    unar = shutil.which("unar")
-    if not unar:
-        raise RuntimeError("TurkceAltyazi RAR fallback requires unar")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "turkcealtyazi.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run([unar, "-quiet", "-o", output_dir, archive_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if result.returncode:
-            raise RuntimeError("unar failed to extract TurkceAltyazi RAR")
-        return _collect_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("TurkceAltyazi RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "turkcealtyazi.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run([sevenzip, "x", f"-o{output_dir}", "-y", archive_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if result.returncode:
-            raise RuntimeError("7z failed to extract TurkceAltyazi RAR")
-        return _collect_subtitle_files(output_dir)
-
-
-def _collect_subtitle_files(directory):
-    files = []
-    for root, _dirs, names in os.walk(directory):
-        for name in names:
-            if not _subtitle_extension(name):
-                continue
-            path = os.path.join(root, name)
-            rel = os.path.relpath(path, directory)
-            with open(path, "rb") as handle:
-                files.append((rel, handle.read()))
-    return files
-
-
 def _format_from_filename(filename):
     return _subtitle_extension(urllib.parse.urlparse(str(filename)).path) or "srt"
 
@@ -969,33 +864,17 @@ def _normalize_line_endings(body):
     return body.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
 
 
-# Turkish subtitles are usually saved as UTF-8, but legacy releases still ship
-# as Windows-1254 or ISO-8859-9. latin-1 decodes every byte without error, so it
-# must come last or Turkish characters are returned as mojibake (for example the
-# cp1254 byte for "s" with cedilla would surface as "thorn").
-_SUBTITLE_ENCODINGS = ("utf-8", "cp1254", "iso-8859-9", "latin-1")
-
-
-def _detect_encoding(body):
-    for encoding in _SUBTITLE_ENCODINGS:
-        try:
-            body.decode(encoding)
-        except (UnicodeDecodeError, LookupError):
-            continue
-        return encoding
-    return "latin-1"
-
-
 def _content_payload(body, fmt):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a
+    # worker guess (especially latin-1, which never fails to decode) only
+    # reintroduces mojibake. Leave encoding unset and let the host normalize.
     if not body:
         raise ValueError("turkcealtyaziorg downloaded empty subtitle")
-    encoding = _detect_encoding(body)
     return {
         "content_b64": base64.b64encode(body).decode("ascii"),
         "content_sha256": hashlib.sha256(body).hexdigest(),
         "content_type": _content_type(fmt),
         "format": fmt,
-        "encoding": encoding,
         "empty": False,
     }
 

@@ -5,7 +5,6 @@ import io
 import unittest
 import zipfile
 from pathlib import Path
-from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "turkcealtyaziorg"
@@ -614,103 +613,157 @@ class TurkceAltyaziDownloadTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
 
-    def test_download_posts_hidden_form_and_extracts_zip(self):
+    def _provider_with_archive(self, archive_body):
         provider = self.mod.TurkceAltyaziOrgProvider()
-        calls = []
+        self.calls = []
 
         def get_response(url, headers, cookies, timeout=30, allow_redirects=True, config=None):
-            del timeout, allow_redirects
-            calls.append(("GET", url, headers, cookies))
+            del timeout, allow_redirects, config
+            self.calls.append(("GET", url, headers, cookies))
             return self.mod.HttpResponse(200, _download_page(), {})
 
         def post_response(url, data, headers, cookies, timeout=30, config=None):
-            del timeout
-            calls.append(("POST", url, data, headers, cookies))
-            return self.mod.HttpResponse(200, _zip_body(), {"content-type": "application/zip"})
+            del timeout, config
+            self.calls.append(("POST", url, data, headers, cookies))
+            return self.mod.HttpResponse(200, archive_body, {"content-type": "application/octet-stream"})
 
         provider._http_get = get_response
         provider._http_post = post_response
+        return provider
+
+    def test_download_posts_hidden_form_and_returns_raw_zip_for_host(self):
+        body = _zip_body()
+        provider = self._provider_with_archive(body)
+
         result = provider.download(
             {
                 "page_url": "https://turkcealtyazi.org/mov/123/inception.html",
                 "release_info": "BluRay,x264-GROUP",
                 "filename": "inception.zip",
+                "season": 1,
+                "episode": 2,
             },
             {"alpha3": "tur"},
             {"cookies": "cf_clearance=token", "user_agent": "UnitTest/1.0"},
         )
 
-        payload = base64.b64decode(result["content_b64"])
-        self.assertEqual(payload, b"1\n00:00:01,000 --> 00:00:02,000\nMerhaba\n")
-        self.assertEqual(result["content_sha256"], hashlib.sha256(payload).hexdigest())
+        # Archive mode: the worker hands the raw archive bytes back untouched.
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["episode"], 2)
+        # No extraction, member selection, or encoding guessing happens worker-side.
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("member", result)
+        self.assertNotIn("encoding", result)
+        # The hidden download form is still posted with the page referer.
+        self.assertEqual(self.calls[1][0], "POST")
+        self.assertEqual(self.calls[1][1], "https://turkcealtyazi.org/ind")
+        self.assertEqual(self.calls[1][2], {"idid": "11", "altid": "22", "sidid": "33"})
+        self.assertEqual(self.calls[1][3]["Referer"], "https://turkcealtyazi.org/mov/123/inception.html")
+
+    def test_download_returns_raw_rar_for_host(self):
+        # Minimal RAR4 signature; the host extracts, the worker only forwards bytes.
+        body = b"Rar!\x1a\x07\x00" + b"\x00" * 32
+        provider = self._provider_with_archive(body)
+
+        result = provider.download(
+            {
+                "page_url": "https://turkcealtyazi.org/serie/200/s01e02.html",
+                "release_info": "HDTV-GROUP",
+                "filename": "episode.rar",
+                "season": 1,
+                "episode": 7,
+            },
+            {"alpha3": "tur"},
+            {},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["episode"], 7)
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
+
+    def test_download_archive_episode_is_none_for_movie(self):
+        body = _zip_body()
+        provider = self._provider_with_archive(body)
+
+        result = provider.download(
+            {
+                "page_url": "https://turkcealtyazi.org/mov/123/inception.html",
+                "filename": "inception.zip",
+            },
+            {"alpha3": "tur"},
+            {},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertIsNone(result["episode"])
+
+    def test_download_direct_subtitle_body_stays_content_mode(self):
+        provider = self._provider_with_archive(b"1\r\n00:00:01,000 --> 00:00:02,000\nMerhaba\r\n")
+
+        result = provider.download(
+            {
+                "page_url": "https://turkcealtyazi.org/mov/123/inception.html",
+                "filename": "inception.srt",
+            },
+            {"alpha3": "tur"},
+            {},
+        )
+
+        content = base64.b64decode(result["content_b64"])
+        self.assertEqual(content, b"1\n00:00:01,000 --> 00:00:02,000\nMerhaba\n")
+        self.assertEqual(result["content_sha256"], hashlib.sha256(content).hexdigest())
         self.assertEqual(result["format"], "srt")
-        self.assertEqual(calls[1][0], "POST")
-        self.assertEqual(calls[1][1], "https://turkcealtyazi.org/ind")
-        self.assertEqual(calls[1][2], {"idid": "11", "altid": "22", "sidid": "33"})
-        self.assertEqual(calls[1][3]["Referer"], "https://turkcealtyazi.org/mov/123/inception.html")
+        # Direct content path must not ship a worker-guessed encoding; the host normalizes.
+        self.assertNotIn("encoding", result)
+        self.assertNotIn("archive_b64", result)
 
-    def test_download_extracts_rar_with_extractor(self):
-        provider = self.mod.TurkceAltyaziOrgProvider()
-        provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True, config=None: self.mod.HttpResponse(
-            200, _download_page(), {}
-        )
-        provider._http_post = lambda url, data, headers, cookies, timeout=30, config=None: self.mod.HttpResponse(
-            200, b"Rar!\x1a\x07\x00body", {"content-type": "application/vnd.rar"}
+    def test_download_rejects_html_error_page(self):
+        provider = self._provider_with_archive(
+            b"<!DOCTYPE html>\n<html><head><title>404</title></head>"
+            b"<body>Subtitle not found</body></html>"
         )
 
-        with mock.patch.object(self.mod, "_extract_rar_files", return_value=[("subtitle.srt", b"RAR subtitle")]):
-            result = provider.download(
+        with self.assertRaises(ValueError):
+            provider.download(
                 {
                     "page_url": "https://turkcealtyazi.org/mov/123/inception.html",
-                    "release_info": "BluRay,x264-GROUP",
-                    "filename": "inception.rar",
+                    "filename": "inception.zip",
                 },
                 {"alpha3": "tur"},
                 {},
             )
 
-        self.assertEqual(base64.b64decode(result["content_b64"]), b"RAR subtitle")
+    def test_download_rejects_empty_body(self):
+        provider = self._provider_with_archive(b"   \r\n  ")
 
-    def test_season_pack_archive_rejects_wrong_episode_member(self):
-        stream = io.BytesIO()
-        with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr("Example.S01E03.srt", "wrong")
-
-        with self.assertRaisesRegex(ValueError, "requested episode"):
-            self.mod.extract_download(
-                stream.getvalue(),
-                "season-pack.zip",
-                {"season": 1, "episode": 2, "is_pack": True},
+        with self.assertRaises(ValueError):
+            provider.download(
+                {
+                    "page_url": "https://turkcealtyazi.org/mov/123/inception.html",
+                    "filename": "inception.zip",
+                },
+                {"alpha3": "tur"},
+                {},
             )
 
-    def test_content_payload_detects_turkish_cp1254_encoding(self):
-        body = "1\n00:00:01,000 --> 00:00:02,000\nMerhaba dünya şş\n".encode("cp1254")
+    def test_search_episode_carries_season_and_episode_in_payload(self):
+        provider = self.mod.TurkceAltyaziOrgProvider()
+        provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True, config=None: self.mod.HttpResponse(
+            200, b"home" if url == "https://turkcealtyazi.org" else _episode_search_page(), {}
+        )
 
-        payload = self.mod._content_payload(body, "srt")
+        results = provider.search(
+            {"kind": "episode", "series": "Example", "series_imdb_id": "tt0903747", "season": 1, "episode": 2},
+            [{"alpha3": "eng"}, {"alpha3": "tur"}],
+            {},
+        )
 
-        self.assertEqual(payload["encoding"], "cp1254")
-        # latin-1 would mojibake the Turkish characters, cp1254 round-trips them.
-        decoded = base64.b64decode(payload["content_b64"]).decode(payload["encoding"])
-        self.assertIn("şş", decoded)
-
-    def test_content_payload_keeps_utf8_for_utf8_bytes(self):
-        body = "Merhaba şş".encode("utf-8")
-
-        payload = self.mod._content_payload(body, "srt")
-
-        self.assertEqual(payload["encoding"], "utf-8")
-
-    def test_season_pack_archive_does_not_match_episode_twenty_as_episode_two(self):
-        stream = io.BytesIO()
-        with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr("Example.S01E020.srt", "wrong")
-
-        with self.assertRaisesRegex(ValueError, "requested episode"):
-            self.mod.extract_download(
-                stream.getvalue(),
-                "season-pack.zip",
-                {"season": 1, "episode": 2, "is_pack": True},
-            )
+        # download() needs episode (and season) for host-side member selection.
+        self.assertEqual(results[0]["provider_payload"]["season"], 1)
+        self.assertEqual(results[0]["provider_payload"]["episode"], 2)
 
 
 if __name__ == "__main__":
