@@ -344,14 +344,6 @@ def _release_info(item):
     return ", ".join(_release_names(item))
 
 
-def _format_from_name(name):
-    path = urllib.parse.urlparse(_coerce_text(name)).path.lower()
-    for ext in SUBTITLE_EXTENSIONS:
-        if path.endswith(ext):
-            return ext[1:]
-    return "srt"
-
-
 def _requested_variants_for_alpha3(requested_languages, alpha3):
     return [
         _language_payload(language)
@@ -463,21 +455,6 @@ def _candidate_from_item(video, requested_languages, item, matched_imdb=False):
     }
 
 
-def _content_type(format_name):
-    mapping = {
-        "srt": "application/x-subrip",
-        "ass": "text/x-ssa",
-        "ssa": "text/x-ssa",
-        "vtt": "text/vtt",
-        "sub": "text/plain",
-    }
-    return mapping.get(format_name, "text/plain")
-
-
-def _normalize_subtitle_bytes(content):
-    return (content or b"").replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-
-
 def _filename_episode_matches(name, payload):
     text = _coerce_text(name)
     target_season = _coerce_int((payload or {}).get("season"))
@@ -490,46 +467,61 @@ def _filename_episode_matches(name, payload):
     return 2 if season == target_season and episode == target_episode else 0
 
 
-def _extract_subtitle_from_zip(data, payload):
+def _select_zip_member(data, payload):
+    # List the archive with stdlib zipfile and pick the member ourselves; the host
+    # extracts and decodes it. For an episode pack we keep the SxxEyy match; only when
+    # no member matches confidently do we hand selection to the host via guessit.
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         names = [
             name for name in archive.namelist()
             if not name.endswith("/") and name.lower().endswith(SUBTITLE_EXTENSIONS)
         ]
-        if not names:
-            return None, None
-        if (payload or {}).get("is_pack") and (payload or {}).get("kind") == "episode":
-            names.sort(key=lambda name: (_filename_episode_matches(name, payload), name), reverse=True)
-            if _filename_episode_matches(names[0], payload) > 0:
-                return _normalize_subtitle_bytes(archive.read(names[0])), _format_from_name(names[0])
-            return None, None
-        names.sort()
-        return _normalize_subtitle_bytes(archive.read(names[0])), _format_from_name(names[0])
+    if not names:
+        return None
+    if (payload or {}).get("is_pack") and (payload or {}).get("kind") == "episode":
+        names.sort(key=lambda name: (_filename_episode_matches(name, payload), name), reverse=True)
+        if _filename_episode_matches(names[0], payload) > 0:
+            return names[0]
+        return None
+    names.sort()
+    return names[0]
 
 
-def _empty_download(format_name="srt"):
-    return {
-        "content_b64": "",
-        "content_sha256": hashlib.sha256(b"").hexdigest(),
-        "content_type": _content_type(format_name),
-        "format": format_name,
-        "encoding": "utf-8",
-        "empty": True,
+def _is_archive_body(body):
+    if not body:
+        return False
+    if zipfile.is_zipfile(io.BytesIO(body)):
+        return True
+    return body.startswith(b"Rar!") or body.startswith(b"7z\xbc\xaf\x27\x1c")
+
+
+def _is_html_body(body):
+    head = (body or b"")[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or b"<body" in head
+        or b"<head" in head
+    )
+
+
+def _archive_payload(body, payload):
+    # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to the
+    # host. When we can list the zip cheaply we pin the member; otherwise the host picks
+    # by episode via guessit. The host detects the encoding via Subtitle.normalize().
+    result = {
+        "archive_b64": base64.b64encode(body).decode("ascii"),
+        "archive_sha256": hashlib.sha256(body).hexdigest(),
     }
-
-
-def _download_result(content, format_name):
-    content = _normalize_subtitle_bytes(content)
-    if not content:
-        return _empty_download(format_name)
-    return {
-        "content_b64": base64.b64encode(content).decode("ascii"),
-        "content_sha256": hashlib.sha256(content).hexdigest(),
-        "content_type": _content_type(format_name),
-        "format": format_name,
-        "encoding": "utf-8",
-        "empty": False,
-    }
+    member = None
+    if zipfile.is_zipfile(io.BytesIO(body)):
+        member = _select_zip_member(body, payload)
+    if member:
+        result["member"] = member
+    else:
+        result["episode"] = _coerce_int((payload or {}).get("episode"))
+    return result
 
 
 class SubSourceProvider:
@@ -636,9 +628,10 @@ class SubSourceProvider:
         if subtitle_id is None:
             raise ValueError("SubSource download requires subtitle_id")
         body = self._http_get_bytes(f"subtitles/{subtitle_id}/download", config or {})
-        if not zipfile.is_zipfile(io.BytesIO(body)):
-            return _empty_download("srt")
-        content, format_name = _extract_subtitle_from_zip(body, payload)
-        if content is None:
-            return _empty_download("srt")
-        return _download_result(content, format_name or "srt")
+        if not body or not body.strip():
+            raise ValueError(f"SubSource empty download for subtitle {subtitle_id}")
+        if _is_html_body(body):
+            raise ValueError(f"SubSource returned an HTML/error page for subtitle {subtitle_id}")
+        if not _is_archive_body(body):
+            raise ValueError(f"SubSource download for subtitle {subtitle_id} is not an archive")
+        return _archive_payload(body, payload)
