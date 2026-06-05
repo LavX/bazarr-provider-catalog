@@ -165,6 +165,21 @@ class SubtitrariNoiProviderTests(unittest.TestCase):
 
         self.assertEqual(results, [])
 
+    def test_search_rejects_episode_rows_pointing_at_a_different_episode(self):
+        provider = self.mod.SubtitrariNoiProvider()
+        row = self.mod.parse_search_results(BREAKING_BAD_HTML)[0]
+        row["comments"] = "Sezonul 1 ep. 2"
+        html = self._search_html_from_row(row)
+        provider._http_post = lambda url, data, timeout=15, referer=None: html
+
+        results = provider.search(
+            {"kind": "episode", "series": "Breaking Bad", "season": 1, "episode": 1, "series_imdb_id": "tt0903747"},
+            [{"alpha3": "ron", "alpha2": "ro"}],
+            {},
+        )
+
+        self.assertEqual(results, [])
+
     def test_search_does_not_label_normal_rows_as_forced_or_hi(self):
         provider = self.mod.SubtitrariNoiProvider()
         provider._http_post = lambda url, data, timeout=15, referer=None: BREAKING_BAD_HTML
@@ -257,6 +272,25 @@ class SubtitrariNoiProviderTests(unittest.TestCase):
             {
                 "Sezonul 1/Breaking.Bad.S01E02.720p.BluRay.x264.DTS-SYLER.srt": b"wrong episode",
                 "Sezonul 1/Breaking.Bad.S01E03.720p.BluRay.x264.DTS-SYLER.srt": b"wrong episode",
+            }
+        )
+
+        with self.assertRaises(ValueError):
+            self.mod.extract_download(
+                archive,
+                {
+                    "filename": "subtitrarinoi.breaking-bad.s01e01.ro.zip",
+                    "season": 1,
+                    "episode": 1,
+                    "release_info": "Breaking Bad S01E01",
+                },
+            )
+
+    def test_download_rejects_later_episode_with_shared_digit_prefix(self):
+        archive = _zip_body(
+            {
+                "Sezonul 1/Breaking.Bad.S01E10.720p.BluRay.x264.DTS-SYLER.srt": b"episode ten",
+                "Sezonul 1/Breaking.Bad.1x11.720p.BluRay.x264.DTS-SYLER.srt": b"episode eleven",
             }
         )
 
