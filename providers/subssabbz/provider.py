@@ -192,12 +192,12 @@ class SubsSabBzProvider:
             if not video.get("series") or video.get("season") is None or video.get("episode") is None:
                 return []
             media_type = "episode"
-            title = _search_title(video["series"], TV_NAME_FIXES)
+            title = _alias_title(video["series"], TV_NAME_FIXES)
         elif video.get("kind") == "movie":
             if not video.get("title"):
                 return []
             media_type = "movie"
-            title = _search_title(video["title"], MOVIE_NAME_FIXES)
+            title = _alias_title(video["title"], MOVIE_NAME_FIXES)
         else:
             return []
         match_video = dict(video)
@@ -274,7 +274,7 @@ class SubsSabBzProvider:
         }
         return {
             "provider": PROVIDER_ID,
-            "id": f"subssabbz-{hashlib.sha1((item['download_url'] + item['filename'] + language['alpha3']).encode('utf-8')).hexdigest()[:16]}",
+            "id": f"subssabbz-{_result_id(item, language)}",
             "language": {
                 "alpha3": language["alpha3"],
                 "alpha2": SUPPORTED_LANGUAGES[language["alpha3"]],
@@ -310,6 +310,18 @@ class SubsSabBzProvider:
         selected = select_subtitle_file(files, payload)
         data = _normalize_line_endings(selected["content"])
         return _content_payload(data, _subtitle_extension(selected["filename"]) or "srt")
+
+
+def _result_id(item, language):
+    # Include hi/forced so same-language variants for one member do not collapse to one id.
+    parts = (
+        item["download_url"],
+        item["filename"],
+        language["alpha3"],
+        "1" if language["hi"] else "0",
+        "1" if language["forced"] else "0",
+    )
+    return hashlib.sha1("\x00".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
 def select_subtitle_file(files, payload):
@@ -433,8 +445,14 @@ def _archive_rows_from_pairs(pairs):
     rows = []
     for filename, content in pairs:
         if _subtitle_extension(filename):
-            rows.append({"filename": os.path.basename(filename), "content": content})
+            rows.append({"filename": _normalize_member_path(filename), "content": content})
     return rows
+
+
+def _normalize_member_path(filename):
+    # Keep the directory so multi-CD packs like CD1/sub.srt and CD2/sub.srt stay distinct,
+    # but normalize separators so the same member resolves identically at download time.
+    return str(filename or "").replace("\\", "/").lstrip("/")
 
 
 def _download_anchor(title_cell):
@@ -526,9 +544,6 @@ def _season_episode_from_filename(filename):
     match = re.search(r"(?P<season>\d{1,2})x(?P<episode>\d{1,3})", normalized)
     if match:
         return int(match.group("season")), int(match.group("episode"))
-    match = re.search(r"(?<!\d)(?P<season>\d)(?P<episode>\d{2})(?!\d)", normalized)
-    if match:
-        return int(match.group("season")), int(match.group("episode"))
     return None, None
 
 
@@ -567,7 +582,7 @@ def _alpha3_for_language(language):
 def _search_payload(video, title, alpha3):
     payload = {
         "act": "search",
-        "movie": title,
+        "movie": _query_title(title),
         "select-language": "1" if alpha3 == "eng" else "2",
         "upldr": "",
         "yr": "",
@@ -578,13 +593,17 @@ def _search_payload(video, title, alpha3):
     return payload
 
 
-def _search_title(title, replacements):
+def _alias_title(title, replacements):
     value = str(title or "")
     for old, new in replacements.items():
         if value == old or value.startswith(old):
             value = value.replace(old, new, 1)
             break
-    return _ascii_fold(value).replace("'", "")
+    return value
+
+
+def _query_title(title):
+    return _ascii_fold(title).replace("'", "")
 
 
 def _headers(referer=None):

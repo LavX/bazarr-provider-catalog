@@ -190,6 +190,59 @@ class TitloviProviderTests(unittest.TestCase):
         self.assertIn(b"Latin", base64.b64decode(latin["content_b64"]))
         self.assertIn(b"Cyrillic", base64.b64decode(cyrillic["content_b64"]))
 
+    def test_manifest_advertises_serbian_cyrillic_variant(self):
+        manifest = json.loads((PROVIDER_DIR / "provider.json").read_text())
+        languages = manifest.get("languages") or []
+
+        def _alpha3_script(code):
+            alpha2_map = {"sr": "srp"}
+            if "-" in code:
+                base, script = code.split("-", 1)
+                return alpha2_map.get(base.lower(), base.lower()), script
+            return alpha2_map.get(code.lower(), code.lower()), None
+
+        advertised = {_alpha3_script(code) for code in languages}
+        # Without the manifest fix the Cyrillic search/bundle path the provider
+        # implements is unreachable because the catalog never routes srp-Cyrl to it.
+        self.assertIn(("srp", "Cyrl"), advertised)
+        self.assertIn(("srp", None), advertised)
+
+    def test_search_routes_serbian_cyrillic_request_to_cirilica(self):
+        provider = self.mod.TitloviProvider()
+        provider._http_post = lambda url, params=None, headers=None, timeout=10: self.mod.HttpResponse(200, _fixture("titlovi_login.json"), {})
+
+        cyrillic_results = {
+            "PagesAvailable": 1,
+            "SubtitleResults": [
+                {
+                    "Id": 3001,
+                    "Title": "Dune",
+                    "Lang": "Cirilica",
+                    "Link": "https://kodi.titlovi.com/download/dune-cyr.zip",
+                    "Release": "Dune.2021.1080p.WEB.H264-MEMENTO",
+                    "Year": 2021,
+                    "Rating": 4.5,
+                    "DownloadCount": 12,
+                }
+            ],
+        }
+
+        def get(url, params=None, headers=None, timeout=10):
+            del url, headers, timeout
+            self.assertEqual(params["lang"], "Cirilica")
+            return self.mod.HttpResponse(200, json.dumps(cyrillic_results).encode("utf-8"), {})
+
+        provider._http_get = get
+        results = provider.search(
+            _video("titlovi_video_dune_2021.json"),
+            [{"alpha3": "srp", "script": "Cyrl"}],
+            {"username": "user", "password": "pass"},
+        )
+
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["3001"])
+        self.assertEqual(results[0]["language"]["alpha3"], "srp")
+        self.assertEqual(results[0]["language"]["script"], "Cyrl")
+
     def test_download_reports_too_many_requests(self):
         provider = self.mod.TitloviProvider()
         provider._login_token = "token-value"

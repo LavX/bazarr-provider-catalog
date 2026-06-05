@@ -87,7 +87,6 @@ _SUBDL_TO_LANGUAGE = {
     "ZH_BG": ("zho", None, "Hant"),
 }
 _LANGUAGE_TO_SUBDL = {value: key for key, value in _SUBDL_TO_LANGUAGE.items()}
-_SUBDL_TO_ALPHA3 = {key: value[0] for key, value in _SUBDL_TO_LANGUAGE.items()}
 SUPPORTED_ALPHA3 = sorted({value[0] for value in _SUBDL_TO_LANGUAGE.values()})
 
 _SEASON_EPISODE_RE = re.compile(r"\bS(?P<season>\d{1,2})E(?P<episode>\d{1,4})\b", re.I)
@@ -131,7 +130,7 @@ def _language_dict(language):
 def _subdl_code(language):
     payload = _language_dict(language)
     alpha3 = payload.get("alpha3")
-    country = payload.get("country")
+    country = payload.get("country_alpha2") or payload.get("country")
     script = payload.get("script")
     candidates = [
         (alpha3, country, script),
@@ -152,10 +151,16 @@ def language_codes(languages):
 
 
 def _language_for_code(code, hi=False, forced=False):
-    alpha3 = _SUBDL_TO_ALPHA3.get(_coerce_text(code).upper())
-    if not alpha3:
+    mapping = _SUBDL_TO_LANGUAGE.get(_coerce_text(code).upper())
+    if not mapping:
         return None
-    return {"alpha3": alpha3, "hi": bool(hi), "forced": bool(forced)}
+    alpha3, country, script = mapping
+    language = {"alpha3": alpha3, "hi": bool(hi), "forced": bool(forced)}
+    if country:
+        language["country_alpha2"] = country
+    if script:
+        language["script"] = script
+    return language
 
 
 def _language_matches(requested_languages, alpha3, hi=False, forced=False):

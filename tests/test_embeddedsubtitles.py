@@ -109,6 +109,48 @@ class EmbeddedSubtitlesParserTests(unittest.TestCase):
         self.assertFalse(streams[1]["language"]["forced"])
         self.assertTrue(streams[1]["language"]["hi"])
 
+    def test_parse_streams_preserves_country_on_regional_tags(self):
+        payload = {
+            "streams": [
+                {
+                    "index": 10,
+                    "codec_name": "subrip",
+                    "tags": {"language": "pt-BR", "title": "Brazilian"},
+                    "disposition": {"forced": 0, "hearing_impaired": 0},
+                },
+                {
+                    "index": 11,
+                    "codec_name": "subrip",
+                    "tags": {"language": "spa-MX", "title": "Latin Spanish"},
+                    "disposition": {"forced": 0, "hearing_impaired": 0},
+                },
+                {
+                    "index": 12,
+                    "codec_name": "subrip",
+                    "tags": {"language": "zh-TW", "title": "Traditional"},
+                    "disposition": {"forced": 0, "hearing_impaired": 0},
+                },
+                {
+                    "index": 13,
+                    "codec_name": "subrip",
+                    "tags": {"language": "pt-PT", "title": "European Portuguese"},
+                    "disposition": {"forced": 0, "hearing_impaired": 0},
+                },
+            ]
+        }
+
+        streams = self.mod.parse_probe_streams(payload, {})
+
+        self.assertEqual(streams[0]["language"]["alpha3"], "por")
+        self.assertEqual(streams[0]["language"]["country_alpha2"], "BR")
+        self.assertEqual(streams[1]["language"]["alpha3"], "spa")
+        self.assertEqual(streams[1]["language"]["country_alpha2"], "MX")
+        self.assertEqual(streams[2]["language"]["alpha3"], "zho")
+        self.assertEqual(streams[2]["language"]["country_alpha2"], "TW")
+        # An unmodeled region (pt-PT) collapses to the plain language.
+        self.assertEqual(streams[3]["language"]["alpha3"], "por")
+        self.assertNotIn("country_alpha2", streams[3]["language"])
+
     def test_unknown_language_can_use_fallback(self):
         payload = {
             "streams": [
@@ -163,6 +205,14 @@ class EmbeddedSubtitlesParserTests(unittest.TestCase):
                 self.mod.probe_media("/media/Example.Show.S01E02.mkv", {})
         finally:
             self.mod.subprocess.run = original_run
+
+    def test_manifest_exposes_hi_fallback_setting(self):
+        manifest = json.loads((PROVIDER_DIR / "provider.json").read_text())
+
+        properties = manifest["config_schema"]["properties"]
+        self.assertIn("hi_fallback", properties)
+        self.assertEqual(properties["hi_fallback"]["type"], "boolean")
+        self.assertFalse(properties["hi_fallback"]["default"])
 
     def test_manifest_reuses_builtin_provider_id(self):
         manifest = json.loads((PROVIDER_DIR / "provider.json").read_text())
@@ -227,6 +277,124 @@ class EmbeddedSubtitlesProviderSearchTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertTrue(results[0]["language"]["forced"])
         self.assertEqual(results[0]["provider_payload"]["format"], "ass")
+
+    def test_search_matches_request_country_for_brazilian_portuguese(self):
+        payload = {
+            "streams": [
+                {
+                    "index": 2,
+                    "codec_name": "subrip",
+                    "tags": {"language": "pt-BR", "title": "Brazilian"},
+                    "disposition": {"forced": 0, "hearing_impaired": 0},
+                },
+                {
+                    "index": 3,
+                    "codec_name": "subrip",
+                    "tags": {"language": "pt", "title": "Portuguese"},
+                    "disposition": {"forced": 0, "hearing_impaired": 0},
+                },
+            ]
+        }
+        provider = self.mod.EmbeddedSubtitlesProvider(
+            probe_runner=FakeProbeRunner(payload),
+            path_exists=lambda path: True,
+        )
+
+        results = provider.search(
+            VIDEO,
+            [{"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR"}],
+            {},
+        )
+
+        self.assertEqual(
+            [item["provider_payload"]["stream_index"] for item in results], [2]
+        )
+        self.assertEqual(results[0]["language"]["country_alpha2"], "BR")
+
+    def test_search_skips_regional_stream_for_plain_language_request(self):
+        payload = {
+            "streams": [
+                {
+                    "index": 2,
+                    "codec_name": "subrip",
+                    "tags": {"language": "pt-BR", "title": "Brazilian"},
+                    "disposition": {"forced": 0, "hearing_impaired": 0},
+                }
+            ]
+        }
+        provider = self.mod.EmbeddedSubtitlesProvider(
+            probe_runner=FakeProbeRunner(payload),
+            path_exists=lambda path: True,
+        )
+
+        results = provider.search(
+            VIDEO,
+            [{"alpha3": "por", "alpha2": "pt"}],
+            {},
+        )
+
+        self.assertEqual(results, [])
+
+    def test_search_hi_fallback_satisfies_non_hi_request(self):
+        payload = {
+            "streams": [
+                {
+                    "index": 2,
+                    "codec_name": "subrip",
+                    "tags": {"language": "eng", "title": "English SDH"},
+                    "disposition": {"forced": 0, "hearing_impaired": 1},
+                }
+            ]
+        }
+        provider = self.mod.EmbeddedSubtitlesProvider(
+            probe_runner=FakeProbeRunner(payload),
+            path_exists=lambda path: True,
+        )
+        request = [{"alpha3": "eng", "alpha2": "en", "hi": False, "forced": False}]
+
+        # Without the fallback the HI-only track does not satisfy a normal request.
+        self.assertEqual(provider.search(VIDEO, request, {}), [])
+
+        results = provider.search(VIDEO, request, {"hi_fallback": True})
+
+        self.assertEqual(
+            [item["provider_payload"]["stream_index"] for item in results], [2]
+        )
+        self.assertFalse(results[0]["language"]["hi"])
+        self.assertFalse(results[0]["hearing_impaired"])
+
+    def test_search_hi_fallback_keeps_hi_when_non_hi_track_present(self):
+        payload = {
+            "streams": [
+                {
+                    "index": 2,
+                    "codec_name": "subrip",
+                    "tags": {"language": "eng", "title": "English"},
+                    "disposition": {"forced": 0, "hearing_impaired": 0},
+                },
+                {
+                    "index": 3,
+                    "codec_name": "subrip",
+                    "tags": {"language": "eng", "title": "English SDH"},
+                    "disposition": {"forced": 0, "hearing_impaired": 1},
+                },
+            ]
+        }
+        provider = self.mod.EmbeddedSubtitlesProvider(
+            probe_runner=FakeProbeRunner(payload),
+            path_exists=lambda path: True,
+        )
+
+        results = provider.search(
+            VIDEO,
+            [{"alpha3": "eng", "alpha2": "en", "hi": False, "forced": False}],
+            {"hi_fallback": True},
+        )
+
+        # The genuine non-HI track still wins; the HI track is left untouched.
+        self.assertEqual(
+            [item["provider_payload"]["stream_index"] for item in results], [2]
+        )
 
     def test_search_returns_empty_when_path_is_missing(self):
         provider = self.mod.EmbeddedSubtitlesProvider(

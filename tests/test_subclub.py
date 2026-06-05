@@ -170,6 +170,81 @@ class SubclubProviderTests(unittest.TestCase):
 
         self.assertEqual(base64.b64decode(content["content_b64"]), b"right release")
 
+    def test_download_archive_fallback_rejects_html_error_page(self):
+        provider = self.mod.SubclubProvider()
+        provider._http_get = lambda url, timeout=30, referer=None: (
+            b"<!DOCTYPE html>\n<html><head><title>404</title></head>"
+            b"<body>Subtitle not found</body></html>"
+        )
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {
+                    "archive_url": "https://www.subclub.eu/down.php?id=11232",
+                    "archive_id": "11232",
+                    "filename": "subclub-11232.zip",
+                },
+                {"alpha3": "est", "alpha2": "et"},
+                {},
+            )
+
+    def test_download_archive_fallback_rejects_empty_body(self):
+        provider = self.mod.SubclubProvider()
+        provider._http_get = lambda url, timeout=30, referer=None: b"   \r\n  "
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {
+                    "archive_url": "https://www.subclub.eu/down.php?id=11232",
+                    "archive_id": "11232",
+                    "filename": "subclub-11232.zip",
+                },
+                {"alpha3": "est", "alpha2": "et"},
+                {},
+            )
+
+    def test_synthetic_fallback_carries_video_release_hints(self):
+        provider = self.mod.SubclubProvider()
+        # Search HTML has a matching episode row, but the archive-content endpoint
+        # answers with no subtitle links, forcing the synthetic fallback archive.
+        provider._http_get = lambda url, timeout=30, referer=None: (
+            SEARCH_GOT_HTML if "jutud.php" in url else b"<html><body>no files</body></html>"
+        )
+
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "Game of Thrones",
+                "season": 1,
+                "episode": 1,
+                "resolution": "720p",
+                "source": "HDTV",
+                "release_group": "CTU",
+            },
+            [{"alpha3": "est", "alpha2": "et"}],
+            {},
+        )
+
+        self.assertTrue(results)
+        payload = results[0]["provider_payload"]
+        # Without the fix the payload only knows the generic "subclub-<id>.zip" name.
+        self.assertEqual(payload["filename"], "subclub-11232.zip")
+        self.assertIn("ctu", payload["release_hints"])
+        self.assertIn("hdtv", payload["release_hints"])
+
+        # The carried hints must let select_subtitle_file pick the wanted release
+        # out of an archive containing several files.
+        body = _zip_body(
+            {
+                "Game.of.Thrones.S01E01.720p.BluRay.X264-REWARD.srt": "wrong release",
+                "Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.srt": "right release",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: body
+        content = provider.download(payload, {"alpha3": "est", "alpha2": "et"}, {})
+
+        self.assertEqual(base64.b64decode(content["content_b64"]), b"right release")
+
 
 if __name__ == "__main__":
     unittest.main()

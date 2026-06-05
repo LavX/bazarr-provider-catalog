@@ -150,6 +150,8 @@ def _language_payload(language):
     else:
         payload = {"alpha3": str(language)}
     payload.setdefault("alpha3", payload.get("alpha2") or "")
+    if not payload.get("country") and payload.get("country_alpha2"):
+        payload["country"] = payload.get("country_alpha2")
     payload.setdefault("hi", False)
     payload.setdefault("forced", False)
     return payload
@@ -188,7 +190,7 @@ def auth_headers(api_key):
 
 def _alpha3_from_name(name):
     key = _clean_text(name).lower()
-    if key == "farsi_persian":
+    if key in ("farsi_persian", "farsi/persian"):
         return "fas"
     return _NAME_TO_ALPHA3.get(key)
 
@@ -197,7 +199,12 @@ def _language_dict(name, hi=False, forced=False):
     alpha3 = _alpha3_from_name(name)
     if not alpha3:
         return None
-    return {"alpha3": alpha3, "hi": bool(hi), "forced": bool(forced)}
+    language = {"alpha3": alpha3, "hi": bool(hi), "forced": bool(forced)}
+    mapped = _SUBSOURCE_TO_LANGUAGE.get(_clean_text(name))
+    country = mapped[1] if mapped else None
+    if country:
+        language["country_alpha2"] = country
+    return language
 
 
 def _request_delay(config):
@@ -368,12 +375,14 @@ def _variant_allowed(requested_languages, alpha3, hi, forced):
     return False
 
 
-def _matches_for_item(video, item, season, episode, is_pack):
+def _matches_for_item(video, item, season, episode, is_pack, matched_imdb=False):
     video = video or {}
     matches = set()
     if video.get("kind") == "episode":
         matches.add("series")
-        if video.get("series_imdb_id"):
+        # Only claim an IMDb match when the title was actually selected by IMDb
+        # id; a text-search fallback must not inflate the score with it.
+        if matched_imdb and video.get("series_imdb_id"):
             matches.add("series_imdb_id")
         if season is not None and season == _coerce_int(video.get("season")):
             matches.add("season")
@@ -383,7 +392,7 @@ def _matches_for_item(video, item, season, episode, is_pack):
             matches.add("episode")
     elif video.get("kind") == "movie":
         matches.add("title")
-        if video.get("imdb_id"):
+        if matched_imdb and video.get("imdb_id"):
             matches.add("imdb_id")
     return sorted(matches)
 
@@ -403,7 +412,7 @@ def _payload_for_item(video, item, season, episode, is_pack):
     }
 
 
-def _candidate_from_item(video, requested_languages, item):
+def _candidate_from_item(video, requested_languages, item, matched_imdb=False):
     hi = is_hearing_impaired(item)
     forced = is_forced(item)
     language = _language_dict(item.get("language"), hi=hi, forced=forced)
@@ -417,13 +426,18 @@ def _candidate_from_item(video, requested_languages, item):
     is_pack = False
     if (video or {}).get("kind") == "episode":
         season, episode = parse_release_season_episode(item.get("releaseInfo"))
-        if season != _coerce_int((video or {}).get("season")):
+        requested_season = _coerce_int((video or {}).get("season"))
+        # The subtitles request already filters server side by seasonNumber and
+        # episodeNumber, so only reject when a release token is present and
+        # actually mismatches. Missing tokens (miniseries/DVD releases or
+        # season-page packs) are treated as unknown, not as a mismatch.
+        if season is not None and season != requested_season:
             return None
         if episode is not None and episode != _coerce_int((video or {}).get("episode")):
             return None
         is_pack = episode is None
 
-    matches = _matches_for_item(video, item, season, episode, is_pack)
+    matches = _matches_for_item(video, item, season, episode, is_pack, matched_imdb)
     payload = _payload_for_item(video, item, season, episode, is_pack)
     score = min(100, 40 + len(matches) * 12)
     uploader = _uploader_name(item)
@@ -572,20 +586,21 @@ class SubSourceProvider:
     def _search_title_id(self, video, config):
         params_list = _title_search_params(video)
         if not params_list:
-            return None
+            return None, False
         for params in params_list:
             self._sleep(config)
             data = self._http_get_json("movies/search", params, config)
             for result in data.get("data") or []:
                 if _result_matches_video_title(result, video):
-                    return result.get("movieId")
-        return None
+                    matched_imdb = params.get("searchType") == "imdb"
+                    return result.get("movieId"), matched_imdb
+        return None, False
 
     def search(self, video, languages, config):
         _require_api_key(config)
         video = video or {}
         requested_languages = [_language_payload(language) for language in languages or []]
-        title_id = self._search_title_id(video, config or {})
+        title_id, matched_imdb = self._search_title_id(video, config or {})
         if not title_id:
             return []
 
@@ -606,7 +621,7 @@ class SubSourceProvider:
             for item in data.get("data") or []:
                 if not isinstance(item, dict):
                     continue
-                candidate = _candidate_from_item(video, requested_languages, item)
+                candidate = _candidate_from_item(video, requested_languages, item, matched_imdb)
                 if candidate:
                     results.append(candidate)
         return results
