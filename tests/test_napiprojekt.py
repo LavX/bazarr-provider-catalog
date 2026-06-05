@@ -494,6 +494,67 @@ class CloudflareTests(unittest.TestCase):
         self.assertEqual(payload["headers"]["Referer"], self.mod.CATALOG_BASE_URL + "/")
         self.assertEqual(payload["headers"]["Content-Type"], "application/x-www-form-urlencoded")
 
+    def test_flaresolverr_transport_failure_raises_cloudflare_blocked(self):
+        def fake_urlopen(request, timeout):
+            del request, timeout
+            raise self.mod.urllib.error.URLError("connection refused")
+
+        with patch.object(self.mod.urllib.request, "urlopen", fake_urlopen):
+            with self.assertRaises(self.mod.CloudflareBlockedError):
+                self.mod._flaresolverr_request(
+                    "POST",
+                    self.mod.CATALOG_SEARCH_URL,
+                    data={"queryString": "Shrek"},
+                    config={"flaresolverr_url": "http://127.0.0.1:8191/v1"},
+                )
+
+    def test_solve_pow_treats_difficulty_as_leading_zero_bits(self):
+        nonce, digest = self.mod._solve_pow("seed", 8)
+
+        self.assertGreaterEqual(self.mod._leading_zero_bits(digest), 8)
+        # Eight leading zero bits, not eight zero hex nibbles (which would be 32 bits).
+        self.assertLess(self.mod._leading_zero_bits(digest), 32)
+        self.assertEqual(
+            hashlib.sha256(f"seed{nonce}".encode("utf-8")).hexdigest(), digest
+        )
+
+    def test_solve_pow_stops_at_deadline(self):
+        result = self.mod._solve_pow("seed", 64, deadline=self.mod.time.monotonic() - 1)
+
+        self.assertEqual(result, (None, None))
+
+
+class FlareSolverrSearchFallbackTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_flaresolverr_transport_failure_keeps_hash_result(self):
+        provider = self.mod.NapiProjektProvider()
+        hash_url = self.mod.hash_download_url("444563eef63f83d47cabb888f7a45113", "pl")
+
+        def get_stub(url, config=None, timeout=15, referer=None):
+            del config, timeout, referer
+            if url == hash_url:
+                return SUBTITLE_BYTES
+            raise AssertionError(f"unexpected GET: {url}")
+
+        def post_stub(url, data, config=None, timeout=15, referer=None):
+            del url, data, config, timeout, referer
+            raise self.mod.CloudflareBlockedError(
+                "napiprojekt FlareSolverr request failed: connection refused"
+            )
+
+        provider._http_get = get_stub
+        provider._http_post = post_stub
+        results = provider.search(
+            SHREK_VIDEO,
+            [{"alpha3": "pol", "alpha2": "pl"}],
+            {"only_authors": False, "only_real_names": False},
+        )
+
+        self.assertEqual([item["provider_payload"]["source"] for item in results], ["hash"])
+        self.assertEqual(results[0]["provider_payload"]["hash"], "444563eef63f83d47cabb888f7a45113")
+
 
 class _FakeResponse:
     def __init__(self, status_code, content, headers=None, url="https://www.napiprojekt.pl/ajax/search_catalog.php"):
