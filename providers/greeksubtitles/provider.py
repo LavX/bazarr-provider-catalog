@@ -4,23 +4,14 @@ import base64 as _base64
 import hashlib as _hashlib
 import html
 import io
-import os
 import re
-import shutil
 import socket
-import subprocess
-import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
 from http.cookiejar import CookieJar
-
-try:
-    import py7zz
-except ImportError:  # pragma: no cover, dependency is declared in manifest
-    py7zz = None
 
 PROVIDER_ID = "greeksubtitles"
 BASE_URL = "https://gr.greek-subtitles.com"
@@ -189,6 +180,7 @@ class GreekSubtitlesProvider:
         return sorted(results, key=lambda item: item["score"], reverse=True)
 
     def _result(self, video, row, search_query):
+        video = video or {}
         language = row["language"]
         alpha2 = row["alpha2"]
         release = row["release"]
@@ -196,6 +188,8 @@ class GreekSubtitlesProvider:
         score = _score(matches, row)
         filename = f"greeksubtitles.{_slug(release)}.{alpha2}.zip"
         download_url = DOWNLOAD_URL.format(row["subtitle_id"])
+        season = _int_or_none(video.get("season")) if video.get("kind") == "episode" else None
+        episode = _int_or_none(video.get("episode")) if video.get("kind") == "episode" else None
         payload = {
             "provider": PROVIDER_ID,
             "schema": 1,
@@ -206,6 +200,8 @@ class GreekSubtitlesProvider:
             "language": language,
             "search_query": search_query,
             "release": release,
+            "season": season,
+            "episode": episode,
         }
         return {
             "provider": PROVIDER_ID,
@@ -237,104 +233,36 @@ class GreekSubtitlesProvider:
 
     def download(self, provider_payload, language, config):
         del language, config
-        payload = provider_payload or {}
+        payload = dict(provider_payload or {})
         url = payload.get("download_url")
         if not url:
             raise ValueError("greeksubtitles download requires download_url")
         body = self._http_get(url, referer=payload.get("page_url"))
-        body, subtitle_format = extract_download(body, payload)
-        return _content_payload(body, subtitle_format)
+        return _download_payload(body, payload)
 
 
-def extract_download(body, payload=None):
+def _download_payload(body, payload):
     payload = payload or {}
-    if _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        selected = select_subtitle_file([name for name, _content in files])
-        return _normalize_line_endings(dict(files)[selected]), _subtitle_extension(selected) or "srt"
-    stream = io.BytesIO(body or b"")
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist())
-            return _normalize_line_endings(archive.read(selected)), _subtitle_extension(selected) or "srt"
-    return _extract_raw_subtitle_download(body, payload.get("filename"))
+    # Reject broken responses up front: getp.php can answer with an empty stream or an
+    # HTML/error page that would otherwise look like a successful download.
+    if not body or not body.strip():
+        raise ValueError("greeksubtitles download returned an empty body")
+    if _looks_like_html(body):
+        raise ValueError("greeksubtitles download returned HTML instead of subtitle content")
+    if _is_archive_body(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
+        # the host, which lists it, picks the member by episode, and detects encoding.
+        return {
+            "archive_b64": _base64.b64encode(body).decode("ascii"),
+            "archive_sha256": _hashlib.sha256(body).hexdigest(),
+            "episode": payload.get("episode"),
+        }
+    # Direct, non-archive subtitle body.
+    return _content_payload(_normalize_line_endings(body), _format_from_filename(payload.get("filename")))
 
 
-def select_subtitle_file(names):
-    candidates = [
-        name
-        for name in names
-        if _subtitle_extension(name) and not os.path.basename(name).startswith(".")
-    ]
-    if not candidates:
-        raise ValueError("greeksubtitles archive contains no supported subtitle files")
-    return sorted(candidates, key=lambda name: (_extension_rank(name), len(name), name.lower()))[0]
-
-
-def _extract_rar_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_archive_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    for command in ("unar", "7z", "7zz"):
-        if not shutil.which(command):
-            continue
-        try:
-            return _extract_archive_with_system_tool(body, command)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        detail = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"GreekSubtitles RAR extraction failed: {detail}") from errors[-1]
-    raise RuntimeError("GreekSubtitles RAR extraction requires bundled py7zz")
-
-
-def _extract_archive_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("py7zz is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "greeksubtitles.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitles(output_dir)
-
-
-def _extract_archive_with_system_tool(body, command):
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "greeksubtitles.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        if command == "unar":
-            args = [command, "-quiet", "-o", output_dir, archive_path]
-        else:
-            args = [command, "x", "-y", f"-o{output_dir}", archive_path]
-        result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"{command} failed to extract GreekSubtitles RAR: {message}")
-        return _collect_extracted_subtitles(output_dir)
-
-
-def _collect_extracted_subtitles(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if not _subtitle_extension(rel) or os.path.basename(rel).startswith("."):
-                continue
-            with open(path, "rb") as handle:
-                files.append((rel, handle.read()))
-    if not files:
-        raise ValueError("greeksubtitles archive contains no supported subtitle files")
-    return files
+def _is_archive_body(body):
+    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
 
 
 def _parse_result_row(row_body):
@@ -436,27 +364,6 @@ def _looks_like_html(body):
     )
 
 
-def _extract_raw_subtitle_download(body, filename):
-    if _looks_like_html(body):
-        raise ValueError("greeksubtitles download returned HTML instead of subtitle content")
-    subtitle_format = _format_from_filename(filename)
-    if not subtitle_format and not _looks_like_raw_subtitle(body):
-        raise ValueError("greeksubtitles download returned unsupported raw content")
-    return _normalize_line_endings(body or b""), subtitle_format or "srt"
-
-
-def _looks_like_raw_subtitle(body):
-    prefix = (body or b"").lstrip()[:2048]
-    lower = prefix.lower()
-    return (
-        b"-->" in prefix
-        or lower.startswith(b"webvtt")
-        or b"[script info]" in lower
-        or b"{\\an" in lower
-        or b"{y:i}" in lower
-    )
-
-
 def _sleep(config):
     delay_ms = (config or {}).get("request_delay_ms", 0) or 0
     if delay_ms > 0:
@@ -479,6 +386,13 @@ def _attr_value(attrs, name):
 def _int_from_text(value):
     match = re.search(r"\d+", value or "")
     return int(match.group(0)) if match else 0
+
+
+def _int_or_none(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _dedupe(values):
@@ -511,33 +425,16 @@ def _subtitle_extension(name):
     return None
 
 
-def _extension_rank(name):
-    suffix = "." + (name or "").rsplit(".", 1)[-1].lower()
-    return {".srt": 0, ".ass": 1, ".ssa": 2, ".sub": 3, ".vtt": 4}.get(suffix, 9)
-
-
 def _content_payload(body, subtitle_format):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     subtitle_format = subtitle_format or "srt"
-    if not body:
-        return {
-            "content_b64": "",
-            "content_sha256": "",
-            "content_type": _content_type(subtitle_format),
-            "format": subtitle_format,
-            "encoding": "windows-1253",
-            "empty": True,
-        }
-    encoding = "utf-8"
-    try:
-        body.decode("utf-8")
-    except UnicodeDecodeError:
-        encoding = "windows-1253"
     return {
         "content_b64": _base64.b64encode(body).decode("ascii"),
         "content_sha256": _hashlib.sha256(body).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 
