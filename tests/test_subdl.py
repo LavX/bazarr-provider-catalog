@@ -406,7 +406,7 @@ class SubDLProviderDownloadTests(unittest.TestCase):
         self.assertEqual(result["format"], "vtt")
         self.assertEqual(result["content_type"], "text/vtt")
 
-    def test_download_selects_requested_episode_from_pack_zip(self):
+    def test_download_returns_archive_with_selected_pack_member(self):
         provider = self.mod.SubDLProvider()
         wanted = b"1\n00:00:01,000 --> 00:00:02,000\nEpisode three\n"
         archive = _zip_bytes(
@@ -434,11 +434,41 @@ class SubDLProviderDownloadTests(unittest.TestCase):
             {"api_key": "test-key"},
         )
 
-        self.assertEqual(base64.b64decode(result["content_b64"]), wanted)
-        self.assertEqual(result["format"], "srt")
-        self.assertFalse(result["empty"])
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["member"], "Show.S01E03.srt")
+        self.assertNotIn("episode", result)
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
 
-    def test_download_returns_empty_when_pack_zip_has_no_requested_episode(self):
+    def test_download_returns_first_member_for_non_pack_zip(self):
+        provider = self.mod.SubDLProvider()
+        archive = _zip_bytes(
+            {
+                "B.movie.srt": b"second alphabetically",
+                "A.movie.srt": b"first alphabetically",
+                "notes.txt": b"not a subtitle",
+            }
+        )
+
+        provider._http_get_bytes = lambda url, timeout=30: archive
+        result = provider.download(
+            {
+                "provider": "subdl",
+                "schema": 1,
+                "download_url": "/subtitle/movie.zip",
+                "format": "zip",
+            },
+            {"alpha3": "eng"},
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["member"], "A.movie.srt")
+        self.assertNotIn("encoding", result)
+
+    def test_download_lets_host_pick_when_pack_zip_has_no_requested_episode(self):
         provider = self.mod.SubDLProvider()
         archive = _zip_bytes({"Show.S01E02.srt": b"episode two"})
 
@@ -459,8 +489,42 @@ class SubDLProviderDownloadTests(unittest.TestCase):
             {"api_key": "test-key"},
         )
 
-        self.assertTrue(result["empty"])
-        self.assertEqual(result["content_b64"], "")
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["episode"], 3)
+        self.assertNotIn("member", result)
+
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.SubDLProvider()
+        provider._http_get_bytes = lambda url, timeout=30: b"   "
+
+        with self.assertRaisesRegex(ValueError, "empty"):
+            provider.download(
+                {
+                    "provider": "subdl",
+                    "schema": 1,
+                    "download_url": "/subtitle/empty.srt",
+                    "format": "srt",
+                },
+                {"alpha3": "eng"},
+                {"api_key": "test-key"},
+            )
+
+    def test_download_rejects_html_error_page(self):
+        provider = self.mod.SubDLProvider()
+        provider._http_get_bytes = lambda url, timeout=30: b"<!DOCTYPE html><html><body>Not found</body></html>"
+
+        with self.assertRaisesRegex(ValueError, "HTML"):
+            provider.download(
+                {
+                    "provider": "subdl",
+                    "schema": 1,
+                    "download_url": "/subtitle/broken.srt",
+                    "format": "srt",
+                },
+                {"alpha3": "eng"},
+                {"api_key": "test-key"},
+            )
 
 
 if __name__ == "__main__":

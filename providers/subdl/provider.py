@@ -562,32 +562,24 @@ def _filename_episode_matches(name, payload):
     return 0
 
 
-def _extract_subtitle_from_zip(data, payload):
+def _select_zip_member(data, payload):
+    # List the zip with stdlib zipfile and pick the member the provider wants, but do not
+    # extract or decode it. The host (Provider Hub v1.1+) reads the named member and runs
+    # chardet via Subtitle.normalize(). Return None to let the host pick by episode.
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         names = [
             name for name in archive.namelist()
             if not name.endswith("/") and name.lower().endswith(SUBTITLE_EXTENSIONS)
         ]
         if not names:
-            return None, None
+            return None
         if (payload or {}).get("is_pack") and (payload or {}).get("kind") == "episode":
             names.sort(key=lambda name: (_filename_episode_matches(name, payload), name), reverse=True)
             if _filename_episode_matches(names[0], payload) > 0:
-                return _normalize_subtitle_bytes(archive.read(names[0])), _format_from_name(names[0])
-            return None, None
+                return names[0]
+            return None
         names.sort()
-        return _normalize_subtitle_bytes(archive.read(names[0])), _format_from_name(names[0])
-
-
-def _empty_download(format_name="srt"):
-    return {
-        "content_b64": "",
-        "content_sha256": hashlib.sha256(b"").hexdigest(),
-        "content_type": _content_type(format_name),
-        "format": format_name,
-        "encoding": "utf-8",
-        "empty": True,
-    }
+        return names[0]
 
 
 def _content_type(format_name):
@@ -601,18 +593,30 @@ def _content_type(format_name):
     return mapping.get(format_name, "text/plain")
 
 
-def _download_result(content, format_name):
-    content = _normalize_subtitle_bytes(content or b"")
-    if not content:
-        return _empty_download(format_name)
+def _content_payload(content, format_name):
+    # Direct, non-archive subtitle body. Do not guess an encoding: the host runs chardet
+    # via Subtitle.normalize(), and a worker guess only reintroduces mojibake.
+    content = _normalize_subtitle_bytes(content)
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(format_name),
         "format": format_name,
-        "encoding": "utf-8",
         "empty": False,
     }
+
+
+def _is_html_body(body):
+    if not body:
+        return False
+    head = body[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or b"<body" in head
+        or b"<head" in head
+    )
 
 
 def _require_api_key(config):
@@ -739,12 +743,25 @@ class SubDLProvider:
         if not download_url:
             raise ValueError("SubDL download requires download_url")
         body = self._http_get_bytes(_absolute_download_url(download_url), timeout=HTTP_TIMEOUT_SECONDS)
-        format_name = _format_from_name(download_url, payload.get("format"))
+        if not body or not body.strip():
+            raise ValueError(f"SubDL empty download for {download_url}")
+        if _is_html_body(body):
+            raise ValueError(f"SubDL returned an HTML/error page for {download_url}")
         if zipfile.is_zipfile(io.BytesIO(body)):
-            content, extracted_format = _extract_subtitle_from_zip(body, payload)
-            if content is None:
-                return _empty_download("srt")
-            return _download_result(content, extracted_format or "srt")
+            # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
+            # the host. Keep our member selection when the zip names a specific file, and
+            # fall back to host episode-based selection otherwise.
+            archive = {
+                "archive_b64": base64.b64encode(body).decode("ascii"),
+                "archive_sha256": hashlib.sha256(body).hexdigest(),
+            }
+            member = _select_zip_member(body, payload)
+            if member is not None:
+                archive["member"] = member
+            else:
+                archive["episode"] = _coerce_int(payload.get("episode"))
+            return archive
+        format_name = _format_from_name(download_url, payload.get("format"))
         if format_name in ARCHIVE_EXTENSIONS:
             format_name = _format_from_name(payload.get("subtitle_id")) or "srt"
-        return _download_result(body, format_name)
+        return _content_payload(body, format_name)
