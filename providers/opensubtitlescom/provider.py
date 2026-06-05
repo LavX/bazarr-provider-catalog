@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import re
+import socket
 import time
 import urllib.error
 import urllib.parse
@@ -15,6 +16,13 @@ PROVIDER_ID = "opensubtitlescom"
 DEFAULT_HOST = "api.opensubtitles.com"
 USER_AGENT = "BazarrProviderHub/1.0"
 HTTP_TIMEOUT_SECONDS = 30
+# Transport-level retry for transient network failures (connection reset, DNS,
+# timeouts, 5xx, 429). Non-transient failures (4xx other than 429, auth, parse)
+# propagate on the first occurrence. Upstream subliminal uses a similar 3-try
+# RetryingSession/ProviderRetryMixin.
+HTTP_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8
 TOKEN_TTL_SECONDS = 12 * 60 * 60
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
 # Format we always ask the OpenSubtitles.com download endpoint to convert to.
@@ -557,27 +565,51 @@ class OpenSubtitlesComProvider:
 
     def _http_request(self, method, url, headers, data=None, timeout=HTTP_TIMEOUT_SECONDS):
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                return response.read()
-        except urllib.error.HTTPError as exc:
-            body = exc.read()
-            message = _error_message(body) or exc.reason or f"status {exc.code}"
-            if exc.code in (400, 401):
-                if exc.code == 401:
-                    raise AuthenticationRequired(message) from exc
-                raise ValueError(message) from exc
-            if exc.code == 406:
-                raise DownloadLimitExceeded(message) from exc
-            if exc.code == 410:
-                raise RuntimeError("OpenSubtitles.com download link expired") from exc
-            if exc.code == 429:
-                raise RateLimited(message) from exc
-            if exc.code >= 500:
-                raise RuntimeError(f"OpenSubtitles.com server error {exc.code}") from exc
-            raise RuntimeError(f"OpenSubtitles.com request failed with status {exc.code}: {message}") from exc
-        except urllib.error.URLError as exc:
-            raise RuntimeError(f"OpenSubtitles.com request failed: {exc.reason}") from exc
+        # Bounded retry only for transient transport failures. Everything else
+        # (4xx other than 429, auth, parse) is mapped and raised on first sight.
+        for attempt in range(1, HTTP_MAX_ATTEMPTS + 1):
+            last_attempt = attempt >= HTTP_MAX_ATTEMPTS
+            try:
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    return response.read()
+            except urllib.error.HTTPError as exc:
+                body = exc.read()
+                # 429 and 5xx are transient: back off and retry while attempts remain.
+                if exc.code == 429 and not last_attempt:
+                    _sleep_for_retry(attempt, _retry_after_seconds(exc))
+                    continue
+                if exc.code >= 500 and not last_attempt:
+                    _sleep_for_retry(attempt, None)
+                    continue
+                raise self._map_http_error(exc, body) from exc
+            except (socket.timeout, TimeoutError) as exc:
+                if last_attempt:
+                    raise RuntimeError(f"OpenSubtitles.com request failed: {exc}") from exc
+                _sleep_for_retry(attempt, None)
+                continue
+            except urllib.error.URLError as exc:
+                if last_attempt:
+                    raise RuntimeError(f"OpenSubtitles.com request failed: {exc.reason}") from exc
+                _sleep_for_retry(attempt, None)
+                continue
+        # Unreachable: the loop either returns, retries, or raises on every path.
+        raise RuntimeError("OpenSubtitles.com request failed after retries")
+
+    def _map_http_error(self, exc, body):
+        message = _error_message(body) or exc.reason or f"status {exc.code}"
+        if exc.code in (400, 401):
+            if exc.code == 401:
+                return AuthenticationRequired(message)
+            return ValueError(message)
+        if exc.code == 406:
+            return DownloadLimitExceeded(message)
+        if exc.code == 410:
+            return RuntimeError("OpenSubtitles.com download link expired")
+        if exc.code == 429:
+            return RateLimited(message)
+        if exc.code >= 500:
+            return RuntimeError(f"OpenSubtitles.com server error {exc.code}")
+        return RuntimeError(f"OpenSubtitles.com request failed with status {exc.code}: {message}")
 
 
 def derive_matches(video, attrs, feature):
@@ -667,6 +699,31 @@ def _error_message(body):
     if not isinstance(data, dict):
         return None
     return data.get("message") or data.get("error") or data.get("detail")
+
+
+def _retry_after_seconds(exc):
+    # Honor a Retry-After header on 429 responses when it is a plain delay in
+    # seconds. Ignore HTTP-date forms and anything unparseable.
+    headers = getattr(exc, "headers", None)
+    value = headers.get("Retry-After") if headers else None
+    if value is None:
+        return None
+    try:
+        seconds = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    if seconds < 0:
+        return None
+    return min(seconds, RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _sleep_for_retry(attempt, retry_after):
+    # Module-level time.sleep so tests can monkeypatch it.
+    if retry_after is not None:
+        delay = retry_after
+    else:
+        delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    time.sleep(min(delay, RETRY_BACKOFF_CAP_SECONDS))
 
 
 def _bool_config(config, key, default):

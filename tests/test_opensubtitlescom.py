@@ -3,8 +3,10 @@ import hashlib
 import importlib.util
 import io
 import json
+import socket
 import time
 import unittest
+import urllib.error
 import zipfile
 from pathlib import Path
 
@@ -906,6 +908,162 @@ class OpenSubtitlesComDownloadTests(unittest.TestCase):
 
         self.assertEqual(results[0]["provider_payload"]["season"], 3)
         self.assertEqual(results[0]["provider_payload"]["episode"], 13)
+
+
+class _FakeResponse:
+    def __init__(self, body):
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return self._body
+
+
+def _http_error(code, body=b"", headers=None):
+    return urllib.error.HTTPError(
+        url="https://api.opensubtitles.com/api/v1/subtitles",
+        code=code,
+        msg=f"status {code}",
+        hdrs=headers,
+        fp=io.BytesIO(body),
+    )
+
+
+class OpenSubtitlesComTransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.provider = self.mod.OpenSubtitlesComProvider()
+        self.slept = []
+        self.mod.time.sleep = lambda seconds: self.slept.append(seconds)
+        self._real_urlopen = self.mod.urllib.request.urlopen
+
+    def tearDown(self):
+        # urllib.request is a shared module; restore the real urlopen so the
+        # patch never leaks into other tests.
+        self.mod.urllib.request.urlopen = self._real_urlopen
+
+    def _patch_urlopen(self, behaviors):
+        # behaviors: list of either an exception (raised) or bytes (returned).
+        calls = {"count": 0}
+
+        def fake_urlopen(request, timeout=None):
+            del request, timeout
+            index = calls["count"]
+            calls["count"] += 1
+            outcome = behaviors[index]
+            if isinstance(outcome, Exception):
+                raise outcome
+            return _FakeResponse(outcome)
+
+        self.mod.urllib.request.urlopen = fake_urlopen
+        return calls
+
+    def test_retries_transient_urlerror_then_succeeds(self):
+        calls = self._patch_urlopen(
+            [urllib.error.URLError("connection reset"), b"ok-body"]
+        )
+
+        body = self.provider._http_request(
+            "GET", "https://api.opensubtitles.com/api/v1/subtitles", {}
+        )
+
+        self.assertEqual(body, b"ok-body")
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(len(self.slept), 1)
+
+    def test_retries_socket_timeout_then_succeeds(self):
+        calls = self._patch_urlopen([socket.timeout("timed out"), b"late-body"])
+
+        body = self.provider._http_request(
+            "GET", "https://api.opensubtitles.com/api/v1/subtitles", {}
+        )
+
+        self.assertEqual(body, b"late-body")
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(len(self.slept), 1)
+
+    def test_retries_503_twice_then_succeeds(self):
+        calls = self._patch_urlopen(
+            [_http_error(503), _http_error(503), b"recovered-body"]
+        )
+
+        body = self.provider._http_request(
+            "GET", "https://api.opensubtitles.com/api/v1/subtitles", {}
+        )
+
+        self.assertEqual(body, b"recovered-body")
+        self.assertEqual(calls["count"], 3)
+        self.assertEqual(len(self.slept), 2)
+
+    def test_honors_retry_after_header_on_429(self):
+        calls = self._patch_urlopen(
+            [_http_error(429, headers={"Retry-After": "3"}), b"after-throttle"]
+        )
+
+        body = self.provider._http_request(
+            "GET", "https://api.opensubtitles.com/api/v1/subtitles", {}
+        )
+
+        self.assertEqual(body, b"after-throttle")
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(self.slept, [3])
+
+    def test_404_is_not_retried_and_propagates_on_first_call(self):
+        calls = self._patch_urlopen([_http_error(404, body=b'{"message":"nope"}')])
+
+        with self.assertRaises(RuntimeError):
+            self.provider._http_request(
+                "GET", "https://api.opensubtitles.com/api/v1/subtitles", {}
+            )
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(self.slept, [])
+
+    def test_401_is_not_retried_and_maps_to_auth_required(self):
+        calls = self._patch_urlopen([_http_error(401, body=b'{"message":"bad token"}')])
+
+        with self.assertRaises(self.mod.AuthenticationRequired):
+            self.provider._http_request(
+                "GET", "https://api.opensubtitles.com/api/v1/subtitles", {}
+            )
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(self.slept, [])
+
+    def test_exhausted_503_retries_raise_mapped_server_error(self):
+        calls = self._patch_urlopen(
+            [_http_error(503), _http_error(503), _http_error(503)]
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "server error 503"):
+            self.provider._http_request(
+                "GET", "https://api.opensubtitles.com/api/v1/subtitles", {}
+            )
+
+        self.assertEqual(calls["count"], 3)
+        self.assertEqual(len(self.slept), 2)
+
+    def test_exhausted_urlerror_retries_raise_runtime_error(self):
+        calls = self._patch_urlopen(
+            [
+                urllib.error.URLError("reset"),
+                urllib.error.URLError("reset"),
+                urllib.error.URLError("reset"),
+            ]
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "request failed"):
+            self.provider._http_request(
+                "GET", "https://api.opensubtitles.com/api/v1/subtitles", {}
+            )
+
+        self.assertEqual(calls["count"], 3)
+        self.assertEqual(len(self.slept), 2)
 
 
 if __name__ == "__main__":
