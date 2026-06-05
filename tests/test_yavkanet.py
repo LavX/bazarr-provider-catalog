@@ -350,6 +350,183 @@ class YavkaNetCloudflareTests(unittest.TestCase):
                 self.mod.http_get("https://yavka.net/imdb/tt1160419", state={})
 
 
+class YavkaNetRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def _scraper(self):
+        return mock.MagicMock()
+
+    def test_http_get_retries_transient_url_error_then_succeeds(self):
+        # A single connection blip (URLError) must not abort the request: the
+        # helper retries and ultimately returns the success body.
+        import urllib.error
+
+        scraper = self._scraper()
+        scraper.get.side_effect = [
+            urllib.error.URLError("connection reset by peer"),
+            FakeResponse(b"<html>ok</html>"),
+        ]
+
+        with mock.patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), mock.patch.object(
+            self.mod.time, "sleep"
+        ) as sleep:
+            body = self.mod.http_get("https://yavka.net/imdb/tt1160419", state={})
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(scraper.get.call_count, 2)
+        sleep.assert_called_once()
+        self.assertGreater(sleep.call_args.args[0], 0)
+
+    def test_http_get_retries_two_transient_errors_then_succeeds(self):
+        # Two failures (a connection error then a read timeout) still recover
+        # within the 3-attempt budget.
+        import urllib.error
+
+        scraper = self._scraper()
+        scraper.get.side_effect = [
+            urllib.error.URLError("name resolution failed"),
+            TimeoutError("read timed out"),
+            FakeResponse(b"<html>ok</html>"),
+        ]
+
+        with mock.patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), mock.patch.object(
+            self.mod.time, "sleep"
+        ) as sleep:
+            body = self.mod.http_get("https://yavka.net/imdb/tt1160419", state={})
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(scraper.get.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_http_get_retries_transient_503_then_succeeds(self):
+        # A transient 503 (no Cloudflare markers) is retried, then the success
+        # body is returned. The 503 must not be mapped to an HTTPError.
+        scraper = self._scraper()
+        scraper.get.side_effect = [
+            FakeResponse(b"upstream down", status=503),
+            FakeResponse(b"<html>ok</html>"),
+        ]
+
+        with mock.patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), mock.patch.object(
+            self.mod.time, "sleep"
+        ) as sleep:
+            body = self.mod.http_get("https://yavka.net/imdb/tt1160419", state={})
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(scraper.get.call_count, 2)
+        sleep.assert_called_once()
+
+    def test_http_get_honors_retry_after_on_429(self):
+        # A 429 with a Retry-After is retried and the header drives the backoff,
+        # capped to the bounded ceiling.
+        scraper = self._scraper()
+        scraper.get.side_effect = [
+            FakeResponse(b"slow down", status=429, headers={"Retry-After": "2"}),
+            FakeResponse(b"<html>ok</html>"),
+        ]
+
+        with mock.patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), mock.patch.object(
+            self.mod.time, "sleep"
+        ) as sleep:
+            body = self.mod.http_get("https://yavka.net/imdb/tt1160419", state={})
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(scraper.get.call_count, 2)
+        self.assertGreaterEqual(sleep.call_args.args[0], 2)
+        self.assertLessEqual(sleep.call_args.args[0], self.mod.RETRY_BACKOFF_CAP_SECONDS)
+
+    def test_http_get_exhausts_retries_and_maps_final_503_to_error(self):
+        # After the attempt budget is spent the last transient response is still
+        # handled by the existing status mapping (503 -> HTTPError), not swallowed.
+        import urllib.error
+
+        scraper = self._scraper()
+        scraper.get.return_value = FakeResponse(b"upstream down", status=503)
+
+        with mock.patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), mock.patch.object(
+            self.mod.time, "sleep"
+        ):
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                self.mod.http_get("https://yavka.net/imdb/tt1160419", state={})
+
+        self.assertEqual(ctx.exception.code, 503)
+        self.assertEqual(scraper.get.call_count, self.mod.HTTP_MAX_ATTEMPTS)
+        ctx.exception.close()
+
+    def test_http_get_does_not_retry_404(self):
+        # A 4xx other than 429 is not transient: it must propagate on the first
+        # attempt with no retry and no sleep.
+        import urllib.error
+
+        scraper = self._scraper()
+        scraper.get.return_value = FakeResponse(b"not found", status=404)
+
+        with mock.patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), mock.patch.object(
+            self.mod.time, "sleep"
+        ) as sleep:
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                self.mod.http_get("https://yavka.net/imdb/tt1160419", state={})
+
+        self.assertEqual(ctx.exception.code, 404)
+        self.assertEqual(scraper.get.call_count, 1)
+        sleep.assert_not_called()
+        ctx.exception.close()
+
+    def test_http_get_does_not_retry_non_transient_exception(self):
+        # A non-network exception (e.g. a parse/value error raised by the
+        # transport layer) propagates immediately without retry.
+        scraper = self._scraper()
+        scraper.get.side_effect = ValueError("boom")
+
+        with mock.patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), mock.patch.object(
+            self.mod.time, "sleep"
+        ) as sleep:
+            with self.assertRaises(ValueError):
+                self.mod.http_get("https://yavka.net/imdb/tt1160419", state={})
+
+        self.assertEqual(scraper.get.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_http_get_does_not_retry_cloudflare_challenge_response(self):
+        # A 503 that is actually a Cloudflare challenge is left to the existing
+        # challenge handling, not retried as a transient transport error.
+        scraper = self._scraper()
+        scraper.get.return_value = FakeResponse(CLOUDFLARE_BODY, status=503)
+
+        with mock.patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), mock.patch.object(
+            self.mod.time, "sleep"
+        ) as sleep:
+            with self.assertRaises(self.mod.CloudflareBlockedError):
+                self.mod.http_get("https://yavka.net/imdb/tt1160419", state={})
+
+        self.assertEqual(scraper.get.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_http_post_retries_transient_error_then_succeeds(self):
+        # The search/login POST path is safe to repeat, so it is retried too.
+        import urllib.error
+
+        scraper = self._scraper()
+        scraper.post.side_effect = [
+            urllib.error.URLError("connection refused"),
+            FakeResponse(b"subtitle-body"),
+        ]
+
+        with mock.patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), mock.patch.object(
+            self.mod.time, "sleep"
+        ) as sleep:
+            body = self.mod.http_post(
+                "https://yavka.net/subtitle/dune-2021/",
+                data={"subtitle_id": "123"},
+                state={},
+            )
+
+        self.assertEqual(body, b"subtitle-body")
+        self.assertEqual(scraper.post.call_count, 2)
+        sleep.assert_called_once()
+
+
 class YavkaNetProviderTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
