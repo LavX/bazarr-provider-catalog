@@ -2,7 +2,9 @@ import base64
 import hashlib
 import importlib.util
 import io
+import socket
 import unittest
+import urllib.error
 import zipfile
 from pathlib import Path
 
@@ -278,6 +280,141 @@ class AnimeKalesiProviderDownloadTests(unittest.TestCase):
         body = base64.b64decode(result["content_b64"])
         self.assertTrue(body.startswith(b"\xef\xbb\xbf[Script Info]\n"))
         self.assertEqual(result["format"], "ass")
+
+
+class _FakeResponse:
+    def __init__(self, body):
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return self._body
+
+
+class _FakeOpener:
+    """Stub opener whose open() replays a queued list of outcomes per call."""
+
+    def __init__(self, outcomes):
+        self._all = list(outcomes)
+        self._outcomes = list(outcomes)
+        self.calls = 0
+
+    def open(self, request, timeout=None):
+        del request, timeout
+        self.calls += 1
+        outcome = self._outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return _FakeResponse(outcome)
+
+    def close(self):
+        # HTTPError opens a backing temp file on read; close them so Python 3.14
+        # does not emit ResourceWarning during garbage collection.
+        for outcome in self._all:
+            closer = getattr(outcome, "close", None)
+            if callable(closer):
+                closer()
+
+
+def _http_error(code, retry_after=None):
+    headers = {"Retry-After": retry_after} if retry_after is not None else {}
+    return urllib.error.HTTPError(
+        url="https://www.animekalesi.com/x",
+        code=code,
+        msg="boom",
+        hdrs=headers,
+        fp=io.BytesIO(b""),
+    )
+
+
+class AnimeKalesiTransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.slept = []
+        self._real_sleep = self.mod.time.sleep
+        self.mod.time.sleep = lambda seconds: self.slept.append(seconds)
+
+    def tearDown(self):
+        self.mod.time.sleep = self._real_sleep
+
+    def _provider_with(self, outcomes):
+        provider = self.mod.AnimeKalesiProvider()
+        opener = _FakeOpener(outcomes)
+        provider._opener = opener
+        self.addCleanup(opener.close)
+        return provider, opener
+
+    def test_http_get_retries_url_error_then_succeeds(self):
+        provider, opener = self._provider_with(
+            [urllib.error.URLError("connection refused"), b"ok"]
+        )
+
+        body = provider._http_get("https://www.animekalesi.com/page")
+
+        self.assertEqual(body, b"ok")
+        self.assertEqual(opener.calls, 2)
+        self.assertEqual(len(self.slept), 1)
+
+    def test_http_get_retries_timeout_twice_then_succeeds(self):
+        provider, opener = self._provider_with(
+            [socket.timeout("slow"), TimeoutError("slow"), b"late"]
+        )
+
+        body = provider._http_get("https://www.animekalesi.com/page")
+
+        self.assertEqual(body, b"late")
+        self.assertEqual(opener.calls, 3)
+        self.assertEqual(len(self.slept), 2)
+
+    def test_http_get_retries_on_503_then_succeeds(self):
+        provider, opener = self._provider_with([_http_error(503), b"recovered"])
+
+        body = provider._http_get("https://www.animekalesi.com/page")
+
+        self.assertEqual(body, b"recovered")
+        self.assertEqual(opener.calls, 2)
+        self.assertEqual(len(self.slept), 1)
+
+    def test_http_get_honors_retry_after_on_429(self):
+        provider, opener = self._provider_with([_http_error(429, retry_after="5"), b"ok"])
+
+        body = provider._http_get("https://www.animekalesi.com/page")
+
+        self.assertEqual(body, b"ok")
+        self.assertEqual(opener.calls, 2)
+        self.assertEqual(self.slept, [5.0])
+
+    def test_http_get_does_not_retry_404(self):
+        provider, opener = self._provider_with([_http_error(404), b"never"])
+
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            provider._http_get("https://www.animekalesi.com/page")
+
+        self.assertEqual(ctx.exception.code, 404)
+        self.assertEqual(opener.calls, 1)
+        self.assertEqual(self.slept, [])
+
+    def test_http_get_raises_after_exhausting_retries(self):
+        provider, opener = self._provider_with(
+            [_http_error(500), _http_error(500), _http_error(500)]
+        )
+
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            provider._http_get("https://www.animekalesi.com/page")
+
+        self.assertEqual(ctx.exception.code, 500)
+        self.assertEqual(opener.calls, 3)
+        self.assertEqual(len(self.slept), 2)
+
+    def test_retry_delay_is_exponential_and_capped(self):
+        self.assertEqual(self.mod._retry_delay(0), self.mod.RETRY_BACKOFF_SECONDS)
+        self.assertEqual(self.mod._retry_delay(1), self.mod.RETRY_BACKOFF_SECONDS * 2)
+        self.assertLessEqual(self.mod._retry_delay(20), self.mod.RETRY_BACKOFF_CAP_SECONDS)
 
 
 if __name__ == "__main__":

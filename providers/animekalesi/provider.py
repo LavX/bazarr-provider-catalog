@@ -21,6 +21,9 @@ BASE_URL = "https://www.animekalesi.com"
 SERIES_INDEX_URL = f"{BASE_URL}/tum-anime-serileri.html"
 HTTP_TIMEOUT_SECONDS = 15
 HTTP_RETRIES = 2
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8.0
+RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 SUPPORTED_LANGUAGES = {"tur": "tr"}
 ALPHA2_TO_ALPHA3 = {value: key for key, value in SUPPORTED_LANGUAGES.items()}
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt")
@@ -198,12 +201,18 @@ class AnimeKalesiProvider:
             try:
                 with self._opener.open(request, timeout=timeout) as response:
                     return response.read()
-            except urllib.error.HTTPError:
-                raise
+            except urllib.error.HTTPError as error:
+                # Retry only on transient server-side statuses (5xx) and rate limiting
+                # (429). All other 4xx (auth, not found, gone, ...) propagate unchanged
+                # on the first occurrence.
+                if error.code not in RETRYABLE_STATUS_CODES or attempt >= HTTP_RETRIES:
+                    raise
+                time.sleep(_retry_delay(attempt, _retry_after_seconds(error)))
             except (TimeoutError, socket.timeout, urllib.error.URLError):
+                # Raw transport failures: connection refused, DNS, reset, timeout.
                 if attempt >= HTTP_RETRIES:
                     raise
-                time.sleep(0.25 * (attempt + 1))
+                time.sleep(_retry_delay(attempt))
         raise RuntimeError("unreachable animekalesi retry state")
 
     def search(self, video, languages, config):
@@ -492,6 +501,27 @@ def _sleep(config):
     delay_ms = (config or {}).get("request_delay_ms", 0) or 0
     if delay_ms > 0:
         time.sleep(min(delay_ms, 5000) / 1000.0)
+
+
+def _retry_delay(attempt, retry_after=None):
+    # attempt is 0-based: 0 before the first retry, 1 before the second.
+    backoff = RETRY_BACKOFF_SECONDS * (2 ** attempt)
+    if retry_after is not None and retry_after > backoff:
+        backoff = retry_after
+    return min(backoff, RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _retry_after_seconds(error):
+    # Honor a Retry-After header (seconds form) when the server sends one on a 429.
+    headers = getattr(error, "headers", None)
+    value = headers.get("Retry-After") if headers else None
+    if not value:
+        return None
+    try:
+        seconds = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds >= 0 else None
 
 
 def _stable_id(url, alpha3):
