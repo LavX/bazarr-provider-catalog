@@ -180,26 +180,14 @@ class SubsUnacsParserTests(unittest.TestCase):
         ])
         self.assertEqual(entries[0]["entry_url"], "https://subsunacs.net/getentry.php?id=144478&ei=0")
 
-    def test_extract_archive_files_reads_zip_and_filters_ignored_txt(self):
-        body = _zip_body(
-            {
-                "Movie.srt": "subtitle",
-                "subsunacs.net_144478.txt": "ignored",
-            }
-        )
-
-        files = self.mod.extract_archive_files(body)
-
-        self.assertEqual(files, [{"filename": "Movie.srt", "path": "Movie.srt", "content": b"subtitle"}])
-
-    def test_extract_archive_files_ignores_oversized_file_lists(self):
-        body = _zip_body({f"readme-{index}.txt": "ignored" for index in range(self.mod.ARCHIVE_FILE_COUNT_LIMIT + 1)})
+    def test_extract_archive_files_leaves_zip_to_the_host(self):
+        # ZIP is extracted host-side now; the worker hands the raw bytes back in download().
+        body = _zip_body({"Movie.srt": "subtitle"})
 
         self.assertEqual(self.mod.extract_archive_files(body), [])
 
-    def test_extract_archive_files_rejects_zip_entries_over_memory_limit(self):
-        self.mod.ARCHIVE_MEMORY_LIMIT = 4
-        body = _zip_body({"Movie.srt": "subtitle"})
+    def test_extract_archive_files_leaves_rar_to_the_host(self):
+        body = b"Rar!\x1a\x07\x00" + b"payload"
 
         self.assertEqual(self.mod.extract_archive_files(body), [])
 
@@ -411,9 +399,9 @@ class SubsUnacsProviderTests(unittest.TestCase):
 
         self.assertEqual(results, [])
 
-    def test_search_keeps_archive_members_with_colliding_basenames(self):
-        # Without the fix, both members collapse to the same basename key and one is dropped,
-        # and a download cannot select the intended directory's file.
+    def test_search_emits_single_archive_candidate_for_zip_download(self):
+        # Members are no longer listed in the worker. A zip download becomes one candidate
+        # whose download() hands the raw archive to the host.
         provider = self.mod.SubsUnacsProvider()
         archive = _zip_body({"cd1/Movie.srt": "first", "cd2/Movie.srt": "second"})
         provider._http_post = lambda url, data, timeout=10, referer=None: SEARCH_DUNE_EN
@@ -425,15 +413,111 @@ class SubsUnacsProviderTests(unittest.TestCase):
             {},
         )
 
-        self.assertEqual(len(results), 2)
-        paths = {item["provider_payload"]["path"] for item in results}
-        self.assertEqual(paths, {"cd1/Movie.srt", "cd2/Movie.srt"})
-        self.assertEqual(len({item["id"] for item in results}), 2)
+        self.assertEqual(len(results), 1)
+        payload = results[0]["provider_payload"]
+        self.assertIsNone(payload.get("path"))
+        self.assertIsNone(payload.get("entry_url"))
 
-        wanted = next(item for item in results if item["provider_payload"]["path"] == "cd2/Movie.srt")
         provider._http_get = lambda url, timeout=10, referer=None: archive
-        content = provider.download(wanted["provider_payload"], {"alpha3": "eng", "alpha2": "en"}, {})
-        self.assertEqual(base64.b64decode(content["content_b64"]), b"second")
+        content = provider.download(payload, {"alpha3": "eng", "alpha2": "en"}, {})
+        self.assertEqual(base64.b64decode(content["archive_b64"]), archive)
+        self.assertEqual(content["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertNotIn("encoding", content)
+
+    def test_download_zip_returns_archive_bytes_and_carries_episode(self):
+        provider = self.mod.SubsUnacsProvider()
+        archive = _zip_body({"Show.S01E05.srt": "subtitle"})
+        provider._http_get = lambda url, timeout=10, referer=None: archive
+
+        content = provider.download(
+            {"download_url": "https://subsunacs.net/subtitles/Some_Show_01x05-80808/!", "episode": 5},
+            {"alpha3": "bul", "alpha2": "bg"},
+            {},
+        )
+
+        self.assertEqual(base64.b64decode(content["archive_b64"]), archive)
+        self.assertEqual(content["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(content["episode"], 5)
+        self.assertNotIn("content_b64", content)
+        self.assertNotIn("encoding", content)
+
+    def test_download_rar_returns_archive_bytes(self):
+        provider = self.mod.SubsUnacsProvider()
+        archive = b"Rar!\x1a\x07\x00" + b"rar-archive-body"
+        provider._http_get = lambda url, timeout=10, referer=None: archive
+
+        content = provider.download(
+            {"download_url": "https://subsunacs.net/subtitles/Dune-144478/!", "episode": None},
+            {"alpha3": "eng", "alpha2": "en"},
+            {},
+        )
+
+        self.assertEqual(base64.b64decode(content["archive_b64"]), archive)
+        self.assertEqual(content["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertIsNone(content["episode"])
+
+    def test_download_archive_episode_is_none_for_movies(self):
+        provider = self.mod.SubsUnacsProvider()
+        archive = _zip_body({"Dune.2021.1080p.srt": "subtitle"})
+        provider._http_get = lambda url, timeout=10, referer=None: archive
+
+        content = provider.download(
+            {"download_url": "https://subsunacs.net/subtitles/Dune-144478/!"},
+            {"alpha3": "eng", "alpha2": "en"},
+            {},
+        )
+
+        self.assertIn("archive_b64", content)
+        self.assertIsNone(content["episode"])
+
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.SubsUnacsProvider()
+        provider._http_get = lambda url, timeout=10, referer=None: b"   \n\t  "
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {"download_url": "https://subsunacs.net/subtitles/Dune-144478/!"},
+                {"alpha3": "eng", "alpha2": "en"},
+                {},
+            )
+
+    def test_download_rejects_html_error_body(self):
+        provider = self.mod.SubsUnacsProvider()
+        provider._http_get = lambda url, timeout=10, referer=None: b"<!doctype html><html><body>error</body></html>"
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {"download_url": "https://subsunacs.net/subtitles/Dune-144478/!"},
+                {"alpha3": "eng", "alpha2": "en"},
+                {},
+            )
+
+    def test_download_seven_zip_still_extracts_in_worker(self):
+        # SubsUnacs genuinely serves .7z, which the host extraction stack does not cover, so
+        # the worker keeps extracting it and hands back the member as content.
+        provider = self.mod.SubsUnacsProvider()
+        provider._http_get = lambda url, timeout=10, referer=None: b"7z\xbc\xaf\x27\x1c" + b"seven-zip-body"
+
+        captured = {}
+        original_extract = self.mod.extract_archive_files
+
+        def fake_extract(body):
+            captured["body"] = body
+            return [{"filename": "Movie.srt", "path": "Movie.srt", "content": b"7z subtitle"}]
+
+        self.mod.extract_archive_files = fake_extract
+        try:
+            content = provider.download(
+                {"download_url": "https://subsunacs.net/subtitles/Dune-144478/!", "filename": "Movie.srt"},
+                {"alpha3": "eng", "alpha2": "en"},
+                {},
+            )
+        finally:
+            self.mod.extract_archive_files = original_extract
+
+        self.assertTrue(captured["body"].startswith(b"7z\xbc\xaf\x27\x1c"))
+        self.assertEqual(base64.b64decode(content["content_b64"]), b"7z subtitle")
+        self.assertEqual(content["format"], "srt")
 
 
 if __name__ == "__main__":

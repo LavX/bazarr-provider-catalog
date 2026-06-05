@@ -122,18 +122,11 @@ def parse_detail_entries(body):
 
 
 def extract_archive_files(body):
-    if not body:
+    # Only .7z is extracted in-worker. The host extracts zip/rar from the raw bytes
+    # download() hands back (Provider Hub v1.1 host-side archive extraction).
+    if not _is_7z_archive(body):
         return []
-    stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            candidates = _zip_subtitle_infos(archive)
-            if candidates is None:
-                return []
-            return _archive_rows_from_pairs((info.filename, archive.read(info)) for info in candidates)
-    if _is_external_archive(body):
-        return _archive_rows_from_pairs(_extract_external_archive_files(body))
-    return []
+    return _archive_rows_from_pairs(_extract_external_archive_files(body))
 
 
 def derive_matches(video, item):
@@ -216,7 +209,7 @@ class SubsUnacsProvider:
                     continue
                 _sleep(config)
                 try:
-                    entries = _entries_from_download_body(self._http_get(row["download_url"], referer=SEARCH_URL), row["download_url"])
+                    entries = _entries_from_download_body(self._http_get(row["download_url"], referer=SEARCH_URL), row["download_url"], row)
                 except Exception:
                     continue
                 for entry in entries:
@@ -260,6 +253,8 @@ class SubsUnacsProvider:
             "path": item.get("path"),
             "title": item.get("title"),
             "year": item.get("year"),
+            "season": item.get("season"),
+            "episode": item.get("episode"),
             "language": language["alpha3"],
             "release_info": item["filename"],
         }
@@ -296,18 +291,35 @@ class SubsUnacsProvider:
         del language, config
         payload = dict(provider_payload or {})
         if payload.get("entry_url"):
-            data = _normalize_line_endings(self._http_get(payload["entry_url"], referer=payload.get("download_url") or SEARCH_URL))
-            return _content_payload(data, _subtitle_extension(payload.get("filename")) or "srt")
+            body = self._http_get(payload["entry_url"], referer=payload.get("download_url") or SEARCH_URL)
+            return self._resolve_download(body, payload, referer=payload.get("download_url") or SEARCH_URL)
         url = payload.get("download_url")
         if not url:
             raise ValueError("subsunacs download requires download_url or entry_url")
-        entries = _entries_from_download_body(self._http_get(url, referer=SEARCH_URL), url)
-        selected = select_subtitle_file(entries, payload)
-        if selected.get("entry_url"):
-            data = _normalize_line_endings(self._http_get(selected["entry_url"], referer=url))
-        else:
-            data = _normalize_line_endings(selected["content"])
-        return _content_payload(data, _subtitle_extension(selected["filename"]) or "srt")
+        body = self._http_get(url, referer=SEARCH_URL)
+        return self._resolve_download(body, payload, referer=url)
+
+    def _resolve_download(self, body, payload, referer):
+        # Reject broken responses up front: the download endpoint can answer with an empty
+        # stream or an HTML/error page that would otherwise look like a successful download.
+        if not body or not body.strip():
+            raise ValueError(f"subsunacs empty download for {payload.get('download_url')}")
+        if _is_html_body(body):
+            # An HTML detail page lists getentry.php members; resolve the wanted member and
+            # fetch its direct subtitle bytes.
+            entries = parse_detail_entries(body)
+            if entries:
+                selected = select_subtitle_file(entries, payload)
+                data = self._http_get(selected["entry_url"], referer=referer)
+                return _download_payload(data, {**payload, "filename": selected["filename"]})
+            raise ValueError(f"subsunacs returned an HTML/error page for {payload.get('download_url')}")
+        if _is_7z_archive(body):
+            # Genuine .7z download. The host extraction stack handles zip/rar only, so keep
+            # extracting 7z in-worker and hand the selected member back as content.
+            files = extract_archive_files(body)
+            selected = select_subtitle_file(files, payload)
+            return _content_payload(_normalize_line_endings(selected["content"]), _subtitle_extension(selected["filename"]) or "srt")
+        return _download_payload(body, payload)
 
 
 def select_subtitle_file(files, payload):
@@ -339,14 +351,29 @@ def select_subtitle_file(files, payload):
     return max(enumerate(files), key=score)[1]
 
 
-def _entries_from_download_body(body, download_url):
+def _entries_from_download_body(body, download_url, row=None):
     entries = parse_detail_entries(body)
     if entries:
         return entries
+    if _is_zip_or_rar_archive(body):
+        # Host-side archive: do not list members in the worker. Produce a single candidate
+        # whose download() hands the raw bytes back to the host for extraction.
+        return [{"filename": _archive_release_name(row, download_url), "archive": True}]
     files = extract_archive_files(body)
     for item in files:
         item["download_url"] = download_url
     return files
+
+
+def _archive_release_name(row, download_url):
+    title = (row or {}).get("title")
+    if title:
+        season = (row or {}).get("season")
+        episode = (row or {}).get("episode")
+        if season is not None and episode is not None:
+            return f"{title} S{int(season):02d}E{int(episode):02d}"
+        return str(title)
+    return os.path.basename(urllib.parse.urlparse(download_url or "").path.rstrip("/")) or "subsunacs.archive"
 
 
 def _extract_external_archive_files(body):
@@ -459,26 +486,6 @@ def _entry_identity(entry):
     return entry.get("path") or entry.get("entry_url") or entry.get("filename")
 
 
-def _zip_subtitle_infos(archive):
-    infos = archive.infolist()
-    if len(infos) > ARCHIVE_FILE_COUNT_LIMIT:
-        return None
-    candidates = []
-    total_size = 0
-    for info in infos:
-        if info.is_dir() or not _is_subtitle_file(info.filename):
-            continue
-        if info.file_size > ARCHIVE_MEMORY_LIMIT:
-            return None
-        total_size += info.file_size
-        if total_size > ARCHIVE_MEMORY_LIMIT:
-            return None
-        candidates.append(info)
-    if len(candidates) > ARCHIVE_SUBTITLE_FILE_COUNT_LIMIT:
-        return None
-    return sorted(candidates, key=lambda item: item.filename)
-
-
 def _is_safe_extracted_file(path, output_dir):
     try:
         file_stat = os.lstat(path)
@@ -494,12 +501,18 @@ def _is_safe_extracted_file(path, output_dir):
         return False
 
 
-def _is_external_archive(body):
-    return bool(body) and (
-        body.startswith(b"Rar!\x1a\x07\x00")
-        or body.startswith(b"Rar!\x1a\x07\x01\x00")
-        or body.startswith(b"7z\xbc\xaf\x27\x1c")
-    )
+def _is_rar_archive(body):
+    return bool(body) and (body.startswith(b"Rar!\x1a\x07\x00") or body.startswith(b"Rar!\x1a\x07\x01\x00"))
+
+
+def _is_7z_archive(body):
+    return bool(body) and body.startswith(b"7z\xbc\xaf\x27\x1c")
+
+
+def _is_zip_or_rar_archive(body):
+    # zip and rar are extracted host-side; 7z stays in-worker (host 7z support is a
+    # separate follow-up), so it is intentionally excluded here.
+    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
 
 
 def _is_ignored_txt_file(filename):
@@ -716,21 +729,49 @@ def _normalize_line_endings(content):
     return (content or b"").replace(b"\r\n", b"\n").replace(b"\r", b"\n")
 
 
+def _download_payload(body, payload):
+    payload = payload or {}
+    # Reject broken responses up front: the endpoint can answer with an empty stream or an
+    # HTML/error page that would otherwise look like a successful download.
+    if not body or not body.strip():
+        raise ValueError(f"subsunacs empty download for {payload.get('download_url')}")
+    if _is_html_body(body):
+        raise ValueError(f"subsunacs returned an HTML/error page for {payload.get('download_url')}")
+    if _is_zip_or_rar_archive(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to the
+        # host, which lists it, picks the member by episode, and detects encoding.
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "episode": payload.get("episode"),
+        }
+    # Direct, non-archive subtitle body.
+    return _content_payload(_normalize_line_endings(body), _subtitle_extension(payload.get("filename")) or "srt")
+
+
+def _is_html_body(body):
+    if not body:
+        return False
+    head = body[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or head.startswith(b"<!--")
+        or b"<body" in head
+        or b"<head" in head
+    )
+
+
 def _content_payload(content, subtitle_format):
-    encoding = "utf-8"
-    for candidate in ("utf-8", "cp1251", "windows-1251", "latin-1"):
-        try:
-            content.decode(candidate)
-            encoding = candidate
-            break
-        except UnicodeDecodeError:
-            continue
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 
