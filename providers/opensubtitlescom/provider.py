@@ -463,6 +463,8 @@ class OpenSubtitlesComProvider:
                 "filename": file_info.get("file_name") or f"opensubtitlescom.{file_id}.srt",
                 "language": language,
                 "release_info": release,
+                "season": _int_or_none(video.get("season")),
+                "episode": _int_or_none(video.get("episode")),
             },
         }
 
@@ -488,9 +490,7 @@ class OpenSubtitlesComProvider:
         if not link:
             raise RuntimeError("OpenSubtitles.com download response did not include link")
         body = self._http_get_bytes(link, {"User-Agent": USER_AGENT}, timeout=HTTP_TIMEOUT_SECONDS)
-        body, fmt = extract_download(body, link, requested_format=DOWNLOAD_SUB_FORMAT)
-        body = _normalize_line_endings(body)
-        return _content_payload(body, fmt)
+        return _download_payload(body, payload, link)
 
     def _ensure_login(self, config):
         if self.token and (time.time() - self.token_started) < TOKEN_TTL_SECONDS:
@@ -720,23 +720,54 @@ def _wanted_feature_types(kind):
     return set()
 
 
-def extract_download(body, filename, requested_format=None):
+def _download_payload(body, payload, link):
+    payload = payload or {}
     if not body:
         raise ValueError("opensubtitlescom downloaded empty subtitle")
-    stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            names = [name for name in archive.namelist() if _subtitle_extension(name)]
-            if not names:
-                raise ValueError("opensubtitlescom archive contains no supported subtitle files")
-            names.sort(key=lambda name: (not name.lower().endswith(".srt"), len(name), name.lower()))
-            name = names[0]
-            return archive.read(name), _subtitle_extension(name) or "srt"
-    # The API converts plain (non-archive) downloads to the requested format, so
-    # report that instead of any stale extension from the original filename.
-    if requested_format:
-        return body, str(requested_format).lower()
-    return body, _format_from_filename(filename)
+    if _is_html_body(body):
+        raise ValueError("opensubtitlescom returned an HTML/error page instead of a subtitle")
+    if zipfile.is_zipfile(io.BytesIO(body)):
+        # Host-side extraction (Provider Hub v1.1+): we list the zip cheaply with stdlib
+        # to pick the member, then hand the raw archive bytes back. The host extracts the
+        # member and detects the encoding via Subtitle.normalize().
+        member = _select_zip_member(body)
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "member": member,
+        }
+    if _is_rar_archive(body) or _is_7z_archive(body):
+        # rar/7z cannot be listed cheaply with stdlib, so let the host pick by episode.
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "episode": _int_or_none(payload.get("episode")),
+        }
+    # Direct, non-archive subtitle body. The API converts plain downloads to the
+    # requested format, so report that instead of any stale extension from the link.
+    return _content_payload(_normalize_line_endings(body), DOWNLOAD_SUB_FORMAT or _format_from_filename(link))
+
+
+def _select_zip_member(body):
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        names = [name for name in archive.namelist() if _subtitle_extension(name)]
+    if not names:
+        raise ValueError("opensubtitlescom archive contains no supported subtitle files")
+    names.sort(key=lambda name: (not name.lower().endswith(".srt"), len(name), name.lower()))
+    return names[0]
+
+
+def _is_rar_archive(body):
+    return bool(body) and body[:4] == b"Rar!"
+
+
+def _is_7z_archive(body):
+    return bool(body) and body[:6] == b"7z\xbc\xaf\x27\x1c"
+
+
+def _is_html_body(body):
+    head = (body or b"")[:1024].lstrip().lower()
+    return head.startswith((b"<!doctype html", b"<html", b"<?xml")) or b"<body" in head or b"<head" in head
 
 
 def _subtitle_extension(name):
@@ -758,17 +789,14 @@ def _normalize_line_endings(body):
 def _content_payload(body, fmt):
     if not body:
         raise ValueError("opensubtitlescom downloaded empty subtitle")
-    try:
-        body.decode("utf-8")
-        encoding = "utf-8"
-    except UnicodeDecodeError:
-        encoding = "latin-1"
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     return {
         "content_b64": base64.b64encode(body).decode("ascii"),
         "content_sha256": hashlib.sha256(body).hexdigest(),
         "content_type": _content_type(fmt),
         "format": fmt,
-        "encoding": encoding,
         "empty": False,
     }
 

@@ -1,9 +1,11 @@
 import base64
 import hashlib
 import importlib.util
+import io
 import json
 import time
 import unittest
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -793,6 +795,117 @@ class OpenSubtitlesComDownloadTests(unittest.TestCase):
 
         self.assertEqual(result["format"], "srt")
         self.assertEqual(result["content_type"], "application/x-subrip")
+
+    def _download_with_body(self, body, payload=None):
+        provider = self.mod.OpenSubtitlesComProvider()
+
+        def post_json(path, params, headers, timeout=30):
+            del params, headers, timeout
+            if path.endswith("/login"):
+                return {"token": "jwt-token", "base_url": "api.opensubtitles.com", "status": 200}
+            return {"link": "https://dl.opensubtitles.com/download/subtitle.srt"}
+
+        provider._http_post_json = post_json
+        provider._http_get_bytes = lambda url, headers, timeout=30: body
+        return provider.download(
+            payload
+            or {
+                "provider": "opensubtitlescom",
+                "schema": 1,
+                "subtitle_id": "10139516",
+                "file_id": 11047023,
+                "filename": "subtitle.srt",
+            },
+            {"alpha3": "eng", "alpha2": "en"},
+            {"username": "user", "password": "pass", "api_key": "api-key"},
+        )
+
+    def test_download_returns_zip_archive_bytes_with_selected_member(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("readme.txt", "ignore me")
+            archive.writestr("Breaking.Bad.S03E13.srt", "1\n00:00:01,000 --> 00:00:02,000\nHi\n")
+        body = buffer.getvalue()
+
+        result = self._download_with_body(body)
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["member"], "Breaking.Bad.S03E13.srt")
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
+
+    def test_download_returns_rar_archive_with_episode_for_host_selection(self):
+        body = b"Rar!\x1a\x07\x00" + b"\x00" * 64
+
+        result = self._download_with_body(
+            body,
+            payload={
+                "provider": "opensubtitlescom",
+                "schema": 1,
+                "file_id": 11047023,
+                "filename": "pack.rar",
+                "episode": 13,
+            },
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["episode"], 13)
+        self.assertNotIn("member", result)
+        self.assertNotIn("encoding", result)
+
+    def test_download_returns_7z_archive_with_episode_for_host_selection(self):
+        body = b"7z\xbc\xaf\x27\x1c" + b"\x00" * 64
+
+        result = self._download_with_body(
+            body,
+            payload={"provider": "opensubtitlescom", "file_id": 11047023, "episode": 7},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["episode"], 7)
+        self.assertNotIn("member", result)
+
+    def test_download_rejects_empty_body(self):
+        with self.assertRaisesRegex(ValueError, "empty"):
+            self._download_with_body(b"")
+
+    def test_download_rejects_html_error_page(self):
+        with self.assertRaisesRegex(ValueError, "HTML"):
+            self._download_with_body(b"<!DOCTYPE html><html><body>error</body></html>")
+
+    def test_download_does_not_pin_encoding_on_direct_content(self):
+        result = self._download_with_body(b"1\r\n00:00:01,000 --> 00:00:02,000\r\nHallo\r\n")
+
+        self.assertIn("content_b64", result)
+        self.assertNotIn("encoding", result)
+
+    def test_search_stores_episode_in_provider_payload(self):
+        provider = self.mod.OpenSubtitlesComProvider()
+        provider._http_post_json = lambda path, payload, headers, timeout=30: {
+            "token": "jwt-token",
+            "base_url": "api.opensubtitles.com",
+            "status": 200,
+        }
+        provider._http_get_json = lambda path, params, headers, timeout=30: {
+            "data": [_subtitle_item(feature_type="Episode")]
+        }
+
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "Breaking Bad",
+                "season": 3,
+                "episode": 13,
+                "series_imdb_id": "tt0903747",
+            },
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"username": "user", "password": "pass", "api_key": "api-key", "use_hash": False},
+        )
+
+        self.assertEqual(results[0]["provider_payload"]["season"], 3)
+        self.assertEqual(results[0]["provider_payload"]["episode"], 13)
 
 
 if __name__ == "__main__":
