@@ -1,10 +1,8 @@
 import base64
 import hashlib
 import importlib.util
-import os
 import unittest
 from pathlib import Path
-from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "subcentral"
@@ -273,53 +271,111 @@ class SubCentralProviderSearchTests(unittest.TestCase):
         self.assertEqual(results[0]["provider_payload"]["attachment_id"], "300350")
 
 
+def _zip_body(names_to_data):
+    import io
+    import zipfile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, data in names_to_data.items():
+            archive.writestr(name, data)
+    return buffer.getvalue()
+
+
+PAYLOAD = {
+    "provider": "subcentral",
+    "schema": 1,
+    "attachment_id": "300350",
+    "url": "https://www.subcentral.de/index.php?page=Attachment&attachmentID=300350&h=c7acdf6f69ede53d5a332e3e59798b44d18395e3",
+    "thread_url": "https://www.subcentral.de/index.php?page=Thread&threadID=52021",
+    "filename": "Blue.Lights.S01E01.WEBRip.x264-ION10.de-SubCentral.rar",
+    "season": 1,
+    "episode": 1,
+}
+
+
 class SubCentralDownloadTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
 
-    def test_download_extracts_rar_with_bundled_py7zz(self):
+    def test_download_returns_rar_archive_payload_unmodified(self):
         provider = self.mod.SubCentralProvider()
         provider._http_get = lambda url, timeout=15, referer=None: RAR_BODY
-        with mock.patch.object(
-            self.mod,
-            "_extract_rar_files",
-            return_value=[("Blue.Lights.S01E01.WEBRip.x264-ION10.de-SubCentral.srt", b"1\nsubtitle\n")],
-        ) as extractor:
-            result = provider.download(
-                {
-                    "provider": "subcentral",
-                    "schema": 1,
-                    "attachment_id": "300350",
-                    "url": "https://www.subcentral.de/index.php?page=Attachment&attachmentID=300350&h=c7acdf6f69ede53d5a332e3e59798b44d18395e3",
-                    "thread_url": "https://www.subcentral.de/index.php?page=Thread&threadID=52021",
-                    "filename": "Blue.Lights.S01E01.WEBRip.x264-ION10.de-SubCentral.rar",
-                    "season": 1,
-                    "episode": 1
-                },
-                {"alpha3": "deu", "alpha2": "de"},
-                {},
-            )
 
-        extractor.assert_called_once_with(RAR_BODY)
-        body = base64.b64decode(result["content_b64"])
-        self.assertEqual(body, b"1\nsubtitle\n")
+        result = provider.download(PAYLOAD, {"alpha3": "deu", "alpha2": "de"}, {})
+
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
+        self.assertEqual(base64.b64decode(result["archive_b64"]), RAR_BODY)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(RAR_BODY).hexdigest())
+        self.assertEqual(result["episode"], 1)
+
+    def test_download_returns_zip_archive_payload_with_episode(self):
+        provider = self.mod.SubCentralProvider()
+        zip_body = _zip_body(
+            {"Blue.Lights.S01E01.WEBRip.x264-ION10.de-SubCentral.srt": b"1\nsubtitle\n"}
+        )
+        provider._http_get = lambda url, timeout=15, referer=None: zip_body
+
+        result = provider.download(PAYLOAD, {"alpha3": "deu", "alpha2": "de"}, {})
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), zip_body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(zip_body).hexdigest())
+        self.assertEqual(result["episode"], 1)
+        self.assertNotIn("encoding", result)
+
+    def test_download_archive_episode_is_none_when_missing(self):
+        provider = self.mod.SubCentralProvider()
+        provider._http_get = lambda url, timeout=15, referer=None: RAR_BODY
+        payload = dict(PAYLOAD)
+        payload.pop("episode")
+
+        result = provider.download(payload, {"alpha3": "deu", "alpha2": "de"}, {})
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), RAR_BODY)
+        self.assertIsNone(result["episode"])
+
+    def test_download_returns_content_for_direct_subtitle_body(self):
+        provider = self.mod.SubCentralProvider()
+        body = b"1\n00:00:01,000 --> 00:00:02,000\nHallo\n"
+        provider._http_get = lambda url, timeout=15, referer=None: body
+        payload = dict(PAYLOAD)
+        payload["filename"] = "Blue.Lights.S01E01.de-SubCentral.srt"
+
+        result = provider.download(payload, {"alpha3": "deu", "alpha2": "de"}, {})
+
+        self.assertNotIn("archive_b64", result)
+        self.assertNotIn("encoding", result)
+        self.assertEqual(base64.b64decode(result["content_b64"]), body)
         self.assertEqual(result["format"], "srt")
         self.assertEqual(result["content_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertFalse(result["empty"])
 
-    def test_rar_extraction_prefers_bundled_py7zz(self):
-        class FakePy7zz:
-            @staticmethod
-            def extract_archive(_archive_path, output_dir):
-                with open(os.path.join(output_dir, "episode.srt"), "wb") as handle:
-                    handle.write(b"subtitle")
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.SubCentralProvider()
+        provider._http_get = lambda url, timeout=15, referer=None: b""
 
-        with mock.patch.object(self.mod, "py7zz", FakePy7zz):
-            with mock.patch.object(
-                self.mod,
-                "_extract_rar_files_with_unar",
-                side_effect=AssertionError("system fallback should not be used"),
-            ):
-                self.assertEqual(self.mod._extract_rar_files(b"rar bytes"), [("episode.srt", b"subtitle")])
+        result = provider.download(PAYLOAD, {"alpha3": "deu", "alpha2": "de"}, {})
+
+        self.assertNotIn("archive_b64", result)
+        self.assertTrue(result["empty"])
+        self.assertEqual(result["content_b64"], "")
+
+    def test_download_rejects_html_error_body(self):
+        provider = self.mod.SubCentralProvider()
+        provider._http_get = (
+            lambda url, timeout=15, referer=None: b"<!DOCTYPE html><html><body>Login required</body></html>"
+        )
+
+        result = provider.download(PAYLOAD, {"alpha3": "deu", "alpha2": "de"}, {})
+
+        self.assertNotIn("archive_b64", result)
+        self.assertTrue(result["empty"])
+
+    def test_download_requires_url(self):
+        provider = self.mod.SubCentralProvider()
+        with self.assertRaises(ValueError):
+            provider.download({"provider": "subcentral"}, {"alpha3": "deu"}, {})
 
 
 if __name__ == "__main__":
