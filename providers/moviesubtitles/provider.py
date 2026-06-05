@@ -255,17 +255,22 @@ class MoviesubtitlesProvider:
 
 def extract_download(body, payload=None):
     payload = payload or {}
-    if not body:
-        return _content_payload(b"", "srt", empty=True)
+    if not body or not body.strip():
+        raise ValueError("moviesubtitles download returned an empty body")
+    if _is_html_body(body):
+        raise ValueError("moviesubtitles download did not return a supported subtitle file")
     stream = io.BytesIO(body)
     if zipfile.is_zipfile(stream):
+        # Host-side extraction (Provider Hub v1.1+): list the zip cheaply with stdlib to
+        # pick the member, then hand the raw archive bytes back. The host extracts it and
+        # detects encoding via Subtitle.normalize().
         with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_files(archive.namelist())
-            subtitle_format = _subtitle_extension(selected[0]) or "srt"
-            content = b"\n\n".join(archive.read(name) for name in selected)
-            return _content_payload(content, subtitle_format)
+            member = select_subtitle_file(archive.namelist())
+        return _archive_payload(body, member=member)
+    if _is_rar_archive(body) or _is_7z_archive(body):
+        return _archive_payload(body, episode=payload.get("episode"))
     subtitle_format = _subtitle_extension(payload.get("filename", ""))
-    if not subtitle_format or _looks_like_html(body):
+    if not subtitle_format:
         raise ValueError("moviesubtitles download did not return a supported subtitle file")
     return _content_payload(body, subtitle_format)
 
@@ -398,27 +403,28 @@ def _subtitle_extension(name):
     return None
 
 
-def _content_payload(content, subtitle_format, empty=False):
-    if empty:
-        return {
-            "content_b64": "",
-            "content_sha256": "",
-            "content_type": _content_type(subtitle_format),
-            "format": subtitle_format,
-            "encoding": "utf-8",
-            "empty": True,
-        }
-    encoding = "utf-8"
-    try:
-        content.decode("utf-8")
-    except UnicodeDecodeError:
-        encoding = "latin-1"
+def _archive_payload(body, member=None, episode=None):
+    # Hand the raw archive bytes to the host (Provider Hub v1.1+). The host extracts the
+    # member with its own zipfile/rarfile stack and detects encoding via normalize().
+    payload = {
+        "archive_b64": _base64.b64encode(body).decode("ascii"),
+        "archive_sha256": _hashlib.sha256(body).hexdigest(),
+    }
+    if member is not None:
+        payload["member"] = member
+    else:
+        payload["episode"] = episode
+    return payload
+
+
+def _content_payload(content, subtitle_format):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially latin-1, which never fails to decode) only reintroduces mojibake.
     return {
         "content_b64": _base64.b64encode(content).decode("ascii"),
         "content_sha256": _hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 
@@ -507,9 +513,17 @@ def _extension_priority(name):
         return len(SUBTITLE_EXTENSIONS)
 
 
-def _looks_like_html(body):
+def _is_html_body(body):
     sample = (body or b"").lstrip()[:512].lower()
     return sample.startswith((b"<!doctype html", b"<html")) or b"<title" in sample
+
+
+def _is_rar_archive(body):
+    return bool(body) and body[:4] == b"Rar!"
+
+
+def _is_7z_archive(body):
+    return bool(body) and body[:6] == b"7z\xbc\xaf\x27\x1c"
 
 
 def _allows_legacy_500_body(url):
