@@ -198,13 +198,14 @@ class AnimeSubInfoDownloadTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
 
-    def test_download_posts_hidden_fields_and_extracts_zip_subtitle(self):
+    def test_download_posts_hidden_fields_and_returns_raw_zip_for_host(self):
         provider = self.mod.AnimeSubInfoProvider()
         posts = []
-        provider._http_post = lambda url, data, timeout=15, referer=None: posts.append((url, data, referer)) or _zip_body(
+        body = _zip_body(
             "[HorribleSubs] Kimetsu no Yaiba - 01 [1080p].ass",
             "[Script Info]\r\nTitle: ok\r\n",
         )
+        provider._http_post = lambda url, data, timeout=15, referer=None: posts.append((url, data, referer)) or body
 
         result = provider.download(
             {
@@ -225,22 +226,26 @@ class AnimeSubInfoDownloadTests(unittest.TestCase):
         self.assertEqual(posts[0][1]["id"], "68055")
         self.assertEqual(posts[0][1]["sh"], "session-hash-1")
         self.assertEqual(posts[0][1]["single_file"], "Pobierz napisy")
-        body = base64.b64decode(result["content_b64"])
-        self.assertEqual(body, b"[Script Info]\nTitle: ok\n")
-        self.assertEqual(result["format"], "ass")
-        self.assertEqual(result["content_sha256"], hashlib.sha256(body).hexdigest())
+        # Archive mode: the worker hands the raw archive bytes back untouched and only
+        # names the member it selected from the cheap stdlib listing.
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["member"], "[HorribleSubs] Kimetsu no Yaiba - 01 [1080p].ass")
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
 
     def test_download_refreshes_hash_after_security_error(self):
         provider = self.mod.AnimeSubInfoProvider()
         posts = []
         provider._http_get = lambda url, timeout=15, referer=None: KIMETSU_REFRESHED_HTML
+        archive = _zip_body("Kimetsu.no.Yaiba.ep01.srt", "1\r\n00:00:01,000 --> 00:00:02,000\r\nOK\r\n")
 
         def post(url, data, timeout=15, referer=None):
             del timeout, referer
             posts.append(data["sh"])
             if len(posts) == 1:
                 return b"<html><body>Blad zabezpieczen.</body></html>"
-            return _zip_body("Kimetsu.no.Yaiba.ep01.srt", "1\r\n00:00:01,000 --> 00:00:02,000\r\nOK\r\n")
+            return archive
 
         provider._http_post = post
         result = provider.download(
@@ -260,7 +265,9 @@ class AnimeSubInfoDownloadTests(unittest.TestCase):
         )
 
         self.assertEqual(posts, ["expired-hash", "session-hash-refreshed"])
-        self.assertEqual(base64.b64decode(result["content_b64"]), b"1\n00:00:01,000 --> 00:00:02,000\nOK\n")
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["member"], "Kimetsu.no.Yaiba.ep01.srt")
 
     def test_download_returns_direct_subtitle_with_normalized_line_endings(self):
         provider = self.mod.AnimeSubInfoProvider()
@@ -303,6 +310,62 @@ class AnimeSubInfoDownloadTests(unittest.TestCase):
 
         self.assertEqual(result["format"], "ass")
         self.assertTrue(base64.b64decode(result["content_b64"]).startswith(b"\xef\xbb\xbf[Script Info]\n"))
+
+    def test_download_direct_body_does_not_ship_worker_encoding(self):
+        provider = self.mod.AnimeSubInfoProvider()
+        provider._http_post = lambda url, data, timeout=15, referer=None: b"1\r\n00:00:01,000 --> 00:00:02,000\r\nOK\r\n"
+
+        result = provider.download(
+            {
+                "provider": "animesubinfo",
+                "schema": 1,
+                "subtitle_id": "raw",
+                "download_hash": "hash",
+                "download_url": "http://animesub.info/sciagnij.php",
+                "filename": "raw.srt",
+            },
+            {"alpha3": "pol", "alpha2": "pl"},
+            {},
+        )
+
+        self.assertNotIn("encoding", result)
+        self.assertNotIn("archive_b64", result)
+
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.AnimeSubInfoProvider()
+        provider._http_post = lambda url, data, timeout=15, referer=None: b"   "
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {
+                    "provider": "animesubinfo",
+                    "schema": 1,
+                    "subtitle_id": "raw",
+                    "download_hash": "hash",
+                    "download_url": "http://animesub.info/sciagnij.php",
+                    "filename": "raw.srt",
+                },
+                {"alpha3": "pol", "alpha2": "pl"},
+                {},
+            )
+
+    def test_download_rejects_html_error_page(self):
+        provider = self.mod.AnimeSubInfoProvider()
+        provider._http_post = lambda url, data, timeout=15, referer=None: b"<html><body>Error page</body></html>"
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {
+                    "provider": "animesubinfo",
+                    "schema": 1,
+                    "subtitle_id": "raw",
+                    "download_hash": "hash",
+                    "download_url": "http://animesub.info/sciagnij.php",
+                    "filename": "raw.srt",
+                },
+                {"alpha3": "pol", "alpha2": "pl"},
+                {},
+            )
 
     def test_archive_rejects_wrong_season_episode_marker(self):
         with self.assertRaises(ValueError):
