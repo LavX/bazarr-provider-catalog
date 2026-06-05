@@ -6,9 +6,6 @@ import html
 import io
 import os
 import re
-import shutil
-import subprocess
-import tempfile
 import time
 import unicodedata
 import urllib.error
@@ -16,11 +13,6 @@ import urllib.parse
 import urllib.request
 import zipfile
 from http.cookiejar import CookieJar
-
-try:
-    import py7zz
-except ImportError:  # pragma: no cover, dependency is declared in manifest
-    py7zz = None
 
 PROVIDER_ID = "subssabbz"
 BASE_URL = "http://subs.sab.bz"
@@ -105,10 +97,10 @@ def parse_search_results(body):
 
 
 def extract_archive_files(body):
+    # Enumerate zip members cheaply for search-time scoring and episode filtering. RAR
+    # archives are not opened worker-side anymore: the host extracts them at download time.
     if not body:
         return []
-    if _is_rar_archive(body):
-        return _archive_rows_from_pairs(_extract_rar_files(body))
     stream = io.BytesIO(body)
     if zipfile.is_zipfile(stream):
         with zipfile.ZipFile(stream) as archive:
@@ -256,6 +248,7 @@ class SubsSabBzProvider:
         ):
             if match_name in matches:
                 score += value
+        season, episode = _payload_season_episode(item)
         payload = {
             "provider": PROVIDER_ID,
             "schema": 1,
@@ -263,6 +256,8 @@ class SubsSabBzProvider:
             "filename": item["filename"],
             "title": item.get("title"),
             "year": item.get("year"),
+            "season": season,
+            "episode": episode,
             "language": language["alpha3"],
             "hi": language["hi"],
             "forced": language["forced"],
@@ -306,10 +301,32 @@ class SubsSabBzProvider:
         url = payload.get("download_url")
         if not url:
             raise ValueError("subssabbz download requires download_url")
-        files = extract_archive_files(self._http_get(url, timeout=30, referer=SEARCH_URL))
-        selected = select_subtitle_file(files, payload)
-        data = _normalize_line_endings(selected["content"])
-        return _content_payload(data, _subtitle_extension(selected["filename"]) or "srt")
+        body = self._http_get(url, timeout=30, referer=SEARCH_URL)
+        return _download_payload(body, payload)
+
+
+def _download_payload(body, payload):
+    payload = payload or {}
+    # Reject broken responses up front: the download endpoint can answer with an empty
+    # stream or an HTML/error page that would otherwise look like a successful download.
+    if not body or not body.strip():
+        raise ValueError(f"subssabbz empty download for {payload.get('download_url')}")
+    if _is_html_body(body):
+        raise ValueError(f"subssabbz returned an HTML/error page for {payload.get('download_url')}")
+    if _is_archive_body(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
+        # the host, which lists it, picks the member by episode, and detects encoding.
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "episode": payload.get("episode"),
+        }
+    # Direct, non-archive subtitle body.
+    return _content_payload(_normalize_line_endings(body), _format_from_filename(payload.get("filename")))
+
+
+def _is_archive_body(body):
+    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
 
 
 def _result_id(item, language):
@@ -324,121 +341,19 @@ def _result_id(item, language):
     return hashlib.sha1("\x00".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
-def select_subtitle_file(files, payload):
-    if not files:
-        raise ValueError("subssabbz archive contains no supported subtitle files")
-    wanted = payload.get("filename")
-    for item in files:
-        if item["filename"] == wanted:
-            return item
-    release_info = _normalize_release(payload.get("release_info") or wanted)
-
-    def score(index_item):
-        index, item = index_item
-        name = _normalize_release(item["filename"])
-        value = max(0, 10 - index)
-        if release_info:
-            for token in [part for part in release_info.split(".") if len(part) > 2]:
-                if token in name:
-                    value += 4
-        if item["filename"].lower().endswith(".srt"):
-            value += 5
-        return value
-
-    return max(enumerate(files), key=score)[1]
-
-
-def _extract_rar_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"SubsSabBz RAR extraction failed: {details}") from errors[-1]
-    raise RuntimeError("SubsSabBz RAR extraction requires bundled py7zz")
-
-
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("SubsSabBz bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subssabbz.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_unar(body):
-    unar = shutil.which("unar")
-    if not unar:
-        raise RuntimeError("SubsSabBz RAR fallback requires unar")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subssabbz.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [unar, "-quiet", "-o", output_dir, archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"unar failed to extract SubsSabBz RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("SubsSabBz RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subssabbz.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [sevenzip, "x", "-y", f"-o{output_dir}", archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract SubsSabBz RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if not _subtitle_extension(rel):
-                continue
-            with open(path, "rb") as handle:
-                files.append((rel, handle.read()))
-    return files
+def _payload_season_episode(item):
+    # Host-side member selection keys off episode. Prefer the marker on the member
+    # filename, fall back to the row-level season/episode. Movies carry no episode.
+    if item.get("media_type") == "movie":
+        return None, None
+    season, episode = _season_episode_from_filename(item.get("filename"))
+    if episode is None:
+        episode = _episode_from_numeric_filename(item.get("filename"))
+    if season is None:
+        season = item.get("season")
+    if episode is None:
+        episode = item.get("episode")
+    return season, episode
 
 
 def _archive_rows_from_pairs(pairs):
@@ -622,6 +537,20 @@ def _is_rar_archive(body):
     return bool(body) and (body.startswith(b"Rar!\x1a\x07\x00") or body.startswith(b"Rar!\x1a\x07\x01\x00"))
 
 
+def _is_html_body(body):
+    if not body:
+        return False
+    head = body[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or head.startswith(b"<!--")
+        or b"<body" in head
+        or b"<head" in head
+    )
+
+
 def _subtitle_extension(name):
     lowered = (name or "").lower()
     for extension in SUBTITLE_EXTENSIONS:
@@ -653,20 +582,14 @@ def _normalize_line_endings(content):
 
 
 def _content_payload(content, subtitle_format):
-    encoding = "utf-8"
-    for candidate in ("utf-8", "cp1251", "latin-1"):
-        try:
-            content.decode(candidate)
-            encoding = candidate
-            break
-        except UnicodeDecodeError:
-            continue
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 
