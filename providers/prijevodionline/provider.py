@@ -104,7 +104,7 @@ def parse_series_page(body):
         section = text[start:end]
         for episode_match in _EPISODE_DIV_RE.finditer(section):
             fields = _episode_fields(episode_match.group("body"))
-            if not fields.get("number"):
+            if fields.get("number") is None:
                 continue
             episodes[(season, fields["number"])] = {
                 "episode_id": episode_match.group("id"),
@@ -265,8 +265,13 @@ class PrijevodiOnlineProvider:
     def _find_series(self, title):
         rows = parse_series_index(self._http_get(_index_url(title), referer=BASE_URL + "/serije"))
         wanted = _normalize(title)
+        # The site sometimes drops possessive apostrophes (e.g. "Da Vincis
+        # Demons" vs "Da Vinci's Demons"), which _normalize turns into a stray
+        # word boundary. Comparing the squashed form too keeps those matches.
+        wanted_squashed = wanted.replace(" ", "")
         for row in rows:
-            if _normalize(row["title"]) == wanted:
+            candidate = _normalize(row["title"])
+            if candidate == wanted or candidate.replace(" ", "") == wanted_squashed:
                 return row
         return None
 
@@ -366,23 +371,38 @@ def select_subtitle_file(names, payload):
     def score(index_name):
         index, name = index_name
         del index
-        normalized = _normalize_release(os.path.basename(name))
+        base = os.path.basename(name)
+        normalized = _normalize_release(base)
         value = 0
         if season is not None and episode is not None:
-            season_episode = f"s{season:02d}e{episode:02d}"
-            compact_episode = f"{season}x{episode:02d}"
-            compact_episode_plain = f"{season}x{episode}"
-            if season_episode in normalized:
+            # Match episode tokens as standalone numbers so a single-digit
+            # episode (e1/1x1) never matches a longer one (e10/1x10) via a
+            # trailing-digit substring.
+            tokens = _episode_tokens(base)
+            if (season, episode) in tokens:
                 value += 100
-            elif compact_episode in normalized or compact_episode_plain in normalized:
-                value += 95
-            elif f"e{episode:02d}" in normalized or f"e{episode}" in normalized:
+            elif any(token_episode == episode for _season, token_episode in tokens):
                 value += 80
         if releases and any(release and release in normalized for release in releases):
             value += 30
         return value
 
     return max(enumerate(candidates), key=score)[1]
+
+
+def _episode_tokens(name):
+    # Parse standalone SxxExx / NxNN markers so episode matching never relies
+    # on substring containment (which would let e1 match e10 or 1x1 match 1x10).
+    tokens = []
+    for match in _SXXEXX_RE.finditer(name or ""):
+        if match.group("s1") is not None:
+            season_value = int(match.group("s1"))
+            episode_value = int(match.group("e1"))
+        else:
+            season_value = int(match.group("s2"))
+            episode_value = int(match.group("e2"))
+        tokens.append((season_value, episode_value))
+    return tokens
 
 
 def _extract_rar_files(body):
