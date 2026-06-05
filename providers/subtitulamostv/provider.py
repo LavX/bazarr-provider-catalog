@@ -6,7 +6,9 @@ import html
 import json
 import os
 import re
+import socket
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
@@ -20,6 +22,10 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
 )
 HTTP_TIMEOUT_SECONDS = 10
+HTTP_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8
+RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
 CONTENT_TYPES = {
     "srt": "application/x-subrip",
     "vtt": "text/vtt",
@@ -427,6 +433,27 @@ def _matches():
     return ["episode", "season", "series", "title"]
 
 
+def _retry_after_seconds(error):
+    try:
+        value = error.headers.get("Retry-After")
+    except AttributeError:
+        return None
+    if not value:
+        return None
+    try:
+        seconds = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    if seconds < 0:
+        return None
+    return min(seconds, RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _backoff_seconds(attempt):
+    delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    return min(delay, RETRY_BACKOFF_CAP_SECONDS)
+
+
 def _http_get(url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
     headers = {
         "User-Agent": USER_AGENT,
@@ -435,8 +462,24 @@ def _http_get(url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
     if referer:
         headers["Referer"] = referer
     request = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read()
+    for attempt in range(1, HTTP_MAX_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.read()
+        except urllib.error.HTTPError as error:
+            # Retry only transient server-side / rate-limit statuses; 4xx
+            # (other than 429) propagate unchanged on the first occurrence.
+            if error.code not in RETRY_STATUS_CODES or attempt >= HTTP_MAX_ATTEMPTS:
+                raise
+            delay = _retry_after_seconds(error)
+            if delay is None:
+                delay = _backoff_seconds(attempt)
+            time.sleep(delay)
+        except (urllib.error.URLError, socket.timeout, TimeoutError):
+            # Connection refused / DNS failure / reset / read timeout.
+            if attempt >= HTTP_MAX_ATTEMPTS:
+                raise
+            time.sleep(_backoff_seconds(attempt))
 
 
 def _sleep(config):
