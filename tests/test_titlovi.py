@@ -37,6 +37,10 @@ def _zip_body(files):
     return stream.getvalue()
 
 
+def _rar_body(payload=b"chernobyl-pack"):
+    return b"Rar!\x1a\x07\x00" + payload
+
+
 class TitloviProviderTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
@@ -137,7 +141,7 @@ class TitloviProviderTests(unittest.TestCase):
         self.assertIn("season", results[0]["matches"])
         self.assertIn("episode", results[0]["matches"])
 
-    def test_download_extracts_matching_episode_from_pack_zip(self):
+    def test_download_returns_raw_zip_archive_with_episode(self):
         provider = self.mod.TitloviProvider()
         archive = _zip_body(
             {
@@ -162,33 +166,51 @@ class TitloviProviderTests(unittest.TestCase):
             {"username": "user", "password": "pass"},
         )
 
-        decoded = base64.b64decode(result["content_b64"])
-        self.assertEqual(decoded, b"1\n00:00:01,000 --> 00:00:02,000\nEpisode one\n")
-        self.assertEqual(result["format"], "srt")
-        self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
+        # Host-side extraction: the worker hands back the raw archive untouched.
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["episode"], 1)
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
+
+    def test_extract_download_returns_raw_rar_archive(self):
+        body = _rar_body()
+
+        result = self.mod.extract_download(body, {"episode": 3, "language": "srp"})
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["episode"], 3)
+        self.assertNotIn("encoding", result)
+
+    def test_extract_download_episode_is_none_for_movies(self):
+        body = _zip_body({"Dune.2021.srt": b"1\n00:00:01,000 --> 00:00:02,000\nMovie\n"})
+
+        result = self.mod.extract_download(body, {"language": "eng", "filename": "dune.zip"})
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertIsNone(result["episode"])
 
     def test_extract_download_accepts_direct_subtitle_body(self):
         body = b"1\r\n00:00:01,000 --> 00:00:02,000\r\nDirect subtitle\r\n"
 
-        result = self.mod.extract_download(body, {"filename": "titlovi.1001.eng.zip"})
+        result = self.mod.extract_download(body, {"filename": "titlovi.1001.eng.srt"})
 
         decoded = base64.b64decode(result["content_b64"])
         self.assertEqual(decoded, b"1\n00:00:01,000 --> 00:00:02,000\nDirect subtitle\n")
         self.assertEqual(result["format"], "srt")
+        self.assertNotIn("encoding", result)
 
-    def test_extract_download_selects_serbian_script_from_bundled_archive(self):
-        body = _zip_body(
-            {
-                "Movie.lat.srt": b"1\n00:00:01,000 --> 00:00:02,000\nLatin\n",
-                "Movie.cyr.srt": b"1\n00:00:01,000 --> 00:00:02,000\nCyrillic\n",
-            }
-        )
+    def test_extract_download_rejects_empty_body(self):
+        for body in (b"", b"   "):
+            with self.assertRaisesRegex(ValueError, "supported subtitle file"):
+                self.mod.extract_download(body, {})
 
-        latin = self.mod.extract_download(body, {"language": "srp", "filename": "movie.zip"})
-        cyrillic = self.mod.extract_download(body, {"language": "srp", "script": "Cyrl", "filename": "movie.zip"})
+    def test_extract_download_rejects_html_error_body(self):
+        body = b"<!DOCTYPE html><html><body>Not found</body></html>"
 
-        self.assertIn(b"Latin", base64.b64decode(latin["content_b64"]))
-        self.assertIn(b"Cyrillic", base64.b64decode(cyrillic["content_b64"]))
+        with self.assertRaisesRegex(ValueError, "supported subtitle file"):
+            self.mod.extract_download(body, {})
 
     def test_manifest_advertises_serbian_cyrillic_variant(self):
         manifest = json.loads((PROVIDER_DIR / "provider.json").read_text())
