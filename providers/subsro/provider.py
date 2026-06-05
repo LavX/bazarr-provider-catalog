@@ -156,8 +156,9 @@ def derive_matches(video, item):
         if season is not None and _int_or_none(video.get("season")) == season:
             add("season")
         episode = parse_episode(candidate)
-        if episode is not None and _int_or_none(video.get("episode")) == episode:
-            add("episode")
+        if episode is not None:
+            if _int_or_none(video.get("episode")) == episode:
+                add("episode")
         elif "imdb_id" in matches and "season" in matches:
             add("episode")
         return matches
