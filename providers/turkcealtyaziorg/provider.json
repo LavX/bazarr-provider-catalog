@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "066a98a7979b71207c70c1806028b358532b214a78f456211c08514cf1753571",
+  "bundle_sha256": "4cb66b5876f5be5c381a69707c42372e1ab56cadea463ca8b8f2ceed52634c88",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -84,13 +84,6 @@
       },
       {
         "hashes": [
-          "sha256:571ac1dc6991c450b25a9c2d84a3705e2ae7a53467b5d111c24fa8baabbed320"
-        ],
-        "name": "annotated-doc",
-        "version": "0.0.4"
-      },
-      {
-        "hashes": [
           "sha256:4d4c1eb3250f735f59ce842d8d92cd2927c008bd52008797ba030b5787c41f3b"
         ],
         "name": "asyncio-throttle",
@@ -149,13 +142,6 @@
       },
       {
         "hashes": [
-          "sha256:482be17c6991b8c19c5429a1e995d9b0efdbb63172824c41f99965dc0ade8ec2"
-        ],
-        "name": "click",
-        "version": "8.4.1"
-      },
-      {
-        "hashes": [
           "sha256:2b4d59804e8408e2fea7d1fbaf218e5ec984325221db76e6a241a9abd6cdd95c",
           "sha256:2eb992bbd4661238c5a397594c83f5b4dc2bc5b848c365c8f991b6780efcc5c7",
           "sha256:40ba1f85eaa6959837b1d51c9767e230e14612eea4ef110ee8854ada22da1bf5",
@@ -201,20 +187,6 @@
       },
       {
         "hashes": [
-          "sha256:9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a"
-        ],
-        "name": "markdown-it-py",
-        "version": "4.2.0"
-      },
-      {
-        "hashes": [
-          "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8"
-        ],
-        "name": "mdurl",
-        "version": "0.1.2"
-      },
-      {
-        "hashes": [
           "sha256:55d97cc6dae627efa6a6e548885712d4864b81110ac76fa4e534c03819fa4a56",
           "sha256:7eee46ccb30ff48a1e35bb818cc90846c6be2b68240e42a78599166722cea709",
           "sha256:97231140a50f5d447d3164f994b86a0bed7cd016e2682f8650d6a9158e14fd31",
@@ -225,13 +197,6 @@
         ],
         "name": "multidict",
         "version": "6.7.1"
-      },
-      {
-        "hashes": [
-          "sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e"
-        ],
-        "name": "packaging",
-        "version": "26.2"
       },
       {
         "hashes": [
@@ -256,13 +221,6 @@
       },
       {
         "hashes": [
-          "sha256:cd3d911976c184e61c641baf4e26a80f4ac474c830bf12cc8e541490c229bfd6"
-        ],
-        "name": "py7zz",
-        "version": "1.1.4"
-      },
-      {
-        "hashes": [
           "sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992"
         ],
         "name": "pycparser",
@@ -275,13 +233,6 @@
         ],
         "name": "pycryptodome",
         "version": "3.23.0"
-      },
-      {
-        "hashes": [
-          "sha256:81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176"
-        ],
-        "name": "pygments",
-        "version": "2.20.0"
       },
       {
         "hashes": [
@@ -320,31 +271,10 @@
       },
       {
         "hashes": [
-          "sha256:33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb"
-        ],
-        "name": "rich",
-        "version": "15.0.0"
-      },
-      {
-        "hashes": [
-          "sha256:7ecfff8f2fd72616f7481040475a65b2bf8af90a56c89140852d1120324e8686"
-        ],
-        "name": "shellingham",
-        "version": "1.5.4"
-      },
-      {
-        "hashes": [
           "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"
         ],
         "name": "six",
         "version": "1.17.0"
-      },
-      {
-        "hashes": [
-          "sha256:75caa44ed46a03fb2dab8808753ffacdbfea88495e74c85a28c5eefcf5f39c89"
-        ],
-        "name": "typer",
-        "version": "0.25.1"
       },
       {
         "hashes": [
@@ -386,7 +316,7 @@
   "entry_class": "TurkceAltyaziOrgProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "ec02360a89c357a323d63c90e8b5fb359d40b2441098a8fa4e14d91154bf16ee"
+    "provider.py": "302db590e3ebd7aa5fdb15dde57c543a880f9c5b19e0b33d82a67691a46fdbd9"
   },
   "languages": [
     "tur",
@@ -411,5 +341,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.5"
+  "version": "0.1.6"
 }
