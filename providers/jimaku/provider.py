@@ -32,7 +32,7 @@ UNHANDLED_ARCHIVE_EXTENSIONS = (".7z",)
 SUBTITLE_EXTENSIONS = (".ass", ".srt", ".ssa", ".sub", ".vtt")
 SUPPORTED_ALPHA3 = "jpn"
 SUPPORTED_ALPHA2 = "ja"
-AI_RE = re.compile(r"[\[\(]?whisperai[\]\)]?|[\[\(]whisper[\]\)]", re.I)
+AI_RE = re.compile(r"(?<![a-z])[\[\(]?whisper(?:ai)?[\]\)]?(?![a-z])", re.I)
 
 LANGUAGE_SQUASH = {
     "jp": "jpn",
@@ -174,9 +174,11 @@ def detect_subtitle_languages(filename):
         if alpha3 and alpha3 not in languages:
             languages.append(alpha3)
 
+    if not languages:
+        return default
     if len(languages) > 1:
         return languages if SUPPORTED_ALPHA3 in languages else default
-    return default
+    return languages
 
 
 def _subtitle_extension(name):
@@ -198,7 +200,11 @@ def _is_unhandled_archive(name):
 def filter_file_entries(files, enable_archives_download, enable_ai_subs, only_archives=False):
     files = [item for item in files or [] if not _is_unhandled_archive(item.get("name"))]
     archive_entries = [item for item in files if _is_archive(item.get("name"))]
-    subtitle_entries = [item for item in files if not _is_archive(item.get("name"))]
+    subtitle_entries = [
+        item
+        for item in files
+        if not _is_archive(item.get("name")) and _subtitle_extension(item.get("name"))
+    ]
     has_only_archives = bool(archive_entries) and not subtitle_entries
     if only_archives:
         files = archive_entries
@@ -214,6 +220,8 @@ def filter_file_entries(files, enable_archives_download, enable_ai_subs, only_ar
         if not enable_ai_subs and AI_RE.search(filename):
             continue
         languages = detect_subtitle_languages(filename)
+        if SUPPORTED_ALPHA3 not in languages:
+            continue
         if len(languages) > 1:
             continue
         try:
@@ -549,7 +557,12 @@ def select_subtitle_file(names, video):
             return 80
         return 0
 
-    return max(candidates, key=score)
+    best = max(candidates, key=score)
+    if score(best) == 0:
+        raise ValueError(
+            f"jimaku archive does not contain a subtitle for episode {episode}"
+        )
+    return best
 
 
 def _is_rar_archive(body):

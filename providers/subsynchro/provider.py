@@ -154,8 +154,11 @@ def parse_legacy_ajax_results(body, video=None):
         )
         matches = []
         wanted_title = _coerce_text((video or {}).get("title"))
+        wanted_year = _safe_int((video or {}).get("year"))
         if wanted_title and _normalize(wanted_title) in _normalize(title_text):
-            matches.extend(["title", "year"])
+            matches.append("title")
+            if wanted_year is not None:
+                matches.append("year")
         rows.append(
             {
                 "file_id": _stable_id(download_url),
@@ -245,6 +248,10 @@ class SubsynchroProvider:
     def _results_from_film_body(self, video, body, referer, config):
         results = []
         seen = set()
+        wanted_year = _safe_int((video or {}).get("year"))
+        _film_title, film_year = _film_identity(body)
+        if wanted_year is not None and film_year is not None and film_year != wanted_year:
+            return results
         releases = _rank_releases(video, parse_film_releases(body))
         for release in releases[:MAX_RELEASE_PAGES]:
             _sleep(config)

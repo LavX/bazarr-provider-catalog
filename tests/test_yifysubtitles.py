@@ -45,6 +45,40 @@ MOVIE_HTML = b"""
   </tbody>
 </table>
 """
+BRAZILIAN_HTML = b"""
+<table class="table other-subs">
+  <tbody>
+    <tr data-id="500001">
+      <td class="rating-cell"><span class="label label-success">5</span></td>
+      <td class="flag-cell"><span class="flag flag-br"></span><span class="sub-lang">Brazilian Portuguese</span></td>
+      <td>
+        <a href="/subtitles/dune-part-one-2021-brazilian-portuguese-yify-500001">
+          <span class="text-muted">subtitle</span> Dune.2021.1080p.WEBRip-CM
+        </a>
+      </td>
+      <td class="other-cell"></td>
+      <td class="uploader-cell">br_uploader</td>
+    </tr>
+  </tbody>
+</table>
+"""
+BIG5_HTML = b"""
+<table class="table other-subs">
+  <tbody>
+    <tr data-id="500002">
+      <td class="rating-cell"><span class="label label-success">4</span></td>
+      <td class="flag-cell"><span class="flag flag-tw"></span><span class="sub-lang">Big 5 code</span></td>
+      <td>
+        <a href="/subtitles/dune-part-one-2021-big-5-yify-500002">
+          <span class="text-muted">subtitle</span> Dune.2021.1080p.WEBRip-CM
+        </a>
+      </td>
+      <td class="other-cell"></td>
+      <td class="uploader-cell">tw_uploader</td>
+    </tr>
+  </tbody>
+</table>
+"""
 DETAIL_HTML = b"""
 <a class="btn-icon download-subtitle" href="/subtitle/dune-2021-english-yify-364913.zip">
   <span class="title">DOWNLOAD SUBTITLE</span>
@@ -106,6 +140,35 @@ class YifyParserTests(unittest.TestCase):
 
         self.assertEqual(set(matches), {"title", "imdb_id", "release_group", "resolution", "source"})
 
+    def test_parse_movie_page_marks_brazilian_portuguese_country(self):
+        rows = self.mod.parse_movie_page(BRAZILIAN_HTML)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["language"], "por")
+        self.assertEqual(rows[0]["country"], "BR")
+
+    def test_parse_movie_page_parses_big5_traditional_chinese_label(self):
+        rows = self.mod.parse_movie_page(BIG5_HTML)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["language"], "zho")
+        self.assertIsNone(rows[0]["country"])
+
+    def test_release_group_matches_only_on_token_boundary(self):
+        # "CM" must not match a different group like "CMRG" via raw substring.
+        self.assertFalse(
+            self.mod._release_group_matches("CM", "Dune.2021.1080p.WEBRip-CMRG")
+        )
+        self.assertTrue(
+            self.mod._release_group_matches("CM", "Dune.2021.1080p.WEBRip-CM")
+        )
+
+    def test_derive_matches_skips_release_group_substring_collision(self):
+        row = {"release": "Dune.2021.1080p.WEBRip-CMRG"}
+        matches = self.mod.derive_matches({"release_group": "CM"}, row)
+
+        self.assertNotIn("release_group", matches)
+
 
 class YifyProviderTests(unittest.TestCase):
     def setUp(self):
@@ -163,6 +226,29 @@ class YifyProviderTests(unittest.TestCase):
         self.assertEqual(normal, [])
         self.assertEqual(len(hi), 1)
         self.assertTrue(hi[0]["language"]["hi"])
+
+    def test_search_distinguishes_brazilian_from_plain_portuguese(self):
+        provider = self.mod.YifySubtitlesProvider()
+        provider._http_get = lambda url, timeout=15, referer=None: BRAZILIAN_HTML
+
+        plain = provider.search(
+            {"kind": "movie", "title": "Dune", "imdb_id": "tt1160419"},
+            [{"alpha3": "por", "alpha2": "pt", "hi": False}],
+            {},
+        )
+        brazilian = provider.search(
+            {"kind": "movie", "title": "Dune", "imdb_id": "tt1160419"},
+            [{"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR", "hi": False}],
+            {},
+        )
+
+        # Plain Portuguese requests must not pick up Brazilian rows.
+        self.assertEqual(plain, [])
+        self.assertEqual(len(brazilian), 1)
+        result = brazilian[0]
+        self.assertEqual(result["language"]["alpha3"], "por")
+        self.assertEqual(result["language"]["country_alpha2"], "BR")
+        self.assertEqual(result["provider_payload"]["country_alpha2"], "BR")
 
     def test_search_skips_forced_variant_without_network(self):
         provider = self.mod.YifySubtitlesProvider()

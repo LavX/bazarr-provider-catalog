@@ -78,7 +78,12 @@ class LegendasNetProvider:
         if response.status in {401, 403}:
             raise PermissionError("Invalid Legendas.net access token")
         _raise_for_status(response, "Legendas.net download")
-        return extract_download(response.body, payload.get("filename") or download_link)
+        # Derive the real subtitle format from the server-provided source (the
+        # actual download path and any Content-Disposition filename), not the
+        # synthetic ".zip" name stored on the search candidate, so direct
+        # ".ass"/".ssa"/".sub"/".vtt" downloads are not mislabeled as ".srt".
+        disposition_name = _content_disposition_filename(response.headers)
+        return extract_download(response.body, disposition_name or str(download_link))
 
     def _search_response(self, video, config):
         if video.get("kind") == "episode":
@@ -183,7 +188,41 @@ def extract_download(body, filename=""):
         with zipfile.ZipFile(stream) as archive:
             selected = _first_subtitle_file(archive.namelist())
             return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
-    return _content_payload(body, _format_from_filename(filename))
+    return _content_payload(body, _direct_format(filename, body))
+
+
+def _direct_format(filename, body):
+    # Prefer the real extension carried by the server filename/path. Only fall
+    # back to sniffing the bytes when the source name has no subtitle extension,
+    # so we never report ".srt" for a direct ".ass"/".ssa"/".sub"/".vtt" file.
+    extension = _subtitle_extension(filename or "")
+    if extension:
+        return extension
+    return _format_from_content(body) or "srt"
+
+
+def _format_from_content(body):
+    head = (body or b"")[:512].lstrip(b"\xef\xbb\xbf").lstrip()
+    lowered = head.lower()
+    if lowered.startswith(b"webvtt"):
+        return "vtt"
+    if lowered.startswith(b"[script info]") or b"\n[script info]" in lowered:
+        return "ass"
+    return None
+
+
+def _content_disposition_filename(headers):
+    value = ""
+    for key, header_value in (headers or {}).items():
+        if str(key).lower() == "content-disposition":
+            value = str(header_value or "")
+            break
+    if not value:
+        return ""
+    match = re.search(r"filename\*?=(?:UTF-8'')?\"?([^\";]+)\"?", value, re.IGNORECASE)
+    if not match:
+        return ""
+    return urllib.parse.unquote(match.group(1)).strip()
 
 
 def _candidate(video, item, kind):

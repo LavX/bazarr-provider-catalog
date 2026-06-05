@@ -42,6 +42,19 @@ WHEEL_COVERAGE_POLICY = (
     "hashes for cp312, cp313, cp314, or a compatible stable-ABI wheel such as "
     "cp311-abi3, on every Bazarr+ platform you support."
 )
+# Packages that ship ABI/platform-specific wheels and therefore must carry hashes
+# for more than one wheel (cp312/cp313/cp314 across manylinux x86_64 and aarch64,
+# or a compatible abi3 wheel). A single hash means a pip --require-hashes install
+# fails on any worker that resolves a different wheel than the one pinned. Use
+# scripts/expand_wheel_hashes.py to regenerate the full set from PyPI.
+KNOWN_MULTIWHEEL_PACKAGES = frozenset({
+    "aiohttp", "brotli", "Brotli", "cffi", "charset-normalizer", "charset_normalizer",
+    "cryptography", "frozenlist", "multidict", "propcache", "psutil",
+    "pycryptodome", "pycryptodomex", "yarl",
+})
+# Packages that legitimately publish only a single-platform wheel (no aarch64 wheel
+# exists on PyPI). Tracked as a known dependency limitation, not a manifest error.
+SINGLE_WHEEL_PACKAGES = frozenset({"py7zz"})
 
 
 class CatalogError(Exception):
@@ -119,6 +132,12 @@ def validate_dependency_lock(manifest_path, dependencies):
         for digest in hashes:
             if not isinstance(digest, str) or not digest.startswith("sha256:") or not _HEX_SHA256_RE.match(digest[7:]):
                 raise CatalogError(f"{manifest_path} dependency {name} has invalid hash")
+        if name in KNOWN_MULTIWHEEL_PACKAGES and name not in SINGLE_WHEEL_PACKAGES and len(hashes) < 2:
+            raise CatalogError(
+                f"{manifest_path} dependency {name} ships ABI-specific wheels but pins only "
+                f"{len(hashes)} hash; include the cp312/cp313/cp314 manylinux x86_64+aarch64 "
+                f"(or abi3) wheel hashes (run scripts/expand_wheel_hashes.py)"
+            )
 
 
 def validate_config_schema(manifest_path, config_schema, secret_fields):

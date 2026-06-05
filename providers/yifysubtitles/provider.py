@@ -22,49 +22,53 @@ USER_AGENT = (
 )
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt")
 
+# Maps the YIFY language label to (alpha3, alpha2, country_alpha2). The country
+# marker keeps Brazilian Portuguese ("por" + "BR") distinct from plain
+# Portuguese, mirroring the upstream yifysubtitles language table.
 LANGUAGE_NAMES = {
-    "Albanian": ("sqi", "sq"),
-    "Arabic": ("ara", "ar"),
-    "Bengali": ("ben", "bn"),
-    "Brazilian Portuguese": ("por", "pt"),
-    "Brazillian Portuguese": ("por", "pt"),
-    "Bulgarian": ("bul", "bg"),
-    "Chinese": ("zho", "zh"),
-    "Chinese BG code": ("zho", "zh"),
-    "Croatian": ("hrv", "hr"),
-    "Czech": ("ces", "cs"),
-    "Danish": ("dan", "da"),
-    "Dutch": ("nld", "nl"),
-    "English": ("eng", "en"),
-    "Farsi/Persian": ("fas", "fa"),
-    "Finnish": ("fin", "fi"),
-    "French": ("fra", "fr"),
-    "German": ("deu", "de"),
-    "Greek": ("ell", "el"),
-    "Hebrew": ("heb", "he"),
-    "Hungarian": ("hun", "hu"),
-    "Indonesian": ("ind", "id"),
-    "Italian": ("ita", "it"),
-    "Japanese": ("jpn", "ja"),
-    "Korean": ("kor", "ko"),
-    "Lithuanian": ("lit", "lt"),
-    "Macedonian": ("mkd", "mk"),
-    "Malay": ("msa", "ms"),
-    "Norwegian": ("nor", "no"),
-    "Polish": ("pol", "pl"),
-    "Portuguese": ("por", "pt"),
-    "Romanian": ("ron", "ro"),
-    "Russian": ("rus", "ru"),
-    "Serbian": ("srp", "sr"),
-    "Slovenian": ("slv", "sl"),
-    "Spanish": ("spa", "es"),
-    "Swedish": ("swe", "sv"),
-    "Thai": ("tha", "th"),
-    "Turkish": ("tur", "tr"),
-    "Urdu": ("urd", "ur"),
-    "Vietnamese": ("vie", "vi"),
+    "Albanian": ("sqi", "sq", None),
+    "Arabic": ("ara", "ar", None),
+    "Bengali": ("ben", "bn", None),
+    "Brazilian Portuguese": ("por", "pt", "BR"),
+    "Brazillian Portuguese": ("por", "pt", "BR"),
+    "Bulgarian": ("bul", "bg", None),
+    "Chinese": ("zho", "zh", None),
+    "Chinese BG code": ("zho", "zh", None),
+    "Big 5 code": ("zho", "zh", None),
+    "Croatian": ("hrv", "hr", None),
+    "Czech": ("ces", "cs", None),
+    "Danish": ("dan", "da", None),
+    "Dutch": ("nld", "nl", None),
+    "English": ("eng", "en", None),
+    "Farsi/Persian": ("fas", "fa", None),
+    "Finnish": ("fin", "fi", None),
+    "French": ("fra", "fr", None),
+    "German": ("deu", "de", None),
+    "Greek": ("ell", "el", None),
+    "Hebrew": ("heb", "he", None),
+    "Hungarian": ("hun", "hu", None),
+    "Indonesian": ("ind", "id", None),
+    "Italian": ("ita", "it", None),
+    "Japanese": ("jpn", "ja", None),
+    "Korean": ("kor", "ko", None),
+    "Lithuanian": ("lit", "lt", None),
+    "Macedonian": ("mkd", "mk", None),
+    "Malay": ("msa", "ms", None),
+    "Norwegian": ("nor", "no", None),
+    "Polish": ("pol", "pl", None),
+    "Portuguese": ("por", "pt", None),
+    "Romanian": ("ron", "ro", None),
+    "Russian": ("rus", "ru", None),
+    "Serbian": ("srp", "sr", None),
+    "Slovenian": ("slv", "sl", None),
+    "Spanish": ("spa", "es", None),
+    "Swedish": ("swe", "sv", None),
+    "Thai": ("tha", "th", None),
+    "Turkish": ("tur", "tr", None),
+    "Urdu": ("urd", "ur", None),
+    "Vietnamese": ("vie", "vi", None),
 }
-SUPPORTED_LANGUAGES = {alpha3: alpha2 for alpha3, alpha2 in LANGUAGE_NAMES.values()}
+SUPPORTED_LANGUAGES = {alpha3: alpha2 for alpha3, alpha2, _country in LANGUAGE_NAMES.values()}
 ALPHA2_TO_ALPHA3 = {alpha2: alpha3 for alpha3, alpha2 in SUPPORTED_LANGUAGES.items()}
 
 _TR_RE = re.compile(r"<tr\b(?P<attrs>[^>]*)>(?P<body>.*?)</tr>", re.I | re.S)
@@ -104,6 +108,7 @@ def parse_movie_page(body):
                 "subtitle_id": subtitle_id,
                 "language": language[0],
                 "alpha2": language[1],
+                "country": language[2],
                 "release": release,
                 "page_url": page_url,
                 "rating": _rating(row_html),
@@ -217,7 +222,9 @@ class YifySubtitlesProvider:
             for language in requested:
                 if row["language"] != language["alpha3"] or row["hi"] != language["hi"]:
                     continue
-                key = (row["subtitle_id"], language["alpha3"], language["hi"])
+                if row.get("country") != language.get("country"):
+                    continue
+                key = (row["subtitle_id"], language["alpha3"], language.get("country"), language["hi"])
                 if key in seen:
                     continue
                 seen.add(key)
@@ -244,10 +251,35 @@ def _result_from_row(video, row, language):
     matches = derive_matches(video, row)
     score = _score(matches, row)
     filename = f"yifysubtitles.{row['subtitle_id']}.{language['alpha2']}.zip"
+    country = language.get("country")
+    language_block = {
+        "alpha3": language["alpha3"],
+        "alpha2": language["alpha2"],
+        "hi": language["hi"],
+        "forced": language.get("forced", False),
+    }
+    if country:
+        language_block["country_alpha2"] = country
+    id_suffix = f"-{country.lower()}" if country else ""
+    provider_payload = {
+        "provider": PROVIDER_ID,
+        "schema": 1,
+        "subtitle_id": row["subtitle_id"],
+        "page_url": row["page_url"],
+        "filename": filename,
+        "release": row["release"],
+        "rating": row["rating"],
+        "language": language["alpha3"],
+        "resolution": video.get("resolution"),
+        "source": video.get("source"),
+        "release_group": video.get("release_group"),
+    }
+    if country:
+        provider_payload["country_alpha2"] = country
     return {
         "provider": PROVIDER_ID,
-        "id": f"yifysubtitles-{row['subtitle_id']}-{language['alpha3']}",
-        "language": dict(language),
+        "id": f"yifysubtitles-{row['subtitle_id']}-{language['alpha3']}{id_suffix}",
+        "language": language_block,
         "release_info": row["release"],
         "filename": filename,
         "matches": matches,
@@ -264,19 +296,7 @@ def _result_from_row(video, row, language):
             "uploader": row["uploader"],
             "rating": row["rating"],
         },
-        "provider_payload": {
-            "provider": PROVIDER_ID,
-            "schema": 1,
-            "subtitle_id": row["subtitle_id"],
-            "page_url": row["page_url"],
-            "filename": filename,
-            "release": row["release"],
-            "rating": row["rating"],
-            "language": language["alpha3"],
-            "resolution": video.get("resolution"),
-            "source": video.get("source"),
-            "release_group": video.get("release_group"),
-        },
+        "provider_payload": provider_payload,
     }
 
 
@@ -300,16 +320,26 @@ def _requested_languages(languages):
         if alpha3 not in SUPPORTED_LANGUAGES:
             continue
         alpha2 = SUPPORTED_LANGUAGES[alpha3]
+        country = _country_for_language(item)
         hi = bool(item.get("hi", False)) if isinstance(item, dict) else False
         forced = bool(item.get("forced", False)) if isinstance(item, dict) else False
         if forced:
             continue
-        key = (alpha3, hi, forced)
+        key = (alpha3, country, hi, forced)
         if key in seen:
             continue
         seen.add(key)
-        rows.append({"alpha3": alpha3, "alpha2": alpha2, "hi": hi, "forced": forced})
+        rows.append({"alpha3": alpha3, "alpha2": alpha2, "country": country, "hi": hi, "forced": forced})
     return rows
+
+
+def _country_for_language(language):
+    if not isinstance(language, dict):
+        return None
+    value = language.get("country_alpha2") or language.get("country")
+    if isinstance(value, str) and value.strip():
+        return value.strip().upper()
+    return None
 
 
 def _alpha3_for_language(language):
@@ -356,8 +386,17 @@ def _title_in_text(title, text):
 
 
 def _release_group_matches(release_group, text):
-    release_group = _coerce_text(release_group)
-    return bool(release_group and release_group.lower() in (text or "").lower())
+    group_tokens = _normalize(release_group).split()
+    text_tokens = _normalize(text).split()
+    if not group_tokens or not text_tokens:
+        return False
+    # Match the release group only on token boundaries so a short group such as
+    # "CM" does not match a different group like "CMRG" via raw substring.
+    span = len(group_tokens)
+    for start in range(len(text_tokens) - span + 1):
+        if text_tokens[start:start + span] == group_tokens:
+            return True
+    return False
 
 
 def _source_matches(source, text):

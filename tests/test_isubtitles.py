@@ -2,6 +2,7 @@ import base64
 import hashlib
 import importlib.util
 import io
+import json
 import unittest
 import zipfile
 from pathlib import Path
@@ -9,6 +10,27 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "isubtitles"
 FIXTURE_DIR = ROOT / "tests" / "fixtures"
+
+
+BRAZIL_HTML = b"""
+<html>
+  <body>
+    <table>
+      <tr>
+        <td data-title="Download"><a href="/download/chernobyl/brazillian-portuguese/2001">Download</a></td>
+        <td data-title="Language"><a href="/chernobyl/brazillian-portuguese/2001">Brazillian Portuguese</a></td>
+        <td class="movie-release" data-title="Release / Movie">
+          <a href="/chernobyl/brazillian-portuguese/2001">Chernobyl.S01E01.WEBRip.x264-ION10</a>
+        </td>
+        <td class="text-nowrap" data-title="Created">6 years ago</td>
+        <td data-title="File">1</td>
+        <td class="text-nowrap" data-title="Size">15.0KB</td>
+        <td class="movie-release" data-title="Comment"></td>
+      </tr>
+    </table>
+  </body>
+</html>
+"""
 
 
 def _load_provider_module():
@@ -365,6 +387,96 @@ class ISubtitlesProviderTests(unittest.TestCase):
                 b"<html><title>challenge</title></html>",
                 {"filename": "isubtitles.bad.zip"},
             )
+
+    def test_search_fetches_brazillian_portuguese_page_for_br_request(self):
+        provider = self.mod.ISubtitlesProvider()
+        responses = {
+            "https://isubtitles.org/search?kwd=Chernobyl+S01E01": SEARCH_HTML,
+            "https://isubtitles.org/chernobyl/brazillian-portuguese": BRAZIL_HTML,
+        }
+        called = []
+
+        def stub(url, timeout=15, referer=None):
+            del timeout, referer
+            called.append(url)
+            if url not in responses:
+                raise AssertionError(f"unexpected URL: {url}")
+            return responses[url]
+
+        provider._http_get = stub
+        results = provider.search(
+            {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1},
+            [{"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR"}],
+            {"request_delay_ms": 0},
+        )
+
+        # S1: the BR request must hit the brazillian-portuguese listing, never the
+        # generic portuguese page.
+        self.assertIn("https://isubtitles.org/chernobyl/brazillian-portuguese", called)
+        self.assertNotIn("https://isubtitles.org/chernobyl/portuguese", called)
+        # S2: Brazilian rows carry alpha3 por + alpha2 pt + country_alpha2 BR.
+        self.assertEqual(
+            results[0]["language"],
+            {"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR", "hi": False, "forced": False},
+        )
+        self.assertEqual(results[0]["provider_payload"]["country_alpha2"], "BR")
+        self.assertTrue(results[0]["id"].endswith("-BR"))
+
+    def test_search_accepts_por_br_alpha3_shorthand(self):
+        provider = self.mod.ISubtitlesProvider()
+        responses = {
+            "https://isubtitles.org/search?kwd=Chernobyl+S01E01": SEARCH_HTML,
+            "https://isubtitles.org/chernobyl/brazillian-portuguese": BRAZIL_HTML,
+        }
+
+        def stub(url, timeout=15, referer=None):
+            del timeout, referer
+            if url not in responses:
+                raise AssertionError(f"unexpected URL: {url}")
+            return responses[url]
+
+        provider._http_get = stub
+        results = provider.search(
+            {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1},
+            [{"alpha3": "por-BR"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(results[0]["language"]["country_alpha2"], "BR")
+
+    def test_result_shape_omits_country_for_generic_portuguese(self):
+        provider = self.mod.ISubtitlesProvider()
+        row = {
+            "subtitle_id": "3001",
+            "slug": "chernobyl",
+            "language": "por",
+            "language_slug": "portuguese",
+            "release_info": "Chernobyl.S01E01.WEBRip.x264-ION10",
+            "download_url": "https://isubtitles.org/download/chernobyl/portuguese/3001",
+            "page_url": "https://isubtitles.org/chernobyl/portuguese/3001",
+            "file_count": 1,
+            "size": "15KB",
+            "updated": "today",
+            "comment": "",
+        }
+        result = provider._result(
+            {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1},
+            {"title": "Chernobyl - (2019)", "year": 2019, "slug": "chernobyl"},
+            row,
+            None,
+        )
+
+        self.assertNotIn("country_alpha2", result["language"])
+        self.assertNotIn("country_alpha2", result["provider_payload"])
+        self.assertFalse(result["id"].endswith("-BR"))
+
+
+class ISubtitlesManifestTests(unittest.TestCase):
+    def test_manifest_languages_include_pt_br(self):
+        manifest = json.loads((PROVIDER_DIR / "provider.json").read_text(encoding="utf-8"))
+        # S3: the manifest must advertise Brazilian Portuguese so Bazarr+ routes
+        # pt-BR requests to this provider.
+        self.assertIn("pt-BR", manifest["languages"])
 
 
 if __name__ == "__main__":
