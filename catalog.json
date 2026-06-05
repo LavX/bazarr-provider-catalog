@@ -1720,7 +1720,6 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-<<<<<<< HEAD
         "bundle_sha256": "2c885ce22eb83299cad2c4cf135eb6884cb49d8476d983db403458ae4b79cad3",
         "config_schema": {
           "additionalProperties": false,
@@ -1776,7 +1775,13 @@
             },
             {
               "hashes": [
-                "sha256:bd6c2a1c7573c64738d716488d2cdd3c00e340e4835707d8fdb8dc1a66ef164e"
+                "sha256:0ea948db76d31190bf08bd371623927ee1339d5f2a0b4b1b4a4439a65298703c",
+                "sha256:1c2aed2e5e41f24ea8ef1590b8e848a79b56f3a5564a65ceec43c9d692dc7d8a",
+                "sha256:3dce51d0f5e7951f8bb4900c257dad282f49190fdbebecd4ba99bcc41fef404d",
+                "sha256:5649fd1c7bade02f320a462fdefd0b4bd3ce036065836d4f42e0de958038e116",
+                "sha256:6178f72c5508bfc5fd446a5905e698c6212932f25bcdd4b47a757a50605a90e2",
+                "sha256:bd6c2a1c7573c64738d716488d2cdd3c00e340e4835707d8fdb8dc1a66ef164e",
+                "sha256:e044c39e41b92c845bc815e5ae4230804e8e7bc29e399b0437d64222d92809dd"
               ],
               "name": "charset-normalizer",
               "version": "3.4.7"
@@ -1902,10 +1907,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "4db5605361d9bcf7331a4d0db1e6e4d28f2f85d46713b8857a13ed9af5d535ef",
-=======
         "bundle_sha256": "483f838c841d24153a15f901cdea96d7ec2463256c9486bb3f72a927d97f6949",
->>>>>>> origin/main
         "config_schema": {
           "additionalProperties": false,
           "properties": {
