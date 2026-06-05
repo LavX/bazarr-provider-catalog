@@ -165,6 +165,27 @@ class SdkCliTests(unittest.TestCase):
         self.assertIn("py3-none-any", matrix["wheel_coverage"])
         self.assertNotIn("3.11", result.stdout)
 
+    def test_validate_rejects_underhashed_multiwheel_dependency(self):
+        from sdk import cli as sdk_cli
+
+        single = {"requirements": [{"name": "cffi", "version": "2.0.0", "hashes": ["sha256:" + "a" * 64]}]}
+        with self.assertRaisesRegex(sdk_cli.CatalogError, "cffi"):
+            sdk_cli.validate_dependency_lock("manifest.json", single)
+
+        multi = {
+            "requirements": [
+                {"name": "cffi", "version": "2.0.0", "hashes": ["sha256:" + "a" * 64, "sha256:" + "b" * 64]}
+            ]
+        }
+        sdk_cli.validate_dependency_lock("manifest.json", multi)  # must not raise
+
+    def test_validate_allows_single_wheel_dependency_exception(self):
+        from sdk import cli as sdk_cli
+
+        # py7zz publishes no aarch64 wheel, so a single pinned hash is acceptable.
+        py7zz = {"requirements": [{"name": "py7zz", "version": "1.1.4", "hashes": ["sha256:" + "c" * 64]}]}
+        sdk_cli.validate_dependency_lock("manifest.json", py7zz)  # must not raise
+
     def test_readme_python_badge_matches_runtime_matrix(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 

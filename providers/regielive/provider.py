@@ -69,7 +69,7 @@ def build_query_params(video):
     elif kind == "episode":
         series = _clean_text(video.get("series"))
         season = _clean_number(video.get("season"))
-        episode = _clean_number(video.get("episode"))
+        episode = _clean_number(_first_episode(video.get("episode")))
         if not series or season is None or episode is None:
             return {}
         params["nume"] = series
@@ -240,9 +240,12 @@ class RegieLiveProvider:
         search_body = self._http_get(search_url)
         rows = []
         for media in parse_html_search_results(search_body, video)[:3]:
+            # Serial root pages only render the default/latest season, so an older
+            # season request must follow the explicit season URL instead.
+            detail_url = _season_detail_url(media["url"], video)
             _sleep(config)
-            detail_body = self._http_get(media["url"], referer=search_url)
-            for row in parse_html_detail_results(detail_body, media["url"]):
+            detail_body = self._http_get(detail_url, referer=search_url)
+            for row in parse_html_detail_results(detail_body, detail_url):
                 if not _html_subtitle_matches_video(row, video):
                     continue
                 row = dict(row)
@@ -360,6 +363,10 @@ def _requests_romanian(languages):
     for language in languages or []:
         if not isinstance(language, dict):
             continue
+        # RegieLive only exposes normal subtitles, so a forced-only or HI-only
+        # Romanian request must be skipped rather than served a regular subtitle.
+        if language.get("forced") or language.get("hi"):
+            continue
         alpha3 = (language.get("alpha3") or "").lower()
         alpha2 = (language.get("alpha2") or "").lower()
         if alpha3 == "ron" or alpha2 == "ro":
@@ -374,6 +381,17 @@ def _html_query(video):
     if video.get("kind") == "episode":
         return _clean_text(video.get("series"))
     return ""
+
+
+def _season_detail_url(media_url, video):
+    video = video or {}
+    if video.get("kind") != "episode":
+        return media_url
+    season = _clean_number(video.get("season"))
+    if season is None:
+        return media_url
+    base = media_url if media_url.endswith("/") else media_url + "/"
+    return urllib.parse.urljoin(base, f"sezonul-{season}/")
 
 
 def _html_media_matches_video(row, video):
@@ -395,7 +413,7 @@ def _html_subtitle_matches_video(row, video):
         return True
     try:
         expected_season = int(video.get("season"))
-        expected_episode = int(video.get("episode"))
+        expected_episode = int(_first_episode(video.get("episode")))
     except (TypeError, ValueError):
         return True
     release = _clean_text(row.get("title"))
@@ -434,6 +452,17 @@ def _clean_number(value):
         return str(int(value))
     except (TypeError, ValueError):
         return None
+
+
+def _first_episode(value):
+    # Bazarr passes multi-episode releases as a list such as [1, 2]; collapse it
+    # to the lowest episode so the search still targets a concrete episode.
+    if isinstance(value, (list, tuple)):
+        numbers = [number for number in (_clean_number(item) for item in value) if number is not None]
+        if not numbers:
+            return None
+        return min(numbers, key=int)
+    return value
 
 
 def _safe_float(value):

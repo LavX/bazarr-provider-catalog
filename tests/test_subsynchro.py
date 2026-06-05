@@ -219,6 +219,67 @@ class SubsynchroProviderTests(unittest.TestCase):
 
         self.assertEqual(ranked, [])
 
+    def test_search_rejects_redirected_film_page_with_wrong_year(self):
+        provider = self.mod.SubsynchroProvider()
+        calls = []
+        legacy_json = json.dumps(
+            {
+                "status": 200,
+                "data": [
+                    {
+                        "titre": "The Plastic Detox",
+                        "titre_original": "The Plastic Detox",
+                        "release": "The.Plastic.Detox.1984.1080p.WEB.H264-LEGACY",
+                        "filename": "The.Plastic.Detox.1984.1080p.WEB.h264-LEGACY.srt",
+                        "telechargement": "https://www.subsynchro.com/download.php?id=42",
+                        "fichier": "zip",
+                    }
+                ],
+            }
+        ).encode("utf-8")
+
+        release_url = "https://www.subsynchro.com/2025/the-plastic-detox/the-plastic-detox-2026-1080p-web-h264-edith.html"
+
+        def stub(url, data=None, timeout=15, referer=None):
+            del timeout, referer
+            calls.append((url, data))
+            if url == self.mod.SEARCH_URL:
+                return FILM_HTML
+            if url == release_url:
+                return RELEASE_HTML
+            if url.startswith(self.mod.LEGACY_AJAX_URL):
+                return legacy_json
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_request = stub
+        results = provider.search(
+            {"kind": "movie", "title": "The Plastic Detox", "year": 1984},
+            [{"alpha3": "fra", "alpha2": "fr"}],
+            {"request_delay_ms": 0},
+        )
+
+        # The redirected film page is for 2025, so its releases must not be
+        # fetched or returned for a 1984 request; the search must fall through
+        # to legacy AJAX instead of returning the wrong-year release.
+        self.assertNotIn(release_url, [call[0] for call in calls])
+        self.assertTrue(calls[-1][0].startswith(self.mod.LEGACY_AJAX_URL))
+        self.assertEqual(len(results), 1)
+        self.assertEqual(
+            results[0]["provider_payload"]["url"],
+            "https://www.subsynchro.com/download.php?id=42",
+        )
+
+    def test_legacy_ajax_without_year_does_not_claim_year_match(self):
+        video = {"kind": "movie", "title": "The Plastic Detox"}
+        rows = self.mod.parse_legacy_ajax_results(LEGACY_JSON, video)
+
+        self.assertIn("title", rows[0]["matches"])
+        self.assertNotIn("year", rows[0]["matches"])
+
+        result = self.mod.SubsynchroProvider()._result(video, rows[0])
+        self.assertEqual(result["matches"], ["title"])
+        self.assertEqual(result["score"], 80)
+
     def test_search_rejects_unsupported_media_or_language(self):
         provider = self.mod.SubsynchroProvider()
         provider._http_request = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("network should not be used"))

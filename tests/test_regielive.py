@@ -58,6 +58,21 @@ class RegieLiveParserTests(unittest.TestCase):
             {"nume": "Breaking Bad", "sezon": "1", "episod": "1", "an": "2008"},
         )
 
+    def test_episode_query_params_collapse_multi_episode_list(self):
+        params = self.mod.build_query_params(
+            {
+                "kind": "episode",
+                "series": "The Office",
+                "season": 1,
+                "episode": [2, 1],
+                "year": 2005,
+            }
+        )
+        self.assertEqual(
+            params,
+            {"nume": "The Office", "sezon": "1", "episod": "1", "an": "2005"},
+        )
+
     def test_parse_search_results_flattens_nested_subtitles(self):
         rows = self.mod.parse_search_results(MOVIE_JSON)
         self.assertEqual([row["subtitle_id"] for row in rows], ["2573535", "2573536"])
@@ -207,6 +222,86 @@ class RegieLiveProviderTests(unittest.TestCase):
         self.assertIn("series", results[0]["matches"])
         self.assertIn("season", results[0]["matches"])
         self.assertIn("episode", results[0]["matches"])
+
+    def test_html_fallback_follows_requested_season(self):
+        provider = self.mod.RegieLiveProvider()
+        search_html = (
+            b"<ul id=\"lista-filme\"><li>"
+            b"<div class=\"tags-imagini\"><a class=\"tag-serial\">Serial</a></div>"
+            b"<h2><a href=\"https://subtitrari.regielive.ro/the-office-1234/\""
+            b" class=\"text-xl\">The Office</a>"
+            b"<span>(2005)</span></h2>"
+            b"</li></ul>"
+        )
+        # The serial root page renders the latest season (S05); only the
+        # sezonul-1 page has the requested S01E01 rows.
+        root_detail_html = (
+            b"<ul><li class=\"subtitrare\">"
+            b"<span id=\"sub_900\">The.Office.S05E01.HDTV.XviD-LOL</span>"
+            b"<a href=\"https://subtitrari.regielive.ro/descarca-1234-900.zip\">Descarca</a>"
+            b"</li></ul>"
+        )
+        season_detail_html = (
+            b"<ul><li class=\"subtitrare\">"
+            b"<span id=\"sub_901\">The.Office.S01E01.PDTV.XviD-FQM</span>"
+            b"<a href=\"https://subtitrari.regielive.ro/descarca-1234-901.zip\">Descarca</a>"
+            b"</li></ul>"
+        )
+        calls = []
+
+        def stub(url, headers=None, timeout=15, referer=None):
+            del headers, timeout, referer
+            calls.append(url)
+            if url.startswith("https://api.regielive.ro/"):
+                raise RuntimeError("regielive rejected the request")
+            if url == "https://subtitrari.regielive.ro/cauta.html?s=The+Office":
+                return search_html
+            if url == "https://subtitrari.regielive.ro/the-office-1234/sezonul-1/":
+                return season_detail_html
+            if url == "https://subtitrari.regielive.ro/the-office-1234/":
+                return root_detail_html
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        results = provider.search(
+            {"kind": "episode", "series": "The Office", "season": 1, "episode": 1, "year": 2005},
+            [{"alpha3": "ron", "alpha2": "ro"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertIn(
+            "https://subtitrari.regielive.ro/the-office-1234/sezonul-1/", calls
+        )
+        self.assertNotIn("https://subtitrari.regielive.ro/the-office-1234/", calls)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["provider_payload"]["subtitle_id"], "901")
+        self.assertEqual(
+            results[0]["release_info"], "The.Office.S01E01.PDTV.XviD-FQM"
+        )
+
+    def test_search_skips_forced_only_and_hi_only_romanian(self):
+        provider = self.mod.RegieLiveProvider()
+
+        def stub(url, headers=None, timeout=15, referer=None):
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        self.assertEqual(
+            provider.search(
+                {"kind": "movie", "title": "Dune", "year": 2021},
+                [{"alpha3": "ron", "alpha2": "ro", "forced": True}],
+                {},
+            ),
+            [],
+        )
+        self.assertEqual(
+            provider.search(
+                {"kind": "movie", "title": "Dune", "year": 2021},
+                [{"alpha3": "ron", "alpha2": "ro", "hi": True}],
+                {},
+            ),
+            [],
+        )
 
     def test_download_visits_landing_page_then_downloads_zip_and_extracts_subtitle(self):
         provider = self.mod.RegieLiveProvider()

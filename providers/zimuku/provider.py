@@ -33,6 +33,11 @@ try:
 except ImportError:  # pragma: no cover, dependency is declared in provider.json
     py7zz = None
 
+try:
+    import charset_normalizer
+except ImportError:  # pragma: no cover, dependency is declared in provider.json
+    charset_normalizer = None
+
 PROVIDER_ID = "zimuku"
 BASE_URL = "https://srtku.com"
 SEARCH_URL = f"{BASE_URL}/search"
@@ -310,7 +315,11 @@ def extract_download(body, payload=None):
             selected = select_subtitle_file(archive.namelist(), payload)
             return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
     if _is_rar_archive(body):
-        files = _extract_rar_files(body)
+        files = _extract_external_archive_files(body, "zimuku.rar")
+        selected = select_subtitle_file([name for name, _data in files], payload)
+        return _content_payload(dict(files)[selected], _subtitle_extension(selected) or "srt")
+    if _is_7z_archive(body):
+        files = _extract_external_archive_files(body, "zimuku.7z")
         selected = select_subtitle_file([name for name, _data in files], payload)
         return _content_payload(dict(files)[selected], _subtitle_extension(selected) or "srt")
     return _content_payload(body, _format_from_filename(payload.get("filename")))
@@ -393,10 +402,21 @@ def compute_score(video, item):
     return 70 if matches else 40
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Returning None stops urllib from following the redirect so the caller
+        # receives the 30x response itself. The Yunsuo verification request must
+        # not follow its 302 target, which on a one-use download URL would read
+        # and discard the subtitle before download() can fetch it.
+        return None
+
+
 class ZimukuProvider:
     def __init__(self):
         self._cookie_jar = CookieJar()
-        self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cookie_jar))
+        cookie_processor = urllib.request.HTTPCookieProcessor(self._cookie_jar)
+        self._opener = urllib.request.build_opener(cookie_processor)
+        self._no_redirect_opener = urllib.request.build_opener(cookie_processor, _NoRedirectHandler())
 
     def search(self, video, languages, config):
         video = video or {}
@@ -414,6 +434,8 @@ class ZimukuProvider:
             for row in parse_search_subtitle_rows(search_response.content, video):
                 if not _requested(row["language"], requested):
                     continue
+                if not _row_matches_episode(video, row):
+                    continue
                 key = (row["detail_url"], row["language"])
                 if key in seen:
                     continue
@@ -426,6 +448,8 @@ class ZimukuProvider:
                 rows = parse_episode_page(self._bypass_get(result_page["url"], config or {}, referer=search_url).content, result_page["year"])
                 for row in rows:
                     if not _requested(row["language"], requested):
+                        continue
+                    if not _row_matches_episode(video, row):
                         continue
                     key = (row["detail_url"], row["language"])
                     if key in seen:
@@ -536,7 +560,6 @@ class ZimukuProvider:
         return None
 
     def _http_get_response(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None, allow_redirects=True):
-        del allow_redirects
         headers = {
             "User-Agent": USER_AGENT,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -545,8 +568,9 @@ class ZimukuProvider:
         if referer:
             headers["Referer"] = referer
         request = urllib.request.Request(url, headers=headers, method="GET")
+        opener = self._opener if allow_redirects else self._no_redirect_opener
         try:
-            with self._opener.open(request, timeout=timeout) as response:
+            with opener.open(request, timeout=timeout) as response:
                 return HttpResponse(
                     getattr(response, "status", 200),
                     response.read(),
@@ -759,16 +783,19 @@ def _languages_from_row(row, release):
         if "hongkong" in src_alt or "繁" in src_alt or "cht" in src_alt:
             found.append("zho-TW")
         if "china" in src_alt or "jollyroger" in src_alt or "简" in src_alt or "chs" in src_alt:
-            found.append("zho")
+            found.append("zho-CN")
         if "english" in src_alt or "英文" in src_alt or re.search(r"\beng\b", src_alt):
             found.append("eng")
-    if not found:
-        if any(token in searchable for token in ("cht", "big5", "繁体", "繁體")):
-            found.append("zho-TW")
-        if any(token in searchable for token in ("chs", "gb", "简体", "簡體")):
-            found.append("zho")
-        if re.search(r"\beng(?:lish)?\b|英文", searchable):
-            found.append("eng")
+    # Always merge filename/text-derived languages with the flag-derived ones.
+    # A row can carry a Chinese flag plus a bilingual release such as
+    # *.CHS.ENG.srt, and gating the text scan behind "if not found" would drop
+    # the English half so English requests never see a valid candidate.
+    if any(token in searchable for token in ("cht", "big5", "繁体", "繁體")):
+        found.append("zho-TW")
+    if any(token in searchable for token in ("chs", "gb", "简体", "簡體")):
+        found.append("zho-CN")
+    if re.search(r"\beng(?:lish)?\b|英文", searchable):
+        found.append("eng")
     deduped = []
     for language in found:
         if language not in deduped:
@@ -918,6 +945,32 @@ def _episode_markers(normalized):
     return None, None
 
 
+def _row_matches_episode(video, row):
+    # Episode searches can surface season packs or sibling episodes (S01E02,
+    # S01E03) under the same season result. When a row carries an explicit
+    # SxxEyy marker it must match the requested season and episode, otherwise a
+    # request for S01E01 would offer the wrong-episode subtitle for download.
+    video = video or {}
+    if video.get("kind") != "episode":
+        return True
+    try:
+        video_episode = int(video.get("episode"))
+    except (TypeError, ValueError):
+        return True
+    season, episode = _episode_markers(_normalize(row.get("release_info")))
+    if episode is None:
+        return True
+    if episode != video_episode:
+        return False
+    try:
+        video_season = int(video.get("season"))
+    except (TypeError, ValueError):
+        return True
+    if season is not None and season != video_season:
+        return False
+    return True
+
+
 def _matches_source(value, normalized_text):
     if not _coerce_text(value):
         return False
@@ -958,11 +1011,15 @@ def _is_rar_archive(body):
     )
 
 
-def _extract_rar_files(body):
+def _is_7z_archive(body):
+    return bool(body) and body.startswith(b"7z\xbc\xaf\x27\x1c")
+
+
+def _extract_external_archive_files(body, archive_name):
     if py7zz is None:
-        raise RuntimeError("Zimuku RAR extraction requires bundled py7zz")
+        raise RuntimeError("Zimuku archive extraction requires bundled py7zz")
     with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "zimuku.rar")
+        archive_path = os.path.join(temp_dir, archive_name)
         output_dir = os.path.join(temp_dir, "out")
         os.mkdir(output_dir)
         with open(archive_path, "wb") as handle:
@@ -992,9 +1049,62 @@ def _content_payload(content, subtitle_format="srt", empty=False):
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format or "srt",
-        "encoding": "utf-8",
+        "encoding": _detect_encoding(content),
         "empty": bool(empty),
     }
+
+
+def _detect_encoding(content):
+    # Zimuku serves many Chinese subtitles in GBK/GB18030 or Big5 rather than
+    # UTF-8. Report the encoding that actually decodes the bytes so consumers do
+    # not display mojibake by trusting a hard-coded utf-8 label.
+    content = content or b""
+    if not content:
+        return "utf-8"
+    try:
+        content.decode("utf-8")
+        return "utf-8"
+    except UnicodeDecodeError:
+        pass
+    detected = _charset_normalizer_encoding(content)
+    if detected:
+        return detected
+    # gb18030 is a superset of GBK and covers simplified and traditional code
+    # points, so try it before Big5 and only fall back to latin-1 as a last
+    # resort to keep the bytes round-trippable.
+    for candidate in ("gb18030", "big5"):
+        try:
+            content.decode(candidate)
+            return candidate
+        except UnicodeDecodeError:
+            continue
+    return "latin-1"
+
+
+def _charset_normalizer_encoding(content):
+    if charset_normalizer is None:
+        return None
+    try:
+        best = charset_normalizer.from_bytes(content).best()
+    except Exception:  # pragma: no cover, defensive against detector failures
+        return None
+    if best is None:
+        return None
+    encoding = (best.encoding or "").lower().replace("_", "-")
+    # Only trust the detector when it lands on a Chinese-family code page. On
+    # short or ambiguous input it can otherwise guess unrelated encodings, so
+    # fall through to the gb18030/big5 decode chain in that case.
+    aliases = {
+        "gbk": "gb18030",
+        "gb2312": "gb18030",
+        "gb18030": "gb18030",
+        "hz-gb-2312": "gb18030",
+        "big5": "big5",
+        "big5hkscs": "big5",
+        "cp950": "big5",
+        "utf-8": "utf-8",
+    }
+    return aliases.get(encoding)
 
 
 def _content_type(subtitle_format):

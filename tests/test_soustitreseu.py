@@ -78,6 +78,32 @@ class SoustitreseuParserTests(unittest.TestCase):
             "https://www.sous-titres.eu/films/download/krbse0p1duwc8oi/Dune.Part.One.%282021%29.Z2.WEB.zip",
         )
 
+    def test_archive_languages_from_vo_vf_filenames(self):
+        self.assertEqual(
+            self.mod._languages_from_archive("Game.Of.Thrones.1x01.VO.FBK.zip", "<img src='img/flag.jpg' />"),
+            ["eng"],
+        )
+        self.assertEqual(
+            self.mod._languages_from_archive("Game.Of.Thrones.1x01.VF.FBK.zip", "<img src='img/flag.jpg' />"),
+            ["fra"],
+        )
+
+    def test_parse_archive_rows_detects_vo_language_without_flag_alt(self):
+        rows = self.mod.parse_archive_rows(
+            """
+            <a class="subList download" href="download/abc/Game.Of.Thrones.1x01.VO.zip">
+              <span class="filenameSerie">Game.Of.Thrones.1x01.VO.zip</span>
+              <span class="episodeNum">1 x 01</span>
+              <span class="lang"><img src="img/flag.jpg" /></span>
+            </a>
+            """,
+            "https://www.sous-titres.eu/series/game_of_thrones.html",
+            "series",
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["languages"], ["eng"])
+
     def test_parse_archive_rows_accepts_sublist_before_href(self):
         rows = self.mod.parse_archive_rows(
             """
@@ -176,6 +202,32 @@ class SoustitreseuProviderTests(unittest.TestCase):
 
         self.assertEqual(results, [])
         self.assertEqual(calls, ["https://www.sous-titres.eu/search.html?q=Interstellar"])
+
+    def test_search_movie_rejects_explicit_year_mismatch(self):
+        provider = self.mod.SoustitreseuProvider()
+        calls = []
+
+        def get_stub(url, timeout=15, referer=None):
+            del timeout, referer
+            calls.append(url)
+            if "search.html" in url:
+                return SEARCH_DUNE_HTML
+            if url == "https://www.sous-titres.eu/films/dune.html":
+                return b"<html><body></body></html>"
+            raise AssertionError(f"unexpected detail request: {url}")
+
+        provider._http_get = get_stub
+        results = provider.search(
+            {"kind": "movie", "title": "Dune", "year": 1984},
+            [{"alpha3": "fra", "alpha2": "fr"}],
+            {},
+        )
+
+        self.assertEqual(results, [])
+        self.assertNotIn(
+            "https://www.sous-titres.eu/films/dune_part_one.html",
+            calls,
+        )
 
     def test_search_ignores_unsupported_or_incomplete_requests(self):
         provider = self.mod.SoustitreseuProvider()

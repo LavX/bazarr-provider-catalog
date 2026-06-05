@@ -126,6 +126,39 @@ class SubF2MParserTests(unittest.TestCase):
 
         self.assertEqual(rows, [])
 
+    def test_parse_subtitle_page_only_marks_imdb_when_page_confirms_it(self):
+        # The page omits the IMDb link, so an expected id from the request must
+        # not inflate the row into an exact-id match.
+        body = DETAIL_DUNE_EN.replace(b"imdb.com/title/tt1160419", b"example.com/no-imdb")
+
+        rows = self.mod.parse_subtitle_page(
+            body,
+            "eng",
+            {"kind": "movie", "title": "Dune: Part One", "year": 2021, "imdb_id": "tt1160419"},
+        )
+
+        self.assertTrue(rows)
+        self.assertTrue(all(not row["imdb_matched"] for row in rows))
+
+        confirmed = self.mod.parse_subtitle_page(
+            DETAIL_DUNE_EN,
+            "eng",
+            {"kind": "movie", "title": "Dune: Part One", "year": 2021, "imdb_id": "tt1160419"},
+        )
+
+        self.assertTrue(confirmed[0]["imdb_matched"])
+
+    def test_requested_languages_keeps_same_language_variants(self):
+        requested = self.mod._requested_languages(
+            [
+                {"alpha3": "eng", "alpha2": "en", "forced": False},
+                {"alpha3": "eng", "alpha2": "en", "forced": True},
+            ]
+        )
+
+        self.assertEqual(len(requested), 2)
+        self.assertEqual({meta["forced"] for meta in requested}, {False, True})
+
     def test_parse_download_button_extracts_absolute_download_url(self):
         url = self.mod.parse_download_url(
             DOWNLOAD_GATE_DUNE,
@@ -244,6 +277,29 @@ class SubF2MProviderTests(unittest.TestCase):
 
         self.assertEqual(results[0]["language"]["alpha3"], "por")
         self.assertEqual(results[0]["provider_payload"]["language_path"], "brazillian-portuguese")
+
+    def test_search_maps_brazilian_portuguese_country_alpha2(self):
+        provider = self.mod.SubF2MProvider()
+        responses = {
+            "https://subf2m.co/subtitles/searchbytitle?query=Dune%3A%20Part%20One&l=": SEARCH_DUNE,
+            "https://subf2m.co/subtitles/dune-2021/brazillian-portuguese": DETAIL_DUNE_EN.replace(
+                b"/subtitles/dune-2021/english/3331049",
+                b"/subtitles/dune-2021/brazillian-portuguese/2706706",
+            ),
+        }
+
+        provider._http_get = lambda url, timeout=15, referer=None, config=None: responses[url]
+        results = provider.search(
+            {"kind": "movie", "title": "Dune: Part One", "year": 2021, "imdb_id": "tt1160419"},
+            [{"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(results[0]["language"]["alpha3"], "por")
+        self.assertEqual(results[0]["language"]["alpha2"], "pt")
+        self.assertEqual(results[0]["language"]["country_alpha2"], "BR")
+        self.assertEqual(results[0]["provider_payload"]["language_path"], "brazillian-portuguese")
+        self.assertEqual(results[0]["provider_payload"]["country_alpha2"], "BR")
 
     def test_download_follows_detail_gate_and_extracts_zip_subtitle(self):
         provider = self.mod.SubF2MProvider()
