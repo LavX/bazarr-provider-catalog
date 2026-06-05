@@ -4,22 +4,13 @@ import base64
 import hashlib
 import html
 import io
-import os
 import re
-import shutil
-import subprocess
-import tempfile
 import time
 import unicodedata
 import urllib.parse
 import urllib.request
 import zipfile
 from http.cookiejar import CookieJar
-
-try:
-    import py7zz
-except ImportError:  # pragma: no cover, dependency is declared in manifest
-    py7zz = None
 
 PROVIDER_ID = "subclub"
 BASE_URL = "https://www.subclub.eu"
@@ -221,14 +212,6 @@ class SubclubProvider:
             "media_type": item.get("media_type"),
             "release_info": filename,
         }
-        # A synthetic fallback archive has only the generic "subclub-<id>.zip" name,
-        # so carry the video's release hints into the payload. Without this,
-        # select_subtitle_file() has nothing but "subclub" and the archive id and
-        # would pick the first .srt instead of the file matching the wanted release.
-        if item.get("synthetic_archive"):
-            hints = _video_release_hints(video)
-            if hints:
-                payload["release_hints"] = hints
         return {
             "provider": PROVIDER_ID,
             "id": f"subclub-{item['archive_id']}-{hashlib.sha1(filename.encode('utf-8')).hexdigest()[:12]}",
@@ -259,158 +242,36 @@ class SubclubProvider:
         url = payload.get("url")
         if url:
             body = self._http_get(url, timeout=30)
-            if not body:
-                raise ValueError(f"subclub empty response for archive {payload.get('archive_id')}")
-            return _content_payload(_normalize_line_endings(body), _format_from_filename(payload.get("filename")))
+            return _download_payload(body, payload)
         archive_url = payload.get("archive_url")
         if not archive_url:
             raise ValueError("subclub download requires url or archive_url")
         body = self._http_get(archive_url, timeout=60)
-        return extract_archive_download(body, payload)
+        return _download_payload(body, payload)
 
 
-def extract_archive_download(body, payload=None):
+def _download_payload(body, payload):
     payload = payload or {}
-    if _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        selected = select_subtitle_file([name for name, _data in files], payload)
-        return _content_payload(_normalize_line_endings(dict(files)[selected]), _subtitle_extension(selected) or "srt")
-    stream = io.BytesIO(body or b"")
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist(), payload)
-            return _content_payload(_normalize_line_endings(archive.read(selected)), _subtitle_extension(selected) or "srt")
-    # Non-archive fallback: the archive endpoint can answer down.php with an HTML/error
-    # page or an empty body. The synthetic fallback filename ends in ".zip", so
-    # _format_from_filename() defaults to "srt" and we would otherwise hand back an
-    # invalid subtitle that looks successful. Reject those bodies instead.
+    # Reject broken responses up front: the down.php endpoint can answer with an empty
+    # stream or an HTML/error page that would otherwise look like a successful download.
     if not body or not body.strip():
         raise ValueError(f"subclub empty download for archive {payload.get('archive_id')}")
     if _is_html_body(body):
         raise ValueError(f"subclub returned an HTML/error page for archive {payload.get('archive_id')}")
+    if _is_archive_body(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
+        # the host, which lists it, picks the member by episode, and detects encoding.
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "episode": payload.get("episode"),
+        }
+    # Direct, non-archive subtitle body.
     return _content_payload(_normalize_line_endings(body), _format_from_filename(payload.get("filename")))
 
 
-def select_subtitle_file(names, payload):
-    candidates = [name for name in names if _subtitle_extension(name)]
-    if not candidates:
-        raise ValueError("subclub archive contains no supported subtitle files")
-    try:
-        season = int((payload or {}).get("season"))
-        episode = int((payload or {}).get("episode"))
-    except (TypeError, ValueError):
-        season = episode = None
-    release_info = _normalize_release((payload or {}).get("release_info") or (payload or {}).get("filename"))
-    release_hints = _normalize_release((payload or {}).get("release_hints"))
-    hint_tokens = {
-        token
-        for source in (release_info, release_hints)
-        for token in source.split(".")
-        if len(token) > 2
-    }
-
-    def score(index_name):
-        index, name = index_name
-        normalized = _normalize_release(os.path.basename(name))
-        value = max(0, 10 - index)
-        if season is not None and episode is not None:
-            if f"s{season:02d}e{episode:02d}" in normalized:
-                value += 70
-            elif f"{season}x{episode:02d}" in normalized or f"{season}x{episode}" in normalized:
-                value += 65
-        for token in hint_tokens:
-            if token in normalized:
-                value += 4
-        if name.lower().endswith(".srt"):
-            value += 5
-        return value
-
-    return max(enumerate(candidates), key=score)[1]
-
-
-def _extract_rar_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"Subclub RAR extraction failed: {details}") from errors[-1]
-    raise RuntimeError("Subclub RAR extraction requires bundled py7zz")
-
-
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("Subclub bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subclub.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_unar(body):
-    unar = shutil.which("unar")
-    if not unar:
-        raise RuntimeError("Subclub RAR fallback requires unar")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subclub.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run([unar, "-quiet", "-o", output_dir, archive_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"unar failed to extract Subclub RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("Subclub RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subclub.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run([sevenzip, "x", "-y", f"-o{output_dir}", archive_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract Subclub RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if not _subtitle_extension(rel):
-                continue
-            with open(path, "rb") as handle:
-                files.append((rel, handle.read()))
-    if not files:
-        raise ValueError("subclub archive contains no supported subtitle files")
-    return files
+def _is_archive_body(body):
+    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
 
 
 def _subtitle_link(row):
@@ -522,20 +383,14 @@ def _normalize_line_endings(content):
 
 
 def _content_payload(content, subtitle_format):
-    encoding = "utf-8"
-    for candidate in ("utf-8", "cp1257", "latin-1"):
-        try:
-            content.decode(candidate)
-            encoding = candidate
-            break
-        except UnicodeDecodeError:
-            continue
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 
@@ -597,13 +452,3 @@ def _normalize_release(value):
     decomposed = unicodedata.normalize("NFKD", str(value))
     folded = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
     return re.sub(r"[^a-z0-9]+", ".", folded.lower()).strip(".")
-
-
-def _video_release_hints(video):
-    video = video or {}
-    parts = []
-    for key in ("filename", "name", "release_group", "source", "resolution", "video_codec", "audio_codec"):
-        value = video.get(key)
-        if value:
-            parts.append(str(value))
-    return _normalize_release(".".join(parts))

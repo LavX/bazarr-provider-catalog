@@ -144,8 +144,11 @@ class SubclubProviderTests(unittest.TestCase):
 
         self.assertEqual(data, b"1\n00:00:01,000 --> 00:00:02,000\nText\n")
         self.assertEqual(content["content_sha256"], hashlib.sha256(data).hexdigest())
+        # Direct content path must not ship a worker-guessed encoding; the host normalizes.
+        self.assertNotIn("encoding", content)
+        self.assertNotIn("archive_b64", content)
 
-    def test_download_archive_fallback_selects_best_file(self):
+    def test_download_zip_archive_returns_raw_archive_for_host(self):
         provider = self.mod.SubclubProvider()
         body = _zip_body(
             {
@@ -162,15 +165,64 @@ class SubclubProviderTests(unittest.TestCase):
                 "filename": "Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.srt",
                 "season": 1,
                 "episode": 1,
-                "release_info": "Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.srt",
             },
             {"alpha3": "est", "alpha2": "et"},
             {},
         )
 
-        self.assertEqual(base64.b64decode(content["content_b64"]), b"right release")
+        # Archive mode: the worker hands the raw archive bytes back untouched.
+        self.assertEqual(base64.b64decode(content["archive_b64"]), body)
+        self.assertEqual(content["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(content["episode"], 1)
+        # No extraction, member selection, or encoding guessing happens worker-side.
+        self.assertNotIn("content_b64", content)
+        self.assertNotIn("member", content)
+        self.assertNotIn("encoding", content)
 
-    def test_download_archive_fallback_rejects_html_error_page(self):
+    def test_download_rar_archive_returns_raw_archive_for_host(self):
+        provider = self.mod.SubclubProvider()
+        # Minimal RAR4 signature; the host extracts, the worker only forwards bytes.
+        body = b"Rar!\x1a\x07\x00" + b"\x00" * 32
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        content = provider.download(
+            {
+                "archive_url": "https://www.subclub.eu/down.php?id=11232",
+                "archive_id": "11232",
+                "filename": "subclub-11232.rar",
+                "season": 1,
+                "episode": 7,
+            },
+            {"alpha3": "est", "alpha2": "et"},
+            {},
+        )
+
+        self.assertEqual(base64.b64decode(content["archive_b64"]), body)
+        self.assertEqual(content["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(content["episode"], 7)
+        self.assertNotIn("content_b64", content)
+
+    def test_download_archive_episode_is_none_for_movie(self):
+        provider = self.mod.SubclubProvider()
+        body = _zip_body({"Inception.2010.720p.BluRay.srt": "movie subtitle"})
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        content = provider.download(
+            {
+                "archive_url": "https://www.subclub.eu/down.php?id=10100",
+                "archive_id": "10100",
+                "filename": "subclub-10100.zip",
+                "season": None,
+                "episode": None,
+            },
+            {"alpha3": "est", "alpha2": "et"},
+            {},
+        )
+
+        self.assertEqual(base64.b64decode(content["archive_b64"]), body)
+        self.assertIsNone(content["episode"])
+
+    def test_download_archive_rejects_html_error_page(self):
         provider = self.mod.SubclubProvider()
         provider._http_get = lambda url, timeout=30, referer=None: (
             b"<!DOCTYPE html>\n<html><head><title>404</title></head>"
@@ -188,7 +240,7 @@ class SubclubProviderTests(unittest.TestCase):
                 {},
             )
 
-    def test_download_archive_fallback_rejects_empty_body(self):
+    def test_download_archive_rejects_empty_body(self):
         provider = self.mod.SubclubProvider()
         provider._http_get = lambda url, timeout=30, referer=None: b"   \r\n  "
 
@@ -203,7 +255,7 @@ class SubclubProviderTests(unittest.TestCase):
                 {},
             )
 
-    def test_synthetic_fallback_carries_video_release_hints(self):
+    def test_search_synthetic_fallback_carries_episode_in_payload(self):
         provider = self.mod.SubclubProvider()
         # Search HTML has a matching episode row, but the archive-content endpoint
         # answers with no subtitle links, forcing the synthetic fallback archive.
@@ -227,13 +279,12 @@ class SubclubProviderTests(unittest.TestCase):
 
         self.assertTrue(results)
         payload = results[0]["provider_payload"]
-        # Without the fix the payload only knows the generic "subclub-<id>.zip" name.
         self.assertEqual(payload["filename"], "subclub-11232.zip")
-        self.assertIn("ctu", payload["release_hints"])
-        self.assertIn("hdtv", payload["release_hints"])
+        # The host needs episode (and season) to pick the archive member.
+        self.assertEqual(payload["season"], 1)
+        self.assertEqual(payload["episode"], 1)
 
-        # The carried hints must let select_subtitle_file pick the wanted release
-        # out of an archive containing several files.
+        # The archive body is forwarded raw with the episode carried through.
         body = _zip_body(
             {
                 "Game.of.Thrones.S01E01.720p.BluRay.X264-REWARD.srt": "wrong release",
@@ -243,7 +294,8 @@ class SubclubProviderTests(unittest.TestCase):
         provider._http_get = lambda url, timeout=30, referer=None: body
         content = provider.download(payload, {"alpha3": "est", "alpha2": "et"}, {})
 
-        self.assertEqual(base64.b64decode(content["content_b64"]), b"right release")
+        self.assertEqual(base64.b64decode(content["archive_b64"]), body)
+        self.assertEqual(content["episode"], 1)
 
 
 if __name__ == "__main__":
