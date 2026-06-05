@@ -215,7 +215,7 @@ class PrijevodiOnlineProviderTests(unittest.TestCase):
             [],
         )
 
-    def test_download_selects_subtitle_from_zip_archive(self):
+    def test_download_returns_zip_archive_bytes_for_host_extraction(self):
         provider = self.mod.PrijevodiOnlineProvider()
         body = _zip_body(
             {
@@ -225,10 +225,11 @@ class PrijevodiOnlineProviderTests(unittest.TestCase):
         )
         provider._http_get = lambda url, timeout=30, referer=None: body
 
-        content = provider.download(
+        result = provider.download(
             {
                 "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/game-of-thrones-01x01-winter-is-coming-hdtv-hr",
                 "filename": "prijevodionline.game-of-thrones.s01e01.hr.zip",
+                "subtitle_id": "18050",
                 "season": 1,
                 "episode": 1,
                 "releases": ["720p.HDTV.X264-CTU"],
@@ -236,45 +237,106 @@ class PrijevodiOnlineProviderTests(unittest.TestCase):
             {"alpha3": "hrv", "alpha2": "hr"},
             {},
         )
-        data = base64.b64decode(content["content_b64"])
 
-        self.assertEqual(data, b"right subtitle")
-        self.assertEqual(content["content_sha256"], hashlib.sha256(data).hexdigest())
-        self.assertEqual(content["format"], "srt")
+        # Archive mode: the worker hands the raw bytes back, the host extracts.
+        self.assertNotIn("content_b64", result)
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["episode"], 1)
+        self.assertNotIn("encoding", result)
 
-    def test_download_does_not_match_episode_one_against_episode_ten(self):
+    def test_download_returns_rar_archive_bytes_for_host_extraction(self):
         provider = self.mod.PrijevodiOnlineProvider()
-        # The episode-ten file is listed first so the buggy unbounded substring
-        # match (1x1 inside 1x10) would otherwise select it for episode 1.
-        body = _zip_body(
-            {
-                "Game.of.Thrones.1x10.720p.HDTV.srt": "episode ten",
-                "Game.of.Thrones.1x01.720p.HDTV.srt": "episode one",
-            }
-        )
+        body = b"Rar!\x1a\x07\x00" + b"binary rar payload"
         provider._http_get = lambda url, timeout=30, referer=None: body
 
-        content = provider.download(
+        result = provider.download(
             {
-                "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/got-1x01",
-                "filename": "prijevodionline.game-of-thrones.s01e01.hr.zip",
+                "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/got-s01e01-hr",
+                "filename": "prijevodionline.game-of-thrones.s01e01.hr.rar",
+                "subtitle_id": "18050",
                 "season": 1,
                 "episode": 1,
             },
             {"alpha3": "hrv", "alpha2": "hr"},
             {},
         )
-        data = base64.b64decode(content["content_b64"])
 
-        self.assertEqual(data, b"episode one")
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["episode"], 1)
+        self.assertNotIn("encoding", result)
 
-    def test_select_subtitle_file_bounds_compact_episode_token(self):
-        names = ["Show.1x10.srt", "Show.1x01.srt"]
+    def test_download_carries_none_episode_when_payload_has_no_episode(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        body = _zip_body({"some.subtitle.srt": "data"})
+        provider._http_get = lambda url, timeout=30, referer=None: body
 
-        self.assertEqual(
-            self.mod.select_subtitle_file(names, {"season": 1, "episode": 1}),
-            "Show.1x01.srt",
+        result = provider.download(
+            {
+                "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/movie-hr",
+                "filename": "prijevodionline.movie.hr.zip",
+                "subtitle_id": "18050",
+            },
+            {"alpha3": "hrv", "alpha2": "hr"},
+            {},
         )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertIsNone(result["episode"])
+
+    def test_download_returns_content_for_direct_subtitle_body(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        body = b"1\n00:00:01,000 --> 00:00:02,000\nHello\n"
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        result = provider.download(
+            {
+                "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/got-s01e01-hr",
+                "filename": "prijevodionline.game-of-thrones.s01e01.hr.srt",
+                "subtitle_id": "18050",
+                "episode": 1,
+            },
+            {"alpha3": "hrv", "alpha2": "hr"},
+            {},
+        )
+
+        self.assertEqual(base64.b64decode(result["content_b64"]), body)
+        self.assertEqual(result["content_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["format"], "srt")
+        self.assertNotIn("encoding", result)
+
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        provider._http_get = lambda url, timeout=30, referer=None: b"   \n"
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {
+                    "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/got",
+                    "subtitle_id": "18050",
+                    "episode": 1,
+                },
+                {"alpha3": "hrv", "alpha2": "hr"},
+                {},
+            )
+
+    def test_download_rejects_html_error_page(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        provider._http_get = lambda url, timeout=30, referer=None: (
+            b"<!DOCTYPE html><html><body>Not found</body></html>"
+        )
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {
+                    "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/got",
+                    "subtitle_id": "18050",
+                    "episode": 1,
+                },
+                {"alpha3": "hrv", "alpha2": "hr"},
+                {},
+            )
 
 
 if __name__ == "__main__":
