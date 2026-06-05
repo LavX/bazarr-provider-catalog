@@ -5,8 +5,10 @@ import hashlib
 import html
 import io
 import re
+import socket
 import time
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -18,6 +20,13 @@ SEARCH_URL = f"{BASE_URL}/jutud.php"
 ARCHIVE_LIST_URL = f"{BASE_URL}/subtitles_archivecontent.php"
 DOWNLOAD_URL = f"{BASE_URL}/down.php"
 HTTP_TIMEOUT_SECONDS = 30
+# Transport-level retry: tolerate a single transient network blip (DNS / reset /
+# timeout / 5xx / 429) without aborting the whole search or download. Mirrors the
+# ~3-try behaviour of upstream subliminal's RetryingSession / ProviderRetryMixin.
+HTTP_RETRIES = 2
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8.0
+RETRY_STATUS = 429
 SUPPORTED_LANGUAGES = {"est": "et"}
 ALPHA2_TO_ALPHA3 = {"et": "est"}
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
@@ -139,8 +148,23 @@ class SubclubProvider:
         if referer:
             headers["Referer"] = referer
         request = urllib.request.Request(url, headers=headers)
-        with self._opener.open(request, timeout=timeout) as response:
-            return response.read()
+        for attempt in range(1, HTTP_RETRIES + 2):
+            try:
+                with self._opener.open(request, timeout=timeout) as response:
+                    return response.read()
+            except urllib.error.HTTPError as error:
+                # 5xx and 429 are transient; every other 4xx (auth, not-found,
+                # forbidden) is a real answer and must propagate on the first try.
+                transient = error.code == RETRY_STATUS or 500 <= error.code <= 599
+                if not transient or attempt > HTTP_RETRIES:
+                    raise
+                _retry_sleep(attempt, _retry_after_seconds(error))
+            except (TimeoutError, socket.timeout, urllib.error.URLError):
+                # Connection refused / DNS / reset / read timeout: transient transport.
+                if attempt > HTTP_RETRIES:
+                    raise
+                _retry_sleep(attempt, None)
+        raise RuntimeError("unreachable subclub retry state")
 
     def search(self, video, languages, config):
         video = dict(video or {})
@@ -409,6 +433,33 @@ def _sleep(config):
     delay_ms = (config or {}).get("request_delay_ms", 0) or 0
     if delay_ms > 0:
         time.sleep(min(int(delay_ms), 5000) / 1000.0)
+
+
+def _retry_sleep(attempt, retry_after):
+    # Exponential backoff with a small base, capped. Honor a server Retry-After
+    # hint (429) when it is larger than the computed backoff. time.sleep is looked
+    # up on the module so tests can monkeypatch it.
+    backoff = min(RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1)), RETRY_BACKOFF_CAP_SECONDS)
+    if retry_after is not None:
+        backoff = min(max(backoff, retry_after), RETRY_BACKOFF_CAP_SECONDS)
+    time.sleep(backoff)
+
+
+def _retry_after_seconds(error):
+    # Only delay-seconds form is honored; an HTTP-date Retry-After falls back to
+    # the normal backoff. Never let a malformed header break the retry.
+    header = None
+    try:
+        header = error.headers.get("Retry-After")
+    except AttributeError:
+        header = None
+    if not header:
+        return None
+    try:
+        seconds = float(str(header).strip())
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds >= 0 else None
 
 
 def _title_matches(wanted, candidate):

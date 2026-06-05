@@ -2,7 +2,9 @@ import base64
 import hashlib
 import importlib.util
 import io
+import socket
 import unittest
+import urllib.error
 import zipfile
 from pathlib import Path
 
@@ -296,6 +298,128 @@ class SubclubProviderTests(unittest.TestCase):
 
         self.assertEqual(base64.b64decode(content["archive_b64"]), body)
         self.assertEqual(content["episode"], 1)
+
+
+class _FakeResponse:
+    def __init__(self, body):
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return False
+
+    def read(self):
+        return self._body
+
+
+class _FakeOpener:
+    """Drop-in for the provider's cookie-aware opener that scripts a sequence of
+    transport outcomes: an exception class/instance is raised, anything else is
+    returned as a response body."""
+
+    def __init__(self, outcomes):
+        self._outcomes = list(outcomes)
+        self.calls = 0
+
+    def open(self, request, timeout=None):
+        self.calls += 1
+        outcome = self._outcomes.pop(0)
+        if isinstance(outcome, BaseException) or (
+            isinstance(outcome, type) and issubclass(outcome, BaseException)
+        ):
+            raise outcome
+        return _FakeResponse(outcome)
+
+
+def _http_error(code, retry_after=None):
+    headers = {}
+    if retry_after is not None:
+        headers["Retry-After"] = retry_after
+    return urllib.error.HTTPError(
+        "https://www.subclub.eu/jutud.php", code, "boom", headers, io.BytesIO(b"")
+    )
+
+
+class SubclubTransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.slept = []
+        self.mod.time.sleep = lambda seconds: self.slept.append(seconds)
+
+    def _provider_with(self, outcomes):
+        provider = self.mod.SubclubProvider()
+        opener = _FakeOpener(outcomes)
+        provider._opener = opener
+        return provider, opener
+
+    def test_retries_url_error_then_succeeds(self):
+        provider, opener = self._provider_with(
+            [urllib.error.URLError("connection reset"), b"<html>ok</html>"]
+        )
+
+        body = provider._http_get("https://www.subclub.eu/jutud.php")
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(opener.calls, 2)
+        self.assertEqual(len(self.slept), 1)
+
+    def test_retries_503_twice_then_succeeds(self):
+        provider, opener = self._provider_with(
+            [_http_error(503), _http_error(503), b"<html>ok</html>"]
+        )
+
+        body = provider._http_get("https://www.subclub.eu/jutud.php")
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(opener.calls, 3)
+        self.assertEqual(len(self.slept), 2)
+        # Exponential backoff: 0.5 then 1.0 seconds.
+        self.assertEqual(self.slept, [0.5, 1.0])
+
+    def test_429_honors_retry_after_header(self):
+        provider, opener = self._provider_with(
+            [_http_error(429, retry_after="3"), b"<html>ok</html>"]
+        )
+
+        body = provider._http_get("https://www.subclub.eu/jutud.php")
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(opener.calls, 2)
+        # Retry-After (3s) wins over the 0.5s base backoff but stays under the cap.
+        self.assertEqual(self.slept, [3.0])
+
+    def test_404_is_not_retried(self):
+        provider, opener = self._provider_with([_http_error(404)])
+
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            provider._http_get("https://www.subclub.eu/jutud.php")
+
+        self.assertEqual(ctx.exception.code, 404)
+        self.assertEqual(opener.calls, 1)
+        self.assertEqual(self.slept, [])
+
+    def test_403_is_not_retried(self):
+        provider, opener = self._provider_with([_http_error(403)])
+
+        with self.assertRaises(urllib.error.HTTPError):
+            provider._http_get("https://www.subclub.eu/jutud.php")
+
+        self.assertEqual(opener.calls, 1)
+        self.assertEqual(self.slept, [])
+
+    def test_gives_up_after_max_attempts(self):
+        provider, opener = self._provider_with(
+            [socket.timeout(), socket.timeout(), socket.timeout()]
+        )
+
+        with self.assertRaises(socket.timeout):
+            provider._http_get("https://www.subclub.eu/jutud.php")
+
+        # 1 initial attempt + 2 retries = 3 transport calls, then it gives up.
+        self.assertEqual(opener.calls, 3)
+        self.assertEqual(len(self.slept), 2)
 
 
 if __name__ == "__main__":
