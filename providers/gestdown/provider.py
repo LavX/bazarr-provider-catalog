@@ -150,6 +150,14 @@ _GESTDOWN_LANGUAGE_NAMES = {
     "zho": "Chinese (Simplified)",
 }
 
+# Region/script variants that Gestdown advertises under their own Addic7ed
+# labels. Keyed by (alpha3, country_alpha2, script); any unset part is None.
+_GESTDOWN_VARIANT_NAMES = {
+    ("por", "BR", None): "Portuguese (Brazilian)",
+    ("srp", None, "Cyrl"): "Serbian (Cyrillic)",
+    ("srp", None, "Latn"): "Serbian (Latin)",
+}
+
 
 def _json_loads(body):
     if isinstance(body, str):
@@ -162,9 +170,24 @@ def _language_payload(language):
     alpha3 = str(payload.get("alpha3") or "").lower()
     payload["alpha3"] = alpha3
     payload.setdefault("alpha2", _ALPHA2.get(alpha3, ""))
+    payload["country_alpha2"] = str(payload.get("country_alpha2") or "").upper() or None
+    payload["script"] = str(payload.get("script") or "").title() or None
     payload.setdefault("hi", False)
     payload.setdefault("forced", False)
     return payload
+
+
+def _language_key(payload):
+    return (payload.get("alpha3"), payload.get("country_alpha2"), payload.get("script"))
+
+
+def _language_id_suffix(payload):
+    parts = [payload.get("alpha3") or ""]
+    if payload.get("country_alpha2"):
+        parts.append(payload["country_alpha2"])
+    if payload.get("script"):
+        parts.append(payload["script"])
+    return "-".join(parts)
 
 
 def _clean_releases(version):
@@ -255,8 +278,10 @@ def parse_subtitle_results(body):
 
 def gestdown_language_name(language):
     payload = _language_payload(language)
-    alpha3 = payload.get("alpha3")
-    return _GESTDOWN_LANGUAGE_NAMES.get(alpha3)
+    variant = _GESTDOWN_VARIANT_NAMES.get(_language_key(payload))
+    if variant:
+        return variant
+    return _GESTDOWN_LANGUAGE_NAMES.get(payload.get("alpha3"))
 
 
 def show_lookup_url(tvdb_id):
@@ -364,7 +389,7 @@ class GestdownProvider:
                         continue
                     raise
                 for entry in parse_subtitle_results(body):
-                    key = (entry["subtitle_id"], language_payload["alpha3"])
+                    key = (entry["subtitle_id"],) + _language_key(language_payload)
                     if key in seen:
                         continue
                     seen.add(key)
@@ -376,12 +401,13 @@ class GestdownProvider:
         language_payload["hi"] = bool(entry.get("hearing_impaired"))
         subtitle_id = entry["subtitle_id"]
         score = compute_score(video, entry)
+        language_code = _language_id_suffix(language_payload)
         return {
             "provider": PROVIDER_ID,
-            "id": f"gestdown-{subtitle_id}-{language_payload['alpha3']}",
+            "id": f"gestdown-{subtitle_id}-{language_code}",
             "language": language_payload,
             "release_info": entry.get("release_info") or subtitle_id,
-            "filename": f"gestdown.{subtitle_id}.{language_payload.get('alpha2') or language_payload['alpha3']}.srt",
+            "filename": f"gestdown.{subtitle_id}.{language_code}.srt",
             "matches": derive_matches(video, entry),
             "score": score,
             "score_without_hash": score,
