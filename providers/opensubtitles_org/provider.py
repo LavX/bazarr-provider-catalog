@@ -7,6 +7,7 @@ import io
 import json
 import os
 import re
+import socket
 import time
 import urllib.error
 import urllib.parse
@@ -30,6 +31,20 @@ USER_AGENT = (
 DEFAULT_TIMEOUT_SECONDS = 30
 DEFAULT_FLARESOLVERR_TIMEOUT_MS = 60000
 SUBTITLE_FORMAT = "srt"
+
+# Transport-level retry for raw network blips only. Matches upstream subliminal's
+# RetryingSession/ProviderRetryMixin (about three tries with exponential backoff).
+# This wraps only the urllib/cloudscraper GET; it never retries challenge
+# responses, 4xx other than 429, or any non-network error.
+RETRY_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8.0
+_RETRYABLE_TRANSPORT_ERRORS = (
+    urllib.error.URLError,
+    socket.timeout,
+    TimeoutError,
+    ConnectionError,
+)
 
 _WS_RE = re.compile(r"\s+")
 _NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
@@ -987,6 +1002,54 @@ def _episode_mismatch(item, context):
     )
 
 
+# Transient exceptions raised by the requests/cloudscraper transport. They are
+# matched by name so this provider does not need to import requests, and so a
+# non-transient requests error (HTTPError, TooManyRedirects, etc.) is never
+# retried.
+_RETRYABLE_REQUESTS_ERROR_NAMES = frozenset(
+    {
+        "ConnectionError",
+        "ConnectTimeout",
+        "ReadTimeout",
+        "Timeout",
+        "ChunkedEncodingError",
+    }
+)
+
+
+def _is_retryable_transport_error(exc):
+    # urllib.error.HTTPError is a URLError subclass but carries an HTTP status; a
+    # 4xx (other than 429) is a definitive answer, not a transient blip, so it
+    # must propagate on the first occurrence.
+    if isinstance(exc, urllib.error.HTTPError):
+        code = getattr(exc, "code", 0) or 0
+        return code == 429 or code >= 500
+    if isinstance(exc, _RETRYABLE_TRANSPORT_ERRORS):
+        return True
+    # requests/cloudscraper transient transport errors, matched by class name so
+    # the provider stays import-light. A requests HTTPError carries a response and
+    # would have a 4xx/5xx status, so it is deliberately excluded here.
+    module = type(exc).__module__ or ""
+    if module.startswith("requests") or module.startswith("urllib3"):
+        return type(exc).__name__ in _RETRYABLE_REQUESTS_ERROR_NAMES
+    return False
+
+
+def _retry_after_seconds(response):
+    headers = getattr(response, "headers", None) or {}
+    getter = getattr(headers, "get", None)
+    raw = getter("Retry-After") if getter else None
+    value = _as_int(raw)
+    if value is None or value < 0:
+        return None
+    return min(float(value), RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _backoff_delay(attempt):
+    # attempt is 1-based; first retry waits RETRY_BACKOFF_SECONDS, then doubles.
+    return min(RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1)), RETRY_BACKOFF_CAP_SECONDS)
+
+
 class OpenSubtitlesOrgProvider:
     def __init__(self):
         self._session = None
@@ -1215,10 +1278,7 @@ class OpenSubtitlesOrgProvider:
         self._apply_delay(config)
         session = self._get_session()
         timeout = _as_int(config.get("timeout")) or DEFAULT_TIMEOUT_SECONDS
-        try:
-            response = session.get(url, timeout=timeout, allow_redirects=True)
-        except Exception as exc:
-            raise ServiceUnavailable(f"OpenSubtitles.org request failed: {exc}") from exc
+        response = self._session_get(session, url, timeout)
         challenge_url = getattr(response, "url", "") or url
         if is_anubis_challenge(challenge_url, getattr(response, "status_code", 0)) or _extract_anubis_challenge(
             _response_text(response)
@@ -1238,6 +1298,52 @@ class OpenSubtitlesOrgProvider:
         if status >= 400:
             raise ServiceUnavailable(f"OpenSubtitles.org HTTP {status}")
         return response
+
+    def _session_get(self, session, url, timeout):
+        # Wrap only the raw transport GET in a bounded retry so a single transient
+        # network blip (connection reset, DNS hiccup, timeout, an isolated 5xx/429)
+        # does not abort the search/download. Challenge responses (Anubis /
+        # Cloudflare) and any 4xx other than 429 are returned untouched so the
+        # existing fallback and status-mapping logic decides what to do. The final
+        # failure raises the same error the provider raised before this retry.
+        last_exc = None
+        for attempt in range(1, RETRY_MAX_ATTEMPTS + 1):
+            try:
+                response = session.get(url, timeout=timeout, allow_redirects=True)
+            except Exception as exc:  # noqa: BLE001 - mirror prior catch-all mapping
+                if not _is_retryable_transport_error(exc):
+                    raise ServiceUnavailable(f"OpenSubtitles.org request failed: {exc}") from exc
+                last_exc = exc
+                if attempt >= RETRY_MAX_ATTEMPTS:
+                    raise ServiceUnavailable(f"OpenSubtitles.org request failed: {exc}") from exc
+                time.sleep(_backoff_delay(attempt))
+                continue
+            if attempt < RETRY_MAX_ATTEMPTS and self._should_retry_response(response):
+                delay = _retry_after_seconds(response)
+                time.sleep(delay if delay is not None else _backoff_delay(attempt))
+                continue
+            return response
+        # Unreachable: the loop always returns or raises, but keep a definite fallback.
+        if last_exc is not None:
+            raise ServiceUnavailable(f"OpenSubtitles.org request failed: {last_exc}")
+        raise ServiceUnavailable("OpenSubtitles.org request failed")
+
+    @staticmethod
+    def _should_retry_response(response):
+        # Retry only a genuine transient HTTP status. A Cloudflare or Anubis
+        # challenge can ride on a 503/403, so never retry those here: they belong
+        # to the challenge fallback path, not the transport blip path.
+        status = getattr(response, "status_code", 200) or 200
+        if status != 429 and status < 500:
+            return False
+        if _is_cloudflare_challenge(response):
+            return False
+        challenge_url = getattr(response, "url", "") or ""
+        if is_anubis_challenge(challenge_url, status):
+            return False
+        if _extract_anubis_challenge(_response_text(response)):
+            return False
+        return True
 
     def _apply_delay(self, config):
         delay_ms = _as_int((config or {}).get("request_delay_ms")) or 0

@@ -1010,6 +1010,155 @@ class MovieHashMatchTests(unittest.TestCase):
         self.assertFalse(any("moviehash" in url for url in calls), calls)
 
 
+class TransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.slept = []
+        self._orig_sleep = self.mod.time.sleep
+        self.mod.time.sleep = lambda seconds: self.slept.append(seconds)
+
+    def tearDown(self):
+        self.mod.time.sleep = self._orig_sleep
+
+    def _install_session(self, steps):
+        # Each step is either a callable raising an exception or a FakeResponse.
+        calls = []
+
+        class RetrySession:
+            def __init__(self):
+                self.headers = {}
+                self.cookies = FakeCookieJar()
+                self._steps = list(steps)
+
+            def get(self, url, **kwargs):
+                calls.append(url)
+                step = self._steps.pop(0)
+                if isinstance(step, Exception):
+                    raise step
+                return step
+
+        session = RetrySession()
+
+        class FakeCloudscraper:
+            @staticmethod
+            def create_scraper(**kwargs):
+                return session
+
+        self.mod.cloudscraper = FakeCloudscraper
+        return calls
+
+    def test_http_get_retries_after_transient_urlerror_then_succeeds(self):
+        import urllib.error
+
+        success = FakeResponse(
+            "https://www.opensubtitles.org/en/search",
+            text="<html><title>Search</title></html>",
+        )
+        calls = self._install_session(
+            [urllib.error.URLError("connection reset"), success]
+        )
+        provider = self.mod.OpenSubtitlesOrgProvider()
+
+        response = provider._http_get("https://www.opensubtitles.org/en/search", {})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(self.slept), 1)
+
+    def test_http_get_retries_after_transient_503_then_succeeds(self):
+        success = FakeResponse(
+            "https://www.opensubtitles.org/en/search",
+            text="<html><title>Search</title></html>",
+        )
+        calls = self._install_session(
+            [
+                FakeResponse(
+                    "https://www.opensubtitles.org/en/search",
+                    status_code=503,
+                    text="upstream is briefly unavailable",
+                ),
+                success,
+            ]
+        )
+        provider = self.mod.OpenSubtitlesOrgProvider()
+
+        response = provider._http_get("https://www.opensubtitles.org/en/search", {})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(self.slept), 1)
+
+    def test_http_get_honors_retry_after_header_on_transient_429(self):
+        success = FakeResponse(
+            "https://www.opensubtitles.org/en/search",
+            text="<html><title>Search</title></html>",
+        )
+        calls = self._install_session(
+            [
+                FakeResponse(
+                    "https://www.opensubtitles.org/en/search",
+                    status_code=429,
+                    text="slow down",
+                    headers={"Retry-After": "2"},
+                ),
+                success,
+            ]
+        )
+        provider = self.mod.OpenSubtitlesOrgProvider()
+
+        response = provider._http_get("https://www.opensubtitles.org/en/search", {})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(self.slept, [2.0])
+
+    def test_http_get_does_not_retry_4xx_and_propagates_first_failure(self):
+        calls = self._install_session(
+            [
+                FakeResponse(
+                    "https://www.opensubtitles.org/en/search",
+                    status_code=404,
+                    text="not found",
+                )
+            ]
+        )
+        provider = self.mod.OpenSubtitlesOrgProvider()
+
+        with self.assertRaisesRegex(self.mod.ServiceUnavailable, "HTTP 404"):
+            provider._http_get("https://www.opensubtitles.org/en/search", {})
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.slept, [])
+
+    def test_http_get_gives_up_after_max_attempts_on_persistent_transient_error(self):
+        import urllib.error
+
+        calls = self._install_session(
+            [
+                urllib.error.URLError("connection reset"),
+                urllib.error.URLError("connection reset"),
+                urllib.error.URLError("connection reset"),
+            ]
+        )
+        provider = self.mod.OpenSubtitlesOrgProvider()
+
+        with self.assertRaisesRegex(self.mod.ServiceUnavailable, "request failed"):
+            provider._http_get("https://www.opensubtitles.org/en/search", {})
+
+        self.assertEqual(len(calls), self.mod.RETRY_MAX_ATTEMPTS)
+        self.assertEqual(len(self.slept), self.mod.RETRY_MAX_ATTEMPTS - 1)
+
+    def test_http_get_does_not_retry_non_transport_exception(self):
+        calls = self._install_session([ValueError("bad parse")])
+        provider = self.mod.OpenSubtitlesOrgProvider()
+
+        with self.assertRaisesRegex(self.mod.ServiceUnavailable, "request failed"):
+            provider._http_get("https://www.opensubtitles.org/en/search", {})
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.slept, [])
+
+
 class PowDeadlineTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
