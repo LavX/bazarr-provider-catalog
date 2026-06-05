@@ -303,7 +303,7 @@ class RegieLiveProviderTests(unittest.TestCase):
             [],
         )
 
-    def test_download_visits_landing_page_then_downloads_zip_and_extracts_subtitle(self):
+    def test_download_visits_landing_page_then_returns_archive_with_member(self):
         provider = self.mod.RegieLiveProvider()
         body = b"1\r\n00:00:01,000 --> 00:00:02,000\r\nSalut\r\n"
         archive = _zip_body({"readme.txt": b"not a subtitle", "Dune.2021.srt": body})
@@ -332,12 +332,13 @@ class RegieLiveProviderTests(unittest.TestCase):
                 ("https://subtitrari.regielive.ro/download/2573535", "https://subtitrari.regielive.ro"),
             ],
         )
-        self.assertEqual(base64.b64decode(result["content_b64"]), body.replace(b"\r\n", b"\n"))
-        self.assertEqual(result["content_sha256"], hashlib.sha256(body.replace(b"\r\n", b"\n")).hexdigest())
-        self.assertEqual(result["content_type"], "application/x-subrip")
-        self.assertEqual(result["format"], "srt")
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["member"], "Dune.2021.srt")
+        self.assertNotIn("encoding", result)
+        self.assertNotIn("content_b64", result)
 
-    def test_download_skips_hidden_and_txt_files(self):
+    def test_download_member_skips_hidden_and_txt_files(self):
         provider = self.mod.RegieLiveProvider()
         archive = _zip_body(
             {
@@ -358,8 +359,8 @@ class RegieLiveProviderTests(unittest.TestCase):
             {},
         )
 
-        self.assertEqual(result["format"], "ass")
-        self.assertEqual(base64.b64decode(result["content_b64"]), b"[Script Info]\nTitle: Test\n")
+        self.assertEqual(result["member"], "Season/file.ass")
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
 
     def test_download_raises_for_server_500_body(self):
         provider = self.mod.RegieLiveProvider()
@@ -367,6 +368,36 @@ class RegieLiveProviderTests(unittest.TestCase):
         def stub(url, headers=None, timeout=15, referer=None):
             del headers, timeout, referer
             return b"ok" if url == "https://subtitrari.regielive.ro" else b"500"
+
+        provider._http_get = stub
+        with self.assertRaises(ValueError):
+            provider.download(
+                {"download_url": "https://subtitrari.regielive.ro/download/2573535"},
+                {"alpha3": "ron", "alpha2": "ro"},
+                {},
+            )
+
+    def test_download_raises_for_html_error_page(self):
+        provider = self.mod.RegieLiveProvider()
+
+        def stub(url, headers=None, timeout=15, referer=None):
+            del headers, timeout, referer
+            return b"ok" if url == "https://subtitrari.regielive.ro" else b"<!DOCTYPE html><html><body>error</body></html>"
+
+        provider._http_get = stub
+        with self.assertRaises(ValueError):
+            provider.download(
+                {"download_url": "https://subtitrari.regielive.ro/download/2573535"},
+                {"alpha3": "ron", "alpha2": "ro"},
+                {},
+            )
+
+    def test_download_raises_for_empty_body(self):
+        provider = self.mod.RegieLiveProvider()
+
+        def stub(url, headers=None, timeout=15, referer=None):
+            del headers, timeout, referer
+            return b"ok" if url == "https://subtitrari.regielive.ro" else b"   "
 
         provider._http_get = stub
         with self.assertRaises(ValueError):
