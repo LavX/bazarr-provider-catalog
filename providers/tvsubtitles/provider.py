@@ -5,8 +5,10 @@ import hashlib
 import html
 import io
 import re
+import socket
 import time
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -15,6 +17,10 @@ import zipfile
 PROVIDER_ID = "tvsubtitles"
 BASE_URL = "https://www.tvsubtitles.net"
 HTTP_TIMEOUT_SECONDS = 10
+HTTP_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8.0
+RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 SUPPORTED_EXTENSIONS = (".srt", ".sub", ".ass", ".ssa")
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -226,8 +232,7 @@ class TvSubtitlesProvider:
             "X-Requested-With": "XMLHttpRequest",
         }
         request = urllib.request.Request(url, data=data, headers=headers)
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.read()
+        return _urlopen_with_retry(request, timeout)
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         return self._http_request(url, timeout=timeout, referer=referer)
@@ -517,6 +522,54 @@ def _decode(value):
     if isinstance(value, str):
         return value
     return value.decode("utf-8", errors="replace")
+
+
+def _urlopen_with_retry(request, timeout):
+    # Bounded retry around the raw urllib transport. Only transient transport
+    # failures are retried: connection errors / DNS / reset (URLError), socket
+    # timeouts, and HTTP 5xx / 429. Every other failure (4xx other than 429,
+    # parse errors, etc.) propagates unchanged on the first occurrence. The body
+    # read happens inside the try so a reset mid-read is also retried; the
+    # return type and behavior of the original urlopen call are preserved.
+    last_error = None
+    for attempt in range(1, HTTP_MAX_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.read()
+        except urllib.error.HTTPError as error:
+            if error.code not in RETRY_STATUS_CODES:
+                raise
+            last_error = error
+            retry_after = _retry_after_seconds(error) if error.code == 429 else None
+        except (urllib.error.URLError, socket.timeout, TimeoutError) as error:
+            # HTTPError is a subclass of URLError and is handled above, so this
+            # branch only sees genuine transport failures.
+            last_error = error
+            retry_after = None
+        if attempt >= HTTP_MAX_ATTEMPTS:
+            raise last_error
+        time.sleep(_retry_delay_seconds(attempt, retry_after))
+
+
+def _retry_delay_seconds(attempt, retry_after=None):
+    delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    if retry_after is not None:
+        delay = max(delay, retry_after)
+    return min(delay, RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _retry_after_seconds(error):
+    header = None
+    try:
+        header = error.headers.get("Retry-After")
+    except AttributeError:
+        header = None
+    if not header:
+        return None
+    try:
+        return max(0.0, float(header.strip()))
+    except (TypeError, ValueError):
+        return None
 
 
 def _sleep(config):
