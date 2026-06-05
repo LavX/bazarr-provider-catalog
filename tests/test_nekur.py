@@ -83,6 +83,9 @@ class NekurProviderTests(unittest.TestCase):
         self.assertEqual(results[0]["provider_payload"]["imdb_id"], "tt1160419")
         self.assertIn("imdb_id", results[0]["matches"])
         self.assertIn("year", results[0]["matches"])
+        # The host needs episode (and season) to pick the archive member; movies carry None.
+        self.assertIsNone(results[0]["provider_payload"]["episode"])
+        self.assertIsNone(results[0]["provider_payload"]["season"])
 
     def test_search_uses_alternative_titles_and_deduplicates(self):
         provider = self.mod.NekurProvider()
@@ -147,13 +150,12 @@ class NekurProviderTests(unittest.TestCase):
             [],
         )
 
-    def test_download_selects_matching_subtitle_from_zip(self):
+    def test_download_zip_archive_returns_raw_archive_for_host(self):
         provider = self.mod.NekurProvider()
         body = _zip_body(
             {
                 "Dune.Part.Two.2024.lv.srt": "wrong movie",
                 "Dune.Part.One.2021.BD.lv.srt": "right subtitle",
-                "Dune.Part.One.2021.BD.forced.lv.srt": "forced subtitle",
             }
         )
         provider._http_get = lambda url, timeout=10: (body, {})
@@ -164,36 +166,85 @@ class NekurProviderTests(unittest.TestCase):
                 "filename": "nekur.dune-part-one.2021.zip",
                 "title": "Dune: Part One",
                 "year": 2021,
-                "notes": "DVD, BD",
+                "episode": None,
             },
             {"alpha3": "lav", "alpha2": "lv"},
             {},
         )
-        data = base64.b64decode(content["content_b64"])
 
-        self.assertEqual(data, b"right subtitle")
-        self.assertEqual(content["format"], "srt")
-        self.assertEqual(content["content_sha256"], hashlib.sha256(data).hexdigest())
-        self.assertFalse(content["empty"])
+        # Archive mode: the worker hands the raw archive bytes back untouched.
+        self.assertEqual(base64.b64decode(content["archive_b64"]), body)
+        self.assertEqual(content["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertIsNone(content["episode"])
+        # No extraction, member selection, or encoding guessing happens worker-side.
+        self.assertNotIn("content_b64", content)
+        self.assertNotIn("member", content)
+        self.assertNotIn("encoding", content)
 
-    def test_download_merges_multipart_zip_subtitles(self):
-        body = _zip_body(
+    def test_download_rar_archive_returns_raw_archive_for_host(self):
+        provider = self.mod.NekurProvider()
+        # Minimal RAR4 signature; the host extracts, the worker only forwards bytes.
+        body = b"Rar!\x1a\x07\x00" + b"\x00" * 32
+        provider._http_get = lambda url, timeout=10: (body, {})
+
+        content = provider.download(
             {
-                "Dune.Part.One.2021.CD1.lv.srt": b"1\n00:00:01,000 --> 00:00:02,000\nPart one\n",
-                "Dune.Part.One.2021.CD2.lv.srt": b"1\n00:10:01,000 --> 00:10:02,000\nPart two\n",
-            }
+                "download_url": "https://subtitri.nekur.net/filmu-subtitri/download/abc",
+                "filename": "nekur.dune-part-one.2021.zip",
+                "title": "Dune: Part One",
+                "year": 2021,
+                "episode": None,
+            },
+            {"alpha3": "lav", "alpha2": "lv"},
+            {},
         )
+
+        self.assertEqual(base64.b64decode(content["archive_b64"]), body)
+        self.assertEqual(content["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertIsNone(content["episode"])
+        self.assertNotIn("content_b64", content)
+        self.assertNotIn("encoding", content)
+
+    def test_extract_download_carries_episode_through_for_host(self):
+        # Movies leave episode None, but download() must forward whatever the
+        # payload holds so the host can pick the right archive member.
+        body = _zip_body({"Show.S01E07.lv.srt": "episode subtitle"})
+
+        content = self.mod.extract_download(
+            body,
+            "nekur.show.zip",
+            {"episode": 7},
+        )
+
+        self.assertEqual(base64.b64decode(content["archive_b64"]), body)
+        self.assertEqual(content["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(content["episode"], 7)
+
+    def test_download_archive_episode_is_none_for_movie(self):
+        body = _zip_body({"Dune.Part.One.2021.lv.srt": "movie subtitle"})
 
         content = self.mod.extract_download(
             body,
             "nekur.dune-part-one.2021.zip",
-            {"title": "Dune: Part One", "year": 2021},
+            {"title": "Dune: Part One", "year": 2021, "episode": None},
         )
-        data = base64.b64decode(content["content_b64"])
 
-        self.assertIn(b"Part one", data)
-        self.assertIn(b"Part two", data)
-        self.assertEqual(content["format"], "srt")
+        self.assertEqual(base64.b64decode(content["archive_b64"]), body)
+        self.assertIsNone(content["episode"])
+
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.NekurProvider()
+        provider._http_get = lambda url, timeout=10: (b"", {})
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {
+                    "download_url": "https://subtitri.nekur.net/filmu-subtitri/download/abc",
+                    "filename": "nekur.dune-part-one.2021.zip",
+                },
+                {"alpha3": "lav", "alpha2": "lv"},
+                {},
+            )
 
     def test_download_rejects_html_error_response(self):
         with self.assertRaises(ValueError):
@@ -209,6 +260,8 @@ class NekurProviderTests(unittest.TestCase):
         data = base64.b64decode(content["content_b64"])
         self.assertTrue(data.startswith(b"1\n00:00:01"))
         self.assertEqual(content["content_type"], "application/x-subrip")
+        # Direct content path must not ship a worker-guessed encoding; the host normalizes.
+        self.assertNotIn("encoding", content)
 
     def test_download_keeps_direct_subtitle_despite_zip_filename(self):
         # Regression: the synthetic ".zip" filename must not reject a direct
@@ -235,6 +288,7 @@ class NekurProviderTests(unittest.TestCase):
         self.assertEqual(data, subtitle)
         self.assertEqual(content["format"], "srt")
         self.assertFalse(content["empty"])
+        self.assertNotIn("archive_b64", content)
 
     def test_download_sniffs_direct_subtitle_without_disposition(self):
         # Even without a usable filename, a body that is plainly SubRip must be
@@ -255,49 +309,6 @@ class NekurProviderTests(unittest.TestCase):
         data = base64.b64decode(content["content_b64"])
         self.assertEqual(data, subtitle)
         self.assertEqual(content["format"], "srt")
-
-    def test_download_skips_macosx_sidecar_files(self):
-        # Regression: AppleDouble sidecars (__MACOSX / ._*) must not be selected
-        # over the real subtitle even when archive order places them first.
-        real = b"1\n00:00:01,000 --> 00:00:02,000\nReal subtitle\n"
-        body = _zip_body(
-            {
-                "__MACOSX/._Dune.Part.One.2021.lv.srt": b"\x00\x05\x16\x07binary metadata",
-                "Dune.Part.One.2021.lv.srt": real,
-            }
-        )
-
-        content = self.mod.extract_download(
-            body,
-            "nekur.dune-part-one.2021.zip",
-            {"title": "Dune: Part One", "year": 2021},
-        )
-        data = base64.b64decode(content["content_b64"])
-
-        self.assertEqual(data, real)
-        self.assertEqual(content["format"], "srt")
-
-    def test_download_prefers_better_single_over_weaker_multipart(self):
-        # Regression: a low-scoring CD1/CD2 pair must not shadow a better
-        # matching single-file subtitle.
-        body = _zip_body(
-            {
-                "Extras.CD1.lv.srt": b"1\n00:00:01,000 --> 00:00:02,000\nExtras one\n",
-                "Extras.CD2.lv.srt": b"1\n00:00:03,000 --> 00:00:04,000\nExtras two\n",
-                "Dune.Part.One.2021.lv.srt": b"1\n00:00:05,000 --> 00:00:06,000\nMain movie\n",
-            }
-        )
-
-        content = self.mod.extract_download(
-            body,
-            "nekur.dune-part-one.2021.zip",
-            {"title": "Dune: Part One", "year": 2021},
-        )
-        data = base64.b64decode(content["content_b64"])
-
-        self.assertIn(b"Main movie", data)
-        self.assertNotIn(b"Extras one", data)
-        self.assertNotIn(b"Extras two", data)
 
 
 if __name__ == "__main__":
