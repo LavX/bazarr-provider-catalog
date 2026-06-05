@@ -2,11 +2,9 @@ import base64
 import hashlib
 import importlib.util
 import io
-import os
 import unittest
 import zipfile
 from pathlib import Path
-from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "subx"
@@ -329,14 +327,31 @@ class SubXProviderDownloadTests(unittest.TestCase):
         self.assertEqual(base64.b64decode(result["content_b64"]), body)
         self.assertEqual(result["content_sha256"], hashlib.sha256(body).hexdigest())
         self.assertEqual(result["format"], "srt")
+        self.assertNotIn("archive_b64", result)
 
-    def test_download_extracts_zip_archive_episode_file(self):
+    def test_download_does_not_guess_encoding_for_direct_body(self):
         provider = self.mod.SubXProvider()
-        body = b"1\n00:00:01,000 --> 00:00:02,000\nHola\n"
-        provider._http_get_bytes = lambda path, api_key, timeout=30: _zip_body(
-            "Breaking.Bad.S03E13.es.srt",
-            body,
+        body = b"1\n00:00:01,000 --> 00:00:02,000\nHol\xe1\n"
+        provider._http_get_bytes = lambda path, api_key, timeout=30: body
+
+        result = provider.download(
+            {
+                "provider": "subx",
+                "schema": 1,
+                "subtitle_id": "sub-1",
+                "download_url": "https://subx-api.duckdns.org/api/subtitles/sub-1/download",
+                "filename": "subx.sub-1.es.srt",
+            },
+            {"alpha3": "spa", "alpha2": "es"},
+            {"api_key": "key-one"},
         )
+
+        self.assertNotIn("encoding", result)
+
+    def test_download_returns_zip_archive_unextracted(self):
+        provider = self.mod.SubXProvider()
+        archive = _zip_body("Breaking.Bad.S03E13.es.srt", b"1\nHola\n")
+        provider._http_get_bytes = lambda path, api_key, timeout=30: archive
 
         result = provider.download(
             {
@@ -351,45 +366,71 @@ class SubXProviderDownloadTests(unittest.TestCase):
             {"api_key": "key-one"},
         )
 
-        self.assertEqual(base64.b64decode(result["content_b64"]), body)
-        self.assertEqual(result["format"], "srt")
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["episode"], 13)
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
 
-    def test_download_extracts_rar_archive_via_bundled_py7zz(self):
+    def test_download_returns_rar_archive_unextracted(self):
         provider = self.mod.SubXProvider()
-        provider._http_get_bytes = lambda path, api_key, timeout=30: b"Rar!\x1a\x07\x00rar body"
-        with mock.patch.object(
-            self.mod,
-            "_extract_rar_files",
-            return_value=[("Breaking.Bad.S03E13.es.srt", b"1\nsubtitle\n")],
-        ) as extractor:
-            result = provider.download(
+        archive = b"Rar!\x1a\x07\x00rar body bytes"
+        provider._http_get_bytes = lambda path, api_key, timeout=30: archive
+
+        result = provider.download(
+            {
+                "provider": "subx",
+                "schema": 1,
+                "subtitle_id": "exact",
+                "download_url": "https://subx-api.duckdns.org/api/subtitles/exact/download",
+                "filename": "subx.exact.es.rar",
+                "episode": 13,
+            },
+            {"alpha3": "spa", "alpha2": "es"},
+            {"api_key": "key-one"},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["episode"], 13)
+        self.assertNotIn("content_b64", result)
+
+    def test_download_archive_carries_none_episode_for_movies(self):
+        provider = self.mod.SubXProvider()
+        archive = _zip_body("Inception.es.srt", b"1\nHola\n")
+        provider._http_get_bytes = lambda path, api_key, timeout=30: archive
+
+        result = provider.download(
+            {
+                "provider": "subx",
+                "schema": 1,
+                "subtitle_id": "movie-1",
+                "download_url": "https://subx-api.duckdns.org/api/subtitles/movie-1/download",
+                "filename": "subx.movie-1.es.zip",
+                "episode": None,
+            },
+            {"alpha3": "spa", "alpha2": "es"},
+            {"api_key": "key-one"},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertIsNone(result["episode"])
+
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.SubXProvider()
+        provider._http_get_bytes = lambda path, api_key, timeout=30: b""
+
+        with self.assertRaises(ValueError):
+            provider.download(
                 {
                     "provider": "subx",
                     "schema": 1,
-                    "subtitle_id": "exact",
-                    "download_url": "https://subx-api.duckdns.org/api/subtitles/exact/download",
-                    "filename": "subx.exact.es.rar",
-                    "episode": 13,
+                    "subtitle_id": "sub-1",
+                    "download_url": "https://subx-api.duckdns.org/api/subtitles/sub-1/download",
+                    "filename": "subx.sub-1.es.srt",
                 },
                 {"alpha3": "spa", "alpha2": "es"},
                 {"api_key": "key-one"},
-            )
-
-        extractor.assert_called_once()
-        self.assertEqual(base64.b64decode(result["content_b64"]), b"1\nsubtitle\n")
-        self.assertEqual(result["format"], "srt")
-
-    def test_rar_extraction_prefers_bundled_py7zz(self):
-        class FakePy7zz:
-            @staticmethod
-            def extract_archive(_archive_path, output_dir):
-                with open(os.path.join(output_dir, "episode.srt"), "wb") as handle:
-                    handle.write(b"subtitle")
-
-        with mock.patch.object(self.mod, "py7zz", FakePy7zz):
-            self.assertEqual(
-                self.mod._extract_rar_files(b"rar bytes"),
-                [("episode.srt", b"subtitle")],
             )
 
 
