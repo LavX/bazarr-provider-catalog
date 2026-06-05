@@ -252,6 +252,19 @@ def _as_float(value):
         return None
 
 
+def _episode_numbers(value):
+    if isinstance(value, (list, tuple, set)):
+        items = value
+    else:
+        items = [value]
+    numbers = set()
+    for item in items:
+        parsed = _as_int(item)
+        if parsed is not None:
+            numbers.add(parsed)
+    return numbers
+
+
 def _clean_text(value):
     if value is None:
         return ""
@@ -506,15 +519,21 @@ def _matches_for_video(
         video_series = _clean_text(video.get("series"))
         if video_series and _normalize(video_series) in _normalize(movie_name):
             matches.add("series")
-        if season is not None and _as_int(video.get("season")) == season:
+        video_season = _as_int(video.get("season"))
+        video_episodes = _episode_numbers(video.get("episode"))
+        if video_season is None and season is not None:
+            video_season = season
+        if not video_episodes and episode is not None:
+            video_episodes = {episode}
+        if season is not None and video_season == season:
             matches.add("season")
-        if episode is not None and _as_int(video.get("episode")) == episode:
+        if episode is not None and episode in video_episodes:
             matches.add("episode")
         tag_match = _EPISODE_TAG_RE.search(release_name or "")
         if tag_match:
-            if _as_int(tag_match.group("season")) == _as_int(video.get("season")):
+            if _as_int(tag_match.group("season")) == video_season:
                 matches.add("season")
-            if _as_int(tag_match.group("episode")) == _as_int(video.get("episode")):
+            if _as_int(tag_match.group("episode")) in video_episodes:
                 matches.add("episode")
     elif kind == "movie" and movie_kind == "movie":
         if video.get("title") and _normalize(video.get("title")) == _normalize(movie_name):
@@ -1108,7 +1127,7 @@ class OpenSubtitlesOrgProvider:
         status = getattr(response, "status_code", 200)
         if status == 429:
             raise RateLimited("OpenSubtitles.org rate limited the request")
-        if status >= 500:
+        if status >= 400:
             raise ServiceUnavailable(f"OpenSubtitles.org HTTP {status}")
         return response
 

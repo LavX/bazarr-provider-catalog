@@ -685,6 +685,59 @@ class NativeSearchTests(unittest.TestCase):
         self.assertEqual(rows[0]["release_name"], "Game.of.Thrones.S01E01.1080p.WEB-DL")
         self.assertEqual(rows[0]["filename"], "Game.of.Thrones.S01E01.1080p.WEB-DL.en.srt")
 
+    def test_match_uses_normalized_episode_for_list_inputs(self):
+        multi_episode_video = dict(EPISODE_VIDEO)
+        multi_episode_video["episode"] = [1, 2]
+        context = self.mod.build_search_context(multi_episode_video, {})
+
+        matches = self.mod._matches_for_video(
+            multi_episode_video,
+            "episode",
+            "Game of Thrones",
+            "Game.of.Thrones.S01E01.1080p.WEB-DL",
+            2011,
+            "tt1480055",
+            context.season,
+            context.episode,
+            None,
+        )
+
+        self.assertIn("episode", matches)
+        self.assertIn("season", matches)
+
+    def test_download_rejects_non_challenge_4xx_instead_of_wrapping_error_body(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        error_body = b"Subtitle has been removed."
+        session = FakeSession(
+            [
+                FakeResponse(
+                    "https://dl.opensubtitles.org/en/download/sub/1952619105",
+                    status_code=404,
+                    content=error_body,
+                )
+            ]
+        )
+
+        class FakeCloudscraper:
+            @staticmethod
+            def create_scraper(**kwargs):
+                return session
+
+        self.mod.cloudscraper = FakeCloudscraper
+
+        with self.assertRaisesRegex(self.mod.ServiceUnavailable, "HTTP 404"):
+            provider.download(
+                {
+                    "provider": "opensubtitles",
+                    "mode": "native",
+                    "subtitle_id": "1952619105",
+                    "download_url": "https://www.opensubtitles.org/en/subtitles/1952619105/game-of-thrones-winter-is-coming-en",
+                    "filename": "Game.of.Thrones.S01E01.srt",
+                },
+                {"alpha3": "eng", "alpha2": "en"},
+                {},
+            )
+
     def test_download_fetches_direct_zip_and_returns_subtitle_payload(self):
         provider = self.mod.OpenSubtitlesOrgProvider()
         calls = []
