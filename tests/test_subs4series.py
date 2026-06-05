@@ -104,16 +104,54 @@ class Subs4SeriesParserTests(unittest.TestCase):
         )
         self.assertEqual(rows[1]["language"], "eng")
 
-    def test_extract_download_reads_zip_subtitle_and_skips_hidden_files(self):
+    def test_extract_download_zip_returns_raw_archive_for_host(self):
+        body = _zip_body()
+
         payload = self.mod.extract_download(
-            _zip_body(),
-            {"filename": "Game.of.Thrones.S01E01.HDTV.XviD-FEVER.el.zip"},
+            body,
+            {"filename": "Game.of.Thrones.S01E01.HDTV.XviD-FEVER.el.zip", "episode": 1},
         )
 
-        self.assertEqual(payload["format"], "srt")
-        self.assertEqual(payload["encoding"], "utf-8")
-        self.assertFalse(payload["empty"])
-        self.assertIn("1\nsubtitle\n", self.mod._decode_payload_text(payload))
+        # Archive mode: the worker hands the raw archive bytes back untouched.
+        self.assertEqual(base64.b64decode(payload["archive_b64"]), body)
+        self.assertEqual(payload["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(payload["episode"], 1)
+        # No extraction, member selection, or encoding guessing happens worker-side.
+        self.assertNotIn("content_b64", payload)
+        self.assertNotIn("member", payload)
+        self.assertNotIn("encoding", payload)
+
+    def test_extract_download_rar_returns_raw_archive_for_host(self):
+        # Minimal RAR4 signature; the host extracts, the worker only forwards bytes.
+        body = b"Rar!\x1a\x07\x00" + b"\x00" * 32
+
+        payload = self.mod.extract_download(body, {"filename": "subs4series.rar", "episode": 5})
+
+        self.assertEqual(base64.b64decode(payload["archive_b64"]), body)
+        self.assertEqual(payload["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(payload["episode"], 5)
+        self.assertNotIn("content_b64", payload)
+        self.assertNotIn("encoding", payload)
+
+    def test_extract_download_archive_episode_is_none_when_missing(self):
+        body = _zip_body()
+
+        payload = self.mod.extract_download(body, {"filename": "subs4series.zip"})
+
+        self.assertEqual(base64.b64decode(payload["archive_b64"]), body)
+        self.assertIsNone(payload["episode"])
+
+    def test_extract_download_rejects_empty_body(self):
+        with self.assertRaises(ValueError):
+            self.mod.extract_download(b"   \r\n  ", {"filename": "subs4series.zip"})
+
+    def test_extract_download_rejects_html_error_page(self):
+        with self.assertRaises(ValueError):
+            self.mod.extract_download(
+                b"<!DOCTYPE html>\n<html><head><title>404</title></head>"
+                b"<body>Subtitle not found</body></html>",
+                {"filename": "subs4series.zip"},
+            )
 
 
 class Subs4SeriesProviderTests(unittest.TestCase):
@@ -163,6 +201,9 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         self.assertIn("release_group", first["matches"])
         self.assertEqual(first["score"], 100)
         self.assertEqual(first["provider_payload"]["page_link"], expected_episode_url)
+        # The host needs episode (and season) to pick the archive member.
+        self.assertEqual(first["provider_payload"]["season"], 1)
+        self.assertEqual(first["provider_payload"]["episode"], 1)
 
     def test_search_rejects_movies(self):
         provider = self.mod.Subs4SeriesProvider()
@@ -198,6 +239,8 @@ class Subs4SeriesProviderTests(unittest.TestCase):
                 "detail_url": "https://www.subs4series.com/english-subtitles/sb6a7a0c63b/game-of-thrones",
                 "page_link": "https://www.subs4series.com/tv-series/game-of-thrones/s8985ffc551/season-1/episode-1",
                 "filename": "Game.of.Thrones.S01E01.HDTV.XviD-FEVER.en.zip",
+                "season": 1,
+                "episode": 1,
             },
             {"alpha3": "eng", "alpha2": "en"},
             {"request_delay_ms": 0},
@@ -207,9 +250,13 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         self.assertEqual(posts[0][1]["my_recaptcha_challenge_field"], "manual_challenge")
         self.assertEqual(posts[0][2], "https://www.subs4series.com/english-subtitles/sb6a7a0c63b/game-of-thrones")
         self.assertTrue(any("anti-block-layover.php" in item[0] for item in seen_gets))
-        body = base64.b64decode(result["content_b64"])
-        self.assertEqual(hashlib.sha256(body).hexdigest(), result["content_sha256"])
-        self.assertIn("1\nsubtitle\n", self.mod._decode_payload_text(result))
+        # Archive mode: the worker forwards the raw zip and carries episode for the host.
+        body = _zip_body()
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["episode"], 1)
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
 
     def test_download_posts_captcha_response_when_required(self):
         provider = self.mod.Subs4SeriesProvider()
@@ -235,6 +282,8 @@ class Subs4SeriesProviderTests(unittest.TestCase):
                 "detail_url": "https://www.subs4series.com/greek-subtitles/s277e869f4/game-of-thrones",
                 "page_link": "https://www.subs4series.com/tv-series/game-of-thrones/s8985ffc551/season-1/episode-1",
                 "filename": "Game.of.Thrones.S01E01.HDTV.XviD-FEVER.el.zip",
+                "season": 1,
+                "episode": 1,
             },
             {"alpha3": "ell", "alpha2": "el"},
             {"captcha_response": "solved-token", "request_delay_ms": 0},
@@ -243,7 +292,8 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         self.assertEqual(posts[0][0], "https://www.subs4series.com/getSub-captcha-token.html")
         self.assertEqual(posts[0][1]["g-recaptcha-response"], "solved-token")
         self.assertEqual(posts[0][1]["recaptcha_response"], "solved-token")
-        self.assertIn("1\nsubtitle\n", self.mod._decode_payload_text(result))
+        self.assertEqual(base64.b64decode(result["archive_b64"]), _zip_body())
+        self.assertEqual(result["episode"], 1)
 
     def test_download_requires_captcha_solution_when_page_has_recaptcha(self):
         provider = self.mod.Subs4SeriesProvider()
