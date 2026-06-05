@@ -6,7 +6,9 @@ import html
 import http.cookiejar
 import os
 import re
+import socket
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
@@ -14,6 +16,10 @@ from html.parser import HTMLParser
 PROVIDER_ID = "greeksubs"
 BASE_URL = "https://greeksubs.net"
 HTTP_TIMEOUT_SECONDS = 20
+HTTP_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8
+RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 MAX_RESULTS = 25
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -216,8 +222,19 @@ class GreekSubsProvider:
         if data is not None:
             headers["Content-Type"] = "application/x-www-form-urlencoded"
         request = urllib.request.Request(url, data=data, headers=headers)
-        with self._opener.open(request, timeout=timeout) as response:
-            return response.read()
+        for attempt in range(1, HTTP_MAX_ATTEMPTS + 1):
+            try:
+                with self._opener.open(request, timeout=timeout) as response:
+                    return response.read()
+            except urllib.error.HTTPError as error:
+                if error.code not in RETRYABLE_STATUS or attempt >= HTTP_MAX_ATTEMPTS:
+                    raise
+                _retry_sleep(attempt, error.headers.get("Retry-After") if error.code == 429 else None)
+            except (urllib.error.URLError, socket.timeout, TimeoutError):
+                if attempt >= HTTP_MAX_ATTEMPTS:
+                    raise
+                _retry_sleep(attempt, None)
+        raise RuntimeError("unreachable greeksubs retry state")
 
     def search(self, video, languages, config):
         language = _requested_greek(languages)
@@ -459,6 +476,23 @@ def _sleep(config):
     delay = int((config or {}).get("request_delay_ms") or 0)
     if delay > 0:
         time.sleep(delay / 1000)
+
+
+def _retry_sleep(attempt, retry_after):
+    delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    after = _retry_after_seconds(retry_after)
+    if after is not None:
+        delay = max(delay, after)
+    time.sleep(min(delay, RETRY_BACKOFF_CAP_SECONDS))
+
+
+def _retry_after_seconds(value):
+    if not value:
+        return None
+    try:
+        return max(0.0, float(str(value).strip()))
+    except (TypeError, ValueError):
+        return None
 
 
 def _decode(body):
