@@ -353,7 +353,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "418a51393a876478e8eca61adcb2e81c2e26b99d93179b9b682d6eb75012322f",
+        "bundle_sha256": "507b689d4b51ee0dac8031b2714b73e3c6988b4de0dfddc99d19db2f31e9497b",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -375,7 +375,7 @@
         "entry_class": "BollyNookProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "2e70192fc07339a0e9e593ba62306a474fce6cfa2a5503e1a803e6164709be8f"
+          "provider.py": "5a377047fd267951d644fc9f1e4524e4cc381afa7c41bff0d1b0fd0bb091b912"
         },
         "languages": [
           "arg",
@@ -441,7 +441,7 @@
         "supported_media": [
           "movie"
         ],
-        "version": "0.1.1"
+        "version": "0.1.2"
       }
     },
     {
