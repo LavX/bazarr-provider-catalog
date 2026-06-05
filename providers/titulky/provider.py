@@ -5,6 +5,7 @@ import hashlib
 import html
 import io
 import re
+import socket
 import time
 import unicodedata
 import urllib.error
@@ -16,6 +17,13 @@ PROVIDER_ID = "titulky"
 BASE_URL = "https://premium.titulky.com"
 DOWNLOAD_URL = f"{BASE_URL}/download.php?id="
 HTTP_TIMEOUT_SECONDS = 30
+# Transport-level retry for transient network blips (connection reset, DNS,
+# timeout, 5xx, 429). Mirrors upstream subliminal's RetryingSession: a single
+# blip should not abort a search/download. Non-transient failures (4xx other
+# than 429, auth/parse errors) propagate unchanged on the first occurrence.
+RETRY_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8.0
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt")
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -150,7 +158,7 @@ class TitulkyProvider:
         opener = urllib.request.build_opener() if allow_redirects else urllib.request.build_opener(_NoRedirectHandler)
         request = urllib.request.Request(url, headers=self._headers(headers))
         try:
-            response = opener.open(request, timeout=timeout)
+            response = _open_with_retry(opener, request, timeout)
         except urllib.error.HTTPError as error:
             result = _http_error_response(error, url)
             self._store_cookies(result.headers)
@@ -167,7 +175,7 @@ class TitulkyProvider:
         request = urllib.request.Request(url, data=encoded, headers=self._headers(merged_headers))
         opener = urllib.request.build_opener(_NoRedirectHandler)
         try:
-            response = opener.open(request, timeout=timeout)
+            response = _open_with_retry(opener, request, timeout)
         except urllib.error.HTTPError as error:
             result = _http_error_response(error, url)
             self._store_cookies(result.headers)
@@ -492,6 +500,57 @@ def _fix_line_endings(content):
 def _looks_like_html(body):
     sample = (body or b"")[:512].lstrip().lower()
     return sample.startswith(b"<!doctype html") or sample.startswith(b"<html") or b"<body" in sample
+
+
+def _open_with_retry(opener, request, timeout):
+    # Bounded transport retry around the raw urllib call only. Transient blips
+    # (connection reset/DNS/refused, timeouts, 5xx, 429) get up to
+    # RETRY_MAX_ATTEMPTS tries with exponential backoff; the final failure is
+    # re-raised so the caller's existing error handling runs unchanged. Anything
+    # non-transient (4xx other than 429, parse/auth errors) propagates on the
+    # first occurrence because it is never matched here.
+    last_error = None
+    for attempt in range(1, RETRY_MAX_ATTEMPTS + 1):
+        try:
+            return opener.open(request, timeout=timeout)
+        except urllib.error.HTTPError as error:
+            if not _is_retryable_status(error.code) or attempt >= RETRY_MAX_ATTEMPTS:
+                raise
+            delay = _retry_after_seconds(error) if error.code == 429 else None
+            error.close()
+            last_error = error
+        except (urllib.error.URLError, socket.timeout, TimeoutError) as error:
+            if attempt >= RETRY_MAX_ATTEMPTS:
+                raise
+            delay = None
+            last_error = error
+        _sleep_backoff(attempt, delay)
+    # Unreachable in practice: the loop either returns, retries, or re-raises.
+    raise last_error
+
+
+def _is_retryable_status(code):
+    code = int(code or 0)
+    return code == 429 or 500 <= code <= 599
+
+
+def _retry_after_seconds(error):
+    headers = getattr(error, "headers", None)
+    value = _header(headers, "retry-after") if headers else ""
+    seconds = _float(value)
+    if seconds is None or seconds < 0:
+        return None
+    return min(seconds, RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _backoff_delay(attempt):
+    return min(RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1)), RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _sleep_backoff(attempt, override=None):
+    delay = override if override is not None else _backoff_delay(attempt)
+    if delay > 0:
+        time.sleep(delay)
 
 
 def _http_error_response(error, url):
