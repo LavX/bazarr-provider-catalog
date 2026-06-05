@@ -4,21 +4,14 @@ import base64
 import hashlib
 import html
 import io
-import os
 import random
 import re
-import tempfile
 import time
 import unicodedata
 import urllib.parse
 import urllib.request
 import zipfile
 from http.cookiejar import CookieJar
-
-try:
-    import py7zz
-except ImportError:  # pragma: no cover, dependency is declared in manifest
-    py7zz = None
 
 PROVIDER_ID = "subs4free"
 BASE_URL = "https://www.subs4free.info"
@@ -151,38 +144,40 @@ def parse_download_form(body):
 
 def extract_download(body, payload=None):
     payload = payload or {}
-    if not body:
-        return _content_payload(b"", _format_from_filename(payload.get("filename")), empty=True)
-    stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist(), payload)
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
-    if _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        selected = select_subtitle_file([name for name, _data in files], payload)
-        return _content_payload(dict(files)[selected], _subtitle_extension(selected) or "srt")
+    # Reject broken responses: getSub.php can answer with an empty stream or an HTML/error
+    # page that otherwise looks like a successful download.
+    if not body or not body.strip():
+        raise ValueError("subs4free returned an empty download")
+    if _is_html_body(body):
+        raise ValueError("subs4free returned an HTML/error page instead of a subtitle")
+    if _is_archive_body(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to the
+        # host, which lists it, picks the member, and detects encoding.
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "episode": payload.get("episode"),
+        }
+    # Direct, non-archive subtitle body.
     return _content_payload(body, _format_from_filename(payload.get("filename")))
 
 
-def select_subtitle_file(names, payload=None):
-    payload = payload or {}
-    candidates = [name for name in names if _subtitle_extension(name) and not _is_hidden_path(name)]
-    if not candidates:
-        raise ValueError("subs4free archive contains no supported subtitle files")
-    release = _normalize(payload.get("release_info") or payload.get("filename") or "")
-    if not release:
-        return candidates[0]
+def _is_archive_body(body):
+    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
 
-    def score(name):
-        normalized = _normalize(os.path.basename(name))
-        score_value = 0
-        for token in release.split():
-            if token in normalized:
-                score_value += 1
-        return score_value
 
-    return max(candidates, key=score)
+def _is_html_body(body):
+    if not body:
+        return False
+    head = body[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or head.startswith(b"<!--")
+        or b"<body" in head
+        or b"<head" in head
+    )
 
 
 def derive_matches(video, item):
@@ -315,6 +310,8 @@ class Subs4FreeProvider:
                 "filename": filename,
                 "release_info": item["release_info"],
                 "language": alpha3,
+                "season": item.get("season"),
+                "episode": item.get("episode"),
             },
         }
 
@@ -567,10 +564,6 @@ def _format_from_filename(filename):
     return _subtitle_extension(filename or "") or "srt"
 
 
-def _is_hidden_path(name):
-    return any(part.startswith(".") for part in (name or "").split("/"))
-
-
 def _is_rar_archive(body):
     return bool(body) and (
         body.startswith(b"Rar!\x1a\x07\x00")
@@ -578,41 +571,15 @@ def _is_rar_archive(body):
     )
 
 
-def _extract_rar_files(body):
-    if py7zz is None:
-        raise RuntimeError("Subs4Free RAR extraction requires bundled py7zz")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subs4free.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if _subtitle_extension(rel) and not _is_hidden_path(rel):
-                with open(path, "rb") as handle:
-                    files.append((rel, handle.read()))
-    if not files:
-        raise ValueError("subs4free archive contains no supported subtitle files")
-    return files
-
-
 def _content_payload(content, subtitle_format="srt", empty=False):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially latin-1, which never fails to decode) only reintroduces mojibake.
     content = _normalize_line_endings(content or b"")
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": "text/plain",
         "format": subtitle_format or "srt",
-        "encoding": _detect_subtitle_encoding(content),
         "empty": bool(empty),
     }
 
@@ -620,16 +587,6 @@ def _content_payload(content, subtitle_format="srt", empty=False):
 def _normalize_line_endings(content):
     normalized = content.replace(b"\r\n", b"\n")
     return normalized.replace(b"\r", b"\n")
-
-
-def _detect_subtitle_encoding(content):
-    if not content:
-        return "utf-8"
-    try:
-        content.decode("utf-8")
-    except UnicodeDecodeError:
-        return "latin-1"
-    return "utf-8"
 
 
 def _decode_payload_text(payload):
