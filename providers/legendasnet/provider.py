@@ -7,6 +7,7 @@ import io
 import json
 import os
 import re
+import socket
 import time
 import unicodedata
 import urllib.error
@@ -18,6 +19,13 @@ PROVIDER_ID = "legendasnet"
 BASE_URL = "https://legendas.net"
 API_URL = f"{BASE_URL}/api/v1"
 HTTP_TIMEOUT_SECONDS = 30
+# Transport-level retry for transient network blips only (mirrors upstream
+# subliminal's RetryingSession/ProviderRetryMixin: a few tries with backoff).
+HTTP_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8.0
+# HTTP statuses worth retrying: throttling (429) and server-side faults (5xx).
+RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
@@ -32,6 +40,64 @@ class HttpResponse:
         self.status = int(status)
         self.body = body or b""
         self.headers = dict(headers or {})
+
+
+def _perform_request(request, timeout):
+    # One raw attempt. Preserves the original error-to-response conversion: an
+    # HTTPError still becomes an HttpResponse carrying its status/body/headers,
+    # so 4xx/5xx/429 keep flowing back to the existing status-mapping callers.
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return HttpResponse(response.status, response.read(), dict(response.headers.items()))
+    except urllib.error.HTTPError as error:
+        try:
+            return HttpResponse(error.code, error.read(), dict(error.headers.items()))
+        finally:
+            error.close()
+
+
+def _request_with_retry(request, timeout):
+    # Bounded retry around the raw transport only. Retries transient transport
+    # exceptions (connection reset/refused, DNS, timeouts) and transient HTTP
+    # statuses (429 + 5xx); everything else (success, 4xx) returns on the first
+    # attempt and any non-transient exception propagates unchanged.
+    last_error = None
+    for attempt in range(1, HTTP_MAX_ATTEMPTS + 1):
+        try:
+            response = _perform_request(request, timeout)
+        except (urllib.error.URLError, socket.timeout, TimeoutError) as error:
+            last_error = error
+            if attempt >= HTTP_MAX_ATTEMPTS:
+                raise
+            time.sleep(_retry_delay(attempt))
+            continue
+        if response.status in RETRY_STATUS_CODES and attempt < HTTP_MAX_ATTEMPTS:
+            time.sleep(_retry_delay(attempt, response))
+            continue
+        return response
+    # Loop only falls through when the final attempt raised transiently.
+    raise last_error
+
+
+def _retry_delay(attempt, response=None):
+    delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    if response is not None and response.status == 429:
+        retry_after = _retry_after_seconds(response.headers)
+        if retry_after is not None:
+            delay = max(delay, retry_after)
+    return min(delay, RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _retry_after_seconds(headers):
+    for key, value in (headers or {}).items():
+        if str(key).lower() != "retry-after":
+            continue
+        try:
+            seconds = int(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+        return seconds if seconds >= 0 else None
+    return None
 
 
 class LegendasNetProvider:
@@ -165,19 +231,11 @@ class LegendasNetProvider:
         request_headers = dict(headers or {})
         request_headers["Content-Type"] = "application/json"
         request = urllib.request.Request(url, data=body, headers=request_headers, method=method)
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                return HttpResponse(response.status, response.read(), dict(response.headers.items()))
-        except urllib.error.HTTPError as error:
-            return HttpResponse(error.code, error.read(), dict(error.headers.items()))
+        return _request_with_retry(request, timeout)
 
     def _http_get(self, url, headers=None, timeout=HTTP_TIMEOUT_SECONDS):
         request = urllib.request.Request(url, headers=dict(headers or {}), method="GET")
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                return HttpResponse(response.status, response.read(), dict(response.headers.items()))
-        except urllib.error.HTTPError as error:
-            return HttpResponse(error.code, error.read(), dict(error.headers.items()))
+        return _request_with_retry(request, timeout)
 
 
 def _download_payload(body, filename, provider_payload):
