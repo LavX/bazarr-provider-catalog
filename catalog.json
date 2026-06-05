@@ -5659,12 +5659,13 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "0a0d126fc5e5b48468fe9d127b45bdbd0d57804d73b990adafa5730e0daab4a9",
+        "bundle_sha256": "d8a35dff28865161ddd5148fa95e81a7d47762f06384459a72eae4f436765c9b",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
             "api_key": {
               "description": "SubSource API key from your SubSource account profile.",
+              "secret": true,
               "title": "API key",
               "type": "string"
             },
@@ -5689,7 +5690,7 @@
         "entry_class": "SubSourceProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "66cebc1bdbf2de8096e737c874cd1e7bfa36f4860a963689f31479ad8572ea8e"
+          "provider.py": "dd4a61a126010094e51a71fb423c740e529d7b37ebca5884bcae31570a819a28"
         },
         "languages": [
           "abk",
@@ -5798,7 +5799,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.0"
+        "version": "0.1.1"
       }
     },
     {
