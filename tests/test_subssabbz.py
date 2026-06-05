@@ -79,6 +79,34 @@ SONS_OF_ANARCHY_EN_HTML = b"""
 """
 
 
+GREYS_ANATOMY_EN_HTML = b"""
+<!doctype html>
+<html>
+<body>
+<table>
+  <tr class="subs-row">
+    <td class="c1field">TV</td>
+    <td class="c1trailer">&nbsp;</td>
+    <td class="c1notice">&nbsp;</td>
+    <td class="c2field">
+      <a href="http://subs.sab.bz/index.php?s=session&amp;act=download&amp;attach_id=88003"
+         onMouseover="ddrivetip('&lt;b&gt;release&lt;/b&gt;: Greys.Anatomy.S01E01')">Grey's Anatomy</a> (2005) [1x1]
+    </td>
+    <td>27 Mar 2005</td>
+    <td>English</td>
+    <td>1</td>
+    <td>23.976</td>
+    <td>translator</td>
+    <td><a href="http://www.imdb.com/title/tt0413573/">URL</a></td>
+    <td>1200</td>
+    <td><img alt="Rating: 5" title="Rating: 5" /></td>
+  </tr>
+</table>
+</body>
+</html>
+"""
+
+
 def _zip_body(files):
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w") as archive:
@@ -223,6 +251,110 @@ class SubsSabBzProviderTests(unittest.TestCase):
         self.assertEqual(calls[0]["movie"], "Daredevil")
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["filename"], "Daredevil.S01E01.WEB-DL.srt")
+
+    def test_search_keeps_apostrophe_titles_for_row_matching(self):
+        provider = self.mod.SubsSabBzProvider()
+        archive = _zip_body({"Greys.Anatomy.S01E01.srt": "subtitle"})
+        calls = []
+
+        def post_stub(url, data, timeout=30, referer=None):
+            del url, timeout, referer
+            calls.append(data)
+            return GREYS_ANATOMY_EN_HTML
+
+        provider._http_post = post_stub
+        provider._http_get = lambda url, timeout=30, referer=None: archive
+
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "Grey's Anatomy",
+                "season": 1,
+                "episode": 1,
+                "series_imdb_id": "tt0413573",
+            },
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {},
+        )
+
+        # The POST query drops the apostrophe, but the row filter must keep it so the
+        # apostrophe-bearing site row still tokenizes to the requested series.
+        self.assertEqual(calls[0]["movie"], "Greys Anatomy")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["filename"], "Greys.Anatomy.S01E01.srt")
+        self.assertIn("series", results[0]["matches"])
+
+    def test_search_accepts_generic_member_with_release_tags(self):
+        provider = self.mod.SubsSabBzProvider()
+        # No SxxEyy marker, only release tags that must not be parsed as 7x20 / 2x64.
+        archive = _zip_body({"Game.of.Thrones.720p.HDTV.x264-CTU.srt": "subtitle"})
+        provider._http_post = lambda url, data, timeout=30, referer=None: SEARCH_GOT_BG_HTML
+        provider._http_get = lambda url, timeout=30, referer=None: archive
+
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "Game of Thrones",
+                "season": 1,
+                "episode": 1,
+                "series_imdb_id": "tt0944947",
+            },
+            [{"alpha3": "bul", "alpha2": "bg"}],
+            {},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["filename"], "Game.of.Thrones.720p.HDTV.x264-CTU.srt")
+        # Release tags must not be mistaken for season/episode markers.
+        self.assertEqual(self.mod._season_episode_from_filename("Game.of.Thrones.720p.HDTV.x264-CTU.srt"), (None, None))
+
+    def test_search_keeps_multi_cd_members_distinct(self):
+        provider = self.mod.SubsSabBzProvider()
+        archive = _zip_body(
+            {
+                "CD1/Inception.srt": "part one",
+                "CD2/Inception.srt": "part two",
+            }
+        )
+        provider._http_post = lambda url, data, timeout=30, referer=None: SEARCH_INCEPTION_EN_HTML
+        provider._http_get = lambda url, timeout=30, referer=None: archive
+
+        results = provider.search(
+            {"kind": "movie", "title": "Inception", "year": 2010},
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {},
+        )
+
+        filenames = sorted(item["filename"] for item in results)
+        self.assertEqual(filenames, ["CD1/Inception.srt", "CD2/Inception.srt"])
+        # The two discs must download to different exact members, not collapse to one basename.
+        first = next(item for item in results if item["filename"] == "CD1/Inception.srt")
+        second = next(item for item in results if item["filename"] == "CD2/Inception.srt")
+        self.assertNotEqual(first["id"], second["id"])
+        content_one = provider.download(first["provider_payload"], {"alpha3": "eng", "alpha2": "en"}, {})
+        content_two = provider.download(second["provider_payload"], {"alpha3": "eng", "alpha2": "en"}, {})
+        self.assertEqual(base64.b64decode(content_one["content_b64"]), b"part one")
+        self.assertEqual(base64.b64decode(content_two["content_b64"]), b"part two")
+
+    def test_search_result_id_includes_hi_and_forced_flags(self):
+        provider = self.mod.SubsSabBzProvider()
+        archive = _zip_body({"Inception.DVDRiP.XviD-ARROW.srt": "english"})
+        provider._http_post = lambda url, data, timeout=30, referer=None: SEARCH_INCEPTION_EN_HTML
+        provider._http_get = lambda url, timeout=30, referer=None: archive
+
+        results = provider.search(
+            {"kind": "movie", "title": "Inception", "year": 2010},
+            [
+                {"alpha3": "eng", "alpha2": "en"},
+                {"alpha3": "eng", "alpha2": "en", "hi": True},
+                {"alpha3": "eng", "alpha2": "en", "forced": True},
+            ],
+            {},
+        )
+
+        ids = [item["id"] for item in results]
+        self.assertEqual(len(ids), 3)
+        self.assertEqual(len(set(ids)), 3)
 
     def test_search_episode_filters_ambiguous_numeric_archive_members(self):
         provider = self.mod.SubsSabBzProvider()

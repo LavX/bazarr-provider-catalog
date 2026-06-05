@@ -136,25 +136,37 @@ class GestdownLanguageTests(unittest.TestCase):
             "Chinese (Simplified)",
         )
 
-    def test_maps_brazilian_portuguese_to_current_api_language_name(self):
+    def test_maps_brazilian_portuguese_to_addic7ed_label(self):
         self.assertEqual(
             self.mod.gestdown_language_name(
                 {"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR"}
             ),
+            "Portuguese (Brazilian)",
+        )
+
+    def test_plain_portuguese_keeps_base_label(self):
+        self.assertEqual(
+            self.mod.gestdown_language_name({"alpha3": "por", "alpha2": "pt"}),
             "Portuguese",
         )
 
-    def test_maps_serbian_script_variants_to_current_api_language_name(self):
+    def test_maps_serbian_script_variants_to_addic7ed_labels(self):
         self.assertEqual(
             self.mod.gestdown_language_name(
                 {"alpha3": "srp", "alpha2": "sr", "script": "Latn"}
             ),
-            "Serbian",
+            "Serbian (Latin)",
         )
         self.assertEqual(
             self.mod.gestdown_language_name(
                 {"alpha3": "srp", "alpha2": "sr", "script": "Cyrl"}
             ),
+            "Serbian (Cyrillic)",
+        )
+
+    def test_plain_serbian_keeps_base_label(self):
+        self.assertEqual(
+            self.mod.gestdown_language_name({"alpha3": "srp", "alpha2": "sr"}),
             "Serbian",
         )
 
@@ -273,6 +285,58 @@ class GestdownProviderSearchTests(unittest.TestCase):
             calls,
         )
         self.assertGreaterEqual(len(results), 1)
+
+    def test_search_uses_variant_labels_and_preserves_country_and_script(self):
+        provider = self.mod.GestdownProvider()
+        calls = []
+
+        def get_json(url, timeout=30):
+            calls.append(url)
+            if url == "https://api.gestdown.info/shows/external/tvdb/81189":
+                return SHOW_LOOKUP
+            if url.startswith(
+                "https://api.gestdown.info/subtitles/get/"
+                "31ffb6ce-c000-4079-8912-b3f72057baed/1/1/"
+            ):
+                return SUBTITLES_ENGLISH
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = get_json
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "Breaking Bad",
+                "series_tvdb_id": 81189,
+                "season": 1,
+                "episode": 1,
+            },
+            [
+                {"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR"},
+                {"alpha3": "srp", "alpha2": "sr", "script": "Cyrl"},
+            ],
+            {"locked_retry_delay_ms": 0},
+        )
+
+        base = (
+            "https://api.gestdown.info/subtitles/get/"
+            "31ffb6ce-c000-4079-8912-b3f72057baed/1/1/"
+        )
+        self.assertIn(base + "Portuguese%20%28Brazilian%29", calls)
+        self.assertIn(base + "Serbian%20%28Cyrillic%29", calls)
+
+        by_id = {result["id"]: result for result in results}
+        pt_br = by_id[
+            "gestdown-69cf7d79-052c-4f12-a57d-995d77de43ad-por-BR"
+        ]
+        self.assertEqual(pt_br["language"]["alpha3"], "por")
+        self.assertEqual(pt_br["language"]["country_alpha2"], "BR")
+
+        sr_cyrl = by_id[
+            "gestdown-69cf7d79-052c-4f12-a57d-995d77de43ad-srp-Cyrl"
+        ]
+        self.assertEqual(sr_cyrl["language"]["alpha3"], "srp")
+        self.assertEqual(sr_cyrl["language"]["script"], "Cyrl")
+        self.assertIsNone(sr_cyrl["language"].get("country_alpha2"))
 
     def test_search_returns_no_results_after_repeated_423s(self):
         provider = self.mod.GestdownProvider()

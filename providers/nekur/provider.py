@@ -136,7 +136,7 @@ class NekurProvider:
             },
         )
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.read()
+            return response.read(), _headers_to_dict(response.headers)
 
     def search(self, video, languages, config):
         if (video or {}).get("kind") != "movie":
@@ -216,8 +216,12 @@ class NekurProvider:
         url = payload.get("download_url")
         if not url:
             raise ValueError("nekur download requires download_url")
-        body = self._http_get(url)
-        return extract_download(body, payload.get("filename", ""), payload)
+        body, headers = self._http_get(url)
+        # The synthetic ".zip" filename only describes archive responses. When the
+        # endpoint serves a direct subtitle, prefer the real Content-Disposition
+        # name so its true extension survives into extract_download().
+        filename = _filename_from_headers(headers) or payload.get("filename", "")
+        return extract_download(body, filename, payload)
 
 
 def extract_download(body, filename="", payload=None):
@@ -236,8 +240,13 @@ def extract_download(body, filename="", payload=None):
             selected = select_subtitle_files(archive.namelist(), payload)
             content = b"\n\n".join(archive.read(name) for name in selected)
             return _content_payload(content, _subtitle_extension(selected[0]) or "srt")
-    subtitle_format = _subtitle_extension(filename or "")
-    if not subtitle_format or _looks_like_html(body):
+    if _looks_like_html(body):
+        raise ValueError("nekur download did not return a supported subtitle file")
+    # Direct (non-archive) subtitle: trust the real filename extension, then fall
+    # back to sniffing the body so a valid .srt/.sub is not rejected just because
+    # the synthetic ".zip" filename carried no usable extension.
+    subtitle_format = _subtitle_extension(filename or "") or _format_from_content(body)
+    if not subtitle_format:
         raise ValueError("nekur download did not return a supported subtitle file")
     return _content_payload(body, subtitle_format)
 
@@ -247,14 +256,41 @@ def select_subtitle_file(names, payload):
 
 
 def select_subtitle_files(names, payload):
-    candidates = [name for name in names if _subtitle_extension(name)]
+    candidates = [
+        name
+        for name in names
+        if _subtitle_extension(name) and not _is_sidecar(name)
+    ]
     if not candidates:
         raise ValueError("nekur archive contains no supported subtitle files")
+
+    best_single = max(
+        enumerate(candidates),
+        key=lambda index_name: _subtitle_file_score(index_name, payload),
+    )[1]
+    best_single_score = _subtitle_file_score((0, best_single), payload)
+
     multipart = _multipart_subset(candidates, payload)
     if multipart:
-        return multipart
+        multipart_score = _group_score(multipart, payload)
+        # Only prefer the multipart set when it scores at least as well as the
+        # best single file. Otherwise a low-scoring CD1/CD2 pair would shadow a
+        # better matching single subtitle.
+        if multipart_score >= best_single_score:
+            return multipart
 
-    return [max(enumerate(candidates), key=lambda index_name: _subtitle_file_score(index_name, payload))[1]]
+    return [best_single]
+
+
+def _is_sidecar(name):
+    parts = name.replace("\\", "/").split("/")
+    if any(part == "__MACOSX" for part in parts):
+        return True
+    return os.path.basename(name).startswith("._")
+
+
+def _group_score(names, payload):
+    return max(_subtitle_file_score((0, name), payload) for name in names)
 
 
 def _subtitle_file_score(index_name, payload):
@@ -482,6 +518,36 @@ def _subtitle_extension(name):
 
 def _format_from_filename(filename):
     return _subtitle_extension(filename or "") or "srt"
+
+
+def _headers_to_dict(headers):
+    return {str(key).lower(): str(value) for key, value in dict(headers or {}).items()}
+
+
+def _filename_from_headers(headers):
+    disposition = (headers or {}).get("content-disposition", "")
+    match = re.search(r'filename\*?=(?:[^\'";]+\'\')?"?([^";]+)"?', disposition)
+    if not match:
+        return ""
+    return urllib.parse.unquote(match.group(1)).strip()
+
+
+def _format_from_content(body):
+    sample = (body or b"").lstrip()[:512]
+    if sample.startswith(b"\xef\xbb\xbf"):
+        sample = sample[3:].lstrip()
+    if sample.upper().startswith(b"WEBVTT"):
+        return "vtt"
+    lowered = sample.lower()
+    if b"[script info]" in lowered or b"[v4+ styles]" in lowered or b"[v4 styles]" in lowered:
+        return "ass"
+    # SubRip cue: a numeric index line followed by a "hh:mm:ss,mmm --> ..." timecode.
+    if re.search(rb"(?m)^\s*\d+\s*\r?\n\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->", sample):
+        return "srt"
+    # MicroDVD .sub frames such as "{0}{25}text".
+    if re.match(rb"\s*\{\d+\}\{\d+\}", sample):
+        return "sub"
+    return None
 
 
 def _content_payload(content, subtitle_format, empty=False):

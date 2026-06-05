@@ -19,6 +19,9 @@ A provider is done only when all of these are true:
 - `/api/v1/download` returns a stream link for that provider.
 - The stream link returns non-empty subtitle bytes.
 - Logs show no provider worker errors for the search or download path.
+- Forced-only and hearing-impaired-only requests are handled, and the provider never advertises a variant it cannot produce.
+- Brazilian Portuguese uses `alpha3: "por"` with `country_alpha2: "BR"`, never a `por-BR` alpha3 or a custom country key, and language names or slugs match the upstream site exactly.
+- Compiled dependencies pass the wheel-matrix gate in `sdk validate`.
 
 Do not stop at "the provider appears in native search". The compat path is what Jellyfin-style clients exercise.
 
@@ -213,6 +216,42 @@ Check the stream:
 - Search returns unrelated results: query generation is too broad or scoring accepts weak title matches.
 - Episode searches miss results: the site may index anime by absolute episode, season episode, localized title, or year.
 - Reusing an unrelated `moviehash` can force slower or different compat paths. Use client-shaped requests unless hash behavior is the target.
+
+## Common review findings (fix before merge)
+
+These issues recur across the catalog and are the first things automated review flags. Check every provider against them.
+
+**Language and variant handling**
+
+- Brazilian Portuguese: return `alpha3: "por"` with `country_alpha2: "BR"`, and read the incoming `country_alpha2` key. Never invent a `por-BR` alpha3 or a custom `country` key; the smoke contract and the built-in path expect the standard shape.
+- Match the site's exact language names or slugs, including its misspellings. Cross-check the bazarr upstream converter (for example `subliminal_patch/converters/subsarr.py`) instead of guessing.
+- If the provider only produces normal subtitles, skip forced-only and hearing-impaired-only requests instead of returning a non-matching variant, and never echo the requested `hi`/`forced` flags onto a candidate it cannot actually satisfy. Filter HI server-side when the site supports it.
+- Carry the returned subtitle's real `alpha2` (and country) in the result language, not just `alpha3`.
+
+**Matching and scoring**
+
+- Reject archives that do not contain the requested episode; do not return the first member or score a wrong-season or wrong-episode row as an exact match. Match episode tokens as standalone tokens (`S01E01`), not substrings.
+- Only award a `year`, `imdb_id`, or `hash` match when the value is actually present and equal. Missing-versus-missing is not a match.
+- Mark a row hash-verifiable only when the hash actually matched.
+- Treat season 0 (specials) as valid: test `is None`, not truthiness.
+
+**Downloads and encoding**
+
+- Return the full download content contract (content, sha256, format, content type, encoding) and report the real format and MIME. Preserve the site's explicit extension field instead of defaulting everything to `srt`.
+- Report the requested output format after any conversion.
+- Detect the site's legacy code page before falling back to latin-1: cp1250 (Polish), cp1251 or windows-1251 (Cyrillic), windows-1255 (Hebrew), and the site's regional encoding. Accept a candidate encoding only if it decodes into that script's character range.
+- Reject an archive whose members are not actually subtitle text (an error page saved as `.srt`).
+
+**Sessions, auth, and anti-bot**
+
+- Re-authenticate when a reused worker's session expires: detect the login or error redirect, drop stale `_logged_in` and cookies, log in again, and retry once.
+- Fetch any per-session form auth key before posting credentials, preserve duplicate `Set-Cookie` headers, and reject a download page that redirected to a login page.
+- After a FlareSolverr or Anubis solve, reuse the solved User-Agent and fresh cookies and drop the stale per-request cookies. Bound proof-of-work and challenge sleeps by the request deadline and raise `ServiceUnavailable` instead of hanging the worker.
+- Use HTTPS for third-party lookups such as TMDB.
+
+**Dependencies**
+
+- Compiled or ABI-specific wheels need the full worker matrix of hashes. Run `python3 scripts/expand_wheel_hashes.py`; `sdk validate` enforces it. A dependency with no aarch64 wheel (for example `py7zz`) cannot run on aarch64 workers; choose another library if aarch64 matters.
 
 ## Bulk workflow
 

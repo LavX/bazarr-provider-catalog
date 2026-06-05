@@ -474,7 +474,13 @@ def _collect_extracted_subtitle_files(output_dir):
 
 
 def _rank_search_rows(rows, title, media_type, year=None):
-    filtered = [row for row in rows if row.get("media_type") == media_type and _row_matches_title(row, title)]
+    filtered = [
+        row
+        for row in rows
+        if row.get("media_type") == media_type
+        and _row_matches_title(row, title)
+        and not _row_year_conflicts(row, year)
+    ]
 
     def score(row):
         value = 0
@@ -495,6 +501,15 @@ def _row_matches_title(row, title):
     if _title_matches(title, row.get("title")):
         return True
     return any(_title_matches(title, alias) for alias in row.get("aliases") or [])
+
+
+def _row_year_conflicts(row, year):
+    if not year or not row.get("year"):
+        return False
+    try:
+        return int(year) != int(row["year"])
+    except (TypeError, ValueError):
+        return False
 
 
 def _archive_matches_episode(archive, video):
@@ -543,9 +558,9 @@ def _season_episode_from_label(label):
 def _languages_from_archive(filename, block):
     normalized = "." + _normalize_release(filename) + "."
     languages = set()
-    if "enfr" in normalized or ".en." in normalized or ".eng." in normalized:
+    if "enfr" in normalized or ".en." in normalized or ".eng." in normalized or ".vo." in normalized:
         languages.add("eng")
-    if "enfr" in normalized or ".fr." in normalized or ".fre." in normalized:
+    if "enfr" in normalized or ".fr." in normalized or ".fre." in normalized or ".vf." in normalized:
         languages.add("fra")
     for match in _IMG_LANG_RE.finditer(block or ""):
         language = ALPHA2_TO_ALPHA3.get((match.group("lang") or "").lower())

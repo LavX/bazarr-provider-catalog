@@ -81,7 +81,13 @@ class BetaSeriesProvider:
         return extract_download(body, payload)
 
     def _http_get_json(self, url, timeout=HTTP_TIMEOUT_SECONDS, config=None):
-        body = self._http_get_bytes(url, timeout=timeout, config=config)
+        try:
+            body = self._http_get_bytes(url, timeout=timeout, config=config)
+        except urllib.error.HTTPError as error:
+            payload = _decode_api_error(error)
+            if payload is None:
+                raise
+            return payload
         return json.loads(body.decode("utf-8"))
 
     def _http_get_bytes(self, url, timeout=HTTP_TIMEOUT_SECONDS, config=None):
@@ -150,6 +156,31 @@ def build_search_url(video, token):
         params["episode"] = video.get("episode")
         return f"{BASE_URL}/shows/episodes?{urllib.parse.urlencode(params)}", {"series_tvdb_id"}
     return None, set()
+
+
+def _decode_api_error(error):
+    """Return the BetaSeries JSON error body so handle_api_errors can run.
+
+    BetaSeries reports documented API errors (no series found, invalid token)
+    with HTTP 400 and a JSON body, which urllib raises as HTTPError before the
+    body is read. Decode that body when it is a real API error and return None
+    for genuine transport failures so they keep propagating.
+    """
+    try:
+        body = error.read()
+    except (OSError, ValueError):
+        return None
+    finally:
+        error.close()
+    if not body:
+        return None
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if isinstance(payload, dict) and isinstance(payload.get("errors"), list):
+        return payload
+    return None
 
 
 def handle_api_errors(payload):

@@ -7,6 +7,7 @@ import json
 import re
 import time
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
@@ -473,14 +474,33 @@ def _extract_anubis_challenge(html_text):
     }
 
 
-def _solve_pow(random_data, difficulty):
-    prefix = "0" * difficulty
+def _leading_zero_bits(digest):
+    count = 0
+    for char in str(digest or ""):
+        value = int(char, 16)
+        if value == 0:
+            count += 4
+            continue
+        for bit in (3, 2, 1, 0):
+            if value & (1 << bit):
+                return count
+            count += 1
+    return count
+
+
+def _solve_pow(random_data, difficulty, deadline=None):
+    try:
+        target_bits = max(0, min(int(difficulty), 64))
+    except (TypeError, ValueError):
+        target_bits = 4
     nonce = 0
     while True:
         digest = _hashlib.sha256(f"{random_data}{nonce}".encode("utf-8")).hexdigest()
-        if digest.startswith(prefix):
+        if _leading_zero_bits(digest) >= target_bits:
             return nonce, digest
         nonce += 1
+        if deadline is not None and time.monotonic() >= deadline:
+            return None, None
 
 
 def _solve_preact(random_data, difficulty):
@@ -527,7 +547,11 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=HTTP_TI
         if getattr(solved, "cookies", None):
             session.cookies.update(solved.cookies)
     else:
-        nonce, digest = _solve_pow(challenge["randomData"], challenge["difficulty"])
+        nonce, digest = _solve_pow(
+            challenge["randomData"], challenge["difficulty"], deadline=started + timeout
+        )
+        if digest is None:
+            return None
         params = {
             "id": challenge["id"],
             "response": digest,
@@ -571,8 +595,11 @@ def _flaresolverr_request(method, url, data=None, config=None, state=None, refer
         headers={"Content-Type": "application/json", "Accept": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=max(HTTP_TIMEOUT_SECONDS, payload["maxTimeout"] / 1000.0 + 5)) as response:
-        response_body = response.read()
+    try:
+        with urllib.request.urlopen(request, timeout=max(HTTP_TIMEOUT_SECONDS, payload["maxTimeout"] / 1000.0 + 5)) as response:
+            response_body = response.read()
+    except urllib.error.URLError as exc:
+        raise CloudflareBlockedError(f"napiprojekt FlareSolverr request failed: {exc}") from exc
     try:
         parsed = json.loads(response_body.decode("utf-8"))
     except json.JSONDecodeError as exc:
