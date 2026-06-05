@@ -6,6 +6,7 @@ import io
 import json
 import os
 import re
+import socket
 import time
 import urllib.error
 import urllib.parse
@@ -22,6 +23,76 @@ USER_AGENT = (
 )
 HTTP_TIMEOUT_SECONDS = 30
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
+
+# Transport-level retry for transient network failures only. Upstream subliminal
+# uses a RetryingSession/ProviderRetryMixin with a few tries plus backoff so a
+# single connection blip does not abort a search or download. We mirror that at
+# the raw urllib call: at most RETRY_ATTEMPTS total tries (RETRY_ATTEMPTS - 1
+# retries), exponential backoff capped at RETRY_BACKOFF_MAX_SECONDS. Only
+# connection errors, timeouts, and HTTP 5xx/429 are retried. Every other error
+# (4xx, auth failures, parse errors) propagates unchanged on the first attempt.
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_MAX_SECONDS = 8.0
+RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+
+
+def _retry_after_seconds(exc):
+    # Honor a Retry-After header on a 429 if the server sent one. Only the simple
+    # delta-seconds form is supported; anything else falls back to the backoff.
+    headers = getattr(exc, "headers", None)
+    if headers is None:
+        return None
+    value = headers.get("Retry-After")
+    if value is None:
+        return None
+    try:
+        seconds = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    if seconds < 0:
+        return None
+    return min(seconds, RETRY_BACKOFF_MAX_SECONDS)
+
+
+def _is_retriable_http_error(exc):
+    return isinstance(exc, urllib.error.HTTPError) and exc.code in RETRY_STATUS_CODES
+
+
+def _is_retriable_transport_error(exc):
+    # A urllib.error.HTTPError is a subclass of URLError, so check it first and
+    # only retry the transient status codes; other 4xx HTTPErrors must propagate.
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in RETRY_STATUS_CODES
+    if isinstance(exc, urllib.error.URLError):
+        return True
+    return isinstance(exc, (socket.timeout, TimeoutError))
+
+
+def _retry_delay(attempt, exc):
+    if _is_retriable_http_error(exc) and exc.code == 429:
+        retry_after = _retry_after_seconds(exc)
+        if retry_after is not None:
+            return retry_after
+    delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    return min(delay, RETRY_BACKOFF_MAX_SECONDS)
+
+
+def _with_transport_retry(do_request):
+    # Run do_request (a single raw urllib request that returns the response body)
+    # under a bounded retry loop. Transient transport failures are retried with
+    # exponential backoff up to RETRY_ATTEMPTS total tries; the final failure and
+    # any non-transient error are re-raised unchanged so existing error handling
+    # (HTTPError 429/4xx mapping, parse errors) still runs in the caller.
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            return do_request()
+        except Exception as exc:  # noqa: BLE001 - re-raised below unless transient
+            if attempt >= RETRY_ATTEMPTS or not _is_retriable_transport_error(exc):
+                raise
+            delay = _retry_delay(attempt, exc)
+            if delay > 0:
+                time.sleep(delay)
 
 
 _SUBSOURCE_TO_LANGUAGE = {
@@ -543,9 +614,13 @@ class SubSourceProvider:
             self._url_for_path(path, params),
             headers=auth_headers(api_key),
         )
-        try:
+
+        def do_request():
             with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
-                body = response.read()
+                return response.read()
+
+        try:
+            body = _with_transport_retry(do_request)
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
             if exc.code == 400:
@@ -565,9 +640,13 @@ class SubSourceProvider:
             self._url_for_path(path),
             headers=auth_headers(api_key),
         )
-        try:
+
+        def do_request():
             with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
                 return response.read()
+
+        try:
+            return _with_transport_retry(do_request)
         except urllib.error.HTTPError as exc:
             if exc.code == 401:
                 raise ValueError("SubSource api_key is invalid or missing") from exc
