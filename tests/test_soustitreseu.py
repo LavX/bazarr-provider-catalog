@@ -2,7 +2,9 @@ import base64
 import hashlib
 import importlib.util
 import io
+import socket
 import unittest
+import urllib.error
 import zipfile
 from pathlib import Path
 
@@ -368,6 +370,129 @@ class SoustitreseuProviderTests(unittest.TestCase):
                 {"alpha3": "eng", "alpha2": "en"},
                 {},
             )
+
+
+class _FakeResponse:
+    def __init__(self, body):
+        self._body = body
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _FakeOpener:
+    """Stubs the lowest urllib transport: opener.open() raises a queued error or returns a body."""
+
+    def __init__(self, outcomes):
+        self._outcomes = list(outcomes)
+        self.calls = 0
+
+    def open(self, request, timeout=None):
+        del request, timeout
+        self.calls += 1
+        outcome = self._outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return _FakeResponse(outcome)
+
+
+class SoustitreseuTransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.sleeps = []
+        self.mod.time.sleep = lambda seconds: self.sleeps.append(seconds)
+
+    def _http_error(self, url, code, reason, headers=None):
+        # urllib.error.HTTPError allocates a temp file for its body; close it on
+        # teardown so 3.14 does not emit a ResourceWarning during GC.
+        error = urllib.error.HTTPError(url, code, reason, headers or {}, None)
+        self.addCleanup(error.close)
+        return error
+
+    def _provider_with_outcomes(self, outcomes):
+        provider = self.mod.SoustitreseuProvider()
+        opener = _FakeOpener(outcomes)
+        provider._opener = opener
+        return provider, opener
+
+    def test_http_get_retries_url_error_then_succeeds(self):
+        provider, opener = self._provider_with_outcomes(
+            [urllib.error.URLError("connection reset"), b"<html>ok</html>"]
+        )
+
+        body = provider._http_get("https://www.sous-titres.eu/search.html?q=x")
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(opener.calls, 2)
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_http_get_retries_timeout_then_succeeds(self):
+        provider, opener = self._provider_with_outcomes(
+            [socket.timeout("read timed out"), TimeoutError("timed out"), b"body"]
+        )
+
+        body = provider._http_get("https://www.sous-titres.eu/x.html")
+
+        self.assertEqual(body, b"body")
+        self.assertEqual(opener.calls, 3)
+        self.assertEqual(len(self.sleeps), 2)
+        # Exponential backoff: 0.5s then 1.0s.
+        self.assertEqual(self.sleeps, [0.5, 1.0])
+
+    def test_http_get_retries_503_then_succeeds(self):
+        error = self._http_error("https://www.sous-titres.eu/x.html", 503, "Service Unavailable")
+        provider, opener = self._provider_with_outcomes([error, b"recovered"])
+
+        body = provider._http_get("https://www.sous-titres.eu/x.html")
+
+        self.assertEqual(body, b"recovered")
+        self.assertEqual(opener.calls, 2)
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_http_get_honors_retry_after_on_429(self):
+        error = self._http_error(
+            "https://www.sous-titres.eu/x.html",
+            429,
+            "Too Many Requests",
+            {"Retry-After": "3"},
+        )
+        provider, opener = self._provider_with_outcomes([error, b"ok"])
+
+        body = provider._http_get("https://www.sous-titres.eu/x.html")
+
+        self.assertEqual(body, b"ok")
+        self.assertEqual(opener.calls, 2)
+        # Retry-After (3s) wins over the 0.5s base backoff.
+        self.assertEqual(self.sleeps, [3.0])
+
+    def test_http_get_does_not_retry_404(self):
+        error = self._http_error("https://www.sous-titres.eu/missing.html", 404, "Not Found")
+        # Only the error is queued: a retry would pop past it and raise IndexError,
+        # so reaching the assertions proves the 404 propagated on the first call.
+        provider, opener = self._provider_with_outcomes([error])
+
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            provider._http_get("https://www.sous-titres.eu/missing.html")
+
+        self.assertEqual(ctx.exception.code, 404)
+        self.assertEqual(opener.calls, 1)
+        self.assertEqual(self.sleeps, [])
+
+    def test_http_get_gives_up_after_max_attempts(self):
+        outcomes = [urllib.error.URLError("down")] * 3
+        provider, opener = self._provider_with_outcomes(outcomes)
+
+        with self.assertRaises(urllib.error.URLError):
+            provider._http_get("https://www.sous-titres.eu/x.html")
+
+        self.assertEqual(opener.calls, 3)
+        self.assertEqual(len(self.sleeps), 2)
 
 
 if __name__ == "__main__":

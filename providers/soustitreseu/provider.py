@@ -6,8 +6,10 @@ import html
 import io
 import os
 import re
+import socket
 import time
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -17,6 +19,13 @@ PROVIDER_ID = "soustitreseu"
 BASE_URL = "https://www.sous-titres.eu"
 SEARCH_URL = f"{BASE_URL}/search.html"
 HTTP_TIMEOUT_SECONDS = 15
+# Transport-level retry for transient network failures (connection reset, DNS
+# blip, read timeout, 5xx, 429). Mirrors upstream subliminal's RetryingSession:
+# a single transient blip should not abort a search/download.
+HTTP_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8.0
+RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 SUPPORTED_LANGUAGES = {"eng": "en", "fra": "fr"}
 ALPHA2_TO_ALPHA3 = {value: key for key, value in SUPPORTED_LANGUAGES.items()}
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
@@ -160,8 +169,26 @@ class SoustitreseuProvider:
         if referer:
             headers["Referer"] = referer
         request = urllib.request.Request(url, headers=headers)
-        with self._opener.open(request, timeout=timeout) as response:
-            return response.read()
+        return self._open_with_retry(request, timeout)
+
+    def _open_with_retry(self, request, timeout):
+        # Retry only raw transport failures around the urllib call. Non-transient
+        # errors (4xx other than 429, parse errors, anything non-network) propagate
+        # unchanged on first occurrence. All callers issue idempotent GETs.
+        for attempt in range(1, HTTP_MAX_ATTEMPTS + 1):
+            try:
+                with self._opener.open(request, timeout=timeout) as response:
+                    return response.read()
+            except urllib.error.HTTPError as error:
+                if error.code not in RETRY_STATUS_CODES or attempt >= HTTP_MAX_ATTEMPTS:
+                    raise
+                _retry_sleep(attempt, error.headers.get("Retry-After") if error.code == 429 else None)
+            except (urllib.error.URLError, socket.timeout, TimeoutError):
+                # urllib.error.HTTPError is a URLError subclass handled above; a bare
+                # URLError here is a connection-level failure (refused/DNS/reset).
+                if attempt >= HTTP_MAX_ATTEMPTS:
+                    raise
+                _retry_sleep(attempt, None)
 
     def search(self, video, languages, config):
         video = dict(video or {})
@@ -514,6 +541,25 @@ def _sleep(config):
     delay_ms = (config or {}).get("request_delay_ms", 0) or 0
     if delay_ms > 0:
         time.sleep(min(int(delay_ms), 5000) / 1000.0)
+
+
+def _retry_sleep(attempt, retry_after):
+    # Module-level time.sleep so tests can monkeypatch provider.time.sleep.
+    delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    parsed = _parse_retry_after(retry_after)
+    if parsed is not None:
+        delay = max(delay, parsed)
+    time.sleep(min(delay, RETRY_BACKOFF_CAP_SECONDS))
+
+
+def _parse_retry_after(value):
+    if not value:
+        return None
+    try:
+        seconds = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds >= 0 else None
 
 
 def _title_matches(wanted, candidate):
