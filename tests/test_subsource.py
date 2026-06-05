@@ -415,7 +415,7 @@ class SubSourceDownloadTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
 
-    def test_download_fetches_archive_and_extracts_subtitle(self):
+    def test_download_returns_archive_and_pins_selected_member(self):
         provider = self.mod.SubSourceProvider()
         body = b"1\n00:00:01,000 --> 00:00:02,000\nHello\n"
         archive = _zip_bytes({"Movie.2020.srt": body})
@@ -438,18 +438,20 @@ class SubSourceDownloadTests(unittest.TestCase):
         )
 
         self.assertEqual(called[0][0], "subtitles/501/download")
-        self.assertEqual(base64.b64decode(result["content_b64"]), body)
-        self.assertEqual(result["content_sha256"], hashlib.sha256(body).hexdigest())
-        self.assertEqual(result["format"], "srt")
-        self.assertFalse(result["empty"])
+        # Host-side extraction: hand back the raw archive bytes plus the selected member.
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["member"], "Movie.2020.srt")
+        # No inline extraction, no encoding pinning.
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
 
-    def test_download_selects_requested_episode_from_pack(self):
+    def test_download_pins_requested_episode_member_from_pack(self):
         provider = self.mod.SubSourceProvider()
-        wanted = b"1\n00:00:01,000 --> 00:00:02,000\nEpisode three\n"
         archive = _zip_bytes(
             {
                 "Show.S01E02.srt": b"episode two",
-                "Show.S01E03.srt": wanted,
+                "Show.S01E03.srt": b"episode three",
             }
         )
 
@@ -468,21 +470,83 @@ class SubSourceDownloadTests(unittest.TestCase):
             {"api_key": "test-key"},
         )
 
-        self.assertEqual(base64.b64decode(result["content_b64"]), wanted)
-        self.assertFalse(result["empty"])
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["member"], "Show.S01E03.srt")
 
-    def test_download_returns_empty_for_non_zip_response(self):
+    def test_download_pack_without_matching_member_lets_host_pick_by_episode(self):
         provider = self.mod.SubSourceProvider()
+        archive = _zip_bytes(
+            {
+                "Show.S01E01.srt": b"episode one",
+                "Show.S01E02.srt": b"episode two",
+            }
+        )
 
-        provider._http_get_bytes = lambda path, config: b"not a zip"
+        provider._http_get_bytes = lambda path, config: archive
         result = provider.download(
-            {"provider": "subsource", "schema": 1, "subtitle_id": 501},
+            {
+                "provider": "subsource",
+                "schema": 1,
+                "subtitle_id": 802,
+                "is_pack": True,
+                "kind": "episode",
+                "season": 1,
+                "episode": 5,
+            },
             {"alpha3": "eng"},
             {"api_key": "test-key"},
         )
 
-        self.assertTrue(result["empty"])
-        self.assertEqual(result["content_b64"], "")
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        # No confident member match, so the host picks by episode via guessit.
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 5)
+
+    def test_download_returns_rar_archive_for_host_picking(self):
+        provider = self.mod.SubSourceProvider()
+        body = b"Rar!\x1a\x07\x00rar-archive-bytes"
+
+        provider._http_get_bytes = lambda path, config: body
+        result = provider.download(
+            {
+                "provider": "subsource",
+                "schema": 1,
+                "subtitle_id": 901,
+                "kind": "episode",
+                "season": 2,
+                "episode": 4,
+            },
+            {"alpha3": "eng"},
+            {"api_key": "test-key"},
+        )
+
+        # stdlib cannot list a rar, so the worker hands the bytes to the host with episode.
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 4)
+
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.SubSourceProvider()
+        provider._http_get_bytes = lambda path, config: b"   "
+
+        with self.assertRaisesRegex(ValueError, "empty"):
+            provider.download(
+                {"provider": "subsource", "schema": 1, "subtitle_id": 501},
+                {"alpha3": "eng"},
+                {"api_key": "test-key"},
+            )
+
+    def test_download_rejects_html_error_page(self):
+        provider = self.mod.SubSourceProvider()
+        provider._http_get_bytes = lambda path, config: b"<!DOCTYPE html><html><body>error</body></html>"
+
+        with self.assertRaisesRegex(ValueError, "HTML"):
+            provider.download(
+                {"provider": "subsource", "schema": 1, "subtitle_id": 501},
+                {"alpha3": "eng"},
+                {"api_key": "test-key"},
+            )
 
 
 if __name__ == "__main__":
