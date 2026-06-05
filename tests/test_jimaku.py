@@ -6,7 +6,6 @@ import json
 import unittest
 import zipfile
 from pathlib import Path
-from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "jimaku"
@@ -323,6 +322,12 @@ class JimakuProviderSearchTests(unittest.TestCase):
         self.assertTrue(results[0]["provider_payload"]["is_archive"])
 
 
+def _rar_body(payload=b""):
+    # A minimal RAR4 signature is enough for byte-based archive detection; the host,
+    # not the worker, extracts members.
+    return b"Rar!\x1a\x07\x00" + payload
+
+
 class JimakuDownloadTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
@@ -346,8 +351,10 @@ class JimakuDownloadTests(unittest.TestCase):
         self.assertEqual(base64.b64decode(result["content_b64"]), SRT_BODY)
         self.assertEqual(result["content_sha256"], hashlib.sha256(SRT_BODY).hexdigest())
         self.assertEqual(result["format"], "srt")
+        self.assertNotIn("encoding", result)
+        self.assertNotIn("archive_b64", result)
 
-    def test_download_extracts_matching_episode_from_zip(self):
+    def test_download_returns_raw_zip_archive_with_episode(self):
         provider = self.mod.JimakuProvider()
         archive = _zip_body(
             {
@@ -364,61 +371,94 @@ class JimakuDownloadTests(unittest.TestCase):
                 "url": "https://jimaku.cc/files/frieren-pack.zip",
                 "filename": "Sousou.no.Frieren.S01.JP.zip",
                 "is_archive": True,
+                "episode": 5,
                 "video": {"kind": "episode", "season": 1, "episode": 5},
             },
             {"alpha3": "jpn", "alpha2": "ja"},
             {"api_key": "secret"},
         )
 
-        self.assertEqual(base64.b64decode(result["content_b64"]), SRT_BODY)
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["episode"], 5)
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
 
-    def test_download_extracts_matching_episode_from_rar(self):
+    def test_download_returns_raw_rar_archive_with_episode(self):
         provider = self.mod.JimakuProvider()
-        provider._http_get = lambda url, config=None: b"rar bytes"
+        archive = _rar_body(b"\x01\x02\x03payload")
+        provider._http_get = lambda url, config=None: archive
 
-        with mock.patch.object(
-            self.mod,
-            "_extract_rar_files",
-            return_value=[
-                ("Sousou.no.Frieren.S01E04.JA.srt", b"wrong"),
-                ("Sousou.no.Frieren.S01E05.JA.srt", SRT_BODY),
-            ],
-        ) as extractor:
-            result = provider.download(
+        result = provider.download(
+            {
+                "provider": "jimaku",
+                "schema": 1,
+                "url": "https://jimaku.cc/files/frieren-pack.rar",
+                "filename": "Sousou.no.Frieren.S01.JP.rar",
+                "is_archive": True,
+                "episode": 5,
+                "video": {"kind": "episode", "season": 1, "episode": 5},
+            },
+            {"alpha3": "jpn", "alpha2": "ja"},
+            {"api_key": "secret"},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["episode"], 5)
+        self.assertNotIn("content_b64", result)
+
+    def test_download_archive_carries_none_episode_for_movie(self):
+        provider = self.mod.JimakuProvider()
+        archive = _zip_body({"Godzilla.Minus.One.2023.JA.srt": SRT_BODY})
+        provider._http_get = lambda url, config=None: archive
+
+        result = provider.download(
+            {
+                "provider": "jimaku",
+                "schema": 1,
+                "url": "https://jimaku.cc/files/godzilla-pack.zip",
+                "filename": "Godzilla.Minus.One.2023.JP.zip",
+                "is_archive": True,
+                "episode": None,
+                "video": {"kind": "movie", "title": "Godzilla Minus One"},
+            },
+            {"alpha3": "jpn", "alpha2": "ja"},
+            {"api_key": "secret"},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertIsNone(result["episode"])
+
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.JimakuProvider()
+        provider._http_get = lambda url, config=None: b"   "
+
+        with self.assertRaisesRegex(ValueError, "empty"):
+            provider.download(
                 {
                     "provider": "jimaku",
                     "schema": 1,
-                    "url": "https://jimaku.cc/files/frieren-pack.rar",
-                    "filename": "Sousou.no.Frieren.S01.JP.rar",
-                    "is_archive": True,
-                    "video": {"kind": "episode", "season": 1, "episode": 5},
+                    "url": "https://jimaku.cc/files/frieren-s01e05.srt",
+                    "filename": "Sousou.no.Frieren.S01E05.JA.srt",
+                    "is_archive": False,
                 },
                 {"alpha3": "jpn", "alpha2": "ja"},
                 {"api_key": "secret"},
             )
 
-        extractor.assert_called_once_with(b"rar bytes")
-        self.assertEqual(base64.b64decode(result["content_b64"]), SRT_BODY)
-
-    def test_download_rejects_archive_missing_requested_episode(self):
+    def test_download_rejects_html_error_page(self):
         provider = self.mod.JimakuProvider()
-        archive = _zip_body(
-            {
-                "Sousou.no.Frieren.S01E04.JA.srt": b"wrong",
-                "Sousou.no.Frieren.S01E06.JA.srt": b"also wrong",
-            }
-        )
-        provider._http_get = lambda url, config=None: archive
+        provider._http_get = lambda url, config=None: b"<!DOCTYPE html><html><body>Not found</body></html>"
 
-        with self.assertRaisesRegex(ValueError, "episode 5"):
+        with self.assertRaisesRegex(ValueError, "HTML"):
             provider.download(
                 {
                     "provider": "jimaku",
                     "schema": 1,
-                    "url": "https://jimaku.cc/files/frieren-pack.zip",
-                    "filename": "Sousou.no.Frieren.S01.JP.zip",
-                    "is_archive": True,
-                    "video": {"kind": "episode", "season": 1, "episode": 5},
+                    "url": "https://jimaku.cc/files/frieren-s01e05.srt",
+                    "filename": "Sousou.no.Frieren.S01E05.JA.srt",
+                    "is_archive": False,
                 },
                 {"alpha3": "jpn", "alpha2": "ja"},
                 {"api_key": "secret"},
