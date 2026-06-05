@@ -138,6 +138,14 @@ ALIASES = {
     "bur": "mya",
     "tib": "bod",
 }
+# Region-bearing language tags the upstream Bazarr provider models as distinct
+# languages (Language("por", "BR"), Language("spa", "MX"), Language("zho", "TW")).
+# The region is preserved as country_alpha2 instead of being stripped.
+COUNTRY_TAGS = {
+    ("por", "br"): "BR",
+    ("spa", "mx"): "MX",
+    ("zho", "tw"): "TW",
+}
 FORCED_TITLE_RE = re.compile(r"\bforced\b", re.I)
 HI_TITLE_RE = re.compile(r"\b(?:sdh|hi|hearing[ -]?impaired|cc)\b", re.I)
 
@@ -279,6 +287,8 @@ class EmbeddedSubtitlesProvider:
             streams = parse_probe_streams(self.probe_runner(path, config or {}), config or {})
         except EmbeddedSubtitleError:
             return []
+        if _as_bool((config or {}).get("hi_fallback")):
+            _apply_hi_fallback(streams, requested)
         results = []
         for stream in streams:
             if not _language_requested(stream["language"], requested):
@@ -329,7 +339,9 @@ def _language_from_tag(tag):
     value = str(tag or "").strip().lower().replace("_", "-")
     if not value or value in {"und", "unknown"}:
         return None
-    primary = value.split("-", 1)[0]
+    parts = value.split("-", 1)
+    primary = parts[0]
+    region = parts[1].split("-", 1)[0] if len(parts) > 1 else ""
     alpha3 = ALIASES.get(primary, primary)
     if len(alpha3) == 2:
         alpha3 = ALPHA2_TO_ALPHA3.get(alpha3)
@@ -338,12 +350,16 @@ def _language_from_tag(tag):
     alpha3 = ALIASES.get(alpha3, alpha3)
     if len(alpha3) != 3:
         return None
-    return {
+    language = {
         "alpha3": alpha3,
         "alpha2": ALPHA3_TO_ALPHA2.get(alpha3),
         "hi": False,
         "forced": False,
     }
+    country = COUNTRY_TAGS.get((alpha3, region))
+    if country:
+        language["country_alpha2"] = country
+    return language
 
 
 def _language_payload(language):
@@ -359,7 +375,40 @@ def _language_payload(language):
     payload.setdefault("alpha2", ALPHA3_TO_ALPHA2.get(alpha3))
     payload["hi"] = _as_bool(payload.get("hi"))
     payload["forced"] = _as_bool(payload.get("forced"))
+    country = _country(payload)
+    if country:
+        payload["country_alpha2"] = country
     return payload
+
+
+def _country(language):
+    if not isinstance(language, dict):
+        return None
+    value = language.get("country_alpha2") or language.get("country") or language.get("region")
+    return str(value).upper() if value else None
+
+
+def _apply_hi_fallback(streams, requested):
+    """Flip HI-only tracks to normal so a non-HI request can be satisfied.
+
+    Mirrors the upstream Bazarr provider: for each requested non-HI language,
+    if every matching stream (same alpha3, country and forced flag) is hearing
+    impaired, drop their HI flag so the request still resolves to a candidate.
+    """
+    for language in requested or []:
+        payload = _language_payload(language)
+        if payload.get("hi"):
+            continue
+        group = [
+            stream
+            for stream in streams
+            if stream["language"].get("alpha3") == payload.get("alpha3")
+            and _country(stream["language"]) == _country(payload)
+            and bool(stream["language"].get("forced")) == bool(payload.get("forced"))
+        ]
+        if group and all(stream["language"].get("hi") for stream in group):
+            for stream in group:
+                stream["language"]["hi"] = False
 
 
 def _language_requested(stream_language, requested):
@@ -369,7 +418,12 @@ def _language_requested(stream_language, requested):
 
 def _language_key(language):
     payload = _language_payload(language)
-    return (payload.get("alpha3"), bool(payload.get("hi")), bool(payload.get("forced")))
+    return (
+        payload.get("alpha3"),
+        _country(payload),
+        bool(payload.get("hi")),
+        bool(payload.get("forced")),
+    )
 
 
 def _title_is_forced(title):

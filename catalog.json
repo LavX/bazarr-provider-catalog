@@ -641,7 +641,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "e8d5839c9f3df5f032d30bc9cb111613e139da2e64daad6e6b9c7352d49ad9c8",
+        "bundle_sha256": "fe42f5678d8293fa8227c6df6d66a049a187296bfe015c875d8366738710131f",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -662,6 +662,12 @@
               "description": "Path to the ffprobe binary used to inspect embedded subtitle streams.",
               "title": "ffprobe path",
               "type": "string"
+            },
+            "hi_fallback": {
+              "default": false,
+              "description": "When the only tracks for a requested language are hearing impaired, treat them as normal subtitles so a non-HI request is still satisfied.",
+              "title": "HI fallback",
+              "type": "boolean"
             },
             "included_codecs": {
               "default": "ass,subrip,webvtt,mov_text",
@@ -693,7 +699,7 @@
         "entry_class": "EmbeddedSubtitlesProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "44fdd44989621f7bf477e6aae63b43c49bfa65121e6f8348e1a35f2decfd889b"
+          "provider.py": "02d3d8ab42dc4654bb538b17e4ab63e3299495c325bd10894c83a583352eadfa"
         },
         "languages": [
           "afr",
@@ -813,7 +819,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.2"
+        "version": "0.1.3"
       }
     },
     {
