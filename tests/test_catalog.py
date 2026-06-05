@@ -250,5 +250,57 @@ class SdkCliTests(unittest.TestCase):
         self.assertEqual(provider_id, "regional")
 
 
+class ArchiveDownloadValidationTests(unittest.TestCase):
+    def _zip(self, names):
+        import io
+        import zipfile
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            for name in names:
+                archive.writestr(name, b"1\n00:00:01,000 --> 00:00:02,000\nHi\n")
+        return buffer.getvalue()
+
+    def test_archive_download_accepts_zip_with_named_member(self):
+        from sdk import cli as sdk_cli
+
+        raw = self._zip(["Show.S01E01.srt", "readme.txt"])
+        sdk_cli._validate_archive_download(
+            "x",
+            {
+                "archive_b64": base64.b64encode(raw).decode("ascii"),
+                "archive_sha256": hashlib.sha256(raw).hexdigest(),
+                "member": "Show.S01E01.srt",
+            },
+        )  # must not raise
+
+    def test_archive_download_rejects_missing_member(self):
+        from sdk import cli as sdk_cli
+
+        raw = self._zip(["Show.S01E01.srt"])
+        with self.assertRaises(sdk_cli.CatalogError):
+            sdk_cli._validate_archive_download(
+                "x", {"archive_b64": base64.b64encode(raw).decode("ascii"), "member": "missing.srt"}
+            )
+
+    def test_archive_download_rejects_archive_without_subtitle(self):
+        from sdk import cli as sdk_cli
+
+        raw = self._zip(["readme.txt", "cover.jpg"])
+        with self.assertRaises(sdk_cli.CatalogError):
+            sdk_cli._validate_archive_download(
+                "x", {"archive_b64": base64.b64encode(raw).decode("ascii")}
+            )
+
+    def test_archive_download_rejects_sha256_mismatch(self):
+        from sdk import cli as sdk_cli
+
+        raw = self._zip(["a.srt"])
+        with self.assertRaises(sdk_cli.CatalogError):
+            sdk_cli._validate_archive_download(
+                "x", {"archive_b64": base64.b64encode(raw).decode("ascii"), "archive_sha256": "0" * 64}
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

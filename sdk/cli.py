@@ -2,10 +2,12 @@ import argparse
 import base64
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import re
 import sys
+import zipfile
 from pathlib import Path, PurePosixPath
 
 SCHEMA_VERSION = 1
@@ -460,14 +462,46 @@ def smoke_test(
     except Exception as exc:
         raise CatalogError(f"{provider_id} download failed: {exc}") from exc
     if not isinstance(content, dict) or content.get("empty") is not False:
-        raise CatalogError(f"{provider_id} download must return a content payload")
-    data = base64.b64decode(content["content_b64"].encode("ascii"), validate=True)
-    if hashlib.sha256(data).hexdigest() != content.get("content_sha256"):
-        raise CatalogError(f"{provider_id} download hash mismatch")
-    if is_official_smoke and data.decode("utf-8") != EXPECTED_SMOKE_SUBTITLE:
-        raise CatalogError(f"{provider_id} download content does not match fixed SRT")
+        raise CatalogError(f"{provider_id} download must return a content or archive payload")
+    if "archive_b64" in content:
+        _validate_archive_download(provider_id, content)
+    else:
+        data = base64.b64decode(content["content_b64"].encode("ascii"), validate=True)
+        if hashlib.sha256(data).hexdigest() != content.get("content_sha256"):
+            raise CatalogError(f"{provider_id} download hash mismatch")
+        if is_official_smoke and data.decode("utf-8") != EXPECTED_SMOKE_SUBTITLE:
+            raise CatalogError(f"{provider_id} download content does not match fixed SRT")
     _assert_secret_not_leaked(config, secret_fields, content, f"{provider_id} download")
     return provider_id
+
+
+def _validate_archive_download(provider_id, content):
+    """Validate an archive-mode download payload.
+
+    Providers may hand the raw archive bytes back to the Bazarr+ host, which extracts
+    the member with its own rarfile/zipfile stack. The SDK validates the shape offline:
+    the bytes must be a real zip or rar (or a bare subtitle stream), and a named member,
+    if given, must exist. Full extraction is exercised host-side on a test server.
+    """
+    raw = base64.b64decode(content["archive_b64"].encode("ascii"), validate=True)
+    expected = content.get("archive_sha256")
+    if expected and hashlib.sha256(raw).hexdigest() != str(expected).lower():
+        raise CatalogError(f"{provider_id} download archive_sha256 mismatch")
+    stream = io.BytesIO(raw)
+    is_rar = raw[:4] == b"Rar!"
+    names = None
+    if zipfile.is_zipfile(stream):
+        with zipfile.ZipFile(stream) as archive:
+            names = archive.namelist()
+    elif not is_rar and not raw.strip():
+        raise CatalogError(f"{provider_id} download returned an empty archive payload")
+    member = content.get("member")
+    if member and names is not None and member not in names:
+        raise CatalogError(f"{provider_id} download member is not in the archive: {member}")
+    if names is not None and not any(
+        name.lower().endswith((".srt", ".sub", ".ssa", ".ass", ".vtt")) for name in names
+    ):
+        raise CatalogError(f"{provider_id} download archive has no subtitle member")
 
 
 def command_validate(args):
