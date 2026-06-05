@@ -135,6 +135,9 @@ class GreekSubtitlesSearchTests(unittest.TestCase):
         self.assertEqual(greek["provider"], "greeksubtitles")
         self.assertEqual(greek["provider_payload"]["subtitle_id"], "2793668")
         self.assertEqual(greek["provider_payload"]["download_url"], "https://www.greeksubtitles.info/getp.php?id=2793668")
+        # A movie has no episode/season for host-side member selection.
+        self.assertIsNone(greek["provider_payload"]["episode"])
+        self.assertIsNone(greek["provider_payload"]["season"])
         self.assertIn("title", greek["matches"])
         self.assertIn("year", greek["matches"])
         self.assertIn("source", greek["matches"])
@@ -173,6 +176,9 @@ class GreekSubtitlesSearchTests(unittest.TestCase):
         self.assertEqual(called, list(responses))
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["provider_payload"]["subtitle_id"], "1659162")
+        # The host needs episode (and season) to pick the archive member.
+        self.assertEqual(results[0]["provider_payload"]["season"], 1)
+        self.assertEqual(results[0]["provider_payload"]["episode"], 1)
         self.assertIn("series", results[0]["matches"])
         self.assertIn("season", results[0]["matches"])
         self.assertIn("episode", results[0]["matches"])
@@ -195,49 +201,91 @@ class GreekSubtitlesDownloadTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
 
-    def test_download_extracts_first_visible_subtitle_from_zip(self):
+    def test_download_zip_archive_returns_raw_archive_for_host(self):
         provider = self.mod.GreekSubtitlesProvider()
-        provider._http_get = lambda url, timeout=30, referer=None: _zip_body(
+        body = _zip_body(
             {
                 ".hidden.srt": "hidden",
                 "info.txt": "not a subtitle",
-                "subs/Dune.2021.srt": "1\r\n00:00:01,000 --> 00:00:02,000\r\nLine\r\n",
+                "subs/Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.srt": "1\r\n00:00:01,000 --> 00:00:02,000\r\nLine\r\n",
             }
         )
+        provider._http_get = lambda url, timeout=30, referer=None: body
 
-        result = provider.download(
+        content = provider.download(
             {
                 "provider": "greeksubtitles",
                 "schema": 1,
-                "download_url": "https://www.greeksubtitles.info/getp.php?id=2793668",
-                "page_url": "http://subtitles.gr/subtitles/Dune-2021-1080p-WEBRip-x264-AAC5-1-YTS-MX-/2793668/",
-                "filename": "Dune.2021.zip",
+                "download_url": "https://www.greeksubtitles.info/getp.php?id=1659162",
+                "page_url": "http://subtitles.gr/subtitles/x/1659162/",
+                "filename": "greeksubtitles.got.el.zip",
+                "season": 1,
+                "episode": 1,
             },
             {"alpha3": "ell", "alpha2": "el"},
             {},
         )
 
-        body = base64.b64decode(result["content_b64"])
-        self.assertEqual(body, b"1\n00:00:01,000 --> 00:00:02,000\nLine\n")
-        self.assertEqual(result["format"], "srt")
-        self.assertEqual(result["content_sha256"], hashlib.sha256(body).hexdigest())
+        # Archive mode: the worker hands the raw archive bytes back untouched.
+        self.assertEqual(base64.b64decode(content["archive_b64"]), body)
+        self.assertEqual(content["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(content["episode"], 1)
+        # No extraction, member selection, or encoding guessing happens worker-side.
+        self.assertNotIn("content_b64", content)
+        self.assertNotIn("member", content)
+        self.assertNotIn("encoding", content)
 
-    def test_extract_download_uses_rar_extractor(self):
-        original = self.mod._extract_rar_files
-        self.mod._extract_rar_files = lambda body: [("subtitle.ass", b"[Script Info]\r\nTitle: ok\r\n")]
-        try:
-            body, subtitle_format = self.mod.extract_download(b"Rar!\x1a\x07\x00fake", {})
-        finally:
-            self.mod._extract_rar_files = original
+    def test_download_rar_archive_returns_raw_archive_for_host(self):
+        provider = self.mod.GreekSubtitlesProvider()
+        # Minimal RAR4 signature; the host extracts, the worker only forwards bytes.
+        body = b"Rar!\x1a\x07\x00" + b"\x00" * 32
+        provider._http_get = lambda url, timeout=30, referer=None: body
 
-        self.assertEqual(body, b"[Script Info]\nTitle: ok\n")
-        self.assertEqual(subtitle_format, "ass")
+        content = provider.download(
+            {
+                "provider": "greeksubtitles",
+                "schema": 1,
+                "download_url": "https://www.greeksubtitles.info/getp.php?id=1659162",
+                "filename": "greeksubtitles.got.el.zip",
+                "season": 1,
+                "episode": 7,
+            },
+            {"alpha3": "ell", "alpha2": "el"},
+            {},
+        )
 
-    def test_download_returns_raw_subtitle_payload(self):
+        self.assertEqual(base64.b64decode(content["archive_b64"]), body)
+        self.assertEqual(content["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(content["episode"], 7)
+        self.assertNotIn("content_b64", content)
+        self.assertNotIn("encoding", content)
+
+    def test_download_archive_episode_is_none_for_movie(self):
+        provider = self.mod.GreekSubtitlesProvider()
+        body = _zip_body({"Dune.2021.1080p.WEBRip.srt": "movie subtitle"})
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        content = provider.download(
+            {
+                "provider": "greeksubtitles",
+                "schema": 1,
+                "download_url": "https://www.greeksubtitles.info/getp.php?id=2793668",
+                "filename": "greeksubtitles.dune.el.zip",
+                "season": None,
+                "episode": None,
+            },
+            {"alpha3": "ell", "alpha2": "el"},
+            {},
+        )
+
+        self.assertEqual(base64.b64decode(content["archive_b64"]), body)
+        self.assertIsNone(content["episode"])
+
+    def test_download_direct_subtitle_returns_content_payload(self):
         provider = self.mod.GreekSubtitlesProvider()
         provider._http_get = lambda url, timeout=30, referer=None: b"1\r\n00:00:01,000 --> 00:00:02,000\r\nRaw\r\n"
 
-        result = provider.download(
+        content = provider.download(
             {
                 "provider": "greeksubtitles",
                 "schema": 1,
@@ -248,22 +296,52 @@ class GreekSubtitlesDownloadTests(unittest.TestCase):
             {},
         )
 
-        self.assertEqual(base64.b64decode(result["content_b64"]), b"1\n00:00:01,000 --> 00:00:02,000\nRaw\n")
-        self.assertEqual(result["format"], "srt")
+        body = base64.b64decode(content["content_b64"])
+        self.assertEqual(body, b"1\n00:00:01,000 --> 00:00:02,000\nRaw\n")
+        self.assertEqual(content["format"], "srt")
+        self.assertEqual(content["content_sha256"], hashlib.sha256(body).hexdigest())
+        # Direct content path must not ship a worker-guessed encoding; the host normalizes.
+        self.assertNotIn("encoding", content)
+        self.assertNotIn("archive_b64", content)
 
-    def test_extract_download_rejects_html_response(self):
+    def test_download_rejects_html_error_page(self):
+        provider = self.mod.GreekSubtitlesProvider()
+        provider._http_get = lambda url, timeout=30, referer=None: (
+            b"<!doctype html><html><body>not a subtitle</body></html>"
+        )
+
         with self.assertRaises(ValueError):
-            self.mod.extract_download(
-                b"<!doctype html><html><body>not a subtitle</body></html>",
-                {"filename": "greeksubtitles.failure.zip"},
+            provider.download(
+                {
+                    "provider": "greeksubtitles",
+                    "schema": 1,
+                    "download_url": "https://www.greeksubtitles.info/getp.php?id=1",
+                    "filename": "greeksubtitles.failure.zip",
+                },
+                {"alpha3": "ell", "alpha2": "el"},
+                {},
             )
 
-    def test_extract_download_rejects_unsupported_raw_response(self):
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.GreekSubtitlesProvider()
+        provider._http_get = lambda url, timeout=30, referer=None: b"   \r\n  "
+
         with self.assertRaises(ValueError):
-            self.mod.extract_download(
-                b"download temporarily unavailable",
-                {"filename": "greeksubtitles.failure.zip"},
+            provider.download(
+                {
+                    "provider": "greeksubtitles",
+                    "schema": 1,
+                    "download_url": "https://www.greeksubtitles.info/getp.php?id=1",
+                    "filename": "greeksubtitles.failure.zip",
+                },
+                {"alpha3": "ell", "alpha2": "el"},
+                {},
             )
+
+    def test_download_requires_download_url(self):
+        provider = self.mod.GreekSubtitlesProvider()
+        with self.assertRaises(ValueError):
+            provider.download({"provider": "greeksubtitles", "schema": 1}, {"alpha3": "ell"}, {})
 
 
 if __name__ == "__main__":
