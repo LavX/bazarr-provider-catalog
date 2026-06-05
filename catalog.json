@@ -4642,7 +4642,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "af9b67c2c4f7852c970b226d487abdbfe6adb13b6575ca7f3e60fe8cde7be011",
+        "bundle_sha256": "5b294797c894765b86ddb05694b3f2458e815dce58286dbea9b5fe11c92b689a",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -4654,6 +4654,7 @@
             },
             "api_key": {
               "description": "SubDL API key from your SubDL account.",
+              "secret": true,
               "title": "API key",
               "type": "string"
             },
@@ -4678,7 +4679,7 @@
         "entry_class": "SubDLProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "72cd72bd375de99d31acabea3e3dac43f24ce5d648cd79b38511e76946f927fd"
+          "provider.py": "66563fd805df845b0a6a6ffa93e22f908cb9d86091a70757b6947559fb929495"
         },
         "languages": [
           "ara",
@@ -4758,7 +4759,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.0"
+        "version": "0.1.1"
       }
     },
     {
