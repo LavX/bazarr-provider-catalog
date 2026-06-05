@@ -113,7 +113,7 @@ class KitsunekkoProviderDownloadTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
 
-    def test_download_extracts_matching_episode_from_zip(self):
+    def test_download_returns_archive_for_host_extraction(self):
         provider = self.mod.KitsunekkoProvider()
         provider._http_get = lambda url, timeout=15, referer=None: COWBOY_ZIP
         result = provider.download(
@@ -130,10 +130,50 @@ class KitsunekkoProviderDownloadTests(unittest.TestCase):
             {},
         )
 
-        body = base64.b64decode(result["content_b64"])
-        self.assertIn(b"Asteroid Blues", body)
-        self.assertEqual(result["format"], "srt")
-        self.assertEqual(result["content_sha256"], hashlib.sha256(body).hexdigest())
+        # The raw archive bytes are forwarded for host-side extraction. The provider
+        # still lists the zip and picks the member, but no longer extracts or decodes it.
+        self.assertEqual(base64.b64decode(result["archive_b64"]), COWBOY_ZIP)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(COWBOY_ZIP).hexdigest())
+        self.assertEqual(self.mod._select_zip_member(COWBOY_ZIP, 1), result["member"])
+        self.assertTrue(result["member"].lower().endswith(".srt"))
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
+
+    def test_download_empty_archive_body_raises(self):
+        provider = self.mod.KitsunekkoProvider()
+        provider._http_get = lambda url, timeout=15, referer=None: b""
+        with self.assertRaises(Exception):
+            provider.download(
+                {
+                    "provider": "kitsunekko",
+                    "schema": 1,
+                    "url": "https://kitsunekko.net/subtitles/Cowboy%20Bebop/Cowboy%20Bebop.zip",
+                    "filename": "Cowboy Bebop.zip",
+                    "format": "zip",
+                    "archive_format": "zip",
+                    "episode": 1,
+                },
+                {"alpha3": "eng", "alpha2": "en"},
+                {},
+            )
+
+    def test_download_html_archive_body_raises(self):
+        provider = self.mod.KitsunekkoProvider()
+        provider._http_get = lambda url, timeout=15, referer=None: b"<!doctype html><html><body>error</body></html>"
+        with self.assertRaises(Exception):
+            provider.download(
+                {
+                    "provider": "kitsunekko",
+                    "schema": 1,
+                    "url": "https://kitsunekko.net/subtitles/Cowboy%20Bebop/Cowboy%20Bebop.zip",
+                    "filename": "Cowboy Bebop.zip",
+                    "format": "zip",
+                    "archive_format": "zip",
+                    "episode": 1,
+                },
+                {"alpha3": "eng", "alpha2": "en"},
+                {},
+            )
 
     def test_download_returns_direct_subtitle_file(self):
         provider = self.mod.KitsunekkoProvider()
