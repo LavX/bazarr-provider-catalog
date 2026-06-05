@@ -280,7 +280,7 @@ class SubF2MProvider:
         _sleep(config)
         body = self._http_get(download_url, referer=page_url, config=config)
         payload.setdefault("download_url", download_url)
-        return extract_download(body, payload)
+        return build_download_payload(body, payload)
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None, config=None):
         config = dict(config or {})
@@ -405,15 +405,21 @@ def derive_matches(video, candidate_title, imdb_matched=False, season_pack=False
     return matches
 
 
-def extract_download(body, payload=None):
+def build_download_payload(body, payload=None):
     payload = payload or {}
-    if not body:
-        return _content_payload(b"", "srt", empty=True)
-    stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist(), payload)
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
+    if not body or _is_html_body(body):
+        raise ValueError(f"subf2m returned an empty or HTML body for {payload.get('page_url')}")
+    if zipfile.is_zipfile(io.BytesIO(body)):
+        # Host-side extraction (Provider Hub v1.1+): hand back the raw archive. The zip can
+        # be listed cheaply with stdlib zipfile, so pick the member here; the host extracts
+        # and detects the encoding via Subtitle.normalize().
+        with zipfile.ZipFile(io.BytesIO(body)) as archive:
+            member = select_subtitle_file(archive.namelist(), payload)
+        return _archive_payload(body, member=member)
+    if _is_rar_archive(body) or _is_7z_archive(body):
+        # rar/7z cannot be listed with the stdlib, so let the host pick by guessit.
+        return _archive_payload(body, episode=_safe_int(payload.get("episode")))
+    # Direct, non-archive subtitle body.
     extension = _subtitle_extension(payload.get("filename", "")) or "srt"
     return _content_payload(body, extension)
 
@@ -707,14 +713,48 @@ def _slug(value, max_length=80):
     return (slug[:max_length].strip("-") or "subtitle")
 
 
-def _content_payload(body, extension, empty=False):
+def _archive_payload(body, member=None, episode=None):
+    data = body or b""
+    payload = {
+        "archive_b64": base64.b64encode(data).decode("ascii"),
+        "archive_sha256": hashlib.sha256(data).hexdigest(),
+    }
+    if member is not None:
+        payload["member"] = member
+    else:
+        payload["episode"] = episode
+    return payload
+
+
+def _content_payload(body, extension):
     data = body or b""
     return {
         "content_b64": base64.b64encode(data).decode("ascii"),
         "content_sha256": hashlib.sha256(data).hexdigest(),
         "format": (extension or "srt").lstrip(".").lower(),
-        "empty": bool(empty),
+        "empty": False,
     }
+
+
+def _is_html_body(body):
+    if not body:
+        return True
+    head = body[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or b"<body" in head
+        or b"<head" in head
+    )
+
+
+def _is_rar_archive(body):
+    return bool(body) and body.startswith(b"Rar!\x1a\x07")
+
+
+def _is_7z_archive(body):
+    return bool(body) and body.startswith(b"7z\xbc\xaf\x27\x1c")
 
 
 def _subtitle_extension(name):
