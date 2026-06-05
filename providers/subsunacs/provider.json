@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "eefa419318d2ad04b62a8873d50c4f12d1eb0a5b8a750854701f658d52324402",
+  "bundle_sha256": "e87b86a95b2bb2aaf82b9e0d971cc9b242ca7723cd957c6e86c3da43d1c9c972",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -130,11 +130,11 @@
       }
     ]
   },
-  "description": "Scrapes SubsUnacs for Bulgarian and English movie and episode subtitles. Direct entry pages plus ZIP, RAR, and 7Z downloads are supported.",
+  "description": "Scrapes SubsUnacs for Bulgarian and English movie and episode subtitles. Direct entry pages plus ZIP, RAR, and 7Z downloads are supported; ZIP and RAR are extracted host-side.",
   "entry_class": "SubsUnacsProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "e1dbb0e1322e044172baead0dafe7cd9d3ab8f1d91d0b9bd490182028c66c8c8"
+    "provider.py": "8dbdcc9b3b84e5a4d9e6cc653c72f12dee233de4d5bbd98ac52dc9f4870e759a"
   },
   "languages": [
     "bul",
@@ -157,5 +157,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.2"
+  "version": "0.1.3"
 }
