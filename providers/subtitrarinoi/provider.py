@@ -314,7 +314,7 @@ def _filename_matches_requested_episode(name, payload):
         return True
     normalized = _normalize_release(name)
     return any(
-        token in normalized
+        re.search(rf"(?<!\d){re.escape(token)}(?!\d)", normalized)
         for token in (
             f"s{season:02d}e{episode:02d}",
             f"{season}x{episode:02d}",
@@ -498,7 +498,11 @@ def _row_matches_video(video, row, matches):
             return False
         return bool({"title", "imdb_id"} & set(matches))
     if kind == "episode":
-        return "season" in matches and bool({"series", "imdb_id"} & set(matches))
+        if "season" not in matches or not {"series", "imdb_id"} & set(matches):
+            return False
+        if "episode" not in matches and _comments_have_episode_hint(row.get("comments")):
+            return False
+        return True
     return False
 
 
@@ -611,6 +615,11 @@ def _episode_matches(comments, wanted_episode):
         if int(match.group("episode")) == wanted:
             return True
     return not found_episode_hint
+
+
+def _comments_have_episode_hint(comments):
+    text = _normalize_text(comments)
+    return bool(_EPISODE_RANGE_RE.search(text) or _SXXEXX_RE.search(text))
 
 
 def _release_matches(video, comments):
