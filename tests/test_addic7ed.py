@@ -121,6 +121,41 @@ def _episode_page_with_odd_row():
     """
 
 
+def _episode_page_with_language_variant(language_name, episode="2", marker="variant"):
+    return (
+        b"""
+    <html>
+      <body>
+        <table>
+          <tr class="epeven">
+            <td>1</td>
+            <td>"""
+        + str(episode).encode()
+        + b"""</td>
+            <td><a href="/serie/Example_Show/1/"""
+        + str(episode).encode()
+        + b"""/Pilot">Pilot</a></td>
+            <td>"""
+        + language_name.encode("utf-8")
+        + b"""</td>
+            <td>WEB-DL+GROUP</td>
+            <td>Completed</td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td><a href="/updated/1/"""
+        + str(episode).encode()
+        + b"/"
+        + marker.encode()
+        + b"""">Download</a></td>
+          </tr>
+        </table>
+      </body>
+    </html>
+    """
+    )
+
+
 def _movie_search_page():
     return b"""
     <html>
@@ -343,8 +378,9 @@ class Addic7edSearchTests(unittest.TestCase):
             calls.append(("GET", url, headers, params))
             if url.endswith("/login.php"):
                 return self.mod.HttpResponse(200, b"<html>login</html>", {})
-            if url.endswith("/srch.php"):
+            if url.endswith("/search.php"):
                 self.assertEqual(params, {"Submit": "Search", "search": "Dune"})
+                self.assertEqual(headers["Referer"], "https://www.addic7ed.com/srch.php")
                 return self.mod.HttpResponse(200, _movie_search_page(), {})
             if url.endswith("/movie/55"):
                 return self.mod.HttpResponse(200, _movie_page(), {})
@@ -381,7 +417,7 @@ class Addic7edSearchTests(unittest.TestCase):
             del timeout, headers, cookies, allow_redirects
             if url.endswith("/panel.php"):
                 return self.mod.HttpResponse(200, b"panel", {})
-            if url.endswith("/srch.php"):
+            if url.endswith("/search.php"):
                 return self.mod.HttpResponse(200, _movie_search_page(), {})
             if url.endswith("/movie/55"):
                 return self.mod.HttpResponse(200, _multi_language_movie_page(), {})
@@ -405,7 +441,7 @@ class Addic7edSearchTests(unittest.TestCase):
             del timeout, headers, cookies, allow_redirects
             if url.endswith("/panel.php"):
                 return self.mod.HttpResponse(200, b"panel", {})
-            if url.endswith("/srch.php"):
+            if url.endswith("/search.php"):
                 return self.mod.HttpResponse(200, _movie_search_page(), {})
             if url.endswith("/movie/55"):
                 return self.mod.HttpResponse(200, _partial_movie_page(), {})
@@ -419,6 +455,134 @@ class Addic7edSearchTests(unittest.TestCase):
         )
 
         self.assertEqual(results, [])
+
+
+    def test_movie_lookup_uses_search_php_with_referer(self):
+        # Regression: upstream get_movie_id() queries search.php (with a Referer),
+        # not the front-page srch.php which can return an interstitial with no
+        # movie table. Hitting srch.php must be treated as a bug.
+        provider = self.mod.Addic7edProvider()
+        seen = {}
+
+        def get_response(url, headers, cookies, timeout=30, params=None, allow_redirects=True):
+            del cookies, timeout, allow_redirects
+            if url.endswith("/panel.php"):
+                return self.mod.HttpResponse(200, b"panel", {})
+            if url.endswith("/srch.php"):
+                raise AssertionError("movie lookup must not use srch.php")
+            if url.endswith("/search.php"):
+                seen["referer"] = headers.get("Referer")
+                seen["params"] = params
+                return self.mod.HttpResponse(200, _movie_search_page(), {})
+            if url.endswith("/movie/55"):
+                return self.mod.HttpResponse(200, _movie_page(), {})
+            raise AssertionError(url)
+
+        provider._http_get = get_response
+        results = provider.search(
+            {"kind": "movie", "title": "Dune", "year": 2021},
+            [{"alpha3": "eng"}],
+            {"cookies": "PHPSESSID=session"},
+        )
+
+        self.assertEqual(seen["params"], {"Submit": "Search", "search": "Dune"})
+        self.assertEqual(seen["referer"], "https://www.addic7ed.com/srch.php")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["provider_payload"]["download_link"], "download/movie/55/eng")
+
+
+class Addic7edLanguageVariantTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def _search_with_language(self, page, requested):
+        provider = self.mod.Addic7edProvider()
+
+        def get_response(url, headers, cookies, timeout=30, params=None, allow_redirects=True):
+            del headers, cookies, timeout, params, allow_redirects
+            if url.endswith("/panel.php"):
+                return self.mod.HttpResponse(200, b"panel", {})
+            if url.endswith("/shows.php"):
+                return self.mod.HttpResponse(200, _shows_page(), {})
+            if url.endswith("/ajax_loadShow.php"):
+                return self.mod.HttpResponse(200, page, {})
+            raise AssertionError(url)
+
+        provider._http_get = get_response
+        return provider.search(
+            {
+                "kind": "episode",
+                "series": "Example Show",
+                "year": 2020,
+                "season": 1,
+                "episode": 2,
+            },
+            requested,
+            {"cookies": "PHPSESSID=session"},
+        )
+
+    def test_language_from_name_resolves_addic7ed_variants(self):
+        # Regression: these real Addic7ed row labels previously fell through to
+        # None and the rows were silently dropped.
+        cases = {
+            "Chinese (Simplified)": {"alpha3": "zho"},
+            "Chinese (Traditional)": {"alpha3": "zho", "script": "Hant"},
+            "Spanish (Spain)": {"alpha3": "spa"},
+            "Spanish (Latin America)": {"alpha3": "spa"},
+            "French (Canadian)": {"alpha3": "fra", "country_alpha2": "CA"},
+            "Galego": {"alpha3": "glg"},
+            "Català": {"alpha3": "cat"},
+            "Serbian (Cyrillic)": {"alpha3": "srp", "script": "Cyrl"},
+            "Serbian (Latin)": {"alpha3": "srp", "script": "Latn"},
+        }
+        for name, expected in cases.items():
+            with self.subTest(language=name):
+                resolved = self.mod._language_from_name(name)
+                self.assertIsNotNone(resolved, f"{name} must not resolve to None")
+                payload = self.mod._language_payload(resolved)
+                for key, value in expected.items():
+                    self.assertEqual(payload.get(key), value, f"{name} -> {key}")
+
+    def test_serbian_cyrillic_row_resolves_with_script(self):
+        results = self._search_with_language(
+            _episode_page_with_language_variant("Serbian (Cyrillic)"),
+            [{"alpha3": "srp", "script": "Cyrl"}],
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(
+            results[0]["language"],
+            {"alpha3": "srp", "script": "Cyrl", "hi": False, "forced": False},
+        )
+
+    def test_chinese_traditional_row_resolves_with_script(self):
+        results = self._search_with_language(
+            _episode_page_with_language_variant("Chinese (Traditional)"),
+            [{"alpha3": "zho", "script": "Hant"}],
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(
+            results[0]["language"],
+            {"alpha3": "zho", "script": "Hant", "hi": False, "forced": False},
+        )
+
+    def test_french_canadian_row_resolves_with_country(self):
+        results = self._search_with_language(
+            _episode_page_with_language_variant("French (Canadian)"),
+            [{"alpha3": "fra"}],
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(
+            results[0]["language"],
+            {"alpha3": "fra", "country_alpha2": "CA", "hi": False, "forced": False},
+        )
+
+    def test_galego_row_is_not_dropped(self):
+        results = self._search_with_language(
+            _episode_page_with_language_variant("Galego"),
+            [{"alpha3": "glg"}],
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["language"]["alpha3"], "glg")
 
 
 class Addic7edDownloadTests(unittest.TestCase):

@@ -27,6 +27,7 @@ LANGUAGE_NAMES = {
     "bulgarian": "bul",
     "catalan": "cat",
     "catala": "cat",
+    "català": "cat",
     "czech": "ces",
     "danish": "dan",
     "german": "deu",
@@ -38,7 +39,9 @@ LANGUAGE_NAMES = {
     "farsi": "fas",
     "finnish": "fin",
     "french": "fra",
+    "french (canadian)": ("fra", "CA"),
     "galician": "glg",
+    "galego": "glg",
     "hebrew": "heb",
     "croatian": "hrv",
     "hungarian": "hun",
@@ -60,16 +63,22 @@ LANGUAGE_NAMES = {
     "slovak": "slk",
     "slovenian": "slv",
     "spanish": "spa",
+    "spanish (spain)": "spa",
+    "spanish (latin america)": "spa",
     "albanian": "sqi",
     "serbian": "srp",
-    "serbian latin": "srp",
-    "serbian cyrillic": "srp",
+    "serbian latin": ("srp", None, "Latn"),
+    "serbian cyrillic": ("srp", None, "Cyrl"),
+    "serbian (latin)": ("srp", None, "Latn"),
+    "serbian (cyrillic)": ("srp", None, "Cyrl"),
     "swedish": "swe",
     "thai": "tha",
     "turkish": "tur",
     "ukrainian": "ukr",
     "vietnamese": "vie",
     "chinese": "zho",
+    "chinese (simplified)": "zho",
+    "chinese (traditional)": ("zho", None, "Hant"),
 }
 
 
@@ -168,9 +177,14 @@ class Addic7edProvider:
         return None
 
     def _get_movie_id(self, title, year, config, cookies):
+        # Upstream get_movie_id() queries search.php (not the front-page srch.php,
+        # which can return an interstitial with no movie table). The real site only
+        # returns results for search.php when a Referer is supplied, mirroring the
+        # patched _search_show_id behavior.
+        headers = self._headers(config, referer=f"{BASE_URL}/srch.php")
         response = self._http_get(
-            f"{BASE_URL}/srch.php",
-            self._headers(config),
+            f"{BASE_URL}/search.php",
+            headers,
             cookies,
             timeout=10,
             params={"Submit": "Search", "search": title},
@@ -372,24 +386,51 @@ def _requested_languages(languages):
     for item in languages or []:
         if not isinstance(item, dict) or not item.get("alpha3"):
             continue
-        alpha3, country = _language_code_parts(item.get("alpha3"))
-        country = str(item.get("country_alpha2") or item.get("country") or country or "").upper() or None
-        requested.add((alpha3, country))
+        alpha3, country, script = _language_code_parts(
+            item.get("alpha3"), item.get("country_alpha2") or item.get("country"), item.get("script")
+        )
+        requested.add((alpha3, country, script))
     return requested
 
 
 def _language_matches(language, requested):
-    alpha3, country = _language_code_parts((language or {}).get("alpha3"))
-    country = str((language or {}).get("country_alpha2") or country or "").upper() or None
-    return (alpha3, country) in requested or (alpha3, None) in requested
+    alpha3, country, script = _language_code_parts(
+        (language or {}).get("alpha3"),
+        (language or {}).get("country_alpha2"),
+        (language or {}).get("script"),
+    )
+    # An exact match wins; otherwise a request without a region/script qualifier
+    # still matches a more specific candidate so real Addic7ed variant rows are
+    # never dropped.
+    return (
+        (alpha3, country, script) in requested
+        or (alpha3, None, script) in requested
+        or (alpha3, country, None) in requested
+        or (alpha3, None, None) in requested
+    )
 
 
-def _language_code_parts(value):
+# Script suffixes carried on ietf-style codes (e.g. "sr-Cyrl", "zho-Hant"). These
+# must be parsed as a script, not mistaken for a country code.
+_KNOWN_SCRIPTS = {"cyrl": "Cyrl", "latn": "Latn", "hant": "Hant", "hans": "Hans"}
+
+
+def _language_code_parts(value, country=None, script=None):
     code = str(value or "").strip()
+    suffix_country = None
+    suffix_script = None
     if "-" in code:
-        alpha3, country = code.split("-", 1)
-        return alpha3.lower(), country.upper()
-    return code.lower(), None
+        code, suffix = code.split("-", 1)
+        if suffix.lower() in _KNOWN_SCRIPTS:
+            suffix_script = _KNOWN_SCRIPTS[suffix.lower()]
+        else:
+            suffix_country = suffix.upper()
+    alpha3 = code.lower()
+    country = str(country or suffix_country or "").upper() or None
+    script = str(script or suffix_script or "").strip() or None
+    if script:
+        script = _KNOWN_SCRIPTS.get(script.lower(), script)
+    return alpha3, country, script
 
 
 def parse_show_ids(body):
@@ -668,7 +709,14 @@ def _language_from_name(value):
 
 def _language_payload(value, hi=False):
     if isinstance(value, tuple):
-        payload = {"alpha3": value[0], "country_alpha2": value[1]}
+        alpha3 = value[0]
+        country = value[1] if len(value) > 1 else None
+        script = value[2] if len(value) > 2 else None
+        payload = {"alpha3": alpha3}
+        if country:
+            payload["country_alpha2"] = country
+        if script:
+            payload["script"] = script
     else:
         payload = {"alpha3": value}
     payload.update({"hi": bool(hi), "forced": False})

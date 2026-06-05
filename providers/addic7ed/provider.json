@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "a0e98ddf486eb1b38a2e26f4f09a8b8b4214813c1232fe9ca874c5d755eed2d0",
+  "bundle_sha256": "7fb7db776413d0bea21d0c82de4a1f8e4423298db7fa50c888cd1777a434c187",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -47,7 +47,7 @@
   "entry_class": "Addic7edProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "b0cf894ed3809cdf9e768bbc922fcb6ed5b3c8d3a86c9fa3b60c607a8d8d81df"
+    "provider.py": "bab680a14f7698ef4f87c1c1ffdc28d34e50ccf05636ea3af736dca8ac9fd8f0"
   },
   "languages": [
     "ara",
@@ -87,13 +87,16 @@
     "slv",
     "spa",
     "sqi",
+    "sr-Cyrl",
+    "sr-Latn",
     "srp",
     "swe",
     "tha",
     "tur",
     "ukr",
     "vie",
-    "zho"
+    "zho",
+    "zho-Hant"
   ],
   "name": "Addic7ed",
   "provider_id": "addic7ed",
@@ -116,5 +119,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.1"
+  "version": "0.1.2"
 }
