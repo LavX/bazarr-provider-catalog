@@ -196,6 +196,60 @@ class ParseTorrentSubtitlesTests(unittest.TestCase):
 
         self.assertEqual([row["subtitle_id"] for row in rows], [15])
 
+    def test_markerless_files_in_multi_file_batch_are_rejected(self):
+        body = json.dumps(
+            {
+                "files": [
+                    {
+                        "filename": "Solo Leveling - 01.mkv",
+                        "attachments": [
+                            {
+                                "id": 20,
+                                "type": "subtitle",
+                                "info": {"lang": "eng", "name": "English", "codec": "ASS"},
+                            }
+                        ],
+                    },
+                    {
+                        "filename": "Solo Leveling - 12.mkv",
+                        "attachments": [
+                            {
+                                "id": 21,
+                                "type": "subtitle",
+                                "info": {"lang": "eng", "name": "English", "codec": "ASS"},
+                            }
+                        ],
+                    },
+                ]
+            }
+        ).encode("utf-8")
+
+        rows = self.mod.parse_torrent_subtitles(body, {"id": 1, "title": "Release"}, VIDEO)
+
+        self.assertEqual(rows, [])
+
+    def test_single_markerless_media_file_is_accepted(self):
+        body = json.dumps(
+            {
+                "files": [
+                    {
+                        "filename": "Solo Leveling - 12.mkv",
+                        "attachments": [
+                            {
+                                "id": 22,
+                                "type": "subtitle",
+                                "info": {"lang": "eng", "name": "English", "codec": "ASS"},
+                            }
+                        ],
+                    }
+                ]
+            }
+        ).encode("utf-8")
+
+        rows = self.mod.parse_torrent_subtitles(body, {"id": 1, "title": "Release"}, VIDEO)
+
+        self.assertEqual([row["subtitle_id"] for row in rows], [22])
+
 
 class MatchingTests(unittest.TestCase):
     def setUp(self):
@@ -330,6 +384,43 @@ class AnimeToshoProviderSearchTests(unittest.TestCase):
         )
 
         self.assertEqual([result["provider_payload"]["subtitle_id"] for result in results], [17])
+
+    def test_search_honors_country_alias_in_language_request(self):
+        provider = self.mod.AnimeToshoProvider()
+        series_entries = json.dumps(
+            [{"id": 1, "status": "complete", "timestamp": 10, "title": "release"}]
+        ).encode("utf-8")
+        torrent_detail = _torrent_body(
+            [
+                {
+                    "id": 23,
+                    "type": "subtitle",
+                    "info": {"lang": "por", "name": "Portuguese (Brazil)", "codec": "ASS"},
+                },
+                {
+                    "id": 24,
+                    "type": "subtitle",
+                    "info": {"lang": "por", "name": "Portuguese (Portugal)", "codec": "ASS"},
+                },
+            ]
+        )
+
+        def stub(url, timeout=15):
+            del timeout
+            if url == "https://feed.animetosho.org/json?eid=277518":
+                return series_entries
+            if url == "https://feed.animetosho.org/json?show=torrent&id=1":
+                return torrent_detail
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        results = provider.search(
+            VIDEO,
+            [{"alpha3": "por", "alpha2": "pt", "country": "PT"}],
+            {"search_threshold": 1, "request_delay_ms": 0},
+        )
+
+        self.assertEqual([result["provider_payload"]["subtitle_id"] for result in results], [24])
 
     def test_search_honors_requested_forced_flag(self):
         provider = self.mod.AnimeToshoProvider()

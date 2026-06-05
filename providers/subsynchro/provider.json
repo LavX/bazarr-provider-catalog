@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "5802c4071391648fe487a25422c303526e56d89f7ddd515c6b9a663e3ae3d85a",
+  "bundle_sha256": "5d8969da4a3d150229c0691254df41051d9d7eb9d6266ad02ffa056e4be9a831",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -22,7 +22,7 @@
   "entry_class": "SubsynchroProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "1bf3ec73ef113a2b5b0f644753fa8c2b595593e127d40d8b2bf430a3db9ede13"
+    "provider.py": "a66a63e22f7a314316c94b191ad85d54443236507043afee4c22b6f131c559f6"
   },
   "languages": [
     "fra"
@@ -43,5 +43,5 @@
   "supported_media": [
     "movie"
   ],
-  "version": "0.1.2"
+  "version": "0.1.3"
 }

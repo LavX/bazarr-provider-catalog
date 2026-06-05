@@ -223,8 +223,10 @@ class SubsUnacsProvider:
                     if not _file_matches_video(entry["filename"], video, media_type):
                         continue
                     for variant in variants:
+                        if not _variant_matches_entry(variant, entry["filename"]):
+                            continue
                         item = {**row, **entry, "media_type": media_type, "language": variant}
-                        key = (row["download_url"], entry["filename"], _language_variant_key(variant))
+                        key = (row["download_url"], _entry_identity(entry), _language_variant_key(variant))
                         if key in seen:
                             continue
                         seen.add(key)
@@ -255,14 +257,16 @@ class SubsUnacsProvider:
             "download_url": item["download_url"],
             "entry_url": item.get("entry_url"),
             "filename": item["filename"],
+            "path": item.get("path"),
             "title": item.get("title"),
             "year": item.get("year"),
             "language": language["alpha3"],
             "release_info": item["filename"],
         }
+        identity = item.get("path") or item.get("entry_url") or item["filename"]
         return {
             "provider": PROVIDER_ID,
-            "id": f"subsunacs-{hashlib.sha1((item['download_url'] + item['filename'] + language_key).encode('utf-8')).hexdigest()[:16]}",
+            "id": f"subsunacs-{hashlib.sha1((item['download_url'] + identity + language_key).encode('utf-8')).hexdigest()[:16]}",
             "language": {
                 "alpha3": language["alpha3"],
                 "alpha2": SUPPORTED_LANGUAGES[language["alpha3"]],
@@ -309,6 +313,11 @@ class SubsUnacsProvider:
 def select_subtitle_file(files, payload):
     if not files:
         raise ValueError("subsunacs download contains no supported subtitle files")
+    wanted_path = payload.get("path")
+    if wanted_path:
+        for item in files:
+            if item.get("path") == wanted_path:
+                return item
     wanted = payload.get("filename")
     for item in files:
         if item["filename"] == wanted:
@@ -437,8 +446,17 @@ def _archive_rows_from_pairs(pairs):
     rows = []
     for filename, content in pairs:
         if _is_subtitle_file(filename):
-            rows.append({"filename": os.path.basename(filename), "content": content})
+            path = _normalize_archive_path(filename)
+            rows.append({"filename": os.path.basename(path), "path": path, "content": content})
     return rows
+
+
+def _normalize_archive_path(filename):
+    return (filename or "").replace("\\", "/").strip("/")
+
+
+def _entry_identity(entry):
+    return entry.get("path") or entry.get("entry_url") or entry.get("filename")
 
 
 def _zip_subtitle_infos(archive):
@@ -565,7 +583,7 @@ def _season_episode_from_filename(filename):
     match = re.search(r"(?P<season>\d{1,2})x(?P<episode>\d{1,3})", normalized)
     if match:
         return int(match.group("season")), int(match.group("episode"))
-    match = re.search(r"(?<!\d)(?P<season>\d)(?P<episode>\d{2})(?!\d)", normalized)
+    match = re.search(r"(?:^|\.)(?P<season>\d)(?P<episode>\d{2})(?:\.|$)", normalized)
     if match:
         return int(match.group("season")), int(match.group("episode"))
     return None, None
@@ -588,6 +606,22 @@ def _requested_languages(languages):
 
 def _language_variant_key(language):
     return (language["alpha3"], bool(language["hi"]), bool(language["forced"]))
+
+
+def _entry_flags(filename):
+    normalized = _normalize_release(filename)
+    forced = bool(re.search(r"(?:^|\.)forced(?:\.|$)", normalized))
+    hi = bool(re.search(r"(?:^|\.)(?:hi|sdh|cc)(?:\.|$)", normalized))
+    return forced, hi
+
+
+def _variant_matches_entry(variant, filename):
+    forced, hi = _entry_flags(filename)
+    if bool(variant.get("forced")) != forced:
+        return False
+    if bool(variant.get("hi")) != hi:
+        return False
+    return True
 
 
 def _alpha3_for_language(language):

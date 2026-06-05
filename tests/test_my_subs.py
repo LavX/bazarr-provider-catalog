@@ -154,6 +154,134 @@ class ParseSubtitleEntriesTests(unittest.TestCase):
         self.assertEqual(entries[0]["language_alpha2"], "tl")
 
 
+class BrazilianPortugueseTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_brazilian_flag_keeps_por_with_br_country(self):
+        body = b"""
+        <a href="/downloads/pt-br-token" class="list-group-item">
+          <span class="flag-icon flag-icon-br" title="Portuguese (Brazilian)"></span>
+          <strong>WEB-DL</strong>
+          <div class="pull-right"><b>7</b><span class="glyphicon glyphicon-download-alt"></span></div>
+        </a>
+        """
+        entries = self.mod.parse_subtitle_entries(
+            body,
+            page_url="https://my-subs.co/film-versions-1-test-subtitles",
+            media_title="Test Movie",
+        )
+
+        self.assertEqual(len(entries), 1)
+        # Without the fix the row collapses to plain Portuguese with no country.
+        self.assertEqual(entries[0]["language_alpha3"], "por")
+        self.assertEqual(entries[0]["language_alpha2"], "pt")
+        self.assertEqual(entries[0]["language_country"], "BR")
+
+    def test_generic_portuguese_has_no_country(self):
+        body = b"""
+        <a href="/downloads/pt-token" class="list-group-item">
+          <span class="flag-icon flag-icon-pt" title="Portuguese"></span>
+          <strong>WEB-DL</strong>
+          <div class="pull-right"><b>3</b><span class="glyphicon glyphicon-download-alt"></span></div>
+        </a>
+        """
+        entries = self.mod.parse_subtitle_entries(
+            body,
+            page_url="https://my-subs.co/film-versions-1-test-subtitles",
+            media_title="Test Movie",
+        )
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["language_alpha3"], "por")
+        self.assertIsNone(entries[0]["language_country"])
+
+    def test_search_request_for_por_br_matches_only_brazilian_rows(self):
+        detail_html = b"""
+        <a href="/downloads/pt-br-token" class="list-group-item">
+          <span class="flag-icon flag-icon-br" title="Portuguese (Brazilian)"></span>
+          <strong>WEB-DL</strong>
+          <div class="pull-right"><b>7</b><span class="glyphicon glyphicon-download-alt"></span></div>
+        </a>
+        <a href="/downloads/pt-token" class="list-group-item">
+          <span class="flag-icon flag-icon-pt" title="Portuguese"></span>
+          <strong>HDTV</strong>
+          <div class="pull-right"><b>3</b><span class="glyphicon glyphicon-download-alt"></span></div>
+        </a>
+        """
+        responses = {
+            "https://my-subs.co/search.php?key=Avatar%202009": (
+                b'<a href="/film-versions-4068-avatar-subtitles" title="Avatar">'
+                b"Avatar (2009)</a>"
+            ),
+            "https://my-subs.co/film-versions-4068-avatar-subtitles": detail_html,
+        }
+        provider = self.mod.MySubsProvider()
+
+        def stub(url, timeout=15, referer=None):
+            del timeout, referer
+            if url not in responses:
+                raise AssertionError(f"unexpected URL: {url}")
+            return responses[url]
+
+        provider._http_get = stub
+        results = provider.search(
+            video={"kind": "movie", "title": "Avatar", "year": 2009},
+            languages=[
+                {"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR"}
+            ],
+            config={"request_delay_ms": 0},
+        )
+
+        # Without the fix both rows collapse to plain "pt" and both leak through.
+        self.assertEqual(len(results), 1)
+        result = results[0]
+        self.assertEqual(result["language"]["alpha3"], "por")
+        self.assertEqual(result["language"]["alpha2"], "pt")
+        self.assertEqual(result["language"]["country_alpha2"], "BR")
+        self.assertEqual(result["provider_payload"]["country_alpha2"], "BR")
+        self.assertTrue(result["id"].endswith("-por-BR"))
+
+    def test_search_request_for_plain_portuguese_excludes_brazilian_rows(self):
+        detail_html = b"""
+        <a href="/downloads/pt-br-token" class="list-group-item">
+          <span class="flag-icon flag-icon-br" title="Portuguese (Brazilian)"></span>
+          <strong>WEB-DL</strong>
+          <div class="pull-right"><b>7</b><span class="glyphicon glyphicon-download-alt"></span></div>
+        </a>
+        <a href="/downloads/pt-token" class="list-group-item">
+          <span class="flag-icon flag-icon-pt" title="Portuguese"></span>
+          <strong>HDTV</strong>
+          <div class="pull-right"><b>3</b><span class="glyphicon glyphicon-download-alt"></span></div>
+        </a>
+        """
+        responses = {
+            "https://my-subs.co/search.php?key=Avatar%202009": (
+                b'<a href="/film-versions-4068-avatar-subtitles" title="Avatar">'
+                b"Avatar (2009)</a>"
+            ),
+            "https://my-subs.co/film-versions-4068-avatar-subtitles": detail_html,
+        }
+        provider = self.mod.MySubsProvider()
+
+        def stub(url, timeout=15, referer=None):
+            del timeout, referer
+            if url not in responses:
+                raise AssertionError(f"unexpected URL: {url}")
+            return responses[url]
+
+        provider._http_get = stub
+        results = provider.search(
+            video={"kind": "movie", "title": "Avatar", "year": 2009},
+            languages=[{"alpha3": "por", "alpha2": "pt"}],
+            config={"request_delay_ms": 0},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertNotIn("country_alpha2", results[0]["language"])
+        self.assertEqual(results[0]["provider_payload"]["download_url"], "https://my-subs.co/downloads/pt-token")
+
+
 class DownloadGateTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()

@@ -432,7 +432,7 @@ def _requested_languages(languages):
         alpha3 = _alpha3_for_language(language)
         if alpha3 not in SUPPORTED_LANGUAGES:
             continue
-        country_alpha2 = str((language or {}).get("country_alpha2") or "").upper() or None
+        country_alpha2 = _requested_country(language)
         requested.add((
             alpha3,
             country_alpha2,
@@ -440,6 +440,17 @@ def _requested_languages(languages):
             _optional_bool(language, "hi", "hearing_impaired"),
         ))
     return requested
+
+
+def _requested_country(language):
+    if not isinstance(language, dict):
+        return None
+    value = (
+        language.get("country_alpha2")
+        or language.get("country")
+        or language.get("region")
+    )
+    return str(value or "").upper() or None
 
 
 def _language_matches_request(language, requested):
@@ -481,7 +492,7 @@ def _optional_bool(mapping, key, fallback_key=None):
     return None
 
 
-def _media_file_matches_video(video, filename):
+def _media_file_matches_video(video, filename, single_file=True):
     video = video or {}
     if video.get("kind") != "episode":
         return True
@@ -492,16 +503,20 @@ def _media_file_matches_video(video, filename):
         return True
     markers = list(_episode_markers(filename))
     if not markers:
-        return True
+        # A markerless file is only trusted when it is the torrent's single
+        # media file. In a multi-file batch (e.g. anime absolute filenames
+        # like "Show - 01.mkv"), accepting it would score the wrong episode's
+        # attachments as an exact match for the requested episode.
+        return single_file
     return (season, episode) in markers or (None, episode) in markers
 
 
 def _matching_media_files(data, entry, video):
-    for media_file in data.get("files") or []:
-        if not isinstance(media_file, dict):
-            continue
+    media_files = [media_file for media_file in (data.get("files") or []) if isinstance(media_file, dict)]
+    single_file = len(media_files) <= 1
+    for media_file in media_files:
         filename = media_file.get("filename") or data.get("torrent_name") or entry.get("title") or ""
-        if _media_file_matches_video(video, filename):
+        if _media_file_matches_video(video, filename, single_file):
             yield media_file, filename
 
 
