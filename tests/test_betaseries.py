@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import urllib.error
 import urllib.parse
 import unittest
 import zipfile
@@ -54,6 +55,68 @@ class BetaSeriesProviderTests(unittest.TestCase):
         self.assertEqual(self.mod.handle_api_errors(NO_SERIES), "empty")
         with self.assertRaisesRegex(ValueError, "Invalid token"):
             self.mod.handle_api_errors(INVALID_TOKEN)
+
+    def _http_error(self, payload):
+        body = json.dumps(payload).encode("utf-8")
+        return urllib.error.HTTPError(
+            url="https://api.betaseries.com/episodes/display",
+            code=400,
+            msg="Bad Request",
+            hdrs=None,
+            fp=io.BytesIO(body),
+        )
+
+    def test_search_handles_http_400_no_series_error(self):
+        provider = self.mod.BetaSeriesProvider()
+
+        def raise_400(url, timeout=10, config=None):
+            del url, timeout, config
+            raise self._http_error(NO_SERIES)
+
+        provider._http_get_bytes = raise_400
+
+        results = provider.search(
+            {"kind": "episode", "series": "Blue Lights", "season": 1, "episode": 1, "tvdb_id": 10101},
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"token": "secret-key"},
+        )
+
+        self.assertEqual(results, [])
+
+    def test_search_handles_http_400_invalid_token_error(self):
+        provider = self.mod.BetaSeriesProvider()
+
+        def raise_400(url, timeout=10, config=None):
+            del url, timeout, config
+            raise self._http_error(INVALID_TOKEN)
+
+        provider._http_get_bytes = raise_400
+
+        with self.assertRaisesRegex(ValueError, "Invalid token"):
+            provider.search(
+                {"kind": "episode", "series": "Blue Lights", "season": 1, "episode": 1, "tvdb_id": 10101},
+                [{"alpha3": "eng", "alpha2": "en"}],
+                {"token": "secret-key"},
+            )
+
+    def test_search_reraises_non_api_http_errors(self):
+        provider = self.mod.BetaSeriesProvider()
+
+        def raise_500(url, timeout=10, config=None):
+            del timeout, config
+            raise urllib.error.HTTPError(
+                url=url, code=500, msg="Server Error", hdrs=None,
+                fp=io.BytesIO(b"<html>boom</html>"),
+            )
+
+        provider._http_get_bytes = raise_500
+
+        with self.assertRaises(urllib.error.HTTPError):
+            provider.search(
+                {"kind": "episode", "series": "Blue Lights", "season": 1, "episode": 1, "tvdb_id": 10101},
+                [{"alpha3": "eng", "alpha2": "en"}],
+                {"token": "secret-key"},
+            )
 
     def test_search_uses_episode_display_when_episode_tvdb_id_exists(self):
         provider = self.mod.BetaSeriesProvider()
