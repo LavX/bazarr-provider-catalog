@@ -4,22 +4,13 @@ import base64
 import hashlib
 import html
 import io
-import os
 import re
-import shutil
-import subprocess
-import tempfile
 import time
 import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-
-try:
-    import py7zz
-except ImportError:
-    py7zz = None
 
 PROVIDER_ID = "titulky"
 BASE_URL = "https://premium.titulky.com"
@@ -101,7 +92,7 @@ class TitulkyProvider:
         if response.status_code == 429:
             raise RuntimeError("Too many requests")
         _raise_for_status(response, url)
-        return extract_download(response.body, payload)
+        return build_download_payload(response.body, payload)
 
     def _ensure_logged_in(self, config):
         if self._logged_in:
@@ -272,43 +263,31 @@ def parse_fps(body):
     return _float(_decode(match.group("fps")).replace(",", "."))
 
 
-def extract_download(body, payload=None):
+def build_download_payload(body, payload=None):
     payload = payload or {}
-    if _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        selected = select_subtitle_file([name for name, _data in files], payload)
-        return _content_payload(dict(files)[selected], _subtitle_extension(selected) or "srt")
-    stream = io.BytesIO(body or b"")
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            names = archive.namelist()
-            candidates = [name for name in names if _subtitle_extension(name)]
-            if not candidates and len(names) == 1:
-                raise RuntimeError("Titulky download limit has been exceeded")
-            selected = select_subtitle_file(names, payload)
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
+    # Reject broken responses up front: download.php can answer with an empty stream or
+    # an HTML/error page that would otherwise look like a successful download.
+    if not body or not body.strip():
+        raise ValueError("titulky returned an empty response")
     if _looks_like_html(body):
         raise ValueError("titulky download did not return a supported subtitle file")
+    if _is_archive_body(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
+        # the host, which lists it, picks the member by episode, and detects encoding.
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "episode": payload.get("episode"),
+        }
     subtitle_format = _direct_subtitle_format(body, payload)
     if not subtitle_format:
         raise ValueError("titulky download did not return a supported subtitle file")
+    # Direct, non-archive subtitle body.
     return _content_payload(body, subtitle_format)
 
 
-def select_subtitle_file(names, payload):
-    candidates = [name for name in names if _subtitle_extension(name)]
-    if not candidates:
-        raise ValueError("titulky archive contains no supported subtitle files")
-    release_tokens = set(_tokens((payload or {}).get("release_info")))
-
-    def score(name):
-        name_tokens = set(_tokens(name))
-        value = len(release_tokens.intersection(name_tokens))
-        if "forced" in name_tokens:
-            value -= 5
-        return value
-
-    return max(candidates, key=score)
+def _is_archive_body(body):
+    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
 
 
 def _result_from_row(video, row, fps, config):
@@ -347,6 +326,8 @@ def _result_from_row(video, row, fps, config):
             "filename": filename,
             "release_info": row["release_info"],
             "language": language["alpha3"],
+            "season": _safe_int(video.get("season")) if video.get("kind") == "episode" else None,
+            "episode": row.get("episode"),
             "fps": fps,
         },
     }
@@ -453,91 +434,6 @@ def _framerate_equal(first, second):
     return False
 
 
-def _extract_rar_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"Titulky RAR extraction failed: {details}") from errors[-1]
-    raise RuntimeError("Titulky RAR extraction requires bundled py7zz")
-
-
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("Titulky bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "titulky.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_unar(body):
-    unar = shutil.which("unar")
-    if not unar:
-        raise RuntimeError("Titulky RAR fallback requires unar")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "titulky.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run([unar, "-quiet", "-o", output_dir, archive_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"unar failed to extract Titulky RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("Titulky RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "titulky.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run([sevenzip, "x", "-y", f"-o{output_dir}", archive_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract Titulky RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if not _subtitle_extension(rel):
-                continue
-            with open(path, "rb") as handle:
-                files.append((rel, handle.read()))
-    if not files:
-        raise ValueError("titulky archive contains no supported subtitle files")
-    return files
-
-
 def _is_rar_archive(body):
     return bool(body) and (
         body.startswith(b"Rar!\x1a\x07\x00")
@@ -568,14 +464,15 @@ def _direct_subtitle_format(body, payload):
 
 
 def _content_payload(content, subtitle_format):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     content = _fix_line_endings(content)
-    encoding = _detect_encoding(content)
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 
@@ -646,16 +543,6 @@ def _header_values(headers, name):
         if str(key).lower() == wanted:
             values.append(str(value))
     return values
-
-
-def _detect_encoding(content):
-    for encoding in ("utf-8", "cp1250", "latin-1"):
-        try:
-            (content or b"").decode(encoding)
-            return encoding
-        except UnicodeDecodeError:
-            continue
-    return "latin-1"
 
 
 def _strip_tags(value):

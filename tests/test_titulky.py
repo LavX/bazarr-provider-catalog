@@ -218,7 +218,7 @@ class TitulkyProviderTests(unittest.TestCase):
         self.assertEqual(provider._cookies["sid"], "session-token")
         self.assertEqual(provider._cookies["premium"], "premium-token")
 
-    def test_download_extracts_zip_subtitle(self):
+    def test_download_zip_archive_returns_raw_archive_for_host(self):
         provider = self.mod.TitulkyProvider()
         provider._logged_in = True
         body = _zip_body(
@@ -229,42 +229,88 @@ class TitulkyProviderTests(unittest.TestCase):
         provider._http_get = lambda url, headers=None, timeout=30, allow_redirects=False: self.mod.HttpResponse(200, body, {}, url)
         result = provider.download(
             {
-                "download_url": "https://premium.titulky.com/download.php?id=101",
-                "page_link": "https://premium.titulky.com/?action=detail&id=101",
-                "filename": "titulky.101.cs.zip",
+                "download_url": "https://premium.titulky.com/download.php?id=201",
+                "page_link": "https://premium.titulky.com/?action=detail&id=201",
+                "filename": "titulky.201.cs.zip",
+                "episode": 3,
             },
             {"alpha3": "ces"},
             {"username": "user", "password": "pass", "approved_only": False, "skip_wrong_fps": False},
         )
 
+        # Host-side extraction: the worker forwards the raw archive untouched.
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["episode"], 3)
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
+
+    def test_build_download_payload_rar_archive_returns_raw_archive_for_host(self):
+        body = b"Rar!\x1a\x07\x00" + b"\x00" * 64
+
+        result = self.mod.build_download_payload(body, {"filename": "titulky.101.cs.zip", "episode": 7})
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["episode"], 7)
+        self.assertNotIn("content_b64", result)
+
+    def test_build_download_payload_archive_episode_is_none_for_movie(self):
+        body = _zip_body({"Dune.2021.cs.srt": b"1\r\n00:00:01,000 --> 00:00:02,000\r\nCzech line\r\n"})
+
+        result = self.mod.build_download_payload(body, {"filename": "titulky.101.cs.zip", "episode": None})
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertIsNone(result["episode"])
+
+    def test_build_download_payload_accepts_direct_subtitle_body(self):
+        body = b"1\r\n00:00:01,000 --> 00:00:02,000\r\nCzech line\r\n"
+
+        result = self.mod.build_download_payload(body, {"filename": "titulky.101.cs.srt"})
+
         decoded = base64.b64decode(result["content_b64"])
         self.assertEqual(decoded, b"1\n00:00:01,000 --> 00:00:02,000\nCzech line\n")
         self.assertEqual(result["format"], "srt")
         self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
+        # The host detects the encoding via chardet; the worker must not guess.
+        self.assertNotIn("encoding", result)
 
-    def test_extract_download_accepts_direct_subtitle_body(self):
-        body = b"1\r\n00:00:01,000 --> 00:00:02,000\r\nCzech line\r\n"
+    def test_build_download_payload_rejects_empty_body(self):
+        with self.assertRaisesRegex(ValueError, "empty"):
+            self.mod.build_download_payload(b"", {"filename": "titulky.101.cs.zip"})
+        with self.assertRaisesRegex(ValueError, "empty"):
+            self.mod.build_download_payload(b"   \n  ", {"filename": "titulky.101.cs.zip"})
 
-        result = self.mod.extract_download(body, {"filename": "titulky.101.cs.zip"})
+    def test_build_download_payload_rejects_html_error_page(self):
+        body = b"<!DOCTYPE html><html><body>Limit exceeded</body></html>"
 
-        decoded = base64.b64decode(result["content_b64"])
-        self.assertEqual(decoded, b"1\n00:00:01,000 --> 00:00:02,000\nCzech line\n")
-        self.assertEqual(result["format"], "srt")
+        with self.assertRaisesRegex(ValueError, "did not return a supported subtitle"):
+            self.mod.build_download_payload(body, {"filename": "limit.zip"})
 
-    def test_extract_download_reports_cp1250_encoding(self):
-        body = "1\r\n00:00:01,000 --> 00:00:02,000\r\nŽluťoučký kůň\r\n".encode("cp1250")
+    def test_search_stores_episode_and_season_in_payload(self):
+        provider = self.mod.TitulkyProvider()
+        provider._http_post = lambda url, data=None, headers=None, timeout=30: self.mod.HttpResponse(
+            302, b"", {"Location": "/?msg_type=i&msg=ok"}, url
+        )
 
-        result = self.mod.extract_download(body, {"filename": "titulky.101.cs.srt"})
+        def get(url, headers=None, timeout=30, allow_redirects=False):
+            del headers, timeout, allow_redirects
+            if "action=serial" in url:
+                return self.mod.HttpResponse(200, _fixture("titulky_browse_chernobyl.html"), {}, url)
+            if "action=detail&id=201" in url:
+                return self.mod.HttpResponse(200, _fixture("titulky_detail_25fps.html"), {}, url)
+            raise AssertionError(url)
 
-        decoded = base64.b64decode(result["content_b64"])
-        self.assertEqual(decoded, body.replace(b"\r\n", b"\n"))
-        self.assertEqual(result["encoding"], "cp1250")
+        provider._http_get = get
+        results = provider.search(
+            _video("titulky_video_chernobyl_s01e01.json"),
+            [{"alpha3": "slk", "alpha2": "sk"}],
+            {"username": "user", "password": "pass", "approved_only": True, "skip_wrong_fps": True},
+        )
 
-    def test_single_file_archive_without_subtitle_reports_download_limit(self):
-        body = _zip_body({"limit.txt": b"limit exceeded"})
-
-        with self.assertRaisesRegex(RuntimeError, "download limit"):
-            self.mod.extract_download(body, {"filename": "limit.zip"})
+        payload = results[0]["provider_payload"]
+        self.assertEqual(payload["episode"], 1)
+        self.assertEqual(payload["season"], 1)
 
     def test_http_get_converts_urllib_http_error_to_response(self):
         provider = self.mod.TitulkyProvider()
