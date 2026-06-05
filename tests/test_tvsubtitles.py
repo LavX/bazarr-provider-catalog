@@ -2,7 +2,9 @@ import base64
 import hashlib
 import importlib.util
 import io
+import socket
 import unittest
+import urllib.error
 import zipfile
 from pathlib import Path
 
@@ -331,3 +333,139 @@ class TvSubtitlesProviderTests(unittest.TestCase):
                 {"alpha3": "eng", "alpha2": "en"},
                 {},
             )
+
+
+class _FakeResponse:
+    def __init__(self, body):
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return self._body
+
+
+def _http_error(code, headers=None):
+    import email.message
+
+    message = email.message.Message()
+    for key, value in (headers or {}).items():
+        message[key] = value
+    return urllib.error.HTTPError(
+        url="https://www.tvsubtitles.net/", code=code, msg="boom", hdrs=message, fp=None
+    )
+
+
+class TvSubtitlesTransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.slept = []
+        # Make backoff a no-op and observable so the loop runs instantly.
+        self.mod.time.sleep = lambda seconds: self.slept.append(seconds)
+
+    def _patch_urlopen(self, outcomes):
+        calls = {"count": 0}
+
+        def fake_urlopen(request, timeout=None):
+            index = calls["count"]
+            calls["count"] += 1
+            outcome = outcomes[index]
+            if isinstance(outcome, Exception):
+                raise outcome
+            return _FakeResponse(outcome)
+
+        self.mod.urllib.request.urlopen = fake_urlopen
+        return calls
+
+    def test_retries_url_error_then_succeeds(self):
+        calls = self._patch_urlopen(
+            [urllib.error.URLError("connection reset"), b"OK"]
+        )
+        provider = self.mod.TvSubtitlesProvider()
+
+        body = provider._http_get("https://www.tvsubtitles.net/tvshow-1.html")
+
+        self.assertEqual(body, b"OK")
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(len(self.slept), 1)
+
+    def test_retries_503_twice_then_succeeds(self):
+        calls = self._patch_urlopen(
+            [_http_error(503), _http_error(503), b"OK"]
+        )
+        provider = self.mod.TvSubtitlesProvider()
+
+        body = provider._http_get("https://www.tvsubtitles.net/tvshow-1.html")
+
+        self.assertEqual(body, b"OK")
+        self.assertEqual(calls["count"], 3)
+        self.assertEqual(len(self.slept), 2)
+
+    def test_retries_socket_timeout_then_succeeds(self):
+        calls = self._patch_urlopen([socket.timeout("slow"), b"OK"])
+        provider = self.mod.TvSubtitlesProvider()
+
+        body = provider._http_get("https://www.tvsubtitles.net/tvshow-1.html")
+
+        self.assertEqual(body, b"OK")
+        self.assertEqual(calls["count"], 2)
+
+    def test_gives_up_after_three_transient_failures(self):
+        calls = self._patch_urlopen(
+            [
+                urllib.error.URLError("down"),
+                urllib.error.URLError("down"),
+                urllib.error.URLError("down"),
+            ]
+        )
+        provider = self.mod.TvSubtitlesProvider()
+
+        with self.assertRaises(urllib.error.URLError):
+            provider._http_get("https://www.tvsubtitles.net/tvshow-1.html")
+
+        self.assertEqual(calls["count"], 3)
+        self.assertEqual(len(self.slept), 2)
+
+    def test_404_is_not_retried_and_propagates(self):
+        calls = self._patch_urlopen([_http_error(404), b"OK"])
+        provider = self.mod.TvSubtitlesProvider()
+
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            provider._http_get("https://www.tvsubtitles.net/tvshow-1.html")
+
+        self.assertEqual(ctx.exception.code, 404)
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(self.slept, [])
+
+    def test_403_is_not_retried_and_propagates(self):
+        calls = self._patch_urlopen([_http_error(403), b"OK"])
+        provider = self.mod.TvSubtitlesProvider()
+
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            provider._http_get("https://www.tvsubtitles.net/tvshow-1.html")
+
+        self.assertEqual(ctx.exception.code, 403)
+        self.assertEqual(calls["count"], 1)
+
+    def test_non_network_error_propagates_immediately(self):
+        calls = self._patch_urlopen([ValueError("bad parse"), b"OK"])
+        provider = self.mod.TvSubtitlesProvider()
+
+        with self.assertRaises(ValueError):
+            provider._http_get("https://www.tvsubtitles.net/tvshow-1.html")
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(self.slept, [])
+
+    def test_429_honors_retry_after_header(self):
+        self._patch_urlopen([_http_error(429, {"Retry-After": "2"}), b"OK"])
+        provider = self.mod.TvSubtitlesProvider()
+
+        body = provider._http_get("https://www.tvsubtitles.net/tvshow-1.html")
+
+        self.assertEqual(body, b"OK")
+        self.assertEqual(self.slept, [2.0])
