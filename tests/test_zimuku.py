@@ -1,13 +1,12 @@
 import base64
+import hashlib
 import importlib.util
 import io
 import json
-import os
 import unittest
 import zlib
 import zipfile
 from pathlib import Path
-from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "zimuku"
@@ -63,6 +62,14 @@ def _zip_body():
     return stream.getvalue()
 
 
+def _rar_body():
+    return b"Rar!\x1a\x07\x00" + b"\x00" * 64
+
+
+def _7z_body():
+    return b"7z\xbc\xaf\x27\x1c" + b"\x00" * 64
+
+
 class ZimukuParserTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
@@ -109,60 +116,67 @@ class ZimukuParserTests(unittest.TestCase):
         self.assertEqual(rows[0]["release_info"], "Dune.2021")
         self.assertEqual(rows[0]["year"], 2021)
 
-    def test_extract_download_prefers_requested_archive_language(self):
-        simplified = self.mod.extract_download(_zip_body(), {"language": "zho", "filename": "archive.zip"})
-        traditional = self.mod.extract_download(_zip_body(), {"language": "zho-TW", "filename": "archive.zip"})
+    def test_extract_download_returns_zip_archive_mode(self):
+        body = _zip_body()
 
-        self.assertIn("simplified bilingual", self.mod._decode_payload_text(simplified))
-        self.assertIn("traditional", self.mod._decode_payload_text(traditional))
+        result = self.mod.extract_download(body, {"filename": "archive.zip", "episode": 1})
 
-    def test_extract_download_unpacks_7z_archive(self):
-        # Finding 1: a 7z response must be extracted, not returned as raw archive
-        # bytes labeled srt.
-        class FakePy7zz:
-            @staticmethod
-            def extract_archive(_archive_path, output_dir):
-                with open(os.path.join(output_dir, "Dune.2021.chs.srt"), "wb") as handle:
-                    handle.write(b"1\nsimplified subtitle\n")
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["episode"], 1)
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
 
-        body = b"7z\xbc\xaf\x27\x1c" + b"\x00" * 32
-        with mock.patch.object(self.mod, "py7zz", FakePy7zz):
-            result = self.mod.extract_download(body, {"language": "zho-CN", "filename": "dune.7z"})
+    def test_extract_download_returns_rar_archive_mode(self):
+        body = _rar_body()
+
+        result = self.mod.extract_download(body, {"filename": "archive.rar", "episode": 3})
+
+        self.assertTrue(self.mod._is_rar_archive(body))
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["episode"], 3)
+        self.assertNotIn("content_b64", result)
+
+    def test_extract_download_returns_7z_archive_mode(self):
+        body = _7z_body()
+
+        result = self.mod.extract_download(body, {"filename": "archive.7z", "episode": 5})
 
         self.assertTrue(self.mod._is_7z_archive(body))
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["episode"], 5)
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
+
+    def test_extract_download_carries_no_episode_for_movies(self):
+        body = _zip_body()
+
+        result = self.mod.extract_download(body, {"filename": "archive.zip"})
+
+        self.assertIn("archive_b64", result)
+        self.assertIsNone(result["episode"])
+
+    def test_extract_download_direct_subtitle_body_is_content_mode(self):
+        body = b"1\n00:00:01,000 --> 00:00:02,000\nhello\n"
+
+        result = self.mod.extract_download(body, {"filename": "dune.srt"})
+
+        self.assertNotIn("archive_b64", result)
         self.assertEqual(result["format"], "srt")
-        self.assertIn("simplified subtitle", self.mod._decode_payload_text(result))
-        self.assertNotEqual(base64.b64decode(result["content_b64"]), body)
+        self.assertEqual(base64.b64decode(result["content_b64"]), body)
+        self.assertNotIn("encoding", result)
 
-    def test_content_payload_reports_gbk_encoding(self):
-        # Finding 2: GBK/Big5 subtitles must not be mislabeled utf-8.
-        gbk_text = (
-            "1\n00:00:01,000 --> 00:00:04,000\n你好世界，欢迎收看本剧第一集。\n\n"
-            "2\n00:00:05,000 --> 00:00:08,000\n这是一段简体中文字幕，用于测试编码检测功能是否正常工作。\n\n"
-            "3\n00:00:09,000 --> 00:00:12,000\n我们希望它能够正确地识别出国标编码而不是其他语言的编码。\n"
-        )
-        big5_text = (
-            "1\n00:00:01,000 --> 00:00:04,000\n你好世界，歡迎收看本劇第一集。\n\n"
-            "2\n00:00:05,000 --> 00:00:08,000\n這是一段繁體中文字幕，用於測試編碼偵測功能是否正常運作。\n\n"
-            "3\n00:00:09,000 --> 00:00:12,000\n我們希望它能夠正確地識別出大五碼而不是其他語言的編碼。\n"
-        )
-        gbk_bytes = gbk_text.encode("gbk")
-        big5_bytes = big5_text.encode("big5")
+    def test_extract_download_rejects_empty_body(self):
+        with self.assertRaises(ValueError):
+            self.mod.extract_download(b"", {"filename": "dune.zip"})
+        with self.assertRaises(ValueError):
+            self.mod.extract_download(b"   \n", {"filename": "dune.zip"})
 
-        with self.assertRaises(UnicodeDecodeError):
-            gbk_bytes.decode("utf-8")
-        gbk_payload = self.mod._content_payload(gbk_bytes, "srt")
-        big5_payload = self.mod._content_payload(big5_bytes, "srt")
-        utf8_payload = self.mod._content_payload("hello world".encode("utf-8"), "srt")
-
-        self.assertEqual(gbk_payload["encoding"], "gb18030")
-        self.assertEqual(utf8_payload["encoding"], "utf-8")
-        # Big5 cannot be told apart from gb18030 by a plain decode probe, so this
-        # leg depends on the bundled charset-normalizer detector.
-        if self.mod.charset_normalizer is not None:
-            self.assertEqual(big5_payload["encoding"], "big5")
-        else:  # pragma: no cover, dependency is declared in provider.json
-            self.assertEqual(big5_payload["encoding"], "gb18030")
+    def test_extract_download_rejects_html_error_body(self):
+        with self.assertRaises(ValueError):
+            self.mod.extract_download(b"<!DOCTYPE html><html><body>error</body></html>", {"filename": "dune.zip"})
 
     def test_languages_from_row_merges_flag_and_bilingual_text(self):
         # Finding 3: a Chinese flag plus a *.CHS.ENG release must still expose
@@ -232,6 +246,10 @@ class ZimukuProviderTests(unittest.TestCase):
         self.assertEqual(cookies["srcurl"], self.mod.string_to_hex("https://srtku.com/search?q=Dune 2021"))
         self.assertEqual({item["provider_payload"]["language"] for item in results}, {"zho-CN", "zho-TW"})
         self.assertTrue(all(item["provider"] == "zimuku" for item in results))
+        # Episode searches must carry the episode (and season) into the payload so
+        # download() can pass episode for host-side member selection.
+        self.assertTrue(all(item["provider_payload"]["episode"] == 1 for item in results))
+        self.assertTrue(all(item["provider_payload"]["season"] == 1 for item in results))
 
     def test_search_uses_current_inline_search_rows(self):
         provider = self.mod.ZimukuProvider()
@@ -259,6 +277,8 @@ class ZimukuProviderTests(unittest.TestCase):
         self.assertEqual(calls, ["https://srtku.com/search?q=Dune+2021"])
         self.assertEqual({item["provider_payload"]["language"] for item in results}, {"zho-CN", "zho-TW"})
         self.assertEqual({item["provider_payload"]["detail_url"] for item in results}, {"https://zimuku.org/detail/210615.html"})
+        # Movies carry no episode.
+        self.assertTrue(all(item["provider_payload"]["episode"] is None for item in results))
 
     def test_yunsuo_bypass_allows_multiple_challenge_retries(self):
         provider = self.mod.ZimukuProvider()
@@ -373,11 +393,12 @@ class ZimukuProviderTests(unittest.TestCase):
 
     def test_download_follows_detail_and_download_pages(self):
         provider = self.mod.ZimukuProvider()
+        zip_body = _zip_body()
         calls = []
         responses = {
             "https://srtku.com/subtitle/game-of-thrones-s01e01-chs-cht.html": self.mod.HttpResponse(200, DETAIL_HTML, {}, "https://srtku.com/subtitle/game-of-thrones-s01e01-chs-cht.html"),
             "https://srtku.com/download/dune-2021.html": self.mod.HttpResponse(200, DOWNLOAD_HTML, {}, "https://srtku.com/download/dune-2021.html"),
-            "https://srtku.com/download/file/dune-2021.zip": self.mod.HttpResponse(200, _zip_body(), {"Content-Disposition": "attachment; filename=dune.zip"}, "https://srtku.com/download/file/dune-2021.zip"),
+            "https://srtku.com/download/file/dune-2021.zip": self.mod.HttpResponse(200, zip_body, {"Content-Disposition": "attachment; filename=dune.zip"}, "https://srtku.com/download/file/dune-2021.zip"),
         }
 
         def response_stub(url, timeout=30, referer=None, allow_redirects=True):
@@ -393,6 +414,7 @@ class ZimukuProviderTests(unittest.TestCase):
                 "detail_url": "https://srtku.com/subtitle/game-of-thrones-s01e01-chs-cht.html",
                 "language": "zho-TW",
                 "filename": "Game.of.Thrones.S01E01.zip",
+                "episode": 1,
             },
             {"alpha3": "zho", "alpha2": "zh", "country": "TW"},
             {"request_delay_ms": 0},
@@ -400,7 +422,11 @@ class ZimukuProviderTests(unittest.TestCase):
 
         self.assertEqual(calls[1][1], "https://srtku.com/subtitle/game-of-thrones-s01e01-chs-cht.html")
         self.assertEqual(calls[2][1], "https://srtku.com/subtitle/game-of-thrones-s01e01-chs-cht.html")
-        self.assertIn("traditional", self.mod._decode_payload_text(result))
+        # Host-side archive mode: the raw zip bytes are handed back, episode carried through.
+        self.assertEqual(base64.b64decode(result["archive_b64"]), zip_body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(zip_body).hexdigest())
+        self.assertEqual(result["episode"], 1)
+        self.assertNotIn("content_b64", result)
 
     def test_search_filters_wrong_episode_rows(self):
         # Finding 5: a season result listing sibling episodes must not offer the
