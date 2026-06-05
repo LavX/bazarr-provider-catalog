@@ -2,6 +2,7 @@ import base64
 import hashlib
 import importlib.util
 import io
+import json
 import unittest
 import zipfile
 from pathlib import Path
@@ -74,6 +75,55 @@ class PrijevodiOnlineParserTests(unittest.TestCase):
             self.mod._index_url("Çukur"),
             "https://www.prijevodi-online.org/serije/index/c",
         )
+
+    def test_parse_series_page_keeps_episode_zero_specials(self):
+        body = (
+            '<script>epizode.key = "ca7a167e13db896fe2324b2cbf10311f";</script>'
+            '<h3 id="sezona-1">Sezona 1</h3>'
+            '<div id="epizoda-90000">'
+            '<ul class="epizoda actual">'
+            '<li class="broj">0.</li>'
+            '<li class="naziv"><a class="open" rel="/prijevod/get/90000" '
+            'title="Download Special">Special</a></li>'
+            '<li class="status">prevedeno</li>'
+            "</ul></div>"
+        )
+
+        parsed = self.mod.parse_series_page(body)
+
+        self.assertIn((1, 0), parsed["episodes"])
+        self.assertEqual(parsed["episodes"][(1, 0)]["episode_id"], "90000")
+        self.assertEqual(parsed["episodes"][(1, 0)]["title"], "Special")
+
+    def test_find_series_matches_titles_that_drop_apostrophes(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        index_html = (
+            '<table><tr id="serija-77">'
+            '<td><a href="/serije/view/77/da-vincis-demons" '
+            'title="Da Vincis Demons">Da Vincis Demons</a></td>'
+            "</tr></table>"
+        ).encode("utf-8")
+        provider._http_get = lambda url, timeout=10, referer=None: index_html
+
+        series = provider._find_series("Da Vinci's Demons")
+
+        self.assertIsNotNone(series)
+        self.assertEqual(series["series_id"], "77")
+        self.assertEqual(series["slug"], "da-vincis-demons")
+
+    def test_manifest_advertises_accepted_montenegrin_code(self):
+        manifest = json.loads((PROVIDER_DIR / "provider.json").read_text())
+
+        self.assertIn("cnr", manifest["languages"])
+        self.assertNotIn("mne", manifest["languages"])
+        # Every advertised code must be accepted by _requested_languages so the
+        # marketplace never filters this provider out for a code it rejects.
+        for code in manifest["languages"]:
+            self.assertEqual(
+                self.mod._requested_languages([{"alpha3": code}]),
+                {code},
+                msg=f"manifest advertises {code} but the provider rejects it",
+            )
 
 
 class PrijevodiOnlineProviderTests(unittest.TestCase):
@@ -191,6 +241,40 @@ class PrijevodiOnlineProviderTests(unittest.TestCase):
         self.assertEqual(data, b"right subtitle")
         self.assertEqual(content["content_sha256"], hashlib.sha256(data).hexdigest())
         self.assertEqual(content["format"], "srt")
+
+    def test_download_does_not_match_episode_one_against_episode_ten(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        # The episode-ten file is listed first so the buggy unbounded substring
+        # match (1x1 inside 1x10) would otherwise select it for episode 1.
+        body = _zip_body(
+            {
+                "Game.of.Thrones.1x10.720p.HDTV.srt": "episode ten",
+                "Game.of.Thrones.1x01.720p.HDTV.srt": "episode one",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        content = provider.download(
+            {
+                "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/got-1x01",
+                "filename": "prijevodionline.game-of-thrones.s01e01.hr.zip",
+                "season": 1,
+                "episode": 1,
+            },
+            {"alpha3": "hrv", "alpha2": "hr"},
+            {},
+        )
+        data = base64.b64decode(content["content_b64"])
+
+        self.assertEqual(data, b"episode one")
+
+    def test_select_subtitle_file_bounds_compact_episode_token(self):
+        names = ["Show.1x10.srt", "Show.1x01.srt"]
+
+        self.assertEqual(
+            self.mod.select_subtitle_file(names, {"season": 1, "episode": 1}),
+            "Show.1x01.srt",
+        )
 
 
 if __name__ == "__main__":

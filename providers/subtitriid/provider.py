@@ -53,6 +53,7 @@ _SEARCH_TITLE_RE = re.compile(
 )
 _TAG_RE = re.compile(r"<[^>]+>")
 _TITLE_RE = re.compile(r"<title>(?P<body>.*?)</title>", re.I | re.S)
+_TITLE_SEPARATOR_RE = re.compile(r"\s+/\s+")
 _WS_RE = re.compile(r"\s+")
 _YEAR_FIELD_RE = re.compile(r"<[^>]+\bid\s*=\s*['\"]film-page-year['\"][^>]*>(?P<body>.*?)</[^>]+>", re.I | re.S)
 
@@ -244,6 +245,8 @@ def extract_download(body, payload=None):
         with zipfile.ZipFile(stream) as archive:
             selected = select_subtitle_files(archive.namelist())
             return _content_payload(_join_subtitle_parts(archive.read(name) for name in selected), _subtitle_extension(selected[0]) or "srt")
+    if _looks_like_html(body):
+        raise ValueError("subtitriid download returned an HTML page instead of a subtitle")
     subtitle_format = _subtitle_extension(filename) or ("srt" if _looks_like_subtitle(body) else "")
     if not subtitle_format:
         raise ValueError("subtitriid download did not return a supported subtitle file")
@@ -376,7 +379,7 @@ def _parse_titles(text):
         title_match = _TITLE_RE.search(text)
         title_text = _strip_tags(title_match.group("body")) if title_match else ""
         title_text = title_text.split(" - ", 1)[0]
-    parts = [part.strip() for part in title_text.split("/") if part.strip()]
+    parts = [part.strip() for part in _TITLE_SEPARATOR_RE.split(title_text) if part.strip()]
     if len(parts) >= 2:
         return parts[-1], parts[0]
     if parts:
@@ -509,6 +512,13 @@ def _subtitle_extension(filename):
 def _looks_like_subtitle(body):
     sample = (body or b"")[:4096].decode("utf-8", errors="ignore").lower()
     return "-->" in sample or "[script info]" in sample or "{\\an" in sample
+
+
+def _looks_like_html(body):
+    sample = (body or b"")[:4096].decode("utf-8", errors="ignore").lstrip().lower()
+    if sample.startswith("<!doctype html") or sample.startswith("<html"):
+        return True
+    return "<html" in sample or "<body" in sample or "<head" in sample
 
 
 def _join_subtitle_parts(parts):

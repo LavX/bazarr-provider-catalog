@@ -65,6 +65,13 @@ class SubDLLanguageTests(unittest.TestCase):
 
         self.assertEqual(codes, ["EN"])
 
+    def test_regional_request_uses_country_alpha2(self):
+        # Bazarr carries Brazilian Portuguese as alpha3 "por" + country_alpha2 "BR".
+        # The mapper must read country_alpha2 so SubDL is queried with BR_PT, not generic PT.
+        codes = self.mod.language_codes([{"alpha3": "por", "country_alpha2": "BR"}])
+
+        self.assertEqual(codes, ["BR_PT"])
+
 
 class SubDLQueryTests(unittest.TestCase):
     def setUp(self):
@@ -286,6 +293,39 @@ class SubDLProviderSearchTests(unittest.TestCase):
         self.assertEqual(first["provider_payload"]["absolute_episode"], 264)
         self.assertIn("season", first["matches"])
         self.assertIn("episode", first["matches"])
+
+    def test_brazilian_portuguese_request_returns_regional_result(self):
+        provider = self.mod.SubDLProvider()
+        calls = []
+        item = {
+            "language": "BR_PT",
+            "name": "filme.2020.1080p.zip",
+            "url": "/subtitle/br-pt.zip",
+            "subtitlePage": "/pt/subtitle/sd321/filme",
+            "release_name": "Filme 2020 1080p",
+            "releases": ["Filme.2020.1080p.WEB"],
+            "author": "subdl-user",
+            "comment": "sincronizado",
+            "hi": False,
+        }
+
+        def stub(params):
+            calls.append(dict(params))
+            return _subdl_response(item)
+
+        provider._http_get_json = stub
+        results = provider.search(
+            {"kind": "movie", "title": "Filme", "year": 2020},
+            [{"alpha3": "por", "country_alpha2": "BR"}],
+            {"api_key": "test-key"},
+        )
+
+        # The query must ask SubDL for the regional code rather than generic PT.
+        self.assertEqual(calls[0]["languages"], "BR_PT")
+        self.assertEqual(len(results), 1)
+        language = results[0]["language"]
+        self.assertEqual(language["alpha3"], "por")
+        self.assertEqual(language["country_alpha2"], "BR")
 
     def test_hi_and_forced_flags_are_detected_from_metadata(self):
         provider = self.mod.SubDLProvider()

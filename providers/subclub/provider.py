@@ -175,7 +175,7 @@ class SubclubProvider:
             _sleep(config)
             files = parse_archive_listing(self._http_get(hit["archive_list_url"], referer=_search_url(title)))
             if not files:
-                files = [{"filename": f"subclub-{hit['archive_id']}.zip", "url": None}]
+                files = [{"filename": f"subclub-{hit['archive_id']}.zip", "url": None, "synthetic_archive": True}]
             for file_info in files:
                 item = {**hit, **file_info, "media_type": media_type}
                 key = (hit["archive_id"], file_info.get("filename"))
@@ -221,6 +221,14 @@ class SubclubProvider:
             "media_type": item.get("media_type"),
             "release_info": filename,
         }
+        # A synthetic fallback archive has only the generic "subclub-<id>.zip" name,
+        # so carry the video's release hints into the payload. Without this,
+        # select_subtitle_file() has nothing but "subclub" and the archive id and
+        # would pick the first .srt instead of the file matching the wanted release.
+        if item.get("synthetic_archive"):
+            hints = _video_release_hints(video)
+            if hints:
+                payload["release_hints"] = hints
         return {
             "provider": PROVIDER_ID,
             "id": f"subclub-{item['archive_id']}-{hashlib.sha1(filename.encode('utf-8')).hexdigest()[:12]}",
@@ -272,7 +280,15 @@ def extract_archive_download(body, payload=None):
         with zipfile.ZipFile(stream) as archive:
             selected = select_subtitle_file(archive.namelist(), payload)
             return _content_payload(_normalize_line_endings(archive.read(selected)), _subtitle_extension(selected) or "srt")
-    return _content_payload(_normalize_line_endings(body or b""), _format_from_filename(payload.get("filename")))
+    # Non-archive fallback: the archive endpoint can answer down.php with an HTML/error
+    # page or an empty body. The synthetic fallback filename ends in ".zip", so
+    # _format_from_filename() defaults to "srt" and we would otherwise hand back an
+    # invalid subtitle that looks successful. Reject those bodies instead.
+    if not body or not body.strip():
+        raise ValueError(f"subclub empty download for archive {payload.get('archive_id')}")
+    if _is_html_body(body):
+        raise ValueError(f"subclub returned an HTML/error page for archive {payload.get('archive_id')}")
+    return _content_payload(_normalize_line_endings(body), _format_from_filename(payload.get("filename")))
 
 
 def select_subtitle_file(names, payload):
@@ -285,6 +301,13 @@ def select_subtitle_file(names, payload):
     except (TypeError, ValueError):
         season = episode = None
     release_info = _normalize_release((payload or {}).get("release_info") or (payload or {}).get("filename"))
+    release_hints = _normalize_release((payload or {}).get("release_hints"))
+    hint_tokens = {
+        token
+        for source in (release_info, release_hints)
+        for token in source.split(".")
+        if len(token) > 2
+    }
 
     def score(index_name):
         index, name = index_name
@@ -295,10 +318,9 @@ def select_subtitle_file(names, payload):
                 value += 70
             elif f"{season}x{episode:02d}" in normalized or f"{season}x{episode}" in normalized:
                 value += 65
-        if release_info:
-            for token in [part for part in release_info.split(".") if len(part) > 2]:
-                if token in normalized:
-                    value += 4
+        for token in hint_tokens:
+            if token in normalized:
+                value += 4
         if name.lower().endswith(".srt"):
             value += 5
         return value
@@ -476,6 +498,13 @@ def _is_rar_archive(body):
     return bool(body) and (body.startswith(b"Rar!\x1a\x07\x00") or body.startswith(b"Rar!\x1a\x07\x01\x00"))
 
 
+def _is_html_body(body):
+    if not body:
+        return False
+    head = body[:1024].lstrip().lower()
+    return head.startswith(b"<!doctype html") or head.startswith(b"<html") or head.startswith(b"<?xml") or head.startswith(b"<!--") or b"<body" in head or b"<head" in head
+
+
 def _subtitle_extension(name):
     lowered = (name or "").lower()
     for extension in SUBTITLE_EXTENSIONS:
@@ -568,3 +597,13 @@ def _normalize_release(value):
     decomposed = unicodedata.normalize("NFKD", str(value))
     folded = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
     return re.sub(r"[^a-z0-9]+", ".", folded.lower()).strip(".")
+
+
+def _video_release_hints(video):
+    video = video or {}
+    parts = []
+    for key in ("filename", "name", "release_group", "source", "resolution", "video_codec", "audio_codec"):
+        value = video.get(key)
+        if value:
+            parts.append(str(value))
+    return _normalize_release(".".join(parts))

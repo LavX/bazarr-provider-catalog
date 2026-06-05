@@ -240,6 +240,99 @@ class LegendasNetDownloadTests(unittest.TestCase):
         self.assertEqual(result["format"], "srt")
         self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
 
+    def test_direct_ass_download_keeps_real_format_despite_zip_filename(self):
+        provider = self.mod.LegendasNetProvider()
+        subtitle_body = (
+            b"[Script Info]\r\nScriptType: v4.00+\r\n\r\n[Events]\r\n"
+            b"Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,Movie line\r\n"
+        )
+
+        def request(method, url, headers=None, json_body=None, timeout=30):
+            del method, headers, json_body, timeout
+            return self.mod.HttpResponse(200, _fixture("legendasnet_login.json"), {})
+
+        def get(url, headers=None, timeout=30):
+            del headers, timeout
+            self.assertEqual(url, "https://legendas.net/legendas/dune.por-br.ass")
+            return self.mod.HttpResponse(200, subtitle_body, {"content-type": "text/plain"})
+
+        provider._http_json = request
+        provider._http_get = get
+        result = provider.download(
+            {
+                "provider": "legendasnet",
+                "schema": 1,
+                "download_link": "/legendas/dune.por-br.ass",
+                "filename": "legendasnet.101.pt-br.zip",
+            },
+            {"alpha3": "por-BR"},
+            {"username": "user", "password": "pass"},
+        )
+
+        self.assertEqual(result["format"], "ass")
+        self.assertEqual(result["content_type"], "text/x-ssa")
+        decoded = base64.b64decode(result["content_b64"])
+        self.assertEqual(decoded, self.mod._normalize_line_endings(subtitle_body))
+
+    def test_direct_download_uses_content_disposition_filename_for_format(self):
+        provider = self.mod.LegendasNetProvider()
+        subtitle_body = b"WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nMovie line\n"
+
+        def request(method, url, headers=None, json_body=None, timeout=30):
+            del method, headers, json_body, timeout
+            return self.mod.HttpResponse(200, _fixture("legendasnet_login.json"), {})
+
+        def get(url, headers=None, timeout=30):
+            del headers, timeout
+            return self.mod.HttpResponse(
+                200,
+                subtitle_body,
+                {"Content-Disposition": 'attachment; filename="dune.por-br.vtt"'},
+            )
+
+        provider._http_json = request
+        provider._http_get = get
+        result = provider.download(
+            {
+                "provider": "legendasnet",
+                "schema": 1,
+                "download_link": "/download/movie/101",
+                "filename": "legendasnet.101.pt-br.zip",
+            },
+            {"alpha3": "por-BR"},
+            {"username": "user", "password": "pass"},
+        )
+
+        self.assertEqual(result["format"], "vtt")
+        self.assertEqual(result["content_type"], "text/vtt")
+
+    def test_direct_download_without_extension_sniffs_content(self):
+        provider = self.mod.LegendasNetProvider()
+        subtitle_body = b"WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nMovie line\n"
+
+        def request(method, url, headers=None, json_body=None, timeout=30):
+            del method, headers, json_body, timeout
+            return self.mod.HttpResponse(200, _fixture("legendasnet_login.json"), {})
+
+        def get(url, headers=None, timeout=30):
+            del headers, timeout
+            return self.mod.HttpResponse(200, subtitle_body, {})
+
+        provider._http_json = request
+        provider._http_get = get
+        result = provider.download(
+            {
+                "provider": "legendasnet",
+                "schema": 1,
+                "download_link": "/download/movie/101",
+                "filename": "legendasnet.101.pt-br.zip",
+            },
+            {"alpha3": "por-BR"},
+            {"username": "user", "password": "pass"},
+        )
+
+        self.assertEqual(result["format"], "vtt")
+
     def test_download_reports_daily_limit(self):
         provider = self.mod.LegendasNetProvider()
         provider._http_json = lambda method, url, headers=None, json_body=None, timeout=30: self.mod.HttpResponse(
