@@ -214,7 +214,7 @@ class SubtitriIdProviderTests(unittest.TestCase):
         self.assertEqual(provider.search({"kind": "movie", "title": "Inception"}, [{"alpha3": "eng"}], {}), [])
         self.assertEqual(provider.search({"kind": "episode", "series": "Inception"}, [{"alpha3": "lav"}], {}), [])
 
-    def test_download_extracts_zip_subtitle(self):
+    def test_download_returns_zip_archive_unextracted(self):
         archive = _zip_body(
             {
                 "poster.jpg": b"not a subtitle",
@@ -229,47 +229,63 @@ class SubtitriIdProviderTests(unittest.TestCase):
                 "url": "https://subtitri.do.am/load/0-0-0-406-20",
                 "page_url": "https://subtitri.do.am/load/subtitri_2010_gada/inception_2010/4-1-0-406",
                 "filename": "subtitriid.inception.2010.lv.zip",
+                "episode": None,
             },
             {"alpha3": "lav", "alpha2": "lv"},
             {},
         )
 
-        decoded = base64.b64decode(result["content_b64"])
-        self.assertEqual(decoded, b"1\n00:00:01,000 --> 00:00:02,000\nSveiki\n")
-        self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
-        self.assertEqual(result["format"], "srt")
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertIsNone(result["episode"])
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
 
-    def test_download_concatenates_multipart_movie_subtitles(self):
-        archive = _zip_body(
+    def test_download_returns_rar_archive_unextracted(self):
+        archive = b"Rar!\x1a\x07\x00rar body bytes"
+        provider = self.mod.SubtitriIdProvider()
+        provider._http_get = lambda url, timeout=30, referer=None: archive
+
+        result = provider.download(
             {
-                "Inception.CD2.srt": b"2\n00:00:03,000 --> 00:00:04,000\nOtra puse\n",
-                "Inception.CD1.srt": b"1\n00:00:01,000 --> 00:00:02,000\nPirma puse\n",
-            }
+                "url": "https://subtitri.do.am/load/0-0-0-406-20",
+                "filename": "subtitriid.inception.2010.lv.rar",
+                "episode": None,
+            },
+            {"alpha3": "lav", "alpha2": "lv"},
+            {},
         )
 
-        result = self.mod.extract_download(archive, {"filename": "subtitriid.inception.2010.lv.zip"})
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertIsNone(result["episode"])
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
 
-        decoded = base64.b64decode(result["content_b64"])
-        self.assertEqual(
-            decoded,
-            b"1\n00:00:01,000 --> 00:00:02,000\nPirma puse\n\n2\n00:00:03,000 --> 00:00:04,000\nOtra puse\n",
-        )
-        self.assertEqual(result["format"], "srt")
+    def test_download_archive_carries_episode_through_payload(self):
+        archive = _zip_body({"Show.S01E03.lv.srt": b"1\nSveiki\n"})
 
-    def test_download_skips_vobsub_pair_sub_file(self):
-        archive = _zip_body(
-            {
-                "Inception.sub": b"\x00\x01binary vobsub payload",
-                "Inception.idx": b"# VobSub index file",
-                "Inception.srt": b"1\n00:00:01,000 --> 00:00:02,000\nSveiki\n",
-            }
+        result = self.mod.extract_download(
+            archive,
+            {"filename": "subtitriid.show.lv.zip", "episode": 3},
         )
 
-        result = self.mod.extract_download(archive, {"filename": "subtitriid.inception.2010.lv.zip"})
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["episode"], 3)
 
-        decoded = base64.b64decode(result["content_b64"])
-        self.assertEqual(decoded, b"1\n00:00:01,000 --> 00:00:02,000\nSveiki\n")
-        self.assertEqual(result["format"], "srt")
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.SubtitriIdProvider()
+        provider._http_get = lambda url, timeout=30, referer=None: b""
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {
+                    "url": "https://subtitri.do.am/load/0-0-0-406-20",
+                    "filename": "subtitriid.inception.2010.lv.zip",
+                },
+                {"alpha3": "lav", "alpha2": "lv"},
+                {},
+            )
 
     def test_download_rejects_html_error_page(self):
         html_error = (
@@ -292,7 +308,9 @@ class SubtitriIdProviderTests(unittest.TestCase):
 
         decoded = base64.b64decode(result["content_b64"])
         self.assertEqual(decoded, b"1\n00:00:01,000 --> 00:00:02,000\nSveiki\n")
-        self.assertEqual(result["encoding"], "utf-8")
+        self.assertEqual(result["format"], "srt")
+        self.assertNotIn("encoding", result)
+        self.assertNotIn("archive_b64", result)
 
 
 if __name__ == "__main__":
