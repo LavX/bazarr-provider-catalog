@@ -351,16 +351,42 @@ class ISubtitlesProvider:
 def extract_download(body, payload=None):
     payload = payload or {}
     if not body:
-        return _content_payload(b"", "srt", empty=True)
+        raise ValueError("isubtitles download returned an empty body")
     stream = io.BytesIO(body)
     if zipfile.is_zipfile(stream):
+        # Host-side extraction (Provider Hub v1.1+): list the zip cheaply with stdlib to
+        # pick the requested member, then hand the raw archive bytes back to the host,
+        # which extracts the member and detects the encoding via Subtitle.normalize().
         with zipfile.ZipFile(stream) as archive:
             selected = select_subtitle_file(archive.namelist(), payload)
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
+        return _archive_payload(body, member=selected)
+    if _is_rar_archive(body) or _is_7z_archive(body):
+        # rar/7z cannot be listed with stdlib, so let the host pick the member by episode.
+        return _archive_payload(body, episode=payload.get("episode"))
     subtitle_format = _subtitle_extension(payload.get("filename", ""))
     if not subtitle_format or _looks_like_html(body):
         raise ValueError("isubtitles download did not return a supported subtitle file")
     return _content_payload(body, subtitle_format)
+
+
+def _archive_payload(body, member=None, episode=None):
+    payload = {
+        "archive_b64": _base64.b64encode(body).decode("ascii"),
+        "archive_sha256": _hashlib.sha256(body).hexdigest(),
+    }
+    if member is not None:
+        payload["member"] = member
+    else:
+        payload["episode"] = episode
+    return payload
+
+
+def _is_rar_archive(body):
+    return bool(body) and body.startswith(b"Rar!")
+
+
+def _is_7z_archive(body):
+    return bool(body) and body.startswith(b"7z\xbc\xaf\x27\x1c")
 
 
 def select_subtitle_file(names, payload):
@@ -534,27 +560,15 @@ def _subtitle_extension(name):
     return None
 
 
-def _content_payload(content, subtitle_format, empty=False):
-    if empty:
-        return {
-            "content_b64": "",
-            "content_sha256": "",
-            "content_type": _content_type(subtitle_format),
-            "format": subtitle_format,
-            "encoding": "utf-8",
-            "empty": True,
-        }
-    encoding = "utf-8"
-    try:
-        content.decode("utf-8")
-    except UnicodeDecodeError:
-        encoding = "latin-1"
+def _content_payload(content, subtitle_format):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     return {
         "content_b64": _base64.b64encode(content).decode("ascii"),
         "content_sha256": _hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 
