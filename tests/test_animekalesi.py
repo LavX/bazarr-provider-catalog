@@ -187,14 +187,15 @@ class AnimeKalesiProviderDownloadTests(unittest.TestCase):
         self.assertEqual(result["format"], "srt")
         self.assertEqual(result["content_sha256"], hashlib.sha256(body).hexdigest())
 
-    def test_download_extracts_matching_episode_from_zip(self):
+    def test_download_returns_zip_archive_with_selected_member(self):
         archive_body = io.BytesIO()
         with zipfile.ZipFile(archive_body, "w") as archive:
             archive.writestr("Jujutsu.Kaisen.2.S01E02.srt", "wrong episode")
             archive.writestr("Jujutsu.Kaisen.2.S01E01.ass", "[Script Info]\r\nTitle: ok\r\n")
+        body = archive_body.getvalue()
 
         provider = self.mod.AnimeKalesiProvider()
-        provider._http_get = lambda url, timeout=15, referer=None: archive_body.getvalue()
+        provider._http_get = lambda url, timeout=15, referer=None: body
         result = provider.download(
             {
                 "provider": "animekalesi",
@@ -209,9 +210,11 @@ class AnimeKalesiProviderDownloadTests(unittest.TestCase):
             {},
         )
 
-        body = base64.b64decode(result["content_b64"])
-        self.assertEqual(body, b"[Script Info]\nTitle: ok\n")
-        self.assertEqual(result["format"], "ass")
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["member"], "Jujutsu.Kaisen.2.S01E01.ass")
 
     def test_download_rejects_zip_with_only_other_episode_files(self):
         archive_body = io.BytesIO()

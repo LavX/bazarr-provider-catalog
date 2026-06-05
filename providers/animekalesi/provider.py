@@ -307,23 +307,29 @@ class AnimeKalesiProvider:
         if not url:
             raise ValueError("animekalesi download requires download_url")
         body = self._http_get(url, referer=payload.get("page_url"))
-        body, subtitle_format = extract_download(body, payload)
-        return _content_payload(body, subtitle_format)
+        return _download_payload(body, payload)
 
 
-def extract_download(body, payload=None):
+def _download_payload(body, payload=None):
     payload = payload or {}
     if not body:
-        return b"", _format_from_filename(payload.get("filename"))
+        raise ValueError("animekalesi download returned an empty body")
     stream = io.BytesIO(body)
     if zipfile.is_zipfile(stream):
+        # Host-side extraction (Provider Hub v1.1+): list the zip with stdlib zipfile to
+        # pick the member, then hand the raw archive bytes plus that member name to the
+        # host, which extracts it and detects the encoding via Subtitle.normalize().
         with zipfile.ZipFile(stream) as archive:
             selected = select_subtitle_file(archive.namelist(), payload)
-            return _normalize_line_endings(archive.read(selected)), _subtitle_extension(selected) or "srt"
+        return {
+            "archive_b64": _base64.b64encode(body).decode("ascii"),
+            "archive_sha256": _hashlib.sha256(body).hexdigest(),
+            "member": selected,
+        }
     subtitle_format = _subtitle_format_from_body(body) or _format_from_filename(payload.get("filename"))
     if not _is_supported_subtitle_body(body, subtitle_format):
         raise ValueError("animekalesi direct download did not return a supported subtitle")
-    return _normalize_line_endings(body), subtitle_format
+    return _content_payload(_normalize_line_endings(body), subtitle_format)
 
 
 def select_subtitle_file(names, payload):
@@ -524,27 +530,15 @@ def _extension_rank(name):
 
 
 def _content_payload(body, subtitle_format):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     subtitle_format = subtitle_format or "srt"
-    if not body:
-        return {
-            "content_b64": "",
-            "content_sha256": "",
-            "content_type": _content_type(subtitle_format),
-            "format": subtitle_format,
-            "encoding": "utf-8",
-            "empty": True,
-        }
-    encoding = "utf-8"
-    try:
-        body.decode("utf-8")
-    except UnicodeDecodeError:
-        encoding = "latin-1"
     return {
         "content_b64": _base64.b64encode(body).decode("ascii"),
         "content_sha256": _hashlib.sha256(body).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 
