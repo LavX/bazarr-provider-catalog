@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import io
 import unittest
+import urllib.error
 import zipfile
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -376,6 +377,142 @@ class AnimeSubInfoDownloadTests(unittest.TestCase):
             {"episode": 1},
         )
         self.assertEqual(selected, "Show.S01E01.ass")
+
+
+class _FakeResponse:
+    def __init__(self, body):
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return self._body
+
+
+class _RecordingOpener:
+    """Stub urllib opener that yields a queued sequence of outcomes per open() call."""
+
+    def __init__(self, outcomes):
+        self._outcomes = list(outcomes)
+        self.calls = 0
+
+    def open(self, request, timeout=None):
+        del request, timeout
+        self.calls += 1
+        outcome = self._outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return _FakeResponse(outcome)
+
+
+class AnimeSubInfoTransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.sleeps = []
+        self._orig_sleep = self.mod.time.sleep
+        self.mod.time.sleep = lambda seconds: self.sleeps.append(seconds)
+        self.addCleanup(self._restore_sleep)
+
+    def _restore_sleep(self):
+        self.mod.time.sleep = self._orig_sleep
+
+    def _http_error(self, code, headers=None):
+        error = urllib.error.HTTPError(
+            "http://animesub.info/x", code, "boom", headers or {}, io.BytesIO(b"")
+        )
+        self.addCleanup(error.close)
+        return error
+
+    def test_get_retries_url_error_then_succeeds(self):
+        provider = self.mod.AnimeSubInfoProvider()
+        provider._opener = _RecordingOpener(
+            [urllib.error.URLError("connection reset"), b"<html>ok</html>"]
+        )
+
+        body = provider._http_get("http://animesub.info/szukaj.php")
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(provider._opener.calls, 2)
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_get_retries_503_twice_then_succeeds(self):
+        provider = self.mod.AnimeSubInfoProvider()
+        provider._opener = _RecordingOpener(
+            [self._http_error(503), self._http_error(503), b"<html>ok</html>"]
+        )
+
+        body = provider._http_get("http://animesub.info/szukaj.php")
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(provider._opener.calls, 3)
+        # Exponential backoff: 0.5 then 1.0 seconds.
+        self.assertEqual(self.sleeps, [0.5, 1.0])
+
+    def test_post_retries_timeout_then_succeeds(self):
+        provider = self.mod.AnimeSubInfoProvider()
+        provider._opener = _RecordingOpener([TimeoutError(), b"archive-bytes"])
+
+        body = provider._http_post(
+            "http://animesub.info/sciagnij.php", {"id": "1", "sh": "h"}
+        )
+
+        self.assertEqual(body, b"archive-bytes")
+        self.assertEqual(provider._opener.calls, 2)
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_429_honors_retry_after_header(self):
+        provider = self.mod.AnimeSubInfoProvider()
+        provider._opener = _RecordingOpener(
+            [self._http_error(429, {"Retry-After": "3"}), b"<html>ok</html>"]
+        )
+
+        body = provider._http_get("http://animesub.info/szukaj.php")
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(self.sleeps, [3.0])
+
+    def test_404_is_not_retried_and_propagates_first_call(self):
+        provider = self.mod.AnimeSubInfoProvider()
+        provider._opener = _RecordingOpener([self._http_error(404)])
+
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            provider._http_get("http://animesub.info/szukaj.php")
+
+        self.assertEqual(ctx.exception.code, 404)
+        self.assertEqual(provider._opener.calls, 1)
+        self.assertEqual(self.sleeps, [])
+
+    def test_persistent_503_exhausts_retries_and_raises(self):
+        provider = self.mod.AnimeSubInfoProvider()
+        provider._opener = _RecordingOpener(
+            [self._http_error(503), self._http_error(503), self._http_error(503)]
+        )
+
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            provider._http_get("http://animesub.info/szukaj.php")
+
+        self.assertEqual(ctx.exception.code, 503)
+        self.assertEqual(provider._opener.calls, 3)
+        self.assertEqual(self.sleeps, [0.5, 1.0])
+
+    def test_persistent_url_error_exhausts_retries_and_raises(self):
+        provider = self.mod.AnimeSubInfoProvider()
+        provider._opener = _RecordingOpener(
+            [
+                urllib.error.URLError("reset"),
+                urllib.error.URLError("reset"),
+                urllib.error.URLError("reset"),
+            ]
+        )
+
+        with self.assertRaises(urllib.error.URLError):
+            provider._http_get("http://animesub.info/szukaj.php")
+
+        self.assertEqual(provider._opener.calls, 3)
 
 
 if __name__ == "__main__":
