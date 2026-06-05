@@ -6,18 +6,11 @@ import io
 import json
 import os
 import re
-import tempfile
-import time
 import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-
-try:
-    import py7zz
-except ImportError:  # pragma: no cover, dependency is declared in manifest
-    py7zz = None
 
 PROVIDER_ID = "betaseries"
 BASE_URL = "https://api.betaseries.com"
@@ -78,7 +71,7 @@ class BetaSeriesProvider:
             if error.code == 404:
                 return _content_payload(b"", "srt", empty=True)
             raise
-        return extract_download(body, payload)
+        return _download_payload(body, payload)
 
     def _http_get_json(self, url, timeout=HTTP_TIMEOUT_SECONDS, config=None):
         try:
@@ -141,6 +134,8 @@ class BetaSeriesProvider:
                 "download_url": row.get("url"),
                 "filename": filename,
                 "release_group": video.get("release_group"),
+                "season": _safe_int(video.get("season")),
+                "episode": _safe_int(video.get("episode")),
             },
         }
 
@@ -196,20 +191,42 @@ def handle_api_errors(payload):
     return "empty"
 
 
-def extract_download(body, payload=None):
+def _download_payload(body, payload=None):
     payload = payload or {}
-    if not body:
-        return _content_payload(b"", "srt", empty=True)
-    stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            files = [(name, archive.read(name)) for name in archive.namelist() if _subtitle_extension(name)]
-            selected_name, selected_body = _select_subtitle_file(files, payload)
-            return _content_payload(selected_body, _subtitle_extension(selected_name) or "srt")
-    if _is_rar_archive(body):
-        selected_name, selected_body = _select_subtitle_file(_extract_rar_files(body), payload)
-        return _content_payload(selected_body, _subtitle_extension(selected_name) or "srt")
+    # Reject broken responses: a 200 with an empty stream or an HTML/error page
+    # would otherwise be forwarded as if it were a usable subtitle.
+    if not body or not body.strip():
+        raise ValueError(f"betaseries empty download for subtitle {payload.get('subtitle_id')}")
+    if _is_html_body(body):
+        raise ValueError(f"betaseries returned an HTML/error page for subtitle {payload.get('subtitle_id')}")
+    if _is_archive_body(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
+        # the host, which lists it, picks the member by episode, and detects encoding.
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "episode": payload.get("episode"),
+        }
+    # Direct, non-archive subtitle body.
     return _content_payload(_normalize_line_endings(body), _subtitle_extension(payload.get("filename")) or "srt")
+
+
+def _is_archive_body(body):
+    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
+
+
+def _is_html_body(body):
+    if not body:
+        return False
+    head = body[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or head.startswith(b"<!--")
+        or b"<body" in head
+        or b"<head" in head
+    )
 
 
 def derive_matches(video, release):
@@ -239,43 +256,6 @@ def _subtitle_rows(payload):
         subtitles = episodes[0].get("subtitles")
         return subtitles if isinstance(subtitles, list) else []
     return []
-
-
-def _select_subtitle_file(files, payload):
-    candidates = [(name, body) for name, body in files if _subtitle_extension(name) and not os.path.basename(name).startswith(".")]
-    if not candidates:
-        raise ValueError("betaseries archive contains no supported subtitle files")
-    release_group = str((payload or {}).get("release_group") or "")
-    if release_group:
-        for name, body in candidates:
-            if release_group in name:
-                return name, _normalize_line_endings(body)
-    name, body = candidates[0]
-    return name, _normalize_line_endings(body)
-
-
-def _extract_rar_files(body):
-    if py7zz is None:
-        raise RuntimeError("betaseries RAR download requires bundled py7zz")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "betaseries.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        files = []
-        for root, _dirs, filenames in os.walk(output_dir):
-            for filename in filenames:
-                path = os.path.join(root, filename)
-                rel = os.path.relpath(path, output_dir)
-                if not _subtitle_extension(rel):
-                    continue
-                with open(path, "rb") as handle:
-                    files.append((rel, handle.read()))
-        if not files:
-            raise ValueError("betaseries RAR contains no supported subtitle files")
-        return files
 
 
 def _is_rar_archive(body):
