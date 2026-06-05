@@ -6,6 +6,7 @@ import io
 import json
 import os
 import re
+import socket
 import time
 import urllib.error
 import urllib.parse
@@ -23,6 +24,70 @@ USER_AGENT = (
 HTTP_TIMEOUT_SECONDS = 30
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
 ARCHIVE_EXTENSIONS = (".zip",)
+
+# Transport-level retry for transient network failures. Upstream subliminal wraps its
+# session in a RetryingSession/ProviderRetryMixin with ~3 tries and backoff; mirror that
+# here so a single connection blip or 5xx/429 does not abort a whole search or download.
+HTTP_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8.0
+
+
+def _is_transient_http_error(exc):
+    # Only 5xx and 429 are worth retrying; every other 4xx is a permanent client error
+    # (bad request, auth, not found) that must propagate on the first occurrence.
+    return exc.code == 429 or 500 <= exc.code < 600
+
+
+def _retry_after_seconds(exc):
+    # Honor a Retry-After header on 429 when it carries a plain integer delay.
+    header = exc.headers.get("Retry-After") if getattr(exc, "headers", None) else None
+    if not header:
+        return None
+    try:
+        delay = int(str(header).strip())
+    except (TypeError, ValueError):
+        return None
+    if delay < 0:
+        return None
+    return min(float(delay), RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _backoff_seconds(attempt):
+    delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    return min(delay, RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _urlopen_with_retry(request, timeout):
+    # Wrap only the raw urllib call in a bounded retry loop. Transient failures
+    # (connection reset/refused/DNS via URLError, socket timeouts, and 5xx/429) are
+    # retried up to HTTP_MAX_ATTEMPTS times with exponential backoff. Any other error,
+    # including 4xx HTTPError other than 429, propagates unchanged to the caller's existing
+    # error handling. The successful response is read and returned as bytes so the caller
+    # keeps its existing return type and post-processing.
+    last_exc = None
+    for attempt in range(1, HTTP_MAX_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.read()
+        except urllib.error.HTTPError as exc:
+            if attempt >= HTTP_MAX_ATTEMPTS or not _is_transient_http_error(exc):
+                raise
+            last_exc = exc
+            delay = _retry_after_seconds(exc) if exc.code == 429 else None
+            if delay is None:
+                delay = _backoff_seconds(attempt)
+        except (urllib.error.URLError, socket.timeout, TimeoutError) as exc:
+            if attempt >= HTTP_MAX_ATTEMPTS:
+                raise
+            last_exc = exc
+            delay = _backoff_seconds(attempt)
+        if delay:
+            time.sleep(delay)
+    # Defensive: the loop always returns or raises above, but keep a clear failure path.
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("SubDL request failed without a response")
 
 
 _SUBDL_TO_LANGUAGE = {
@@ -646,8 +711,7 @@ class SubDLProvider:
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
-                body = response.read()
+            body = _urlopen_with_retry(request, HTTP_TIMEOUT_SECONDS)
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
             if exc.code == 403:
@@ -665,8 +729,7 @@ class SubDLProvider:
             headers={"User-Agent": os.environ.get("SZ_USER_AGENT", USER_AGENT)},
         )
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                return response.read()
+            return _urlopen_with_retry(request, timeout)
         except urllib.error.HTTPError as exc:
             if exc.code == 403:
                 raise ValueError("Invalid SubDL api_key") from exc
