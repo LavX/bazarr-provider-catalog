@@ -3625,7 +3625,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "caff6d88208bb2b5ad77f8b52b2662df0592f8e069771d13674f771e5b425268",
+        "bundle_sha256": "bf5c6304d686d701b660b36f5bb486d7bbe21482b89595669f65484aab62ed43",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -3647,7 +3647,7 @@
         "entry_class": "RegieLiveProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "81770379c497df89f9390a24f4e20aa22b66cc3a399e06e30c5782c6d0811dcc"
+          "provider.py": "68b2c51cba33e57cbb6c55c3d1f4188daf70f17fcd49f949cdf1bba2127d76d2"
         },
         "languages": [
           "ron"
@@ -3669,7 +3669,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.1"
+        "version": "0.1.2"
       }
     },
     {
