@@ -224,6 +224,9 @@ class TitrariProviderSearchTests(unittest.TestCase):
         self.assertEqual(results, [])
 
 
+RAR_BODY = b"Rar!\x1a\x07\x00" + b"chernobyl-archive-payload-bytes"
+
+
 class TitrariDownloadTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
@@ -243,44 +246,84 @@ class TitrariDownloadTests(unittest.TestCase):
         self.assertEqual(data, SRT_BODY)
         self.assertEqual(result["content_sha256"], hashlib.sha256(SRT_BODY).hexdigest())
         self.assertEqual(result["format"], "srt")
+        self.assertNotIn("encoding", result)
 
-    def test_download_selects_requested_episode_from_zip(self):
+    def test_download_returns_zip_archive_bytes_for_host_extraction(self):
         body = _zip_with(
             {
-                "Chernobyl.S01E02.srt": b"wrong",
+                "Chernobyl.S01E02.srt": b"other episode",
                 "Chernobyl.S01E01.1080p.BluRay.srt": SRT_BODY,
             }
         )
         result = self.mod.extract_download(body, {"season": 1, "episode": 1, "filename": "chernobyl.zip"})
 
-        data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
-        self.assertEqual(data, SRT_BODY)
-        self.assertEqual(result["format"], "srt")
+        self.assertNotIn("content_b64", result)
+        self.assertEqual(base64.b64decode(result["archive_b64"].encode("ascii"), validate=True), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["episode"], 1)
+        self.assertNotIn("encoding", result)
 
-    def test_download_accepts_single_untagged_episode_member(self):
-        body = _zip_with({"subtitrare.srt": SRT_BODY})
-        result = self.mod.extract_download(body, {"season": 1, "episode": 1, "filename": "chernobyl.zip"})
+    def test_download_returns_rar_archive_bytes_for_host_extraction(self):
+        result = self.mod.extract_download(RAR_BODY, {"season": 1, "episode": 1, "filename": "chernobyl.rar"})
 
-        data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
-        self.assertEqual(data, SRT_BODY)
+        self.assertNotIn("content_b64", result)
+        self.assertEqual(base64.b64decode(result["archive_b64"].encode("ascii"), validate=True), RAR_BODY)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(RAR_BODY).hexdigest())
+        self.assertEqual(result["episode"], 1)
 
-    def test_download_rejects_episode_archive_without_requested_member(self):
-        body = _zip_with({"Chernobyl.S01E02.srt": b"wrong episode"})
+    def test_download_archive_episode_is_none_for_movies(self):
+        body = _zip_with({"Dune.2021.1080p.srt": SRT_BODY})
+        result = self.mod.extract_download(body, {"episode": None, "filename": "dune.zip"})
 
-        with self.assertRaisesRegex(ValueError, "requested episode"):
-            self.mod.extract_download(body, {"season": 1, "episode": 1, "filename": "chernobyl.zip"})
+        self.assertEqual(base64.b64decode(result["archive_b64"].encode("ascii"), validate=True), body)
+        self.assertIsNone(result["episode"])
 
-    def test_download_rejects_episode_archive_with_wrong_season_member(self):
-        body = _zip_with({"Chernobyl.S02E01.srt": b"wrong season"})
+    def test_download_passes_episode_from_payload_through_http(self):
+        body = _zip_with({"Chernobyl.S01E01.srt": SRT_BODY})
+        provider = self.mod.TitrariProvider()
+        provider._http_get = lambda url, timeout=15, referer=None: body
 
-        with self.assertRaisesRegex(ValueError, "requested episode"):
-            self.mod.extract_download(body, {"season": 1, "episode": 1, "filename": "chernobyl.zip"})
+        result = provider.download(
+            {
+                "download_url": "https://www.titrari.ro/get.php?id=141103",
+                "filename": "chernobyl.zip",
+                "season": 1,
+                "episode": 1,
+            },
+            {"alpha3": "ron"},
+            {},
+        )
 
-    def test_download_rejects_numeric_fallback_from_wrong_season_member(self):
-        body = _zip_with({"Chernobyl.S02.01.srt": b"wrong season"})
+        self.assertEqual(base64.b64decode(result["archive_b64"].encode("ascii"), validate=True), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["episode"], 1)
 
-        with self.assertRaisesRegex(ValueError, "requested episode"):
-            self.mod.extract_download(body, {"season": 1, "episode": 1, "filename": "chernobyl.zip"})
+    def test_download_rejects_empty_body(self):
+        with self.assertRaises(ValueError):
+            self.mod.extract_download(b"", {"filename": "chernobyl.zip"})
+
+    def test_download_rejects_html_error_page(self):
+        body = b"<!DOCTYPE html><html><body>Eroare</body></html>"
+        with self.assertRaisesRegex(ValueError, "HTML"):
+            self.mod.extract_download(body, {"filename": "chernobyl.zip"})
+
+
+class TitrariSearchPayloadTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_episode_payload_carries_season_and_episode(self):
+        rows = self.mod.parse_search_results(EPISODE_CHERNOBYL_HTML)
+        row = next(item for item in rows if item["subtitle_id"] == "141103")
+        result = self.mod._result_from_row(
+            {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1},
+            row,
+            {"alpha3": "ron", "alpha2": "ro", "hi": False, "forced": False},
+        )
+
+        payload = result["provider_payload"]
+        self.assertEqual(payload["season"], 1)
+        self.assertEqual(payload["episode"], 1)
 
 
 if __name__ == "__main__":
