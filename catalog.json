@@ -2334,7 +2334,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "c70d2aad73e7b06d6eaff834127338379c090a8f57d9daacab4f2934b778a7ab",
+        "bundle_sha256": "039c5c2620516e6350b4ae4dfc5f12690d8523bcd4981d71dc3aee1b622bd7bc",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -2468,7 +2468,7 @@
         "entry_class": "NekurProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "3bf1e270ae7c485ce52aa99956ec5b7eff9162b3f41b2594c518fceb4ddd5be7"
+          "provider.py": "c68ce4cbc4b52b35f7aeb8f99d6da792f3372b92b2b1967881ff0f6caa320074"
         },
         "languages": [
           "lav"
@@ -2489,7 +2489,7 @@
         "supported_media": [
           "movie"
         ],
-        "version": "0.1.1"
+        "version": "0.1.2"
       }
     },
     {
