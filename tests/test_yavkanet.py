@@ -66,6 +66,9 @@ CURRENT_DETAIL_HTML = b"""
 </a>
 """
 SRT_BODY = b"1\n00:00:01,000 --> 00:00:02,000\nYavkaNet subtitle.\n"
+# RAR4 signature followed by arbitrary bytes. Host-side extraction only needs the
+# magic to route the body to archive mode; the host owns the real rar/zip stack.
+RAR_BODY = b"Rar!\x1a\x07\x00" + SRT_BODY
 CLOUDFLARE_BODY = b"<html><title>Just a moment...</title><script src='/cdn-cgi/challenge-platform/x'></script></html>"
 
 
@@ -468,6 +471,47 @@ class YavkaNetProviderTests(unittest.TestCase):
 
         self.assertEqual(len(results), 1)
 
+    def test_episode_search_stores_season_and_episode_in_payload(self):
+        imdb_html = b"""
+        <table>
+          <tr>
+            <td>
+              <a class="balon" href="/subtitle/example-s01e02" content="Example.S01E02.1080p.WEB-DL">
+                Example.S01E02.1080p.WEB-DL
+              </a>
+            </td>
+          </tr>
+        </table>
+        """
+        provider = self.mod.YavkaNetProvider()
+
+        def stub(url, timeout=15, config=None, state=None, referer=None):
+            del timeout, config, state, referer
+            if url == "https://yavka.net/imdb/tt1160419":
+                return imdb_html
+            if url == "https://yavka.net/subtitle/example-s01e02/":
+                return CURRENT_DETAIL_HTML
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "Example",
+                "season": 1,
+                "episode": 2,
+                "series_imdb_id": "tt1160419",
+            },
+            [{"alpha3": "bul", "alpha2": "bg"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(len(results), 1)
+        payload = results[0]["provider_payload"]
+        # download() reads episode (and season) from the payload for host-side member selection.
+        self.assertEqual(payload["season"], 1)
+        self.assertEqual(payload["episode"], 2)
+
     def test_search_skips_unsupported_language_without_network(self):
         provider = self.mod.YavkaNetProvider()
         provider._http_get = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unexpected network"))
@@ -480,7 +524,7 @@ class YavkaNetProviderTests(unittest.TestCase):
 
         self.assertEqual(results, [])
 
-    def test_download_posts_form_and_extracts_zip_subtitle(self):
+    def test_download_posts_form_and_returns_zip_archive(self):
         body = _zip_with(
             {
                 "Dune.2021.720p.WEB-DL.srt": b"wrong",
@@ -496,23 +540,19 @@ class YavkaNetProviderTests(unittest.TestCase):
                 "form_data": {"subtitle_id": "123", "token": "abc"},
                 "filename": "Dune.2021.1080p.WEB-DL-FLUX.zip",
                 "release": "Dune.2021.1080p.WEB-DL-FLUX",
-                "video": {
-                    "kind": "movie",
-                    "title": "Dune",
-                    "year": 2021,
-                    "release_group": "FLUX",
-                    "resolution": "1080p",
-                    "source": "Web",
-                },
+                "episode": None,
             },
             {"alpha3": "bul"},
             {},
         )
 
-        data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
-        self.assertEqual(data, SRT_BODY)
-        self.assertEqual(result["content_sha256"], hashlib.sha256(SRT_BODY).hexdigest())
-        self.assertEqual(result["format"], "srt")
+        # Host-side extraction: the worker returns the raw archive bytes untouched.
+        self.assertNotIn("content_b64", result)
+        raw = base64.b64decode(result["archive_b64"].encode("ascii"), validate=True)
+        self.assertEqual(raw, body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertIsNone(result["episode"])
+        self.assertNotIn("encoding", result)
 
     def test_download_uses_get_for_direct_download_links(self):
         body = _zip_with({"Dune.2021.WEB.srt": SRT_BODY})
@@ -527,65 +567,49 @@ class YavkaNetProviderTests(unittest.TestCase):
                 "form_data": {},
                 "filename": "Dune.2021.WEB.zip",
                 "release": "Dune.2021.WEB",
-                "video": {"kind": "movie", "title": "Dune", "year": 2021, "source": "Web"},
+                "episode": None,
             },
             {"alpha3": "bul"},
             {},
         )
 
-        data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
-        self.assertEqual(data, SRT_BODY)
+        raw = base64.b64decode(result["archive_b64"].encode("ascii"), validate=True)
+        self.assertEqual(raw, body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
 
-    def test_download_rejects_episode_archive_without_requested_member(self):
-        body = _zip_with({"Example.S01E03.srt": b"wrong episode"})
+    def test_extract_download_returns_zip_archive_for_movies(self):
+        body = _zip_with({"Dune.2021.WEB.srt": SRT_BODY})
 
-        with self.assertRaisesRegex(ValueError, "requested episode"):
+        result = self.mod.extract_download(body, {"filename": "Dune.2021.WEB.zip"})
+
+        raw = base64.b64decode(result["archive_b64"].encode("ascii"), validate=True)
+        self.assertEqual(raw, body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        # Movies carry no episode for host-side member selection.
+        self.assertIsNone(result["episode"])
+        self.assertNotIn("encoding", result)
+
+    def test_extract_download_carries_episode_for_rar_archive(self):
+        body = RAR_BODY
+
+        result = self.mod.extract_download(body, {"filename": "Example.S01.rar", "episode": 2})
+
+        raw = base64.b64decode(result["archive_b64"].encode("ascii"), validate=True)
+        self.assertEqual(raw, body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["episode"], 2)
+        self.assertNotIn("encoding", result)
+
+    def test_extract_download_rejects_empty_body(self):
+        with self.assertRaisesRegex(ValueError, "empty"):
+            self.mod.extract_download(b"", {"filename": "Dune.2021.WEB.zip"})
+
+    def test_extract_download_rejects_html_error_page(self):
+        with self.assertRaisesRegex(ValueError, "HTML"):
             self.mod.extract_download(
-                body,
-                {
-                    "filename": "Example.S01.zip",
-                    "video": {"kind": "episode", "series": "Example", "season": 1, "episode": 2},
-                },
+                b"<!DOCTYPE html><html><body>error</body></html>",
+                {"filename": "Dune.2021.WEB.zip"},
             )
-
-    def test_archive_selection_requires_matching_season_for_episode_members(self):
-        body = _zip_with(
-            {
-                "Example.S02E02.srt": b"wrong season",
-                "Example.S01E02.srt": SRT_BODY,
-            }
-        )
-
-        result = self.mod.extract_download(
-            body,
-            {
-                "filename": "Example.S01.zip",
-                "video": {"kind": "episode", "series": "Example", "season": 1, "episode": 2},
-            },
-        )
-
-        data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
-        self.assertEqual(data, SRT_BODY)
-
-    def test_archive_selection_matches_numeric_episode_members(self):
-        body = _zip_with(
-            {
-                "01.srt": b"episode one",
-                "02.srt": SRT_BODY,
-                "03.srt": b"episode three",
-            }
-        )
-
-        result = self.mod.extract_download(
-            body,
-            {
-                "filename": "Example.S01.zip",
-                "video": {"kind": "episode", "series": "Example", "season": 1, "episode": 2},
-            },
-        )
-
-        data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
-        self.assertEqual(data, SRT_BODY)
 
 
 class YavkaNetCodexFixTests(unittest.TestCase):
@@ -740,34 +764,29 @@ class YavkaNetCodexFixTests(unittest.TestCase):
 
         self.assertEqual(results, [])
 
-    def test_content_payload_reports_windows_1251_encoding(self):
+    def test_extract_download_never_sets_encoding_for_archives(self):
+        # The worker no longer guesses an encoding. The host runs chardet via
+        # Subtitle.normalize() over the extracted member, so an archive payload
+        # must not carry an encoding hint that could reintroduce mojibake.
         cyrillic = "Здравей свят".encode("cp1251")
         body = _zip_with({"Dune.2021.WEB.srt": cyrillic})
 
-        result = self.mod.extract_download(
-            body,
-            {
-                "filename": "Dune.2021.WEB.zip",
-                "video": {"kind": "movie", "title": "Dune", "year": 2021},
-            },
-        )
+        result = self.mod.extract_download(body, {"filename": "Dune.2021.WEB.zip"})
 
-        self.assertEqual(result["encoding"], "cp1251")
+        self.assertNotIn("encoding", result)
+        raw = base64.b64decode(result["archive_b64"].encode("ascii"), validate=True)
+        self.assertEqual(raw, body)
+
+    def test_extract_download_passes_non_archive_subtitle_through(self):
+        # A bare subtitle stream (not zip/rar) stays in content mode, still with
+        # no worker-side encoding guess.
+        result = self.mod.extract_download(SRT_BODY, {"filename": "Dune.2021.WEB.srt"})
+
+        self.assertNotIn("encoding", result)
+        self.assertNotIn("archive_b64", result)
         data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
-        self.assertEqual(data, cyrillic)
-
-    def test_content_payload_reports_utf8_for_ascii_subtitle(self):
-        body = _zip_with({"Dune.2021.WEB.srt": SRT_BODY})
-
-        result = self.mod.extract_download(
-            body,
-            {
-                "filename": "Dune.2021.WEB.zip",
-                "video": {"kind": "movie", "title": "Dune", "year": 2021},
-            },
-        )
-
-        self.assertEqual(result["encoding"], "utf-8")
+        self.assertEqual(data, SRT_BODY)
+        self.assertEqual(result["format"], "srt")
 
 
 if __name__ == "__main__":
