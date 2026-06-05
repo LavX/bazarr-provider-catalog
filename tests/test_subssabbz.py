@@ -327,14 +327,10 @@ class SubsSabBzProviderTests(unittest.TestCase):
 
         filenames = sorted(item["filename"] for item in results)
         self.assertEqual(filenames, ["CD1/Inception.srt", "CD2/Inception.srt"])
-        # The two discs must download to different exact members, not collapse to one basename.
+        # The two discs must keep distinct result ids so the host can stage both members.
         first = next(item for item in results if item["filename"] == "CD1/Inception.srt")
         second = next(item for item in results if item["filename"] == "CD2/Inception.srt")
         self.assertNotEqual(first["id"], second["id"])
-        content_one = provider.download(first["provider_payload"], {"alpha3": "eng", "alpha2": "en"}, {})
-        content_two = provider.download(second["provider_payload"], {"alpha3": "eng", "alpha2": "en"}, {})
-        self.assertEqual(base64.b64decode(content_one["content_b64"]), b"part one")
-        self.assertEqual(base64.b64decode(content_two["content_b64"]), b"part two")
 
     def test_search_result_id_includes_hi_and_forced_flags(self):
         provider = self.mod.SubsSabBzProvider()
@@ -451,30 +447,128 @@ class SubsSabBzProviderTests(unittest.TestCase):
         self.assertEqual(self.mod._search_payload({"kind": "movie"}, "Inception", "eng")["select-language"], "1")
         self.assertEqual(self.mod._search_payload({"kind": "movie"}, "Inception", "bul")["select-language"], "2")
 
-    def test_download_selects_named_archive_member_and_normalizes_line_endings(self):
+    def test_download_returns_zip_archive_bytes_with_episode(self):
         provider = self.mod.SubsSabBzProvider()
-        archive = _zip_body(
-            {
-                "wrong.srt": "wrong",
-                "Inception.DVDRiP.XviD-ARROW.CD1.srt": "1\r\nText\r\n",
-            }
-        )
+        archive = _zip_body({"Game.of.Thrones.S01E01.srt": "subtitle"})
         provider._http_get = lambda url, timeout=30, referer=None: archive
 
-        content = provider.download(
+        result = provider.download(
+            {
+                "download_url": "http://subs.sab.bz/index.php?act=download&attach_id=88001",
+                "filename": "Game.of.Thrones.S01E01.srt",
+                "episode": 1,
+            },
+            {"alpha3": "bul", "alpha2": "bg"},
+            {},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["episode"], 1)
+        # Host-side extraction: the worker must not return decoded content or an encoding.
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
+
+    def test_download_returns_rar_archive_bytes_with_episode(self):
+        provider = self.mod.SubsSabBzProvider()
+        archive = b"Rar!\x1a\x07\x00" + b"payload-bytes"
+        provider._http_get = lambda url, timeout=30, referer=None: archive
+
+        result = provider.download(
+            {
+                "download_url": "http://subs.sab.bz/index.php?act=download&attach_id=88002",
+                "filename": "Game.of.Thrones.S01E02.srt",
+                "episode": 2,
+            },
+            {"alpha3": "bul", "alpha2": "bg"},
+            {},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["episode"], 2)
+        self.assertNotIn("content_b64", result)
+
+    def test_download_carries_no_episode_for_movies(self):
+        provider = self.mod.SubsSabBzProvider()
+        archive = _zip_body({"Inception.2010.DVDRip.srt": "subtitle"})
+        provider._http_get = lambda url, timeout=30, referer=None: archive
+
+        result = provider.download(
             {
                 "download_url": "http://subs.sab.bz/index.php?act=download&attach_id=51168",
-                "filename": "Inception.DVDRiP.XviD-ARROW.CD1.srt",
-                "release_info": "Inception.DVDRiP.XviD-ARROW.CD1.srt",
+                "filename": "Inception.2010.DVDRip.srt",
+                "episode": None,
             },
             {"alpha3": "eng", "alpha2": "en"},
             {},
         )
-        data = base64.b64decode(content["content_b64"])
 
-        self.assertEqual(data, b"1\nText\n")
-        self.assertEqual(content["content_sha256"], hashlib.sha256(data).hexdigest())
-        self.assertEqual(content["format"], "srt")
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertIsNone(result["episode"])
+
+    def test_download_returns_content_for_direct_subtitle_body(self):
+        provider = self.mod.SubsSabBzProvider()
+        provider._http_get = lambda url, timeout=30, referer=None: b"1\r\nHello\r\n"
+
+        result = provider.download(
+            {
+                "download_url": "http://subs.sab.bz/index.php?act=download&attach_id=51168",
+                "filename": "Inception.srt",
+            },
+            {"alpha3": "eng", "alpha2": "en"},
+            {},
+        )
+        data = base64.b64decode(result["content_b64"])
+
+        self.assertEqual(data, b"1\nHello\n")
+        self.assertEqual(result["content_sha256"], hashlib.sha256(data).hexdigest())
+        self.assertEqual(result["format"], "srt")
+        # The worker no longer guesses an encoding; the host runs chardet.
+        self.assertNotIn("encoding", result)
+
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.SubsSabBzProvider()
+        provider._http_get = lambda url, timeout=30, referer=None: b""
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {"download_url": "http://subs.sab.bz/index.php?act=download&attach_id=1"},
+                {"alpha3": "eng", "alpha2": "en"},
+                {},
+            )
+
+    def test_download_rejects_html_error_body(self):
+        provider = self.mod.SubsSabBzProvider()
+        provider._http_get = lambda url, timeout=30, referer=None: b"<!doctype html><html><body>error</body></html>"
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {"download_url": "http://subs.sab.bz/index.php?act=download&attach_id=1"},
+                {"alpha3": "eng", "alpha2": "en"},
+                {},
+            )
+
+    def test_search_stores_episode_in_provider_payload(self):
+        provider = self.mod.SubsSabBzProvider()
+        archive = _zip_body({"Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.srt": "subtitle"})
+        provider._http_post = lambda url, data, timeout=30, referer=None: SEARCH_GOT_BG_HTML
+        provider._http_get = lambda url, timeout=30, referer=None: archive
+
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "Game of Thrones",
+                "season": 1,
+                "episode": 1,
+                "series_imdb_id": "tt0944947",
+            },
+            [{"alpha3": "bul", "alpha2": "bg"}],
+            {},
+        )
+
+        self.assertEqual(results[0]["provider_payload"]["season"], 1)
+        self.assertEqual(results[0]["provider_payload"]["episode"], 1)
 
 
 if __name__ == "__main__":
