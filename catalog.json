@@ -2764,7 +2764,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "ba8cb911f527a2b26cff80d54f70ccbfa9f4c70ba13daaa0f1887568f94f0d7e",
+        "bundle_sha256": "7a7f589b7e5cfe02b0ee94e5a50099916338b9b4a8020901721faae32fe2bf83",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -2822,7 +2822,7 @@
         "entry_class": "OpenSubtitlesComProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "245b7e5b05fafe67b648fe0725bbe8d9b6f5afa7b9e929ef6bf9958c196af711"
+          "provider.py": "23da96f30b805439b9551cc839bfa40cd5d0c547f5d821e75e7a75201a7ab0cf"
         },
         "languages": [
           "abk",
@@ -2940,7 +2940,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.3"
+        "version": "0.1.4"
       }
     },
     {
