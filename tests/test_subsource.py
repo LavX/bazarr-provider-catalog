@@ -2,7 +2,10 @@ import base64
 import hashlib
 import importlib.util
 import io
+import json
+import socket
 import unittest
+import urllib.error
 import zipfile
 from pathlib import Path
 
@@ -547,6 +550,151 @@ class SubSourceDownloadTests(unittest.TestCase):
                 {"alpha3": "eng"},
                 {"api_key": "test-key"},
             )
+
+
+class _FakeResponse:
+    def __init__(self, body):
+        self._body = body
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+def _http_error(code, body=b"", headers=None):
+    return urllib.error.HTTPError(
+        url="https://api.subsource.net/api/v1/test",
+        code=code,
+        msg="error",
+        hdrs=headers or {},
+        fp=io.BytesIO(body),
+    )
+
+
+class SubSourceTransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.sleeps = []
+        self._http_errors = []
+        # Make the backoff sleep mockable and a no-op so the test does not wait.
+        self.mod.time.sleep = lambda seconds: self.sleeps.append(seconds)
+
+    def tearDown(self):
+        # The fixture builds real HTTPError objects backed by a temp file; close
+        # them so the discarded intermediate retries do not emit ResourceWarning.
+        for error in self._http_errors:
+            error.close()
+
+    def _install_urlopen(self, outcomes):
+        # Each entry is either an exception to raise or a response body to return.
+        for outcome in outcomes:
+            if isinstance(outcome, urllib.error.HTTPError):
+                self._http_errors.append(outcome)
+        calls = []
+
+        def fake_urlopen(request, timeout=None):
+            del timeout
+            calls.append(request)
+            outcome = outcomes[len(calls) - 1]
+            if isinstance(outcome, Exception):
+                raise outcome
+            return _FakeResponse(outcome)
+
+        self.mod.urllib.request.urlopen = fake_urlopen
+        return calls
+
+    def test_json_get_retries_urlerror_then_succeeds(self):
+        provider = self.mod.SubSourceProvider()
+        success = json.dumps({"success": True, "data": []}).encode("utf-8")
+        calls = self._install_urlopen(
+            [urllib.error.URLError("connection reset"), success]
+        )
+
+        result = provider._http_get_json("subtitles", {"movieId": 1}, {"api_key": "k"})
+
+        self.assertEqual(result, {"success": True, "data": []})
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_bytes_get_retries_503_twice_then_succeeds(self):
+        provider = self.mod.SubSourceProvider()
+        calls = self._install_urlopen(
+            [_http_error(503), _http_error(503), b"archive-bytes"]
+        )
+
+        result = provider._http_get_bytes("subtitles/1/download", {"api_key": "k"})
+
+        self.assertEqual(result, b"archive-bytes")
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(self.sleeps), 2)
+
+    def test_timeout_is_retried(self):
+        provider = self.mod.SubSourceProvider()
+        success = json.dumps({"data": []}).encode("utf-8")
+        calls = self._install_urlopen([socket.timeout("timed out"), success])
+
+        result = provider._http_get_json("movies/search", {"q": "x"}, {"api_key": "k"})
+
+        self.assertEqual(result, {"data": []})
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_retry_gives_up_after_three_attempts(self):
+        provider = self.mod.SubSourceProvider()
+        calls = self._install_urlopen(
+            [_http_error(500), _http_error(500), _http_error(500)]
+        )
+
+        # After exhausting retries the final HTTPError is re-raised and mapped by
+        # the existing handler to a RuntimeError, exactly as before.
+        with self.assertRaisesRegex(RuntimeError, "SubSource API error 500"):
+            provider._http_get_json("subtitles", {"movieId": 1}, {"api_key": "k"})
+
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(self.sleeps), 2)
+
+    def test_404_is_not_retried_and_propagates(self):
+        provider = self.mod.SubSourceProvider()
+        calls = self._install_urlopen([_http_error(404, b"not found")])
+
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            provider._http_get_bytes("subtitles/1/download", {"api_key": "k"})
+
+        self.assertEqual(ctx.exception.code, 404)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.sleeps, [])
+        ctx.exception.close()
+
+    def test_400_is_not_retried_and_maps_to_runtimeerror(self):
+        provider = self.mod.SubSourceProvider()
+        calls = self._install_urlopen([_http_error(400, b"bad")])
+
+        with self.assertRaisesRegex(RuntimeError, "request parameters are invalid") as ctx:
+            provider._http_get_json("subtitles", {"movieId": 1}, {"api_key": "k"})
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.sleeps, [])
+        cause = ctx.exception.__cause__
+        if cause is not None:
+            cause.close()
+
+    def test_429_honors_retry_after_header(self):
+        provider = self.mod.SubSourceProvider()
+        success = json.dumps({"data": []}).encode("utf-8")
+        calls = self._install_urlopen(
+            [_http_error(429, headers={"Retry-After": "2"}), success]
+        )
+
+        result = provider._http_get_json("subtitles", {"movieId": 1}, {"api_key": "k"})
+
+        self.assertEqual(result, {"data": []})
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(self.sleeps, [2.0])
 
 
 if __name__ == "__main__":
