@@ -288,13 +288,12 @@ class SuperSubtitlesProviderTests(unittest.TestCase):
             [],
         )
 
-    def test_download_selects_requested_episode_from_zip_pack(self):
+    def test_download_returns_raw_zip_archive_with_episode(self):
         provider = self.mod.SuperSubtitlesProvider()
         archive = _zip_body(
             {
                 "La.Brea.S02E12.720p.WEB.H264-CAKES.srt": b"wrong",
                 "La.Brea.S02E13.720p.WEB.H264-CAKES.srt": b"right",
-                "La.Brea.S02E13.1080p.WEB.H264-NTb.srt": b"right but lower release score",
             }
         )
         provider._http_get = lambda url, timeout=30, referer=None: archive
@@ -311,53 +310,53 @@ class SuperSubtitlesProviderTests(unittest.TestCase):
             {},
         )
 
-        decoded = base64.b64decode(result["content_b64"])
-        self.assertEqual(decoded, b"right")
-        self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
-        self.assertEqual(result["format"], "srt")
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["episode"], 13)
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
 
-    def test_download_selects_requested_episode_from_zip_pack_with_x_episode_marker(self):
+    def test_download_returns_raw_rar_archive_with_episode(self):
         provider = self.mod.SuperSubtitlesProvider()
-        archive = _zip_body(
-            {
-                "La Brea - 2x12 - The Swarm (WEB.720p-CAKES).eng.srt": b"wrong",
-                "La Brea - 2x13 - The Journey, Part 1 (WEB.720p-CAKES, WEB.1080p-CAKES).eng.srt": b"right",
-                "La Brea - 2x13 - The Journey, Part 1 (AMZN.WEB-DL.720p-NTb).eng.srt": b"right but lower release score",
-            }
-        )
+        archive = b"Rar!\x1a\x07\x00" + b"binary rar payload"
         provider._http_get = lambda url, timeout=30, referer=None: archive
 
         result = provider.download(
             {
                 "url": "https://feliratok.eu/index.php?action=letolt&felirat=1691315119",
-                "filename": "La.Brea.S02.WEB.WEBRip.WEB-DL.720p.1080p.ENG.zip",
+                "filename": "La.Brea.S02E13.720p.WEB.H264-CAKES.rar",
                 "season": 2,
                 "episode": 13,
-                "release_info": "La Brea (WEB.720p-CAKES)",
             },
             {"alpha3": "eng", "alpha2": "en"},
             {},
         )
 
-        decoded = base64.b64decode(result["content_b64"])
-        self.assertEqual(decoded, b"right")
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["episode"], 13)
+        self.assertNotIn("content_b64", result)
 
-    def test_download_rejects_archive_without_requested_episode(self):
-        provider = self.mod.SuperSubtitlesProvider()
-        archive = _zip_body({"La.Brea.S02E12.720p.WEB.H264-CAKES.srt": b"wrong"})
-        provider._http_get = lambda url, timeout=30, referer=None: archive
+    def test_download_archive_for_movie_carries_no_episode(self):
+        archive = _zip_body({"Dune.2021.1080p.srt": b"sub"})
 
-        with self.assertRaisesRegex(ValueError, "requested episode"):
-            provider.download(
-                {
-                    "url": "https://feliratok.eu/index.php?action=letolt&felirat=1691315119",
-                    "filename": "La.Brea.S02.WEB.WEBRip.WEB-DL.720p.1080p.ENG.zip",
-                    "season": 2,
-                    "episode": 13,
-                    "release_info": "La Brea (WEB.720p-CAKES)",
-                },
-                {"alpha3": "eng", "alpha2": "en"},
-                {},
+        result = self.mod.extract_download(
+            archive,
+            {"filename": "Dune.2021.zip", "season": None, "episode": None},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertIsNone(result["episode"])
+
+    def test_download_rejects_empty_body(self):
+        with self.assertRaisesRegex(ValueError, "empty"):
+            self.mod.extract_download(b"", {"filename": "Dune.srt"})
+
+    def test_download_rejects_html_error_page(self):
+        with self.assertRaisesRegex(ValueError, "HTML"):
+            self.mod.extract_download(
+                b"<!DOCTYPE html><html><body>error</body></html>",
+                {"filename": "Dune.zip"},
             )
 
     def test_download_returns_direct_subtitle_body(self):
@@ -367,7 +366,8 @@ class SuperSubtitlesProviderTests(unittest.TestCase):
         )
 
         self.assertEqual(base64.b64decode(result["content_b64"]), b"1\n00:00:01,000 --> 00:00:02,000\nHello\n")
-        self.assertEqual(result["encoding"], "utf-8")
+        self.assertEqual(result["format"], "srt")
+        self.assertNotIn("encoding", result)
 
     def test_request_url_encodes_raw_spaces_without_breaking_query_separators(self):
         result = self.mod._request_url(
