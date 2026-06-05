@@ -1,7 +1,10 @@
 import base64
 import hashlib
 import importlib.util
+import io
+import socket
 import unittest
+import urllib.error
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -668,6 +671,179 @@ class Addic7edCookieTests(unittest.TestCase):
                 "wikisubtitlesuser": "user",
                 "wikisubtitlespass": "pass",
             },
+        )
+
+
+class _FakeRawResponse:
+    """Stand-in for the object urllib's opener.open() returns."""
+
+    def __init__(self, status, body=b"ok", headers=None):
+        self.status = status
+        self._body = body
+        self.headers = _FakeHeaders(headers or [])
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return self._body
+
+
+class _FakeHeaders:
+    def __init__(self, items):
+        self._items = list(items)
+
+    def items(self):
+        return list(self._items)
+
+
+class _FakeOpener:
+    """Replaces urllib.request.build_opener(); replays a scripted sequence."""
+
+    def __init__(self, steps):
+        self._steps = list(steps)
+        self.calls = 0
+
+    def open(self, request, timeout=None):
+        del request, timeout
+        self.calls += 1
+        if not self._steps:
+            raise AssertionError("opener.open called more times than scripted")
+        step = self._steps.pop(0)
+        if isinstance(step, Exception):
+            raise step
+        return step
+
+
+class Addic7edTransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self._orig_build_opener = self.mod.urllib.request.build_opener
+        self._orig_sleep = self.mod.time.sleep
+        self._sleeps = []
+        # Module-level time.sleep is monkeypatched so retries never actually wait.
+        self.mod.time.sleep = lambda delay: self._sleeps.append(delay)
+
+    def tearDown(self):
+        self.mod.urllib.request.build_opener = self._orig_build_opener
+        self.mod.time.sleep = self._orig_sleep
+
+    def _install_opener(self, steps):
+        opener = _FakeOpener(steps)
+        self.mod.urllib.request.build_opener = lambda *args, **kwargs: opener
+        return opener
+
+    def _get(self, **kwargs):
+        return self.mod._http_request("GET", "https://www.addic7ed.com/shows.php", {}, {}, **kwargs)
+
+    def test_url_error_is_retried_then_succeeds(self):
+        opener = self._install_opener(
+            [
+                urllib.error.URLError("connection refused"),
+                _FakeRawResponse(200, b"recovered"),
+            ]
+        )
+        response = self._get()
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.body, b"recovered")
+        self.assertEqual(opener.calls, 2)
+        self.assertEqual(len(self._sleeps), 1)
+
+    def test_timeout_is_retried_twice_then_succeeds(self):
+        opener = self._install_opener(
+            [
+                socket.timeout("timed out"),
+                socket.timeout("timed out"),
+                _FakeRawResponse(200, b"ok"),
+            ]
+        )
+        response = self._get()
+        self.assertEqual(response.status, 200)
+        self.assertEqual(opener.calls, 3)
+        self.assertEqual(len(self._sleeps), 2)
+
+    def test_503_get_is_retried_then_succeeds(self):
+        opener = self._install_opener(
+            [
+                self._http_error(503),
+                _FakeRawResponse(200, b"ok"),
+            ]
+        )
+        response = self._get()
+        self.assertEqual(response.status, 200)
+        self.assertEqual(opener.calls, 2)
+        self.assertEqual(len(self._sleeps), 1)
+
+    def test_persistent_url_error_raises_after_three_attempts(self):
+        opener = self._install_opener(
+            [
+                urllib.error.URLError("connection refused"),
+                urllib.error.URLError("connection refused"),
+                urllib.error.URLError("connection refused"),
+            ]
+        )
+        with self.assertRaisesRegex(RuntimeError, "Addic7ed request failed"):
+            self._get()
+        self.assertEqual(opener.calls, 3)
+        self.assertEqual(len(self._sleeps), 2)
+
+    def test_404_is_not_retried_and_maps_to_response(self):
+        opener = self._install_opener([self._http_error(404, b"missing")])
+        response = self._get()
+        self.assertEqual(response.status, 404)
+        self.assertEqual(opener.calls, 1)
+        self.assertEqual(self._sleeps, [])
+
+    def test_403_is_not_retried(self):
+        opener = self._install_opener([self._http_error(403)])
+        response = self._get()
+        self.assertEqual(response.status, 403)
+        self.assertEqual(opener.calls, 1)
+        self.assertEqual(self._sleeps, [])
+
+    def test_value_error_propagates_on_first_attempt(self):
+        opener = self._install_opener([ValueError("boom")])
+        with self.assertRaises(ValueError):
+            self._get()
+        self.assertEqual(opener.calls, 1)
+        self.assertEqual(self._sleeps, [])
+
+    def test_post_5xx_is_not_retried(self):
+        # A non-idempotent POST (login) must never be re-submitted on a 5xx.
+        opener = self._install_opener([self._http_error(503, b"server error")])
+        response = self.mod._http_request(
+            "POST",
+            "https://www.addic7ed.com/dologin.php",
+            {},
+            {},
+            data={"username": "u", "password": "p"},
+        )
+        self.assertEqual(response.status, 503)
+        self.assertEqual(opener.calls, 1)
+        self.assertEqual(self._sleeps, [])
+
+    def test_429_honors_retry_after_header(self):
+        opener = self._install_opener(
+            [
+                self._http_error(429, b"slow down", [("Retry-After", "2")]),
+                _FakeRawResponse(200, b"ok"),
+            ]
+        )
+        response = self._get()
+        self.assertEqual(response.status, 200)
+        self.assertEqual(opener.calls, 2)
+        self.assertEqual(self._sleeps, [2])
+
+    def _http_error(self, code, body=b"", headers=None):
+        return urllib.error.HTTPError(
+            url="https://www.addic7ed.com/shows.php",
+            code=code,
+            msg="error",
+            hdrs=_FakeHeaders(headers or []),
+            fp=io.BytesIO(body),
         )
 
 

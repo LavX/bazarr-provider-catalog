@@ -5,6 +5,8 @@ import datetime as _datetime
 import hashlib
 import html
 import re
+import socket
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -18,6 +20,16 @@ HTTP_TIMEOUT_SECONDS = 30
 DOWNLOAD_CAP = 40
 VIP_DOWNLOAD_CAP = 80
 DOWNLOAD_WINDOW = _datetime.timedelta(hours=24)
+
+# Transport-level retry on transient network failures only, mirroring upstream
+# subliminal's RetryingSession (~3 tries with backoff). This wraps the raw
+# urllib call; it does not change header/cookie handling, redirect handling, the
+# 429/5xx -> response mapping, or the existing URLError -> RuntimeError mapping.
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8
+# HTTP statuses treated as transient. 429 is rate limiting; 5xx are server-side.
+RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
 LANGUAGE_NAMES = {
     "arabic": "ara",
@@ -329,6 +341,55 @@ def _http_request(
     params=None,
     allow_redirects=True,
 ):
+    # Bounded retry/backoff around the raw transport. Only transient failures are
+    # retried; everything else (4xx other than 429, parse errors, auth failures,
+    # any non-network exception) propagates unchanged on the first occurrence.
+    # A 5xx/429 status response is only retried for GET, never for a POST, so a
+    # non-idempotent login is never submitted twice.
+    last_response = None
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            response = _http_request_once(
+                method,
+                url,
+                headers,
+                cookies,
+                data=data,
+                timeout=timeout,
+                params=params,
+                allow_redirects=allow_redirects,
+            )
+        except (urllib.error.URLError, socket.timeout, TimeoutError) as exc:
+            # Transport-level failures only. HTTPError (a URLError subclass) never
+            # reaches here: _http_request_once converts it to a response. This is
+            # connection refused / DNS / reset / timeout. On the final attempt,
+            # surface the same error the provider raises today (URLError stays
+            # mapped to the existing RuntimeError; other transport errors keep
+            # their own type).
+            if attempt >= RETRY_ATTEMPTS:
+                if isinstance(exc, urllib.error.URLError):
+                    raise RuntimeError(f"Addic7ed request failed: {exc.reason}") from exc
+                raise
+            _retry_sleep(attempt)
+            continue
+        last_response = response
+        if method == "GET" and response.status in RETRY_STATUS_CODES and attempt < RETRY_ATTEMPTS:
+            _retry_sleep(attempt, response)
+            continue
+        return response
+    return last_response
+
+
+def _http_request_once(
+    method,
+    url,
+    headers,
+    cookies,
+    data=None,
+    timeout=HTTP_TIMEOUT_SECONDS,
+    params=None,
+    allow_redirects=True,
+):
     if params:
         delimiter = "&" if urllib.parse.urlsplit(url).query else "?"
         url = f"{url}{delimiter}{urllib.parse.urlencode(params)}"
@@ -347,9 +408,30 @@ def _http_request(
         with opener.open(request, timeout=timeout) as response:
             return HttpResponse(response.status, response.read(), list(response.headers.items()))
     except urllib.error.HTTPError as exc:
+        # 4xx/5xx (including 429) map to a response, as before. The retry loop
+        # decides whether a 5xx/429 GET should be re-attempted.
         return HttpResponse(exc.code, exc.read(), list(exc.headers.items()))
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Addic7ed request failed: {exc.reason}") from exc
+
+
+def _retry_sleep(attempt, response=None):
+    delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    delay = min(delay, RETRY_BACKOFF_CAP_SECONDS)
+    if response is not None and response.status == 429:
+        retry_after = _retry_after_seconds(response.headers)
+        if retry_after is not None:
+            delay = min(retry_after, RETRY_BACKOFF_CAP_SECONDS)
+    # Module-level time.sleep so tests can monkeypatch provider.time.sleep.
+    time.sleep(delay)
+
+
+def _retry_after_seconds(headers):
+    value = _header(headers, "retry-after").strip()
+    if not value:
+        return None
+    try:
+        return max(0, int(float(value)))
+    except (TypeError, ValueError):
+        return None
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
