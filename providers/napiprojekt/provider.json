@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "13d9da1060513cf68d384c2d2d2687f7c301677c34b92a79e909563e492a8188",
+  "bundle_sha256": "d229e6cec5b92d5a01b116d47f128371f1aea5f8c6d342ecaea987a198379478",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -309,7 +309,7 @@
   "entry_class": "NapiProjektProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "0a1a7e8d0cf3183be982a07018fca4fc89d066d834cdd4b5b2fd77b654d51707"
+    "provider.py": "3e422b30c93e4f994a8571680b2e86feabb60dbeea0a1fc48a8b2f92b1382bc2"
   },
   "languages": [
     "pol"
@@ -331,5 +331,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.4"
+  "version": "0.1.5"
 }
