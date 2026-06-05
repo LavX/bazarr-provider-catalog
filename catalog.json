@@ -6520,7 +6520,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "e4bbdaf5cfdd7b2f2d5627844f6c984acef86264c0f143b9807728f8621a11e1",
+        "bundle_sha256": "e2f932bbbf043160b8cff1ac14d08aec7772407b3cea62415b30372e1a05fada",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -6825,7 +6825,7 @@
         "entry_class": "YavkaNetProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "c5bcbac35df22cf3f0ad97d73262fb4ec73f3c9a819f67b36d163e0f56c17dca"
+          "provider.py": "20138a183bd7f6add3521e460357ccfef0b8ef01b66694ace9de6b142832c524"
         },
         "languages": [
           "bul",
@@ -6851,7 +6851,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.6"
+        "version": "0.1.7"
       }
     },
     {

@@ -6,6 +6,7 @@ import html
 import io
 import json
 import re
+import socket
 import time
 import urllib.error
 import urllib.parse
@@ -21,6 +22,15 @@ PROVIDER_ID = "yavkanet"
 BASE_URL = "https://yavka.net"
 HOME_URL = f"{BASE_URL}/"
 HTTP_TIMEOUT_SECONDS = 15
+# Transport-level retry: a single transient network blip (connection reset, DNS
+# hiccup, read timeout, a 5xx/429 from the edge) should not abort the whole
+# search/download. Mirrors upstream subliminal's RetryingSession/ProviderRetryMixin
+# (~3 tries with exponential backoff). Only raw transport failures are retried;
+# Cloudflare/Anubis handling and 4xx errors are left untouched.
+HTTP_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8.0
+RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
 DEFAULT_FLARESOLVERR_TIMEOUT_MS = 10000
 MAX_FLARESOLVERR_TIMEOUT_MS = 30000
 FLARESOLVERR_HTTP_TIMEOUT_BUFFER_SECONDS = 5
@@ -400,7 +410,7 @@ def _http_request(method, url, data=None, timeout=HTTP_TIMEOUT_SECONDS, config=N
     if method == "POST":
         request_kwargs["data"] = data or {}
     try:
-        response = scraper.post(url, **request_kwargs) if method == "POST" else scraper.get(url, **request_kwargs)
+        response = _request_with_retry(scraper, method, url, request_kwargs)
     except Exception as exc:
         if _flaresolverr_url(config) and _is_cloudflare_exception(exc):
             return _flaresolverr_request(method, url, data=data, timeout=timeout, config=config, state=state)
@@ -413,7 +423,7 @@ def _http_request(method, url, data=None, timeout=HTTP_TIMEOUT_SECONDS, config=N
         solved = solve_anubis_challenge(scraper, response.url, url, timeout=timeout)
         if not solved:
             raise CloudflareBlockedError("yavkanet Anubis challenge could not be solved")
-        response = scraper.post(url, **request_kwargs) if method == "POST" else scraper.get(url, **request_kwargs)
+        response = _request_with_retry(scraper, method, url, request_kwargs)
         body = getattr(response, "content", None)
         if body is None:
             body = str(getattr(response, "text", "")).encode("utf-8")
@@ -434,6 +444,108 @@ def _http_request(method, url, data=None, timeout=HTTP_TIMEOUT_SECONDS, config=N
     if status >= 400:
         raise urllib.error.HTTPError(url, status, f"HTTP {status}", headers, None)
     return body
+
+
+def _request_with_retry(scraper, method, url, request_kwargs):
+    """Perform the raw cloudscraper call with a bounded transport retry.
+
+    Only TRANSIENT transport failures are retried: connection/DNS/reset errors,
+    read timeouts, and responses carrying a transient HTTP status (5xx / 429).
+    A Cloudflare/Anubis exception, an HTTP 4xx other than 429, and any other
+    exception propagate unchanged so the caller's existing FlareSolverr fallback
+    and status handling run exactly as before. When retries are exhausted the
+    final exception is re-raised, or the final (still-transient) response is
+    returned so the caller maps it the same way it does today.
+    """
+    last_response = None
+    for attempt in range(1, HTTP_MAX_ATTEMPTS + 1):
+        try:
+            response = scraper.post(url, **request_kwargs) if method == "POST" else scraper.get(url, **request_kwargs)
+        except Exception as exc:
+            # A Cloudflare/challenge exception is not a transport blip: hand it
+            # straight back so the FlareSolverr fallback can take over.
+            if _is_cloudflare_exception(exc) or not _is_transient_transport_error(exc):
+                raise
+            if attempt >= HTTP_MAX_ATTEMPTS:
+                raise
+            _sleep_backoff(attempt)
+            continue
+        retry_after = _transient_response_retry_after(response)
+        if retry_after is None or attempt >= HTTP_MAX_ATTEMPTS:
+            return response
+        last_response = response
+        _sleep_backoff(attempt, retry_after)
+    return last_response
+
+
+def _is_transient_transport_error(exc):
+    # Raw transport blips that a quick retry can recover from. Parse/value errors,
+    # auth failures, and HTTP 4xx HTTPErrors are deliberately excluded.
+    if isinstance(exc, urllib.error.HTTPError):
+        return False
+    if isinstance(exc, (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError, OSError)):
+        return True
+    # cloudscraper rides on requests/urllib3; match their transient transport
+    # families by name so we do not hard-depend on those modules being importable.
+    transient_names = {
+        "ConnectionError",
+        "ConnectTimeout",
+        "ReadTimeout",
+        "Timeout",
+        "ConnectTimeoutError",
+        "ReadTimeoutError",
+        "NewConnectionError",
+        "NameResolutionError",
+        "ProtocolError",
+        "MaxRetryError",
+        "ChunkedEncodingError",
+    }
+    for klass in type(exc).__mro__:
+        if klass.__name__ in transient_names:
+            return True
+    return False
+
+
+def _transient_response_retry_after(response):
+    """Return a non-negative delay if the response is a retryable 5xx/429.
+
+    Returns None when the response is not transient (so it is returned as-is).
+    A 429/5xx that is actually a Cloudflare challenge is left for the existing
+    challenge handling, not retried here.
+    """
+    try:
+        status = int(getattr(response, "status_code", 0))
+    except (TypeError, ValueError):
+        return None
+    if status not in RETRY_STATUS_CODES:
+        return None
+    headers = getattr(response, "headers", {}) or {}
+    body = getattr(response, "content", None)
+    if body is None:
+        body = str(getattr(response, "text", "")).encode("utf-8")
+    if is_cloudflare_challenge(status, headers, body):
+        return None
+    return _retry_after_seconds(headers)
+
+
+def _retry_after_seconds(headers):
+    normalized = {str(key).lower(): str(value) for key, value in (headers or {}).items()}
+    raw = normalized.get("retry-after")
+    if not raw:
+        return 0.0
+    try:
+        return max(0.0, float(raw.strip()))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _sleep_backoff(attempt, retry_after=0.0):
+    delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    delay = min(delay, RETRY_BACKOFF_CAP_SECONDS)
+    delay = max(delay, retry_after)
+    delay = min(delay, RETRY_BACKOFF_CAP_SECONDS)
+    # Module-level time.sleep so tests can monkeypatch provider.time.sleep.
+    time.sleep(delay)
 
 
 def _get_cloudscraper(state):
