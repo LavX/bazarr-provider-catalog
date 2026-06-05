@@ -1423,7 +1423,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "fd4683352792184a93b34ba99addefaa2a7fa196ced91339d870586b9b25d6d2",
+        "bundle_sha256": "a4508276a6447cbc3ff98929efbecdf7f9c752b9ed241d480ebdb0f7ca0529a5",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1576,7 +1576,7 @@
         "entry_class": "JimakuProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "bd22a639f7819520e272a042c15c20f62863c5a69c4320a68b100fbf842ff82b"
+          "provider.py": "61d913c20093d5ad473424321e90fea8f504ce813f74607b3f13d8dfccd89043"
         },
         "languages": [
           "jpn"
@@ -1600,7 +1600,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.0"
+        "version": "0.1.1"
       }
     },
     {
