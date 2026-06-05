@@ -31,9 +31,10 @@ EPISODE_VIDEO = {
     "imdb_id": "tt1480055",
     "fps": "23.976",
     "size": 234567890,
-    "hashes": {"opensubtitles": "9f8e7d6c5b4a3210"},
     "original_name": "Game.of.Thrones.S01E01.1080p.WEB-DL",
 }
+
+HASH_EPISODE_VIDEO = dict(EPISODE_VIDEO, hashes={"opensubtitles": "9f8e7d6c5b4a3210"})
 
 LANGUAGES = [{"alpha3": "eng", "alpha2": "en"}]
 SRT_BODY = b"1\n00:00:01,000 --> 00:00:02,000\nWinter is coming.\n"
@@ -179,6 +180,20 @@ WRONG_FPS_SUBTITLES_HTML = """
       <a href="/en/profile/uploader">syncmaster</a>
       <a href="/en/subtitleserve/sub/1952619110">9x</a>
       <span class="p">25.000</span>
+    </td>
+  </tr>
+</table>
+"""
+
+HASH_SUBTITLES_HTML = """
+<table>
+  <tr>
+    <td id="main1952619120">
+      <strong><a href="/en/subtitles/1952619120/game-of-thrones-winter-is-coming-en">"Game of Thrones" Winter Is Coming (2011)</a></strong><br />
+      Game.of.Thrones.S01E01.1080p.WEB-DL<br />
+      <a href="/en/profile/uploader">syncmaster</a>
+      <a href="/en/subtitleserve/sub/1952619120">99x</a>
+      <span class="p">23.976</span>
     </td>
   </tr>
 </table>
@@ -770,6 +785,142 @@ class NativeSearchTests(unittest.TestCase):
         self.assertEqual(data, SRT_BODY)
         self.assertEqual(result["content_sha256"], hashlib.sha256(SRT_BODY).hexdigest())
         self.assertEqual(result["content_type"], "application/x-subrip")
+
+
+class MovieHashMatchTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_search_queries_moviehash_listing_and_awards_hash_match(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        calls = []
+
+        def fake_get(url, config):
+            calls.append(url)
+            if "moviehash-9f8e7d6c5b4a3210" in url and "sublanguageid-eng" in url:
+                return FakeResponse(url, text=HASH_SUBTITLES_HTML)
+            if "moviehash-9f8e7d6c5b4a3210" in url and "sublanguageid-all" in url:
+                return FakeResponse(url, text=HASH_SUBTITLES_HTML)
+            if "search/sublanguageid-all/imdbid-1480055" in url:
+                return FakeResponse(url, text=SEARCH_HTML)
+            if "search/sublanguageid-eng/imdbid-1480055" in url:
+                return FakeResponse(url, text=SUBTITLES_HTML)
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = fake_get
+
+        results = provider.search(HASH_EPISODE_VIDEO, LANGUAGES, {"skip_wrong_fps": True})
+
+        # The moviehash listing is queried (with the byte size segment) so
+        # hash-matched results come back.
+        self.assertTrue(
+            any("moviehash-9f8e7d6c5b4a3210" in url for url in calls),
+            calls,
+        )
+        self.assertTrue(
+            any("moviebytesize-234567890" in url for url in calls),
+            calls,
+        )
+
+        hashed = next(item for item in results if item["provider_payload"]["subtitle_id"] == "1952619120")
+        self.assertIn("hash", hashed["matches"])
+        self.assertTrue(hashed["hash_verifiable"])
+        self.assertEqual(hashed["provider_payload"]["moviehash"], "9f8e7d6c5b4a3210")
+        # The hash match lifts the score to the maximum, while score_without_hash
+        # reflects only the non-hash matches (series/season/episode/imdb_id).
+        self.assertEqual(hashed["score"], 100)
+        self.assertEqual(
+            hashed["score_without_hash"],
+            self.mod._score_from_matches(hashed["matches"], include_hash=False),
+        )
+        self.assertLess(hashed["score_without_hash"], hashed["score"])
+
+    def test_regular_listing_rows_are_not_awarded_a_hash_match(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+
+        def fake_get(url, config):
+            if "moviehash-9f8e7d6c5b4a3210" in url:
+                # The moviehash listing finds nothing for this video.
+                return FakeResponse(url, text="<table id=\"search_results\"></table>")
+            if "search/sublanguageid-all/imdbid-1480055" in url:
+                return FakeResponse(url, text=SEARCH_HTML)
+            if "search/sublanguageid-eng/imdbid-1480055" in url:
+                return FakeResponse(url, text=SUBTITLES_HTML)
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = fake_get
+
+        # The video carries a hash, but the imdb/title listing rows must not be
+        # tagged with that hash: only genuine moviehash-listing rows may.
+        results = provider.search(HASH_EPISODE_VIDEO, LANGUAGES, {"skip_wrong_fps": True})
+
+        imdb_row = next(item for item in results if item["provider_payload"]["subtitle_id"] == "1952619105")
+        self.assertNotIn("hash", imdb_row["matches"])
+        self.assertFalse(imdb_row["hash_verifiable"])
+        self.assertIsNone(imdb_row["provider_payload"]["moviehash"])
+
+    def test_search_without_hash_does_not_query_moviehash_listing(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        calls = []
+
+        def fake_get(url, config):
+            calls.append(url)
+            if "search/sublanguageid-all/imdbid-1480055" in url:
+                return FakeResponse(url, text=SEARCH_HTML)
+            if "search/sublanguageid-eng/imdbid-1480055" in url:
+                return FakeResponse(url, text=SUBTITLES_HTML)
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = fake_get
+
+        provider.search(EPISODE_VIDEO, LANGUAGES, {"skip_wrong_fps": True})
+
+        self.assertFalse(any("moviehash" in url for url in calls), calls)
+
+
+class PowDeadlineTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_solve_pow_raises_service_unavailable_when_deadline_passed(self):
+        # An already-expired deadline must abort instead of looping forever on a
+        # high-difficulty challenge.
+        with self.assertRaises(self.mod.ServiceUnavailable):
+            self.mod._solve_pow("random", 64, deadline=self.mod.time.monotonic() - 1)
+
+    def test_solve_anubis_pow_challenge_aborts_when_budget_exhausted(self):
+        challenge_json = (
+            '<script id="anubis_challenge">'
+            '{"challenge":{"id":"abc","randomData":"seed","difficulty":64,"method":"fast"}}'
+            "</script>"
+        )
+        session = FakeSession([FakeResponse("https://www.opensubtitles.org/.within.website/", text=challenge_json)])
+
+        # A tiny timeout makes the proof-of-work budget expire almost
+        # immediately, so an unsolvable difficulty cannot hang the worker.
+        with self.assertRaises(self.mod.ServiceUnavailable):
+            self.mod.solve_anubis_challenge(
+                session,
+                "https://www.opensubtitles.org/.within.website/?redir=/",
+                "https://www.opensubtitles.org/",
+                timeout=0.001,
+            )
+
+    def test_solve_anubis_preact_challenge_aborts_when_budget_exhausted(self):
+        challenge_json = (
+            '<script id="anubis_challenge">'
+            '{"challenge":{"id":"abc","randomData":"seed","difficulty":64,"method":"preact"}}'
+            "</script>"
+        )
+        session = FakeSession([FakeResponse("https://www.opensubtitles.org/.within.website/", text=challenge_json)])
+
+        with self.assertRaises(self.mod.ServiceUnavailable):
+            self.mod.solve_anubis_challenge(
+                session,
+                "https://www.opensubtitles.org/.within.website/?redir=/",
+                "https://www.opensubtitles.org/",
+                timeout=0.001,
+            )
 
 
 if __name__ == "__main__":

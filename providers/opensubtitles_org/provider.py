@@ -220,6 +220,7 @@ class SearchContext:
     episode: int | None
     tag: str | None
     use_tag_search: bool = False
+    hash: str | None = None
 
 
 def _as_bool(value, default=False):
@@ -482,6 +483,9 @@ def build_search_context(video, config):
     else:
         imdb_id = None
 
+    hashes = video.get("hashes") or {}
+    movie_hash = _clean_text(hashes.get(PROVIDER_ID)) or None
+
     return SearchContext(
         kind=kind,
         query=query,
@@ -491,6 +495,7 @@ def build_search_context(video, config):
         episode=episode,
         tag=_clean_text(video.get("original_name")) or None,
         use_tag_search=_as_bool((config or {}).get("use_tag_search")),
+        hash=movie_hash,
     )
 
 
@@ -612,6 +617,7 @@ def _candidate(
             "download_url": page_link,
             "filename": filename,
             "release_info": release_name,
+            "moviehash": subtitle_hash or None,
         },
         "display": {
             "download_count": int(download_count or 0),
@@ -654,10 +660,12 @@ def _extract_anubis_challenge(html_text):
     }
 
 
-def _solve_pow(random_data, difficulty):
+def _solve_pow(random_data, difficulty, deadline=None):
     prefix = "0" * difficulty
     nonce = 0
     while True:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise ServiceUnavailable("OpenSubtitles.org Anubis proof-of-work timed out")
         digest = hashlib.sha256(f"{random_data}{nonce}".encode("utf-8")).hexdigest()
         if digest.startswith(prefix):
             return nonce, digest
@@ -676,6 +684,7 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=DEFAULT
     base = f"{parsed.scheme}://{parsed.netloc}"
     challenge_page_url = challenge_url if challenge_url.startswith("http") else base + challenge_url
     started = time.monotonic()
+    deadline = started + max(float(timeout or DEFAULT_TIMEOUT_SECONDS), 0.1)
 
     response = session.get(challenge_page_url, timeout=(10, timeout), allow_redirects=True)
     challenge = _extract_anubis_challenge(response.text)
@@ -693,7 +702,11 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=DEFAULT
             session.cookies.update(solved.cookies)
     elif method == "preact":
         result, delay = _solve_preact(challenge["randomData"], challenge["difficulty"])
-        time.sleep(delay)
+        remaining = deadline - time.monotonic()
+        if delay > remaining:
+            raise ServiceUnavailable("OpenSubtitles.org Anubis preact challenge timed out")
+        if delay > 0:
+            time.sleep(delay)
         params = {
             "id": challenge["id"],
             "result": result,
@@ -708,7 +721,7 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=DEFAULT
         if solved.cookies:
             session.cookies.update(solved.cookies)
     else:
-        nonce, digest = _solve_pow(challenge["randomData"], challenge["difficulty"])
+        nonce, digest = _solve_pow(challenge["randomData"], challenge["difficulty"], deadline=deadline)
         params = {
             "id": challenge["id"],
             "response": digest,
@@ -964,6 +977,46 @@ class OpenSubtitlesOrgProvider:
         config = config or {}
         context = build_search_context(video, config)
         query = context.query[0] if context.query else _clean_text((video or {}).get("title") or (video or {}).get("series"))
+
+        # A known opensubtitles hash is the strongest possible match. Query the
+        # moviehash listing first so hash-matched results come back, then merge
+        # with the regular imdb/title lookup (deduplicated by subtitle id).
+        seen = set()
+        candidates = self._hash_candidates(video or {}, languages or [], context, config, seen)
+
+        candidates.extend(
+            self._regular_candidates(video or {}, languages or [], context, config, query, seen)
+        )
+        return candidates
+
+    def _hash_candidates(self, video, languages, context, config, seen):
+        hash_url = self._build_hash_search_url(context)
+        if not hash_url:
+            return []
+        hash_result = {
+            "title": context.query[0] if context.query else _clean_text(video.get("title") or video.get("series")),
+            "year": video.get("year"),
+            "imdb_id": context.imdb_id,
+            "kind": context.kind or "movie",
+            "url": hash_url,
+        }
+        if _subtitle_language_codes(languages):
+            return self._subtitles_for_result(
+                hash_result, video, languages, context, config, seen, is_hash_lookup=True
+            )
+        response = self._http_get(hash_url, config)
+        return self._candidates_from_items(
+            _parse_subtitle_rows(_response_text(response), hash_url),
+            hash_result,
+            video,
+            languages,
+            context,
+            config,
+            seen,
+            is_hash_lookup=True,
+        )
+
+    def _regular_candidates(self, video, languages, context, config, query, seen):
         search_url = self._build_search_url(query, context)
         search_response = self._http_get(search_url, config)
         search_html = _response_text(search_response)
@@ -971,25 +1024,25 @@ class OpenSubtitlesOrgProvider:
         if direct_items:
             direct_result = {
                 "title": query,
-                "year": (video or {}).get("year"),
+                "year": video.get("year"),
                 "imdb_id": context.imdb_id,
                 "kind": context.kind or "movie",
                 "url": search_url,
             }
-            if _subtitle_language_codes(languages or []) and "sublanguageid-all" in search_url:
+            if _subtitle_language_codes(languages) and "sublanguageid-all" in search_url:
                 language_candidates = self._subtitles_for_result(
-                    direct_result, video or {}, languages or [], context, config
+                    direct_result, video, languages, context, config, seen
                 )
                 if language_candidates:
                     return language_candidates
             return self._candidates_from_items(
-                direct_items, direct_result, video or {}, languages or [], context, config, set()
+                direct_items, direct_result, video, languages, context, config, seen
             )
         results = _parse_search_results(search_html, search_url, context.kind)
-        best_result = select_best_result(results, context.imdb_id, query, (video or {}).get("year"))
+        best_result = select_best_result(results, context.imdb_id, query, video.get("year"))
         if not best_result:
             return []
-        return self._subtitles_for_result(best_result, video or {}, languages or [], context, config)
+        return self._subtitles_for_result(best_result, video, languages, context, config, seen)
 
     def download(self, provider_payload, language, config):
         del language
@@ -1018,6 +1071,15 @@ class OpenSubtitlesOrgProvider:
             raise ServiceUnavailable("OpenSubtitles.org downloaded empty subtitle")
         return _content_payload(content, format_=os.path.splitext(payload.get("filename") or "")[1].lstrip(".") or SUBTITLE_FORMAT)
 
+    def _build_hash_search_url(self, context):
+        if not context.hash:
+            return None
+        moviehash = urllib.parse.quote(context.hash, safe="")
+        url = f"{BASE_URL}/en/search/sublanguageid-all/moviehash-{moviehash}"
+        if context.size:
+            url += f"/moviebytesize-{urllib.parse.quote(str(context.size), safe='')}"
+        return url
+
     def _build_search_url(self, query, context):
         if context.use_tag_search and context.tag:
             tag = urllib.parse.quote(context.tag, safe="")
@@ -1036,7 +1098,7 @@ class OpenSubtitlesOrgProvider:
             params["SearchOnlyMovies"] = "on"
         return f"{BASE_URL}/en/search2?{urllib.parse.urlencode(params)}"
 
-    def _subtitles_for_result(self, result, video, languages, context, config):
+    def _subtitles_for_result(self, result, video, languages, context, config, seen=None, is_hash_lookup=False):
         language_codes = _subtitle_language_codes(languages)
         page_urls = []
         if language_codes:
@@ -1045,7 +1107,8 @@ class OpenSubtitlesOrgProvider:
         else:
             page_urls.append(result["url"])
         candidates = []
-        seen = set()
+        if seen is None:
+            seen = set()
         for page_url in page_urls:
             response = self._http_get(page_url, config)
             candidates.extend(
@@ -1057,11 +1120,12 @@ class OpenSubtitlesOrgProvider:
                     context,
                     config,
                     seen,
+                    is_hash_lookup=is_hash_lookup,
                 )
             )
         return candidates
 
-    def _candidates_from_items(self, items, result, video, languages, context, config, seen):
+    def _candidates_from_items(self, items, result, video, languages, context, config, seen, is_hash_lookup=False):
         candidates = []
         for item in items:
             if item["subtitle_id"] in seen:
@@ -1072,6 +1136,14 @@ class OpenSubtitlesOrgProvider:
                 continue
             if _episode_mismatch(item, context):
                 continue
+            # A moviehash lookup returns rows that genuinely match the requested
+            # hash. The native pages do not echo the MovieHash, so carry the
+            # requested hash onto those rows only, mirroring upstream attaching
+            # the queried hash to each result so the 'hash' match (and
+            # hash_verifiable) can be awarded when it equals video.hashes.
+            subtitle_hash = item.get("hash_value")
+            if is_hash_lookup and not subtitle_hash:
+                subtitle_hash = context.hash
             suppress_matches = _as_bool(config.get("skip_wrong_fps"), default=True) and _wrong_fps(video, item["fps"])
             candidates.append(
                 _candidate(
@@ -1087,7 +1159,7 @@ class OpenSubtitlesOrgProvider:
                     episode=context.episode,
                     filename=item["filename"],
                     fps=item["fps"],
-                    subtitle_hash=item.get("hash_value"),
+                    subtitle_hash=subtitle_hash,
                     uploader=item["uploader"],
                     download_count=item["download_count"],
                     video=video,
