@@ -7440,6 +7440,7 @@
           "hrv",
           "mkd",
           "slv",
+          "sr-Cyrl",
           "srp"
         ],
         "name": "Titlovi",
@@ -7462,7 +7463,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.1"
+        "version": "0.1.2"
       }
     },
     {
