@@ -1,9 +1,13 @@
 import base64
+import email.message
 import gzip
 import hashlib
 import importlib.util
+import io
 import json
+import socket
 import unittest
+import urllib.error
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -201,6 +205,131 @@ class BSPlayerProviderDownloadTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             provider.download({"provider": "other", "download_url": "http://example.test/a.gz"}, {"alpha3": "eng"}, {})
+
+
+class _FakeResponse(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.close()
+        return False
+
+
+class BSPlayerTransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.sleeps = []
+        self._http_errors = []
+        # urllib and time are shared module singletons, so save and restore the
+        # originals to avoid leaking the monkeypatch into other test cases.
+        self._orig_urlopen = self.mod.urllib.request.urlopen
+        self._orig_sleep = self.mod.time.sleep
+        # Make the backoff sleep a mockable no-op via the module-level time.sleep.
+        self.mod.time.sleep = lambda seconds: self.sleeps.append(seconds)
+
+    def tearDown(self):
+        self.mod.urllib.request.urlopen = self._orig_urlopen
+        self.mod.time.sleep = self._orig_sleep
+        # HTTPError keeps an internal tempfile open; close it to avoid noisy
+        # ResourceWarning during garbage collection.
+        for error in self._http_errors:
+            error.close()
+
+    def _http_error(self, code, body=b"", headers=None):
+        error = urllib.error.HTTPError(
+            url="http://s1.api.bsplayer-subtitles.com/v1.php",
+            code=code,
+            msg="error",
+            hdrs=headers,
+            fp=io.BytesIO(body),
+        )
+        self._http_errors.append(error)
+        return error
+
+    def _patch_urlopen(self, side_effects):
+        calls = {"count": 0}
+
+        def fake_urlopen(request, timeout=None):
+            index = calls["count"]
+            calls["count"] += 1
+            effect = side_effects[index]
+            if isinstance(effect, Exception):
+                raise effect
+            return _FakeResponse(effect)
+
+        self.mod.urllib.request.urlopen = fake_urlopen
+        return calls
+
+    def test_retries_url_error_then_succeeds(self):
+        request = self.mod.urllib.request.Request("http://s1.api.bsplayer-subtitles.com/v1.php")
+        calls = self._patch_urlopen([urllib.error.URLError("connection reset"), b"OK"])
+
+        result = self.mod._urlopen_read(request, timeout=12)
+
+        self.assertEqual(result, b"OK")
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_retries_503_twice_then_succeeds(self):
+        request = self.mod.urllib.request.Request("http://s1.api.bsplayer-subtitles.com/v1.php")
+        calls = self._patch_urlopen([self._http_error(503), self._http_error(503), b"DATA"])
+
+        result = self.mod._urlopen_read(request, timeout=12)
+
+        self.assertEqual(result, b"DATA")
+        self.assertEqual(calls["count"], 3)
+        self.assertEqual(len(self.sleeps), 2)
+
+    def test_retries_socket_timeout(self):
+        request = self.mod.urllib.request.Request("http://s1.api.bsplayer-subtitles.com/v1.php")
+        calls = self._patch_urlopen([socket.timeout("timed out"), b"OK"])
+
+        result = self.mod._urlopen_read(request, timeout=12)
+
+        self.assertEqual(result, b"OK")
+        self.assertEqual(calls["count"], 2)
+
+    def test_does_not_retry_404(self):
+        request = self.mod.urllib.request.Request("http://s1.api.bsplayer-subtitles.com/v1.php")
+        calls = self._patch_urlopen([self._http_error(404), b"unused"])
+
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self.mod._urlopen_read(request, timeout=12)
+
+        self.assertEqual(ctx.exception.code, 404)
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(self.sleeps, [])
+
+    def test_gives_up_after_max_attempts_and_reraises(self):
+        request = self.mod.urllib.request.Request("http://s1.api.bsplayer-subtitles.com/v1.php")
+        calls = self._patch_urlopen(
+            [urllib.error.URLError("a"), urllib.error.URLError("b"), urllib.error.URLError("c")]
+        )
+
+        with self.assertRaises(urllib.error.URLError):
+            self.mod._urlopen_read(request, timeout=12)
+
+        self.assertEqual(calls["count"], 3)
+        self.assertEqual(len(self.sleeps), 2)
+
+    def test_honors_retry_after_header_on_429(self):
+        request = self.mod.urllib.request.Request("http://s1.api.bsplayer-subtitles.com/v1.php")
+        headers = email.message.Message()
+        headers["Retry-After"] = "3"
+        self._patch_urlopen([self._http_error(429, headers=headers), b"OK"])
+
+        result = self.mod._urlopen_read(request, timeout=12)
+
+        self.assertEqual(result, b"OK")
+        self.assertEqual(self.sleeps, [3])
+
+    def test_get_bytes_retries_transient_then_returns(self):
+        client = self.mod.BSPlayerApiClient(api_url="http://s1.api.bsplayer-subtitles.com/v1.php")
+        self._patch_urlopen([self._http_error(503), b"payload"])
+
+        self.assertEqual(client.get_bytes("http://download.test/file"), b"payload")
+        self.assertEqual(len(self.sleeps), 1)
 
 
 if __name__ == "__main__":
