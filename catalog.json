@@ -1317,7 +1317,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "483f838c841d24153a15f901cdea96d7ec2463256c9486bb3f72a927d97f6949",
+        "bundle_sha256": "da299e9119dc164f8169ada7a548fb91b2e2cdd63cdecb792431d7ed4a75b5f2",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1354,7 +1354,7 @@
         "entry_class": "LegendasNetProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "8cd0e37fb0ff20e6ad96dc78381fb3126f0d3867bbe52a4d99a0acbde7ba5146"
+          "provider.py": "a4bbf7103a9f4b170949fa27bbc4e2aec109931e3c0586d17f4bee3e0daeea00"
         },
         "languages": [
           "por-BR"
@@ -1379,7 +1379,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.1"
+        "version": "0.1.2"
       }
     },
     {

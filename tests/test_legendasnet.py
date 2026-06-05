@@ -177,6 +177,9 @@ class LegendasNetSearchTests(unittest.TestCase):
 
         self.assertEqual([item["provider_payload"]["file_id"] for item in results], [201])
         self.assertEqual(results[0]["page_link"], "https://legendas.net/tv_legenda?movie_id=87108&legenda_id=201")
+        # Season/episode are carried so the host can pick the archive member.
+        self.assertEqual(results[0]["provider_payload"]["season"], 1)
+        self.assertEqual(results[0]["provider_payload"]["episode"], 1)
         self.assertIn("series", results[0]["matches"])
         self.assertIn("series_imdb_id", results[0]["matches"])
         self.assertIn("season", results[0]["matches"])
@@ -203,7 +206,7 @@ class LegendasNetDownloadTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
 
-    def test_download_extracts_first_file_from_zip(self):
+    def test_download_zip_archive_returns_raw_archive_for_host(self):
         provider = self.mod.LegendasNetProvider()
         archive_body = _zip_body(
             {
@@ -235,10 +238,106 @@ class LegendasNetDownloadTests(unittest.TestCase):
             {"username": "user", "password": "pass"},
         )
 
-        decoded = base64.b64decode(result["content_b64"])
-        self.assertEqual(decoded, b"1\n00:00:01,000 --> 00:00:02,000\nMovie line\n")
-        self.assertEqual(result["format"], "srt")
-        self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
+        # Host-side extraction: the raw archive is forwarded with the member the
+        # provider selected. No extraction, decoding, or encoding guess worker-side.
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive_body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive_body).hexdigest())
+        self.assertEqual(result["member"], "Dune.Part.One.2021.pt-BR.srt")
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
+
+    def test_download_rar_archive_returns_raw_archive_with_episode(self):
+        provider = self.mod.LegendasNetProvider()
+        archive_body = b"Rar!\x1a\x07\x00rar-bytes"
+
+        def request(method, url, headers=None, json_body=None, timeout=30):
+            del method, headers, json_body, timeout
+            return self.mod.HttpResponse(200, _fixture("legendasnet_login.json"), {})
+
+        def get(url, headers=None, timeout=30):
+            del headers, timeout
+            return self.mod.HttpResponse(200, archive_body, {})
+
+        provider._http_json = request
+        provider._http_get = get
+        result = provider.download(
+            {
+                "provider": "legendasnet",
+                "schema": 1,
+                "download_link": "/download/tv/201",
+                "filename": "legendasnet.201.zip",
+                "episode": 1,
+                "season": 1,
+            },
+            {"alpha3": "por-BR"},
+            {"username": "user", "password": "pass"},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive_body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive_body).hexdigest())
+        self.assertEqual(result["episode"], 1)
+        self.assertNotIn("member", result)
+        self.assertNotIn("encoding", result)
+
+    def test_download_7z_archive_returns_raw_archive_with_episode(self):
+        provider = self.mod.LegendasNetProvider()
+        archive_body = b"7z\xbc\xaf\x27\x1c7z-bytes"
+
+        def request(method, url, headers=None, json_body=None, timeout=30):
+            del method, headers, json_body, timeout
+            return self.mod.HttpResponse(200, _fixture("legendasnet_login.json"), {})
+
+        def get(url, headers=None, timeout=30):
+            del headers, timeout
+            return self.mod.HttpResponse(200, archive_body, {})
+
+        provider._http_json = request
+        provider._http_get = get
+        result = provider.download(
+            {
+                "provider": "legendasnet",
+                "schema": 1,
+                "download_link": "/download/movie/101",
+                "filename": "legendasnet.101.zip",
+                "episode": None,
+            },
+            {"alpha3": "por-BR"},
+            {"username": "user", "password": "pass"},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive_body)
+        self.assertIsNone(result["episode"])
+        self.assertNotIn("member", result)
+
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.LegendasNetProvider()
+        provider._http_json = lambda method, url, headers=None, json_body=None, timeout=30: self.mod.HttpResponse(
+            200, _fixture("legendasnet_login.json"), {}
+        )
+        provider._http_get = lambda url, headers=None, timeout=30: self.mod.HttpResponse(200, b"   ", {})
+
+        with self.assertRaisesRegex(ValueError, "empty body"):
+            provider.download(
+                {"download_link": "/download/movie/101", "filename": "legendasnet.101.zip"},
+                {"alpha3": "por-BR"},
+                {"username": "user", "password": "pass"},
+            )
+
+    def test_download_rejects_html_error_page(self):
+        provider = self.mod.LegendasNetProvider()
+        provider._http_json = lambda method, url, headers=None, json_body=None, timeout=30: self.mod.HttpResponse(
+            200, _fixture("legendasnet_login.json"), {}
+        )
+        provider._http_get = lambda url, headers=None, timeout=30: self.mod.HttpResponse(
+            200, b"<!DOCTYPE html><html><body>error</body></html>", {}
+        )
+
+        with self.assertRaisesRegex(ValueError, "HTML/error page"):
+            provider.download(
+                {"download_link": "/download/movie/101", "filename": "legendasnet.101.zip"},
+                {"alpha3": "por-BR"},
+                {"username": "user", "password": "pass"},
+            )
 
     def test_direct_ass_download_keeps_real_format_despite_zip_filename(self):
         provider = self.mod.LegendasNetProvider()
@@ -271,6 +370,8 @@ class LegendasNetDownloadTests(unittest.TestCase):
 
         self.assertEqual(result["format"], "ass")
         self.assertEqual(result["content_type"], "text/x-ssa")
+        self.assertNotIn("encoding", result)
+        self.assertNotIn("archive_b64", result)
         decoded = base64.b64decode(result["content_b64"])
         self.assertEqual(decoded, self.mod._normalize_line_endings(subtitle_body))
 
