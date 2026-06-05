@@ -5,7 +5,9 @@ import hashlib
 import html
 import io
 import re
+import socket
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -15,6 +17,14 @@ PROVIDER_ID = "titrari"
 BASE_URL = "https://www.titrari.ro"
 HOME_URL = f"{BASE_URL}/"
 HTTP_TIMEOUT_SECONDS = 15
+# Transport-level retry for transient network blips only. Mirrors upstream subliminal's
+# RetryingSession/ProviderRetryMixin (~3 tries + backoff). Retries cover connection
+# resets/DNS failures, timeouts, HTTP 5xx, and HTTP 429; everything else propagates on the
+# first occurrence so a 404 or auth failure is never masked by a retry.
+RETRY_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8.0
+RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 DEFAULT_ADVANCED_SEARCH_PAGE = "numaicautamcaneiesepenas"
 SUPPORTED_LANGUAGES = {"ron": "ro", "eng": "en"}
 ALPHA2_TO_ALPHA3 = {value: key for key, value in SUPPORTED_LANGUAGES.items()}
@@ -202,8 +212,26 @@ class TitrariProvider:
         if referer:
             headers["Referer"] = referer
         request = urllib.request.Request(url, headers=headers)
-        with self._opener.open(request, timeout=timeout) as response:
-            return response.read()
+        # Only the raw transport call is retried. Header/cookie handling, the opener, and
+        # the returned bytes are untouched; FlareSolverr/throttle logic lives elsewhere.
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                with self._opener.open(request, timeout=timeout) as response:
+                    return response.read()
+            except urllib.error.HTTPError as error:
+                if error.code not in RETRY_STATUS_CODES or attempt >= RETRY_MAX_ATTEMPTS:
+                    raise
+                _sleep_retry(attempt, _retry_after_seconds(error))
+            except (urllib.error.URLError, socket.timeout, TimeoutError) as error:
+                # HTTPError is a URLError subclass but is handled above, so reaching here
+                # means a genuine transport failure (refused/reset/DNS/timeout). A 4xx
+                # other than 429 already raised as HTTPError and never lands here.
+                if attempt >= RETRY_MAX_ATTEMPTS:
+                    raise
+                del error
+                _sleep_retry(attempt, None)
 
     def search(self, video, languages, config):
         config = dict(config or {})
@@ -597,6 +625,32 @@ def _sleep(config):
         delay_ms = 0
     if delay_ms > 0:
         time.sleep(delay_ms / 1000)
+
+
+def _sleep_retry(attempt, retry_after):
+    # Exponential backoff, capped. A Retry-After hint (429) wins when it is larger so we do
+    # not hammer the host sooner than it asked. Uses the module-level time.sleep so tests
+    # can monkeypatch it to a no-op.
+    delay = min(RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1)), RETRY_BACKOFF_CAP_SECONDS)
+    if retry_after is not None:
+        delay = min(max(delay, retry_after), RETRY_BACKOFF_CAP_SECONDS)
+    if delay > 0:
+        time.sleep(delay)
+
+
+def _retry_after_seconds(error):
+    # Honor a Retry-After header (delta-seconds form only) on a 429 if present.
+    try:
+        value = error.headers.get("Retry-After")
+    except AttributeError:
+        return None
+    if not value:
+        return None
+    try:
+        seconds = float(value.strip())
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds >= 0 else None
 
 
 def _decode(value):
