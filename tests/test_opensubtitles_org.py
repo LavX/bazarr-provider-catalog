@@ -505,6 +505,8 @@ class NativeSearchTests(unittest.TestCase):
         self.assertEqual(first["provider"], "opensubtitles")
         self.assertEqual(first["provider_payload"]["mode"], "native")
         self.assertEqual(first["provider_payload"]["subtitle_id"], "1952619105")
+        self.assertEqual(first["provider_payload"]["season"], 1)
+        self.assertEqual(first["provider_payload"]["episode"], 1)
         self.assertEqual(first["provider_payload"]["download_url"], "https://www.opensubtitles.org/en/subtitles/1952619105/game-of-thrones-winter-is-coming-en")
         self.assertEqual(first["language"]["alpha3"], "eng")
         self.assertIn("episode", first["matches"])
@@ -753,7 +755,7 @@ class NativeSearchTests(unittest.TestCase):
                 {},
             )
 
-    def test_download_fetches_direct_zip_and_returns_subtitle_payload(self):
+    def test_download_returns_archive_bytes_and_selected_member(self):
         provider = self.mod.OpenSubtitlesOrgProvider()
         calls = []
         archive = _zip_bytes()
@@ -780,11 +782,141 @@ class NativeSearchTests(unittest.TestCase):
             {},
         )
 
-        data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
+        # The host extracts the archive: the worker returns the raw archive bytes and
+        # the member it selected, with no content/encoding fields.
         self.assertEqual(calls, ["https://dl.opensubtitles.org/en/download/sub/1952619105"])
-        self.assertEqual(data, SRT_BODY)
-        self.assertEqual(result["content_sha256"], hashlib.sha256(SRT_BODY).hexdigest())
+        data = base64.b64decode(result["archive_b64"].encode("ascii"), validate=True)
+        self.assertEqual(data, archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["member"], "Game.of.Thrones.S01E01.srt")
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
+
+    def test_download_selects_episode_member_when_filename_absent(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        archive = _zip_bytes(filename="Game.of.Thrones.S01E01.1080p.srt")
+
+        provider._http_get = lambda url, config: FakeResponse(
+            url, content=archive, headers={"content-type": "application/zip"}
+        )
+
+        result = provider.download(
+            {
+                "provider": "opensubtitles",
+                "mode": "native",
+                "subtitle_id": "1952619105",
+            },
+            {"alpha3": "eng", "alpha2": "en"},
+            {},
+        )
+
+        # No preferred filename: the first subtitle member is selected.
+        self.assertEqual(result["member"], "Game.of.Thrones.S01E01.1080p.srt")
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+
+    def test_download_returns_rar_archive_for_host_to_pick_by_episode(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        rar_body = b"Rar!\x1a\x07\x00rest-of-archive-bytes"
+
+        provider._http_get = lambda url, config: FakeResponse(url, content=rar_body)
+
+        result = provider.download(
+            {
+                "provider": "opensubtitles",
+                "mode": "native",
+                "subtitle_id": "1952619105",
+                "filename": "Game.of.Thrones.S01E01.srt",
+                "season": 1,
+                "episode": 1,
+            },
+            {"alpha3": "eng", "alpha2": "en"},
+            {},
+        )
+
+        data = base64.b64decode(result["archive_b64"].encode("ascii"), validate=True)
+        self.assertEqual(data, rar_body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(rar_body).hexdigest())
+        self.assertEqual(result["episode"], 1)
+        self.assertNotIn("member", result)
+
+    def test_download_follows_html_page_to_zip_and_returns_archive(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        archive = _zip_bytes()
+        calls = []
+
+        def fake_get(url, config):
+            calls.append(url)
+            if "download/sub" in url:
+                return FakeResponse(
+                    url,
+                    text='<html><a href="/en/subtitleserve/sub/1952619105">Download</a></html>',
+                    content=b'<html><a href="/en/subtitleserve/sub/1952619105">Download</a></html>',
+                )
+            return FakeResponse(url, content=archive)
+
+        provider._http_get = fake_get
+
+        result = provider.download(
+            {
+                "provider": "opensubtitles",
+                "mode": "native",
+                "subtitle_id": "1952619105",
+                "filename": "Game.of.Thrones.S01E01.srt",
+            },
+            {"alpha3": "eng", "alpha2": "en"},
+            {},
+        )
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result["member"], "Game.of.Thrones.S01E01.srt")
+        self.assertEqual(
+            base64.b64decode(result["archive_b64"].encode("ascii"), validate=True), archive
+        )
+
+    def test_download_returns_direct_non_archive_subtitle_as_content(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        provider._http_get = lambda url, config: FakeResponse(url, content=SRT_BODY)
+
+        result = provider.download(
+            {
+                "provider": "opensubtitles",
+                "mode": "native",
+                "subtitle_id": "1952619105",
+                "filename": "Game.of.Thrones.S01E01.srt",
+            },
+            {"alpha3": "eng", "alpha2": "en"},
+            {},
+        )
+
+        self.assertEqual(
+            base64.b64decode(result["content_b64"].encode("ascii"), validate=True), SRT_BODY
+        )
         self.assertEqual(result["content_type"], "application/x-subrip")
+        self.assertNotIn("archive_b64", result)
+        self.assertNotIn("encoding", result)
+
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        provider._http_get = lambda url, config: FakeResponse(url, content=b"")
+
+        with self.assertRaisesRegex(self.mod.ServiceUnavailable, "empty"):
+            provider.download(
+                {"provider": "opensubtitles", "mode": "native", "subtitle_id": "1952619105"},
+                {"alpha3": "eng", "alpha2": "en"},
+                {},
+            )
+
+    def test_download_rejects_html_error_page_without_link(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        body = b"<html><body>Subtitle has been removed.</body></html>"
+        provider._http_get = lambda url, config: FakeResponse(url, text=body.decode(), content=body)
+
+        with self.assertRaisesRegex(self.mod.ServiceUnavailable, "no subtitle link"):
+            provider.download(
+                {"provider": "opensubtitles", "mode": "native", "subtitle_id": "1952619105"},
+                {"alpha3": "eng", "alpha2": "en"},
+                {},
+            )
 
 
 class MovieHashMatchTests(unittest.TestCase):
