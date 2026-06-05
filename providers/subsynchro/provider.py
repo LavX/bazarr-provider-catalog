@@ -349,9 +349,15 @@ def extract_download(body, payload=None):
     if zipfile.is_zipfile(stream):
         stream.seek(0)
         with zipfile.ZipFile(stream) as archive:
-            name = select_subtitle_file(archive.namelist())
-            content = _normalize_line_endings(archive.read(name))
-            return _content_payload(content, _subtitle_extension(name) or "srt")
+            member = select_subtitle_file(archive.namelist())
+        # Host-side extraction (Provider Hub v1.1+): we still list the zip cheaply with
+        # stdlib zipfile to pick the member, but hand the raw archive bytes back to the
+        # host, which extracts that member and detects encoding via Subtitle.normalize().
+        return {
+            "archive_b64": _base64.b64encode(body).decode("ascii"),
+            "archive_sha256": _hashlib.sha256(body).hexdigest(),
+            "member": member,
+        }
     subtitle_format = _subtitle_extension(payload.get("filename", ""))
     if not subtitle_format or _looks_like_html(body):
         raise ValueError("subsynchro download did not return a supported subtitle archive")
@@ -529,26 +535,21 @@ def _subtitle_extension(name):
 
 
 def _content_payload(content, subtitle_format, empty=False):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially latin-1, which never fails to decode) only reintroduces mojibake.
     if empty:
         return {
             "content_b64": "",
             "content_sha256": "",
             "content_type": _content_type(subtitle_format),
             "format": subtitle_format,
-            "encoding": "utf-8",
             "empty": True,
         }
-    encoding = "utf-8"
-    try:
-        content.decode("utf-8")
-    except UnicodeDecodeError:
-        encoding = "latin-1"
     return {
         "content_b64": _base64.b64encode(content).decode("ascii"),
         "content_sha256": _hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 
