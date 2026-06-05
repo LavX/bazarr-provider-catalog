@@ -178,7 +178,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "8fff6563c6ac273c2b36c2353dea0df2b2f7c82744bc60601ba68114120e9f82",
+        "bundle_sha256": "a2fcdc5a3bb174c5bf2b7e7f4002e9300cc424f549fd720d58704abab87415b1",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -200,7 +200,7 @@
         "entry_class": "AnimeSubInfoProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "4e9f14577fc31f9d933c3b5067c33ec9ae531d43126e04641099d746ecb0c8be"
+          "provider.py": "beb519b694d6ee7001cdc5eb8d3908032757a8b9f1ee6c03a6fcc8ff4a0dee95"
         },
         "languages": [
           "pol"
@@ -222,7 +222,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.1"
+        "version": "0.1.2"
       }
     },
     {
