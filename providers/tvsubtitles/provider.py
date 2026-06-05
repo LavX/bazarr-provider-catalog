@@ -193,22 +193,27 @@ def parse_episode_subtitles(body, series, season, episode, year=None):
 
 
 def extract_download(body, payload=None):
-    payload = payload or {}
+    del payload
     if not body:
-        return _content_payload(b"", "srt", empty=True)
+        raise ValueError("tvsubtitles download returned an empty body")
     stream = io.BytesIO(body)
     if not zipfile.is_zipfile(stream):
         raise ValueError("tvsubtitles download did not return a zip archive")
+    # List the zip cheaply with stdlib zipfile to pick the single member, then hand the
+    # raw archive bytes back to the host (Provider Hub v1.1+), which extracts the member
+    # and detects encoding via Subtitle.normalize().
     with zipfile.ZipFile(stream) as archive:
         names = archive.namelist()
-        if len(names) != 1:
-            raise ValueError("tvsubtitles archive contains more than one file")
-        name = names[0]
-        subtitle_format = _subtitle_extension(name)
-        if not subtitle_format:
-            raise ValueError("tvsubtitles archive contains no supported subtitle file")
-        content = _normalize_line_endings(archive.read(name))
-    return _content_payload(content, subtitle_format)
+    if len(names) != 1:
+        raise ValueError("tvsubtitles archive contains more than one file")
+    member = names[0]
+    if not _subtitle_extension(member):
+        raise ValueError("tvsubtitles archive contains no supported subtitle file")
+    return {
+        "archive_b64": base64.b64encode(body).decode("ascii"),
+        "archive_sha256": hashlib.sha256(body).hexdigest(),
+        "member": member,
+    }
 
 
 class TvSubtitlesProvider:
@@ -454,39 +459,6 @@ def _subtitle_extension(name):
     return None
 
 
-def _content_payload(content, subtitle_format, empty=False):
-    if empty:
-        return {
-            "content_b64": "",
-            "content_sha256": "",
-            "content_type": _content_type(subtitle_format),
-            "format": subtitle_format,
-            "encoding": "utf-8",
-            "empty": True,
-        }
-    encoding = "utf-8"
-    try:
-        content.decode("utf-8")
-    except UnicodeDecodeError:
-        encoding = "latin-1"
-    return {
-        "content_b64": base64.b64encode(content).decode("ascii"),
-        "content_sha256": hashlib.sha256(content).hexdigest(),
-        "content_type": _content_type(subtitle_format),
-        "format": subtitle_format,
-        "encoding": encoding,
-        "empty": False,
-    }
-
-
-def _content_type(subtitle_format):
-    if subtitle_format in {"ass", "ssa"}:
-        return "text/x-ssa"
-    if subtitle_format == "sub":
-        return "text/plain"
-    return "application/x-subrip"
-
-
 def _title_matches(candidate, titles):
     candidate_norm = _normalize(candidate)
     if not candidate_norm:
@@ -537,10 +509,6 @@ def _safe_int(value):
         return int(value)
     except (TypeError, ValueError):
         return None
-
-
-def _normalize_line_endings(content):
-    return (content or b"").replace(b"\r\n", b"\n").replace(b"\r", b"\n")
 
 
 def _decode(value):

@@ -239,7 +239,7 @@ class TvSubtitlesProviderTests(unittest.TestCase):
 
         self.assertEqual(results, [])
 
-    def test_download_follows_script_redirect_and_extracts_single_zip_member(self):
+    def test_download_follows_script_redirect_and_returns_zip_archive(self):
         provider = self.mod.TvSubtitlesProvider()
         zip_body = _zip_files(
             {"The.Office.S01E02.en.srt": b"1\r\n00:00:01,000 --> 00:00:02,000\r\nLine\r\n"}
@@ -263,10 +263,11 @@ class TvSubtitlesProviderTests(unittest.TestCase):
             {},
         )
 
-        decoded = base64.b64decode(result["content_b64"])
-        self.assertEqual(decoded, b"1\n00:00:01,000 --> 00:00:02,000\nLine\n")
-        self.assertEqual(result["format"], "srt")
-        self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
+        self.assertEqual(base64.b64decode(result["archive_b64"]), zip_body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(zip_body).hexdigest())
+        self.assertEqual(result["member"], "The.Office.S01E02.en.srt")
+        self.assertNotIn("encoding", result)
+        self.assertNotIn("content_b64", result)
 
     def test_download_quotes_script_redirect_paths_with_spaces(self):
         provider = self.mod.TvSubtitlesProvider()
@@ -287,7 +288,32 @@ class TvSubtitlesProviderTests(unittest.TestCase):
             {},
         )
 
-        self.assertFalse(result["empty"])
+        self.assertEqual(base64.b64decode(result["archive_b64"]), zip_body)
+        self.assertEqual(result["member"], "The.Office.S01E02.en.srt")
+
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.TvSubtitlesProvider()
+        provider._http_request = lambda url, data=None, timeout=10, referer=None: b""
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {"provider": "tvsubtitles", "schema": 1, "subtitle_id": "7001"},
+                {"alpha3": "eng", "alpha2": "en"},
+                {},
+            )
+
+    def test_download_rejects_non_archive_body(self):
+        provider = self.mod.TvSubtitlesProvider()
+        provider._http_request = lambda url, data=None, timeout=10, referer=None: (
+            b"<html><body>Not found</body></html>"
+        )
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {"provider": "tvsubtitles", "schema": 1, "subtitle_id": "7001"},
+                {"alpha3": "eng", "alpha2": "en"},
+                {},
+            )
 
     def test_download_rejects_archives_with_multiple_subtitle_files(self):
         provider = self.mod.TvSubtitlesProvider()

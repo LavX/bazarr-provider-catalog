@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "c1499f4e7e3a1363bad3d2a65eb0e7be818e90ccfc4905b491513cde38419b6d",
+  "bundle_sha256": "6c763bb9ad86439a3b40c3ba7e44513d4a697de797ee8eccabdff12bba9b4b14",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -22,7 +22,7 @@
   "entry_class": "TvSubtitlesProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "a86671513a668e22036d2d65c4b87475e27068edf6938070697906bb5b154d90"
+    "provider.py": "b3b26198b27f20df75ff500a5c7ecae23e6a0b8a2380efb736e5602edb35199b"
   },
   "languages": [
     "ara",
@@ -65,5 +65,5 @@
   "supported_media": [
     "episode"
   ],
-  "version": "0.1.1"
+  "version": "0.1.2"
 }
