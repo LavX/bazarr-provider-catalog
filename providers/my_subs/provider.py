@@ -413,7 +413,7 @@ def _entry_from_parts(page_url, media_title, release, code, download_url, count,
     alpha3 = _alpha3_for(alpha2)
     if not alpha3:
         return None
-    release_info = release or media_title or "My-Subs subtitle"
+    release_info = release or media_title or ""
     return {
         "language_alpha2": alpha2,
         "language_alpha3": alpha3,

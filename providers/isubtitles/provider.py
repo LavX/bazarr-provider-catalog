@@ -196,7 +196,7 @@ def parse_subtitle_rows(body):
                 "slug": slug,
                 "language": alpha3,
                 "language_slug": language_slug,
-                "release_info": " | ".join(release_names),
+                "release_info": "\n".join(release_names),
                 "download_url": _absolute_url(_decode(download_match.group("href"))),
                 "page_url": _absolute_url(f"/{slug}/{language_slug}/{subtitle_id}"),
                 "file_count": _int_from_text(_strip_tags(_cell_by_title(row, "File"))),

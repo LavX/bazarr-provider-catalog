@@ -969,7 +969,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "d292a3710ffa967ae1972ef4c4e4aab78b2128718e68d700b98bde9369b82a06",
+        "bundle_sha256": "e29ade500c5849ab1cb0c369914951e4c81822cc12d3a78e7d2392556fc039aa",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -991,7 +991,7 @@
         "entry_class": "ISubtitlesProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "94dcac9ac1d7031da41b314c537a739d932aa056a1b2ed7ad4397fa6828ea86f"
+          "provider.py": "cecd09375798c3f0816d810c94c9c7f696bfc14c3e25794d9bebb189bbcfa755"
         },
         "languages": [
           "aze",
@@ -1084,7 +1084,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.3"
+        "version": "0.1.4"
       }
     },
     {
@@ -1446,7 +1446,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "87eaba2b5affbbf412f5025f60ed8de1a4a6c21c51351cb03efa45ddbc9e9070",
+        "bundle_sha256": "cdb890c7f7a9bd30ca39dcb02aa8cc7b09e2d046fab30640ff219b7ecb52d0d8",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1468,7 +1468,7 @@
         "entry_class": "MySubsProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "34a398e0ae9d06059277011d46bfe0fdb4baf92ee21880ae9defd209b289cbbf"
+          "provider.py": "20ebe426b072ce49538ebf79946b6ce8ed2889a51b20a58d462a2cb5201804d3"
         },
         "languages": [
           "eng",
@@ -1531,7 +1531,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.2"
+        "version": "0.1.3"
       }
     },
     {
@@ -5028,7 +5028,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "4460b793dc047e4c9f0e1fbdf856679d3ca864e54201336b025afc511cbfd92a",
+        "bundle_sha256": "968b7f7e73fba8e01917b03d3b1deb372847239f731fdbcfa01bf510ae6ee290",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -5050,7 +5050,7 @@
         "entry_class": "SubtitlestarProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "8a99cd25df3d99be8f6f342f879e7d9afad22e5304c56f3382f84bb8479ea64d"
+          "provider.py": "85ca599c2124aa53dce9b713e4efc002ba71523779d52fd48ce3eaf01c173af2"
         },
         "languages": [
           "fas"
@@ -5072,7 +5072,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.10"
+        "version": "0.1.11"
       }
     },
     {

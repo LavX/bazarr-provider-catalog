@@ -802,7 +802,7 @@ class SubtitlestarProvider:
                         "provider": PROVIDER_ID,
                         "id": f"subtitlestar-{hashlib.md5(download_url.encode()).hexdigest()[:12]}",
                         "language": language,
-                        "release_info": f"{candidate['title']} [{details['quality'] or 'Unknown'}]",
+                        "release_info": f"{candidate['title']} {details['quality']}".strip() if details['quality'] else candidate['title'],
                         "filename": f"subtitlestar.{_download_basename(download_url)}",
                         "matches": matches,
                         "score": score,
