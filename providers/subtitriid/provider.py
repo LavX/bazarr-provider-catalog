@@ -6,18 +6,10 @@ import html
 import io
 import os
 import re
-import shutil
-import subprocess
-import tempfile
 import time
 import urllib.parse
 import urllib.request
 import zipfile
-
-try:
-    import py7zz
-except ImportError:  # pragma: no cover, dependency is declared in manifest
-    py7zz = None
 
 PROVIDER_ID = "subtitriid"
 BASE_URL = "https://subtitri.do.am"
@@ -217,6 +209,8 @@ class SubtitriIdProvider:
                 "language": "lav",
                 "hi": bool(language.get("hi")),
                 "forced": bool(language.get("forced")),
+                "season": row.get("season"),
+                "episode": row.get("episode"),
             },
         }
 
@@ -233,142 +227,28 @@ class SubtitriIdProvider:
 def extract_download(body, payload=None):
     payload = dict(payload or {})
     filename = payload.get("filename") or ""
+    # Reject broken responses up front: the download endpoint can answer with an empty
+    # stream or an HTML/error page that would otherwise look like a successful download.
     if not body:
-        return _content_payload(b"", _format_from_filename(filename), empty=True)
-    if _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        selected = select_subtitle_files([name for name, _content in files])
-        contents = dict(files)
-        return _content_payload(_join_subtitle_parts(contents[name] for name in selected), _subtitle_extension(selected[0]) or "srt")
-    stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_files(archive.namelist())
-            return _content_payload(_join_subtitle_parts(archive.read(name) for name in selected), _subtitle_extension(selected[0]) or "srt")
+        raise ValueError("subtitriid download returned an empty body")
     if _looks_like_html(body):
         raise ValueError("subtitriid download returned an HTML page instead of a subtitle")
-    subtitle_format = _subtitle_extension(filename) or ("srt" if _looks_like_subtitle(body) else "")
-    if not subtitle_format:
+    if _is_archive_body(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
+        # the host, which lists it, picks the member by episode, and detects encoding.
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "episode": payload.get("episode"),
+        }
+    # Direct, non-archive subtitle body.
+    if not _subtitle_extension(filename) and not _looks_like_subtitle(body):
         raise ValueError("subtitriid download did not return a supported subtitle file")
-    return _content_payload(body, subtitle_format)
+    return _content_payload(body, _format_from_filename(filename))
 
 
-def select_subtitle_file(names):
-    return select_subtitle_files(names)[0]
-
-
-def select_subtitle_files(names):
-    names = list(names or [])
-    candidates = [
-        name
-        for name in names
-        if _subtitle_extension(name)
-        and not os.path.basename(name).startswith(".")
-        and not _is_vobsub_sidecar(name, names)
-    ]
-    if not candidates:
-        raise ValueError("subtitriid archive contains no supported subtitle files")
-    multipart = _multipart_subset(candidates)
-    return multipart or [candidates[0]]
-
-
-def _extract_rar_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"Subtitri.id RAR extraction failed: {details}") from errors[-1]
-    raise RuntimeError("Subtitri.id RAR extraction requires bundled py7zz")
-
-
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("Subtitri.id bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subtitriid.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_unar(body):
-    return _extract_rar_files_with_command(body, "unar", ["unar", "-quiet", "-o"])
-
-
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("Subtitri.id RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subtitriid.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [sevenzip, "x", "-y", f"-o{output_dir}", archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract Subtitri.id RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_command(body, command, args):
-    executable = shutil.which(command)
-    if not executable:
-        raise RuntimeError(f"Subtitri.id RAR fallback requires {command}")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subtitriid.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [*args, output_dir, archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"{command} failed to extract Subtitri.id RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            relative_path = os.path.relpath(path, output_dir)
-            if not _subtitle_extension(relative_path):
-                continue
-            with open(path, "rb") as handle:
-                files.append((relative_path, handle.read()))
-    if not files:
-        raise ValueError("subtitriid archive contains no supported subtitle files")
-    return files
+def _is_archive_body(body):
+    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
 
 
 def _parse_titles(text):
@@ -480,24 +360,18 @@ def _variant_suffix(language):
     return "-".join(parts)
 
 
-def _content_payload(content, subtitle_format, empty=False):
+def _content_payload(content, subtitle_format):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     content = content or b""
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": "text/plain",
         "format": subtitle_format or "srt",
-        "encoding": _guess_encoding(content),
-        "empty": bool(empty),
+        "empty": False,
     }
-
-
-def _guess_encoding(content):
-    try:
-        content.decode("utf-8")
-        return "utf-8"
-    except UnicodeDecodeError:
-        return "cp1257"
 
 
 def _format_from_filename(filename):
@@ -519,44 +393,6 @@ def _looks_like_html(body):
     if sample.startswith("<!doctype html") or sample.startswith("<html"):
         return True
     return "<html" in sample or "<body" in sample or "<head" in sample
-
-
-def _join_subtitle_parts(parts):
-    cleaned = [part.rstrip(b"\r\n") for part in parts]
-    return b"\n\n".join(cleaned) + (b"\n" if cleaned else b"")
-
-
-def _is_vobsub_sidecar(name, names):
-    path = urllib.parse.urlparse(name or "").path.lower()
-    if not path.endswith(".sub"):
-        return False
-    idx_path = f"{os.path.splitext(path)[0]}.idx"
-    normalized_names = {urllib.parse.urlparse(item or "").path.lower() for item in names or []}
-    return idx_path in normalized_names
-
-
-def _multipart_subset(names):
-    groups = {}
-    for name in names:
-        part_number = _multipart_part_number(name)
-        if part_number is None:
-            continue
-        groups.setdefault((_multipart_key(name), _subtitle_extension(name)), []).append((part_number, name))
-    for group in groups.values():
-        if len(group) < 2:
-            continue
-        return [name for _part_number, name in sorted(group, key=lambda item: item[0])]
-    return []
-
-
-def _multipart_part_number(name):
-    match = re.search(r"\b(?:cd|part|disc|disk)\s*0*(?P<number>\d{1,2})\b", _normalize(name), re.I)
-    return int(match.group("number")) if match else None
-
-
-def _multipart_key(name):
-    normalized = _normalize(os.path.splitext(os.path.basename(name or ""))[0])
-    return re.sub(r"\b(?:cd|part|disc|disk)\s*0*\d+\b", "", normalized).strip()
 
 
 def _is_rar_archive(body):

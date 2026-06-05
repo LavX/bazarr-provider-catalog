@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "ea91824d905fd065e4dcf881353cde850e668024c1856c0c2d68d76e0b418623",
+  "bundle_sha256": "fb0a102efd87321abd43917aad0a93217dddcd4be52272cc9bd010cb00ea4124",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -17,13 +17,6 @@
   },
   "dependencies": {
     "requirements": [
-      {
-        "hashes": [
-          "sha256:571ac1dc6991c450b25a9c2d84a3705e2ae7a53467b5d111c24fa8baabbed320"
-        ],
-        "name": "annotated-doc",
-        "version": "0.0.4"
-      },
       {
         "hashes": [
           "sha256:3c52e209ba0a4ad7aebe60436a4ab349c39e1e602e8c134221e546902ad25897"
@@ -46,13 +39,6 @@
       },
       {
         "hashes": [
-          "sha256:482be17c6991b8c19c5429a1e995d9b0efdbb63172824c41f99965dc0ade8ec2"
-        ],
-        "name": "click",
-        "version": "8.4.1"
-      },
-      {
-        "hashes": [
           "sha256:cc246e3a3f89580c3a951b5ad298ca4638078b2cdd4f115654332b5c26daded5"
         ],
         "name": "idna",
@@ -60,66 +46,10 @@
       },
       {
         "hashes": [
-          "sha256:9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a"
-        ],
-        "name": "markdown-it-py",
-        "version": "4.2.0"
-      },
-      {
-        "hashes": [
-          "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8"
-        ],
-        "name": "mdurl",
-        "version": "0.1.2"
-      },
-      {
-        "hashes": [
-          "sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e"
-        ],
-        "name": "packaging",
-        "version": "26.2"
-      },
-      {
-        "hashes": [
-          "sha256:cd3d911976c184e61c641baf4e26a80f4ac474c830bf12cc8e541490c229bfd6"
-        ],
-        "name": "py7zz",
-        "version": "1.1.4"
-      },
-      {
-        "hashes": [
-          "sha256:81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176"
-        ],
-        "name": "pygments",
-        "version": "2.20.0"
-      },
-      {
-        "hashes": [
           "sha256:2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0"
         ],
         "name": "requests",
         "version": "2.34.2"
-      },
-      {
-        "hashes": [
-          "sha256:33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb"
-        ],
-        "name": "rich",
-        "version": "15.0.0"
-      },
-      {
-        "hashes": [
-          "sha256:7ecfff8f2fd72616f7481040475a65b2bf8af90a56c89140852d1120324e8686"
-        ],
-        "name": "shellingham",
-        "version": "1.5.4"
-      },
-      {
-        "hashes": [
-          "sha256:75caa44ed46a03fb2dab8808753ffacdbfea88495e74c85a28c5eefcf5f39c89"
-        ],
-        "name": "typer",
-        "version": "0.25.1"
       },
       {
         "hashes": [
@@ -134,7 +64,7 @@
   "entry_class": "SubtitriIdProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "8684fbae24e459a85b4b77d607169a6d12c6d27eb3866d3a1f8692bd2287f85e"
+    "provider.py": "b7eb1dc1c80dec8187df913d85ac7d2700eeb71f58562c456f4fb772a42de118"
   },
   "languages": [
     "lav"
@@ -155,5 +85,5 @@
   "supported_media": [
     "movie"
   ],
-  "version": "0.1.2"
+  "version": "0.1.3"
 }
