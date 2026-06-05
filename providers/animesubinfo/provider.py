@@ -21,6 +21,9 @@ SEARCH_URL = f"{BASE_URL}/szukaj.php"
 DOWNLOAD_URL = f"{BASE_URL}/sciagnij.php"
 HTTP_TIMEOUT_SECONDS = 15
 HTTP_RETRIES = 2
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8.0
+RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 SUPPORTED_LANGUAGES = {"pol": "pl"}
 ALPHA2_TO_ALPHA3 = {value: key for key, value in SUPPORTED_LANGUAGES.items()}
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub")
@@ -146,33 +149,35 @@ class AnimeSubInfoProvider:
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         request = urllib.request.Request(url, headers=_headers(referer=referer))
-        for attempt in range(HTTP_RETRIES + 1):
-            try:
-                with self._opener.open(request, timeout=timeout) as response:
-                    return response.read()
-            except urllib.error.HTTPError:
-                raise
-            except (TimeoutError, socket.timeout, urllib.error.URLError):
-                if attempt >= HTTP_RETRIES:
-                    raise
-                time.sleep(0.25 * (attempt + 1))
-        raise RuntimeError("unreachable animesubinfo retry state")
+        return self._open_with_retry(request, timeout)
 
     def _http_post(self, url, data, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         encoded = urllib.parse.urlencode(data).encode("iso-8859-2", errors="replace")
         headers = _headers(referer=referer)
         headers["Content-Type"] = "application/x-www-form-urlencoded"
         request = urllib.request.Request(url, data=encoded, headers=headers)
-        for attempt in range(HTTP_RETRIES + 1):
+        return self._open_with_retry(request, timeout)
+
+    def _open_with_retry(self, request, timeout):
+        # Bounded transport retry around the raw urllib call only. Retries transient
+        # failures (connection errors, timeouts, HTTP 5xx and 429) so a single network
+        # blip does not abort a search or download. Non-transient errors (HTTP 4xx other
+        # than 429, parse errors, etc.) propagate unchanged on the first occurrence.
+        for attempt in range(1, HTTP_RETRIES + 2):
             try:
                 with self._opener.open(request, timeout=timeout) as response:
                     return response.read()
-            except urllib.error.HTTPError:
-                raise
-            except (TimeoutError, socket.timeout, urllib.error.URLError):
-                if attempt >= HTTP_RETRIES:
+            except urllib.error.HTTPError as error:
+                if error.code not in RETRY_STATUS_CODES or attempt > HTTP_RETRIES:
                     raise
-                time.sleep(0.25 * (attempt + 1))
+                delay = _retry_after_delay(error) if error.code == 429 else None
+                if delay is None:
+                    delay = _backoff_delay(attempt)
+                time.sleep(delay)
+            except (TimeoutError, socket.timeout, urllib.error.URLError):
+                if attempt > HTTP_RETRIES:
+                    raise
+                time.sleep(_backoff_delay(attempt))
         raise RuntimeError("unreachable animesubinfo retry state")
 
     def search(self, video, languages, config):
@@ -589,6 +594,24 @@ def _sleep(config):
     delay_ms = (config or {}).get("request_delay_ms", 0) or 0
     if delay_ms > 0:
         time.sleep(min(delay_ms, 5000) / 1000.0)
+
+
+def _backoff_delay(attempt):
+    return min(RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1)), RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _retry_after_delay(error):
+    # Honor a Retry-After header on 429 when it is a small, parseable number of seconds.
+    try:
+        header = error.headers.get("Retry-After")
+    except AttributeError:
+        header = None
+    if not header:
+        return None
+    value = str(header).strip()
+    if not value.isdigit():
+        return None
+    return min(float(value), RETRY_BACKOFF_CAP_SECONDS)
 
 
 def _absolute_url(value):
