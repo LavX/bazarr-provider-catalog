@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "07f42d7d63a4abe071b7189a55bb58db825bdaa7dea352dd1a9adc02b3902f26",
+  "bundle_sha256": "d6421fc9c3a62628731e629f5f99a600927e4382043f03c7e5ee676bf3e98859",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -22,7 +22,7 @@
   "entry_class": "KitsunekkoProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "2abf3f90fb431559c7db7591a35de33707c938245e25f0abc11a1965cf1feaa4"
+    "provider.py": "69180fb74bac23b30a7d7469f7d083b513cd4ceeafe5c36fea3c7c5bbac1631d"
   },
   "languages": [
     "eng",
@@ -45,5 +45,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.0"
+  "version": "0.1.1"
 }

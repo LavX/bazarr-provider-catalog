@@ -245,8 +245,16 @@ class KitsunekkoProvider:
         if not url:
             raise ValueError("kitsunekko download requires url")
         body = self._http_get(url)
-        if payload.get("archive_format") == "zip" or body.startswith(b"PK\x03\x04"):
-            body, fmt = _extract_from_zip(body, payload.get("episode"))
+        if payload.get("archive_format") == "zip" or zipfile.is_zipfile(io.BytesIO(body or b"")):
+            # Host-side extraction (Provider Hub v1.1+): list the zip cheaply with stdlib
+            # zipfile, pick the member, and hand the raw archive bytes back to the host,
+            # which extracts that member and detects the encoding.
+            member = _select_zip_member(body, payload.get("episode"))
+            return {
+                "archive_b64": _base64.b64encode(body).decode("ascii"),
+                "archive_sha256": _hashlib.sha256(body).hexdigest(),
+                "member": member,
+            }
         return _content_payload(body, fmt)
 
 
@@ -276,14 +284,13 @@ def _directory_score(video, title):
     return 0
 
 
-def _extract_from_zip(body, episode):
+def _select_zip_member(body, episode):
     with zipfile.ZipFile(io.BytesIO(body)) as archive:
         names = [name for name in archive.namelist() if name.lower().endswith(SUBTITLE_EXTENSIONS)]
-        if not names:
-            raise ValueError("kitsunekko archive contained no subtitle files")
-        names.sort(key=lambda name: _archive_sort_key(name, episode))
-        selected = names[0]
-        return archive.read(selected), selected.rsplit(".", 1)[-1].lower()
+    if not names:
+        raise ValueError("kitsunekko archive contained no subtitle files")
+    names.sort(key=lambda name: _archive_sort_key(name, episode))
+    return names[0]
 
 
 def _archive_sort_key(name, episode):
@@ -306,26 +313,22 @@ def _episode_in_text(normalized, episode, season=None):
 
 
 def _content_payload(body, fmt):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     if not body:
         return {
             "content_b64": "",
             "content_sha256": "",
             "content_type": _content_type(fmt),
             "format": fmt,
-            "encoding": "utf-8",
             "empty": True,
         }
-    encoding = "utf-8"
-    try:
-        body.decode("utf-8")
-    except UnicodeDecodeError:
-        encoding = "latin-1"
     return {
         "content_b64": _base64.b64encode(body).decode("ascii"),
         "content_sha256": _hashlib.sha256(body).hexdigest(),
         "content_type": _content_type(fmt),
         "format": fmt,
-        "encoding": encoding,
         "empty": False,
     }
 
