@@ -2,8 +2,6 @@ import base64
 import hashlib
 import importlib.util
 import io
-import os
-import tempfile
 import unittest
 import zipfile
 from pathlib import Path
@@ -180,41 +178,12 @@ class SubsUnacsParserTests(unittest.TestCase):
         ])
         self.assertEqual(entries[0]["entry_url"], "https://subsunacs.net/getentry.php?id=144478&ei=0")
 
-    def test_extract_archive_files_leaves_zip_to_the_host(self):
-        # ZIP is extracted host-side now; the worker hands the raw bytes back in download().
-        body = _zip_body({"Movie.srt": "subtitle"})
-
-        self.assertEqual(self.mod.extract_archive_files(body), [])
-
-    def test_extract_archive_files_leaves_rar_to_the_host(self):
-        body = b"Rar!\x1a\x07\x00" + b"payload"
-
-        self.assertEqual(self.mod.extract_archive_files(body), [])
-
-    def test_collect_extracted_files_repairs_unreadable_archive_permissions(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "Show.S01E01.en.srt"
-            path.write_bytes(b"subtitle")
-            path.chmod(0)
-            try:
-                files = self.mod._collect_extracted_subtitle_files(temp_dir)
-            finally:
-                path.chmod(0o600)
-
-        self.assertEqual(files, [("Show.S01E01.en.srt", b"subtitle")])
-
-    def test_collect_extracted_files_skips_symlinks(self):
-        if not hasattr(os, "symlink"):
-            self.skipTest("symlink support is unavailable")
-        with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as outside_dir:
-            outside = Path(outside_dir) / "outside.srt"
-            outside.write_bytes(b"outside subtitle")
-            link = Path(temp_dir) / "Show.S01E01.en.srt"
-            os.symlink(outside, link)
-
-            files = self.mod._collect_extracted_subtitle_files(temp_dir)
-
-        self.assertEqual(files, [])
+    def test_archive_signature_detects_zip_rar_and_7z(self):
+        # download() hands zip/rar/7z bytes back to the host; non-archive bytes stay content.
+        self.assertTrue(self.mod._is_archive_body(_zip_body({"Movie.srt": "subtitle"})))
+        self.assertTrue(self.mod._is_archive_body(b"Rar!\x1a\x07\x00payload"))
+        self.assertTrue(self.mod._is_archive_body(b"7z\xbc\xaf\x27\x1cpayload"))
+        self.assertFalse(self.mod._is_archive_body(b"1\r\nplain srt text\r\n"))
 
 
 class SubsUnacsProviderTests(unittest.TestCase):
@@ -492,32 +461,24 @@ class SubsUnacsProviderTests(unittest.TestCase):
                 {},
             )
 
-    def test_download_seven_zip_still_extracts_in_worker(self):
-        # SubsUnacs genuinely serves .7z, which the host extraction stack does not cover, so
-        # the worker keeps extracting it and hands back the member as content.
+    def test_download_seven_zip_returns_archive_bytes_and_carries_episode(self):
+        # The host extraction stack now covers 7z too, so a .7z body is handed back as the
+        # raw archive instead of being extracted in the worker.
         provider = self.mod.SubsUnacsProvider()
-        provider._http_get = lambda url, timeout=10, referer=None: b"7z\xbc\xaf\x27\x1c" + b"seven-zip-body"
+        archive = b"7z\xbc\xaf\x27\x1c" + b"seven-zip-body"
+        provider._http_get = lambda url, timeout=10, referer=None: archive
 
-        captured = {}
-        original_extract = self.mod.extract_archive_files
+        content = provider.download(
+            {"download_url": "https://subsunacs.net/subtitles/Some_Show_01x05-80808/!", "episode": 5},
+            {"alpha3": "bul", "alpha2": "bg"},
+            {},
+        )
 
-        def fake_extract(body):
-            captured["body"] = body
-            return [{"filename": "Movie.srt", "path": "Movie.srt", "content": b"7z subtitle"}]
-
-        self.mod.extract_archive_files = fake_extract
-        try:
-            content = provider.download(
-                {"download_url": "https://subsunacs.net/subtitles/Dune-144478/!", "filename": "Movie.srt"},
-                {"alpha3": "eng", "alpha2": "en"},
-                {},
-            )
-        finally:
-            self.mod.extract_archive_files = original_extract
-
-        self.assertTrue(captured["body"].startswith(b"7z\xbc\xaf\x27\x1c"))
-        self.assertEqual(base64.b64decode(content["content_b64"]), b"7z subtitle")
-        self.assertEqual(content["format"], "srt")
+        self.assertEqual(base64.b64decode(content["archive_b64"]), archive)
+        self.assertEqual(content["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(content["episode"], 5)
+        self.assertNotIn("content_b64", content)
+        self.assertNotIn("encoding", content)
 
 
 if __name__ == "__main__":

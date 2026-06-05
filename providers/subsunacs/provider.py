@@ -6,21 +6,12 @@ import html
 import io
 import os
 import re
-import shutil
-import stat
-import subprocess
-import tempfile
 import time
 import unicodedata
 import urllib.parse
 import urllib.request
 import zipfile
 from http.cookiejar import CookieJar
-
-try:
-    import py7zz
-except ImportError:  # pragma: no cover, dependency is declared in manifest
-    py7zz = None
 
 PROVIDER_ID = "subsunacs"
 BASE_URL = "https://subsunacs.net"
@@ -30,9 +21,6 @@ HTTP_TIMEOUT_SECONDS = 10
 SUPPORTED_LANGUAGES = {"bul": "bg", "eng": "en"}
 ALPHA2_TO_ALPHA3 = {"bg": "bul", "en": "eng"}
 SUBTITLE_EXTENSIONS = (".srt", ".sub", ".txt")
-ARCHIVE_FILE_COUNT_LIMIT = 256
-ARCHIVE_SUBTITLE_FILE_COUNT_LIMIT = 64
-ARCHIVE_MEMORY_LIMIT = 100 * 1024 * 1024
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
@@ -119,14 +107,6 @@ def parse_detail_entries(body):
             continue
         entries.append({"filename": os.path.basename(filename), "entry_url": _absolute_url(href)})
     return entries
-
-
-def extract_archive_files(body):
-    # Only .7z is extracted in-worker. The host extracts zip/rar from the raw bytes
-    # download() hands back (Provider Hub v1.1 host-side archive extraction).
-    if not _is_7z_archive(body):
-        return []
-    return _archive_rows_from_pairs(_extract_external_archive_files(body))
 
 
 def derive_matches(video, item):
@@ -313,12 +293,6 @@ class SubsUnacsProvider:
                 data = self._http_get(selected["entry_url"], referer=referer)
                 return _download_payload(data, {**payload, "filename": selected["filename"]})
             raise ValueError(f"subsunacs returned an HTML/error page for {payload.get('download_url')}")
-        if _is_7z_archive(body):
-            # Genuine .7z download. The host extraction stack handles zip/rar only, so keep
-            # extracting 7z in-worker and hand the selected member back as content.
-            files = extract_archive_files(body)
-            selected = select_subtitle_file(files, payload)
-            return _content_payload(_normalize_line_endings(selected["content"]), _subtitle_extension(selected["filename"]) or "srt")
         return _download_payload(body, payload)
 
 
@@ -355,14 +329,11 @@ def _entries_from_download_body(body, download_url, row=None):
     entries = parse_detail_entries(body)
     if entries:
         return entries
-    if _is_zip_or_rar_archive(body):
-        # Host-side archive: do not list members in the worker. Produce a single candidate
-        # whose download() hands the raw bytes back to the host for extraction.
+    if _is_archive_body(body):
+        # Host-side archive (zip/rar/7z): do not list members in the worker. Produce a
+        # single candidate whose download() hands the raw bytes back to the host.
         return [{"filename": _archive_release_name(row, download_url), "archive": True}]
-    files = extract_archive_files(body)
-    for item in files:
-        item["download_url"] = download_url
-    return files
+    return []
 
 
 def _archive_release_name(row, download_url):
@@ -376,129 +347,8 @@ def _archive_release_name(row, download_url):
     return os.path.basename(urllib.parse.urlparse(download_url or "").path.rstrip("/")) or "subsunacs.archive"
 
 
-def _extract_external_archive_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_external_archive_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_external_archive_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_external_archive_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"SubsUnacs archive extraction failed: {details}") from errors[-1]
-    raise RuntimeError("SubsUnacs archive extraction requires bundled py7zz")
-
-
-def _extract_external_archive_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("SubsUnacs bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subsunacs.archive")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_external_archive_files_with_unar(body):
-    unar = shutil.which("unar")
-    if not unar:
-        raise RuntimeError("SubsUnacs archive fallback requires unar")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subsunacs.archive")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run([unar, "-quiet", "-o", output_dir, archive_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"unar failed to extract SubsUnacs archive: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_external_archive_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("SubsUnacs archive fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subsunacs.archive")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run([sevenzip, "x", "-y", f"-o{output_dir}", archive_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract SubsUnacs archive: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if not _is_subtitle_file(rel):
-                continue
-            if not _is_safe_extracted_file(path, output_dir):
-                continue
-            if os.path.getsize(path) > ARCHIVE_MEMORY_LIMIT:
-                continue
-            try:
-                os.chmod(path, os.stat(path).st_mode | 0o600)
-            except OSError:
-                pass
-            with open(path, "rb") as handle:
-                files.append((rel, handle.read()))
-    if len(files) > ARCHIVE_SUBTITLE_FILE_COUNT_LIMIT:
-        return []
-    return files
-
-
-def _archive_rows_from_pairs(pairs):
-    rows = []
-    for filename, content in pairs:
-        if _is_subtitle_file(filename):
-            path = _normalize_archive_path(filename)
-            rows.append({"filename": os.path.basename(path), "path": path, "content": content})
-    return rows
-
-
-def _normalize_archive_path(filename):
-    return (filename or "").replace("\\", "/").strip("/")
-
-
 def _entry_identity(entry):
     return entry.get("path") or entry.get("entry_url") or entry.get("filename")
-
-
-def _is_safe_extracted_file(path, output_dir):
-    try:
-        file_stat = os.lstat(path)
-    except OSError:
-        return False
-    if not stat.S_ISREG(file_stat.st_mode):
-        return False
-    output_real = os.path.realpath(output_dir)
-    path_real = os.path.realpath(path)
-    try:
-        return os.path.commonpath([output_real, path_real]) == output_real
-    except ValueError:
-        return False
 
 
 def _is_rar_archive(body):
@@ -509,10 +359,10 @@ def _is_7z_archive(body):
     return bool(body) and body.startswith(b"7z\xbc\xaf\x27\x1c")
 
 
-def _is_zip_or_rar_archive(body):
-    # zip and rar are extracted host-side; 7z stays in-worker (host 7z support is a
-    # separate follow-up), so it is intentionally excluded here.
-    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
+def _is_archive_body(body):
+    # zip, rar, and 7z are all extracted host-side (Provider Hub v1.1+). download() hands
+    # the raw bytes back as archive_b64 for the host to list, select, and decode.
+    return _is_rar_archive(body) or _is_7z_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
 
 
 def _is_ignored_txt_file(filename):
@@ -737,9 +587,9 @@ def _download_payload(body, payload):
         raise ValueError(f"subsunacs empty download for {payload.get('download_url')}")
     if _is_html_body(body):
         raise ValueError(f"subsunacs returned an HTML/error page for {payload.get('download_url')}")
-    if _is_zip_or_rar_archive(body):
-        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to the
-        # host, which lists it, picks the member by episode, and detects encoding.
+    if _is_archive_body(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw zip/rar/7z bytes back to
+        # the host, which lists it, picks the member by episode, and detects encoding.
         return {
             "archive_b64": base64.b64encode(body).decode("ascii"),
             "archive_sha256": hashlib.sha256(body).hexdigest(),
