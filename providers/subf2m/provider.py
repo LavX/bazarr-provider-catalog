@@ -210,9 +210,10 @@ def rank_episode_paths(video, rows):
 def parse_subtitle_page(body, alpha3, video):
     if not _imdb_matches(body, video):
         return []
+    imdb_matched = _imdb_confirmed(body, video)
     rows = []
     for item in _iter_item_blocks(body or b""):
-        row = _parse_item(item, alpha3, video)
+        row = _parse_item(item, alpha3, video, imdb_matched=imdb_matched)
         if row is not None:
             rows.append(row)
     return rows
@@ -315,15 +316,19 @@ class SubF2MProvider:
         filename = f"subf2m.{_slug(row['release_info'])}.{language['alpha2']}.{row['subtitle_id']}.zip"
         hearing_impaired = bool(row.get("hearing_impaired"))
         forced = bool(row.get("forced"))
+        language_block = {
+            "alpha3": row["language"],
+            "alpha2": language["alpha2"],
+            "hi": hearing_impaired,
+            "forced": forced,
+        }
+        country_alpha2 = _country_alpha2_for_path(language.get("path"))
+        if country_alpha2:
+            language_block["country_alpha2"] = country_alpha2
         return {
             "provider": PROVIDER_ID,
             "id": f"subf2m-{row['subtitle_id']}-{row['language']}",
-            "language": {
-                "alpha3": row["language"],
-                "alpha2": language["alpha2"],
-                "hi": hearing_impaired,
-                "forced": forced,
-            },
+            "language": language_block,
             "release_info": row["release_info"],
             "filename": filename,
             "matches": matches,
@@ -348,6 +353,7 @@ class SubF2MProvider:
                 "filename": filename,
                 "language": row["language"],
                 "language_path": language["path"],
+                "country_alpha2": country_alpha2,
                 "hi": hearing_impaired,
                 "forced": forced,
                 "season": _safe_int(video.get("season")),
@@ -427,7 +433,7 @@ def select_subtitle_file(names, payload=None):
     return sorted(candidates, key=_file_preference_key)[0]
 
 
-def _parse_item(item, alpha3, video):
+def _parse_item(item, alpha3, video, imdb_matched=False):
     releases = []
     for list_match in _SCROLLLIST_RE.finditer(item or b""):
         for release_match in _LI_RE.finditer(list_match.group("body")):
@@ -458,7 +464,7 @@ def _parse_item(item, alpha3, video):
         "page_url": page_url,
         "forced": _looks_forced(release_info),
         "hearing_impaired": _looks_hearing_impaired(release_info),
-        "imdb_matched": _expected_imdb(video) is not None,
+        "imdb_matched": bool(imdb_matched),
         "season_pack": _release_is_season_pack(release_text, _safe_int((video or {}).get("season"))),
     }
 
@@ -515,6 +521,15 @@ def _imdb_matches(body, video):
     return parsed == expected
 
 
+def _imdb_confirmed(body, video):
+    expected = _expected_imdb(video)
+    if expected is None:
+        return False
+    match = _IMDB_RE.search(body or b"")
+    parsed = _decode(match.group("imdb")) if match else None
+    return parsed is not None and parsed == expected
+
+
 def _expected_imdb(video):
     video = video or {}
     return video.get("series_imdb_id") or video.get("imdb_id")
@@ -534,7 +549,7 @@ def _requested_languages(languages):
         if isinstance(language, dict):
             meta["hi"] = _optional_bool(language.get("hi"))
             meta["forced"] = _optional_bool(language.get("forced"))
-        key = (alpha3, meta["path"])
+        key = (alpha3, meta["path"], meta.get("hi"), meta.get("forced"))
         if key in seen:
             continue
         seen.add(key)
@@ -557,10 +572,21 @@ def _alpha3_for_language(language):
     return ALIAS_ALPHA3.get(code, code)
 
 
+def _country_alpha2_for_path(path):
+    if path == "brazillian-portuguese":
+        return "BR"
+    return None
+
+
 def _is_brazilian_portuguese(language):
     if not isinstance(language, dict):
         return False
-    value = language.get("country") or language.get("region") or language.get("alpha2")
+    value = (
+        language.get("country_alpha2")
+        or language.get("country")
+        or language.get("region")
+        or language.get("alpha2")
+    )
     return str(value or "").upper() in {"BR", "PT-BR"}
 
 
