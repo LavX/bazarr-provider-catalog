@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import socket
 import unittest
 import zipfile
 from pathlib import Path
@@ -315,10 +316,13 @@ class TitulkyProviderTests(unittest.TestCase):
     def test_http_get_converts_urllib_http_error_to_response(self):
         provider = self.mod.TitulkyProvider()
         original_build_opener = self.mod.urllib.request.build_opener
+        original_sleep = self.mod.time.sleep
+        calls = []
 
         class FailingOpener:
             def open(self, request, timeout=30):
                 del request, timeout
+                calls.append(1)
                 raise self_mod.urllib.error.HTTPError(
                     "https://premium.titulky.com/download.php?id=101",
                     429,
@@ -329,13 +333,187 @@ class TitulkyProviderTests(unittest.TestCase):
 
         self_mod = self.mod
         self.mod.urllib.request.build_opener = lambda *args: FailingOpener()
+        self.mod.time.sleep = lambda *args, **kwargs: None
         try:
             response = provider._http_get("https://premium.titulky.com/download.php?id=101")
         finally:
             self.mod.urllib.request.build_opener = original_build_opener
+            self.mod.time.sleep = original_sleep
 
+        # 429 is transient: retried up to RETRY_MAX_ATTEMPTS, then the final
+        # response is converted to an HttpResponse (the 429->error mapping is
+        # preserved for the caller to handle).
+        self.assertEqual(len(calls), self.mod.RETRY_MAX_ATTEMPTS)
         self.assertEqual(response.status_code, 429)
         self.assertEqual(response.body, b"limited")
+
+    def test_http_get_retries_transient_url_error_then_succeeds(self):
+        provider = self.mod.TitulkyProvider()
+        original_build_opener = self.mod.urllib.request.build_opener
+        original_sleep = self.mod.time.sleep
+        attempts = []
+        sleeps = []
+
+        class _Resp:
+            def __init__(self):
+                self._body = b"ok-body"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def getcode(self):
+                return 200
+
+            def read(self):
+                return self._body
+
+            @property
+            def headers(self):
+                return {}
+
+            def geturl(self):
+                return "https://premium.titulky.com/?action=serial"
+
+        class FlakyOpener:
+            def open(self, request, timeout=30):
+                del request, timeout
+                attempts.append(1)
+                if len(attempts) == 1:
+                    raise self_mod.urllib.error.URLError("connection reset by peer")
+                if len(attempts) == 2:
+                    raise socket.timeout("timed out")
+                return _Resp()
+
+        self_mod = self.mod
+        self.mod.urllib.request.build_opener = lambda *args: FlakyOpener()
+        self.mod.time.sleep = lambda seconds: sleeps.append(seconds)
+        try:
+            response = provider._http_get("https://premium.titulky.com/?action=serial")
+        finally:
+            self.mod.urllib.request.build_opener = original_build_opener
+            self.mod.time.sleep = original_sleep
+
+        # Two transient failures, recovered on the third attempt.
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual(len(sleeps), 2)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.body, b"ok-body")
+
+    def test_http_get_retries_503_then_succeeds(self):
+        provider = self.mod.TitulkyProvider()
+        original_build_opener = self.mod.urllib.request.build_opener
+        original_sleep = self.mod.time.sleep
+        attempts = []
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def getcode(self):
+                return 200
+
+            def read(self):
+                return b"recovered"
+
+            @property
+            def headers(self):
+                return {}
+
+            def geturl(self):
+                return "https://premium.titulky.com/?action=serial"
+
+        class FlakyOpener:
+            def open(self, request, timeout=30):
+                del request, timeout
+                attempts.append(1)
+                if len(attempts) == 1:
+                    raise self_mod.urllib.error.HTTPError(
+                        "https://premium.titulky.com/?action=serial",
+                        503,
+                        "Service Unavailable",
+                        {},
+                        io.BytesIO(b"down"),
+                    )
+                return _Resp()
+
+        self_mod = self.mod
+        self.mod.urllib.request.build_opener = lambda *args: FlakyOpener()
+        self.mod.time.sleep = lambda *args, **kwargs: None
+        try:
+            response = provider._http_get("https://premium.titulky.com/?action=serial")
+        finally:
+            self.mod.urllib.request.build_opener = original_build_opener
+            self.mod.time.sleep = original_sleep
+
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.body, b"recovered")
+
+    def test_http_get_does_not_retry_404(self):
+        provider = self.mod.TitulkyProvider()
+        original_build_opener = self.mod.urllib.request.build_opener
+        original_sleep = self.mod.time.sleep
+        attempts = []
+        sleeps = []
+
+        class FailingOpener:
+            def open(self, request, timeout=30):
+                del request, timeout
+                attempts.append(1)
+                raise self_mod.urllib.error.HTTPError(
+                    "https://premium.titulky.com/?action=serial",
+                    404,
+                    "Not Found",
+                    {},
+                    io.BytesIO(b"missing"),
+                )
+
+        self_mod = self.mod
+        self.mod.urllib.request.build_opener = lambda *args: FailingOpener()
+        self.mod.time.sleep = lambda seconds: sleeps.append(seconds)
+        try:
+            response = provider._http_get("https://premium.titulky.com/?action=serial")
+        finally:
+            self.mod.urllib.request.build_opener = original_build_opener
+            self.mod.time.sleep = original_sleep
+
+        # 4xx (other than 429) is not transient: a single attempt, no backoff,
+        # converted to a response that the caller maps to an error.
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(sleeps, [])
+        self.assertEqual(response.status_code, 404)
+
+    def test_http_get_does_not_retry_url_error_after_max_attempts(self):
+        provider = self.mod.TitulkyProvider()
+        original_build_opener = self.mod.urllib.request.build_opener
+        original_sleep = self.mod.time.sleep
+        attempts = []
+
+        class FailingOpener:
+            def open(self, request, timeout=30):
+                del request, timeout
+                attempts.append(1)
+                raise self_mod.urllib.error.URLError("name or service not known")
+
+        self_mod = self.mod
+        self.mod.urllib.request.build_opener = lambda *args: FailingOpener()
+        self.mod.time.sleep = lambda *args, **kwargs: None
+        try:
+            with self.assertRaises(self.mod.urllib.error.URLError):
+                provider._http_get("https://premium.titulky.com/?action=serial")
+        finally:
+            self.mod.urllib.request.build_opener = original_build_opener
+            self.mod.time.sleep = original_sleep
+
+        # A persistent transient error is retried up to the cap, then re-raised
+        # unchanged so the provider surfaces the same failure it does today.
+        self.assertEqual(len(attempts), self.mod.RETRY_MAX_ATTEMPTS)
 
 
 if __name__ == "__main__":
