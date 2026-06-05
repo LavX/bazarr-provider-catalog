@@ -7,18 +7,10 @@ import io
 import json
 import os
 import re
-import shutil
-import subprocess
-import tempfile
 import time
 import urllib.parse
 import urllib.request
 import zipfile
-
-try:
-    import py7zz
-except ImportError:  # pragma: no cover, dependency is declared in manifest
-    py7zz = None
 
 PROVIDER_ID = "supersubtitles"
 BASE_URL = "https://feliratok.eu"
@@ -293,55 +285,29 @@ class SuperSubtitlesProvider:
 def extract_download(body, payload=None):
     payload = dict(payload or {})
     filename = payload.get("filename") or ""
-    if not body:
-        return _content_payload(b"", _format_from_filename(filename), empty=True)
-    if _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        selected = select_subtitle_file([name for name, _content in files], payload)
-        return _content_payload(dict(files)[selected], _subtitle_extension(selected) or "srt")
-    stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist(), payload)
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
+    # Reject broken responses up front: the download endpoint can answer with an empty
+    # stream or an HTML/error page that would otherwise look like a successful download.
+    if not body or not body.strip():
+        raise ValueError("supersubtitles empty download")
+    if _is_html_body(body):
+        raise ValueError("supersubtitles returned an HTML/error page")
+    if _is_archive_body(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
+        # the host, which lists it, picks the member by episode, and detects encoding.
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "episode": _safe_int(payload.get("episode")),
+        }
+    # Direct, non-archive subtitle body.
     subtitle_format = _subtitle_extension(filename) or ("srt" if _looks_like_subtitle(body) else "")
     if not subtitle_format:
         raise ValueError("supersubtitles download did not return a supported subtitle file")
     return _content_payload(body, subtitle_format)
 
 
-def select_subtitle_file(names, payload=None):
-    candidates = _archive_subtitle_candidates(names)
-    payload = dict(payload or {})
-    candidates = _episode_archive_candidates(candidates, payload)
-    return _best_subtitle_candidate(candidates, payload)
-
-
-def _archive_subtitle_candidates(names):
-    candidates = [name for name in names if _subtitle_extension(name) and not os.path.basename(name).startswith(".")]
-    if not candidates:
-        raise ValueError("supersubtitles archive contains no supported subtitle files")
-    return candidates
-
-
-def _episode_archive_candidates(candidates, payload):
-    if _safe_int(payload.get("season")) is None or _safe_int(payload.get("episode")) is None:
-        return candidates
-    matched = [name for name in candidates if _subtitle_file_matches_requested_episode(name, payload)]
-    if not matched:
-        raise ValueError("supersubtitles archive contains no subtitle file for the requested episode")
-    return matched
-
-
-def _best_subtitle_candidate(candidates, payload):
-    best_name = candidates[0]
-    best_score = _subtitle_file_score(best_name, payload)
-    for name in candidates[1:]:
-        score = _subtitle_file_score(name, payload)
-        if score > best_score:
-            best_name = name
-            best_score = score
-    return best_name
+def _is_archive_body(body):
+    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
 
 
 def _movie_matches(video, row):
@@ -518,162 +484,18 @@ def _provider_payload(row, language, filename, release_info):
     }
 
 
-def _extract_rar_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"SuperSubtitles RAR extraction failed: {details}") from errors[-1]
-    raise RuntimeError("SuperSubtitles RAR extraction requires bundled py7zz")
-
-
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("SuperSubtitles bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "supersubtitles.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_unar(body):
-    return _extract_rar_files_with_command(body, "unar", ["unar", "-quiet", "-o"])
-
-
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("SuperSubtitles RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "supersubtitles.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [sevenzip, "x", "-y", f"-o{output_dir}", archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract SuperSubtitles RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_command(body, command, args):
-    executable = shutil.which(command)
-    if not executable:
-        raise RuntimeError(f"SuperSubtitles RAR fallback requires {command}")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "supersubtitles.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [*args, output_dir, archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"{command} failed to extract SuperSubtitles RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            relative_path = os.path.relpath(path, output_dir)
-            if not _subtitle_extension(relative_path):
-                continue
-            with open(path, "rb") as handle:
-                files.append((relative_path, handle.read()))
-    if not files:
-        raise ValueError("supersubtitles archive contains no supported subtitle files")
-    return files
-
-
-def _content_payload(content, subtitle_format, empty=False):
+def _content_payload(content, subtitle_format):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     content = content or b""
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": "text/plain",
         "format": subtitle_format or "srt",
-        "encoding": _guess_encoding(content),
-        "empty": bool(empty),
+        "empty": False,
     }
-
-
-def _guess_encoding(content):
-    try:
-        (content or b"").decode("utf-8")
-        return "utf-8"
-    except UnicodeDecodeError:
-        return "cp1250"
-
-
-def _subtitle_file_score(name, payload):
-    normalized = _normalize(os.path.basename(name))
-    score = 0
-    season = _safe_int(payload.get("season"))
-    episode = _safe_int(payload.get("episode"))
-    if season is not None and episode is not None:
-        if _subtitle_file_has_episode_marker(normalized, season, episode):
-            score += 100
-        elif re.search(rf"\be0*{episode}\b", normalized):
-            score += 80
-    release_info = payload.get("release_info") or ""
-    release_group = _release_group_from_text(release_info)
-    if release_group and re.search(rf"\b{re.escape(_normalize(release_group))}\b", normalized):
-        score += 50
-    resolution = _resolution_from_text(release_info)
-    if resolution and resolution in normalized:
-        score += 15
-    source = _source_token(release_info)
-    if source and source in normalized:
-        score += 5
-    return score
-
-
-def _subtitle_file_matches_requested_episode(name, payload):
-    normalized = _normalize(os.path.basename(name))
-    season = _safe_int((payload or {}).get("season"))
-    episode = _safe_int((payload or {}).get("episode"))
-    if season is None or episode is None:
-        return True
-    return _subtitle_file_has_episode_marker(normalized, season, episode)
-
-
-def _subtitle_file_has_episode_marker(normalized_name, season, episode):
-    return bool(
-        re.search(rf"\bs0*{season}e0*{episode}\b", normalized_name)
-        or re.search(rf"\b0*{season}x0*{episode}\b", normalized_name)
-    )
 
 
 def _requested_variants(languages):
@@ -950,14 +772,18 @@ def _is_rar_archive(body):
     return (body or b"").startswith(b"Rar!\x1a\x07\x00") or (body or b"").startswith(b"Rar!\x1a\x07\x01\x00")
 
 
-def _release_group_from_text(value):
-    match = re.search(r"-([A-Za-z0-9][A-Za-z0-9._]+)\b", _coerce_text(value))
-    return match.group(1) if match else ""
-
-
-def _resolution_from_text(value):
-    match = re.search(r"\b(?:480p|576p|720p|1080p|2160p|4k)\b", _coerce_text(value), re.I)
-    return match.group(0).lower() if match else ""
+def _is_html_body(body):
+    if not body:
+        return False
+    head = body[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or head.startswith(b"<!--")
+        or b"<body" in head
+        or b"<head" in head
+    )
 
 
 def _source_token(value):
