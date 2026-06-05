@@ -4,21 +4,12 @@ import base64
 import hashlib
 import html
 import io
-import os
 import re
-import shutil
-import subprocess
-import tempfile
 import time
 import urllib.parse
 import urllib.request
 import zipfile
 from http.cookiejar import CookieJar
-
-try:
-    import py7zz
-except ImportError:  # pragma: no cover, dependency is declared in manifest
-    py7zz = None
 
 PROVIDER_ID = "titrari"
 BASE_URL = "https://www.titrari.ro"
@@ -174,53 +165,26 @@ def derive_matches(video, row):
 def extract_download(body, payload=None):
     payload = payload or {}
     filename = payload.get("filename") or ""
-    if not body:
-        return _content_payload(b"", _format_from_filename(filename), empty=True)
-    if _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        selected = select_subtitle_file([name for name, _data in files], payload)
-        return _content_payload(dict(files)[selected], _subtitle_extension(selected) or "srt")
-    stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist(), payload)
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
+    # Reject broken responses up front: get.php can answer with an empty stream or an
+    # HTML/error page that would otherwise look like a successful download.
+    if not body or not body.strip():
+        raise ValueError("titrari download returned an empty body")
     if _looks_like_html(body):
         raise ValueError("titrari download returned HTML instead of a subtitle file")
+    if _is_archive_body(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
+        # the host, which lists it, picks the member by episode, and detects encoding.
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "episode": payload.get("episode"),
+        }
+    # Direct, non-archive subtitle body.
     return _content_payload(body, _format_from_filename(filename))
 
 
-def select_subtitle_file(names, payload=None):
-    payload = payload or {}
-    candidates = [name for name in names if _is_supported_subtitle_name(name)]
-    if not candidates:
-        raise ValueError("titrari archive contains no supported subtitle files")
-    try:
-        episode = int(payload.get("episode"))
-    except (TypeError, ValueError):
-        episode = None
-    if episode is None:
-        return candidates[0]
-    season = _safe_int(payload.get("season"))
-
-    def score(name):
-        normalized = _normalize(os.path.basename(name))
-        value = _archive_episode_score(name, season, episode)
-        if value <= 0:
-            return 0
-        if _token_in_text(payload.get("resolution"), normalized):
-            value += 8
-        if _source_matches(payload.get("source"), normalized):
-            value += 8
-        if _release_group_matches(payload.get("release_group"), normalized):
-            value += 6
-        return value
-
-    single_candidate = _select_single_episode_candidate(candidates, score)
-    if single_candidate:
-        return single_candidate
-
-    return _best_scored_episode_candidate(candidates, score)
+def _is_archive_body(body):
+    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
 
 
 class TitrariProvider:
@@ -527,58 +491,6 @@ def _episode_matches(video, row):
     return not found_range
 
 
-def _archive_episode_score(name, season, episode):
-    basename = os.path.basename(name or "").lower()
-    has_structured_episode = False
-    best = 0
-    for pattern in (_SXXEXX_RE, _XX_RE, _S_SEPARATED_EPISODE_RE):
-        for match in pattern.finditer(basename):
-            has_structured_episode = True
-            if int(match.group("episode")) != episode:
-                continue
-            if season is None or int(match.group("season")) == season:
-                best = max(best, 100)
-    if best:
-        return best
-    if _EPISODE_RE.search(basename):
-        for match in _EPISODE_RE.finditer(basename):
-            if int(match.group("episode")) == episode:
-                return 90
-    return _archive_numeric_episode_score(basename, has_structured_episode, episode)
-
-
-def _select_single_episode_candidate(candidates, score):
-    if len(candidates) != 1:
-        return None
-    only = candidates[0]
-    value = score(only)
-    if value > 0 or not _archive_has_episode_hint(only):
-        return only
-    return None
-
-
-def _best_scored_episode_candidate(candidates, score):
-    selected = max(candidates, key=score)
-    if score(selected) <= 0:
-        raise ValueError("titrari archive does not contain the requested episode")
-    return selected
-
-
-def _archive_numeric_episode_score(basename, has_structured_episode, episode):
-    if has_structured_episode:
-        return 0
-    if re.search(rf"(?<!\d)0*{episode}(?!\d)", _normalize(basename)):
-        return 70
-    return 0
-
-
-def _archive_has_episode_hint(name):
-    basename = os.path.basename(name or "").lower()
-    if any(pattern.search(basename) for pattern in (_SXXEXX_RE, _XX_RE, _S_SEPARATED_EPISODE_RE, _EPISODE_RE)):
-        return True
-    return bool(re.search(r"(?<!\d)\d{1,3}(?!\d)", _normalize(basename)))
-
-
 def _release_group_matches(release_group, text):
     release_group = _coerce_text(release_group)
     if not release_group:
@@ -631,6 +543,9 @@ def _imdb_number(value):
 
 
 def _content_payload(content, fmt, empty=False):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     content = content or b""
     fmt = fmt or "srt"
     return {
@@ -638,7 +553,6 @@ def _content_payload(content, fmt, empty=False):
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(fmt),
         "format": fmt,
-        "encoding": "utf-8",
         "empty": bool(empty),
     }
 
@@ -667,11 +581,6 @@ def _subtitle_extension(name):
     return None
 
 
-def _is_supported_subtitle_name(name):
-    base = os.path.basename(name or "")
-    return bool(base and not base.startswith(".") and _subtitle_extension(base))
-
-
 def _looks_like_html(body):
     sample = (body or b"").lstrip()[:1024].lower()
     return sample.startswith(b"<!doctype html") or sample.startswith(b"<html") or b"<body" in sample
@@ -679,101 +588,6 @@ def _looks_like_html(body):
 
 def _is_rar_archive(body):
     return bool(body) and (body.startswith(b"Rar!\x1a\x07\x00") or body.startswith(b"Rar!\x1a\x07\x01\x00"))
-
-
-def _extract_rar_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"Titrari RAR extraction failed: {details}") from errors[-1]
-    raise RuntimeError("Titrari RAR extraction requires bundled py7zz")
-
-
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("Titrari bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "titrari.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_unar(body):
-    unar = shutil.which("unar")
-    if not unar:
-        raise RuntimeError("Titrari RAR fallback requires unar")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "titrari.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [unar, "-quiet", "-o", output_dir, archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"unar failed to extract Titrari RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("Titrari RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "titrari.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [sevenzip, "x", "-y", f"-o{output_dir}", archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract Titrari RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if not _is_supported_subtitle_name(rel):
-                continue
-            with open(path, "rb") as handle:
-                files.append((rel, handle.read()))
-    if not files:
-        raise ValueError("titrari archive contains no supported subtitle files")
-    return files
 
 
 def _sleep(config):
