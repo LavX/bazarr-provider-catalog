@@ -89,6 +89,26 @@ class SubtitriIdParserTests(unittest.TestCase):
         self.assertIn("title", matches)
         self.assertIn("year", matches)
 
+    def test_parse_titles_keeps_literal_slash_titles_intact(self):
+        for raw_title in ("Face/Off", "Frost/Nixon"):
+            detail = DETAIL_HTML.replace(b"Pirms\xc4\x81kums / Inception", raw_title.encode("utf-8"))
+            row = self.mod.parse_detail_page(
+                detail,
+                "https://subtitri.do.am/load/subtitri_2010_gada/inception_2010/4-1-0-406",
+            )
+
+            self.assertEqual(row["title"], raw_title)
+            self.assertEqual(row["local_title"], "")
+            self.assertIn("title", self.mod.derive_matches({"kind": "movie", "title": raw_title}, row))
+
+    def test_parse_titles_splits_spaced_local_original_separator(self):
+        title, local_title = self.mod._parse_titles(
+            '<h1 class="main-header"><KBD> Pirmsākums / Inception </KBD></h1>'
+        )
+
+        self.assertEqual(title, "Inception")
+        self.assertEqual(local_title, "Pirmsākums")
+
 
 class SubtitriIdProviderTests(unittest.TestCase):
     def setUp(self):
@@ -250,6 +270,19 @@ class SubtitriIdProviderTests(unittest.TestCase):
         decoded = base64.b64decode(result["content_b64"])
         self.assertEqual(decoded, b"1\n00:00:01,000 --> 00:00:02,000\nSveiki\n")
         self.assertEqual(result["format"], "srt")
+
+    def test_download_rejects_html_error_page(self):
+        html_error = (
+            b"<!DOCTYPE html>\n"
+            b"<!-- uCoz served this error page -->\n"
+            b"<html><head><title>404</title></head>"
+            b"<body>File not found</body></html>\n"
+        )
+
+        # The HTML comment ends in --> so the old subtitle-cue heuristic accepted it.
+        self.assertTrue(self.mod._looks_like_subtitle(html_error))
+        with self.assertRaises(ValueError):
+            self.mod.extract_download(html_error, {"filename": "subtitriid.inception.2010.lv.zip"})
 
     def test_download_returns_direct_subtitle_body(self):
         result = self.mod.extract_download(
