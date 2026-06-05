@@ -679,7 +679,7 @@ class SubtitlestarProviderDownloadTests(unittest.TestCase):
         provider._http_get = lambda url, timeout=15: body
         return provider
 
-    def test_download_returns_base64_for_zip(self):
+    def test_download_returns_archive_bytes_for_zip(self):
         import io
         import zipfile
         zip_buffer = io.BytesIO()
@@ -695,9 +695,12 @@ class SubtitlestarProviderDownloadTests(unittest.TestCase):
             language={"alpha3": "fas"},
             config={},
         )
-        self.assertEqual(result["format"], "srt")
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
         self.assertFalse(result["empty"])
-        self.assertEqual(base64.b64decode(result["content_b64"]), b"1\n00:00:01,000 --> 00:00:02,500\nHello\n")
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["member"], "dune.srt")
 
     def test_download_marks_empty_body(self):
         provider = self._provider_with_body(b"")
@@ -722,7 +725,7 @@ class SubtitlestarProviderDownloadTests(unittest.TestCase):
         self.assertEqual(result["format"], "vtt")
         self.assertEqual(result["content_type"], "text/vtt")
 
-    def test_download_merges_multipart_movie_zip_subtitles(self):
+    def test_download_returns_archive_with_selected_member_for_multipart_movie_zip(self):
         import io
         import zipfile
         zip_buffer = io.BytesIO()
@@ -741,9 +744,9 @@ class SubtitlestarProviderDownloadTests(unittest.TestCase):
             config={},
         )
 
-        decoded = base64.b64decode(result["content_b64"])
-        self.assertIn(b"Part one", decoded)
-        self.assertIn(b"Part two", decoded)
+        self.assertNotIn("content_b64", result)
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["member"], "Movie.CD1.srt")
 
     def test_download_rejects_html_body_from_zip_url(self):
         provider = self._provider_with_body(b"<html><title>blocked</title></html>")
@@ -757,13 +760,14 @@ class SubtitlestarProviderDownloadTests(unittest.TestCase):
                 config={},
             )
 
-    def test_download_marks_empty_archive_entry(self):
+    def test_download_returns_archive_for_episode_zip(self):
         import io
         import zipfile
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zf:
-            zf.writestr("Show.S01E05.srt", b"")
-        provider = self._provider_with_body(zip_buffer.getvalue())
+            zf.writestr("Show.S01E05.srt", "1\n00:00:01,000 --> 00:00:02,000\nHi\n")
+        body = zip_buffer.getvalue()
+        provider = self._provider_with_body(body)
 
         result = provider.download(
             provider_payload={
@@ -774,7 +778,10 @@ class SubtitlestarProviderDownloadTests(unittest.TestCase):
             config={},
         )
 
-        self.assertTrue(result["empty"])
+        self.assertFalse(result["empty"])
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["member"], "Show.S01E05.srt")
 
     def test_download_rejects_paired_vobsub_sub_member(self):
         import io

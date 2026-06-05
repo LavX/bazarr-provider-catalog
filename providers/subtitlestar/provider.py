@@ -630,17 +630,17 @@ def extract_download(body, filename="", video=None):
 
     stream = io.BytesIO(body)
     if zipfile.is_zipfile(stream):
+        # Host-side extraction (Provider Hub v1.1+): list the zip cheaply with stdlib
+        # zipfile to pick the member, then hand the raw archive bytes plus the chosen
+        # member name back to the host, which extracts it and detects the encoding.
         with zipfile.ZipFile(stream) as archive:
-            names = archive.namelist()
-            selected_files = select_subtitle_files(names, video or {})
-            subtitle_format = _subtitle_extension(selected_files[0]) or _format_from_filename(selected_files[0])
-            content = b"\n\n".join(archive.read(name) for name in selected_files)
-            if not content:
-                return _content_payload(b"", subtitle_format, empty=True)
-            return _content_payload(
-                content,
-                subtitle_format,
-            )
+            member = select_subtitle_file(archive.namelist(), video or {})
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "member": member,
+            "empty": False,
+        }
 
     filename_path = urllib.parse.urlparse(filename or "").path.lower()
     subtitle_format = _subtitle_extension(filename)
@@ -663,20 +663,16 @@ def _content_payload(content, subtitle_format, empty=False):
             "content_sha256": "",
             "content_type": _content_type(subtitle_format),
             "format": subtitle_format,
-            "encoding": "utf-8",
             "empty": True,
         }
-    encoding = "utf-8"
-    try:
-        content.decode("utf-8")
-    except UnicodeDecodeError:
-        encoding = "windows-1256"
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 
