@@ -6,8 +6,10 @@ import html
 import io
 import os
 import re
+import socket
 import time
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -16,6 +18,12 @@ from http.cookiejar import CookieJar
 PROVIDER_ID = "prijevodionline"
 BASE_URL = "https://www.prijevodi-online.org"
 HTTP_TIMEOUT_SECONDS = 10
+# Bounded transport retry: a single transient network blip (reset/DNS/timeout,
+# or a 5xx/429 from the host) should not abort a search or download. Mirrors the
+# ~3-try behaviour of upstream subliminal's RetryingSession.
+HTTP_RETRIES = 2
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8.0
 SUPPORTED_LANGUAGES = {
     "hrv": "hr",
     "srp": "sr",
@@ -171,8 +179,7 @@ class PrijevodiOnlineProvider:
         if referer:
             headers["Referer"] = referer
         request = urllib.request.Request(url, headers=headers)
-        with self._opener.open(request, timeout=timeout) as response:
-            return response.read()
+        return self._open_with_retry(request, timeout)
 
     def _http_post(self, url, data, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         headers = {
@@ -191,8 +198,34 @@ class PrijevodiOnlineProvider:
             headers=headers,
             method="POST",
         )
-        with self._opener.open(request, timeout=timeout) as response:
-            return response.read()
+        # The POST is the subtitle-list fetch (key lookup); it is read-only and
+        # safe to repeat, so the same bounded retry applies.
+        return self._open_with_retry(request, timeout)
+
+    def _open_with_retry(self, request, timeout):
+        # Wrap ONLY the raw urllib transport in a bounded retry. Retries cover
+        # transient failures (connection reset/DNS/refused, timeouts, HTTP 5xx
+        # and 429) and nothing else: 4xx other than 429, parse errors, and any
+        # non-network exception propagate unchanged on their first occurrence.
+        for attempt in range(1, HTTP_RETRIES + 2):
+            try:
+                with self._opener.open(request, timeout=timeout) as response:
+                    return response.read()
+            except urllib.error.HTTPError as error:
+                if not _is_retryable_status(error.code) or attempt >= HTTP_RETRIES + 1:
+                    raise
+                _sleep_backoff(attempt, _retry_after_seconds(error))
+            except (socket.timeout, TimeoutError):
+                if attempt >= HTTP_RETRIES + 1:
+                    raise
+                _sleep_backoff(attempt, None)
+            except urllib.error.URLError:
+                # URLError covers connection refused / DNS / reset. HTTPError is a
+                # subclass and was already handled above, so this branch is the
+                # genuine transport failure that is always transient here.
+                if attempt >= HTTP_RETRIES + 1:
+                    raise
+                _sleep_backoff(attempt, None)
 
     def search(self, video, languages, config):
         if (video or {}).get("kind") != "episode":
@@ -522,6 +555,37 @@ def _sleep(config):
     delay_ms = (config or {}).get("request_delay_ms", 0) or 0
     if delay_ms > 0:
         time.sleep(min(int(delay_ms), 5000) / 1000.0)
+
+
+def _is_retryable_status(code):
+    return code == 429 or 500 <= int(code) <= 599
+
+
+def _retry_after_seconds(error):
+    # Honour a Retry-After header on 429 when the host sends one. Only the
+    # numeric (delta-seconds) form is supported; an HTTP-date or junk value is
+    # ignored in favour of exponential backoff.
+    headers = getattr(error, "headers", None)
+    if not headers:
+        return None
+    raw = headers.get("Retry-After")
+    if raw is None:
+        return None
+    try:
+        seconds = float(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds >= 0 else None
+
+
+def _sleep_backoff(attempt, retry_after):
+    # Exponential backoff with a small base, capped. A valid Retry-After wins.
+    if retry_after is not None:
+        delay = retry_after
+    else:
+        delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    # Call the module-level time.sleep so tests can monkeypatch it.
+    time.sleep(min(delay, RETRY_BACKOFF_CAP_SECONDS))
 
 
 def _strip_tags(value):

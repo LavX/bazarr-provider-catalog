@@ -3,7 +3,9 @@ import hashlib
 import importlib.util
 import io
 import json
+import socket
 import unittest
+import urllib.error
 import zipfile
 from pathlib import Path
 
@@ -337,6 +339,175 @@ class PrijevodiOnlineProviderTests(unittest.TestCase):
                 {"alpha3": "hrv", "alpha2": "hr"},
                 {},
             )
+
+
+class _FakeResponse:
+    def __init__(self, body):
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return self._body
+
+
+class _ScriptedOpener:
+    """Opener stub that yields a scripted sequence of errors then a body.
+
+    Each entry is either an exception instance (raised) or bytes (returned via a
+    response context manager). Records every call so tests can assert attempt
+    counts.
+    """
+
+    def __init__(self, sequence):
+        self._sequence = list(sequence)
+        self.calls = 0
+
+    def open(self, request, timeout=None):
+        del request, timeout
+        self.calls += 1
+        step = self._sequence.pop(0)
+        if isinstance(step, Exception):
+            raise step
+        return _FakeResponse(step)
+
+
+def _http_error(code, retry_after=None):
+    headers = {}
+    if retry_after is not None:
+        headers["Retry-After"] = retry_after
+    return urllib.error.HTTPError(
+        "https://www.prijevodi-online.org/test", code, "boom", headers, io.BytesIO(b"")
+    )
+
+
+class PrijevodiOnlineTransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.slept = []
+        self._orig_sleep = self.mod.time.sleep
+        # Patch the module-level sleep to a no-op recorder so retries are instant
+        # and observable.
+        self.mod.time.sleep = lambda seconds: self.slept.append(seconds)
+
+    def tearDown(self):
+        self.mod.time.sleep = self._orig_sleep
+
+    def test_http_get_retries_url_error_then_succeeds(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        opener = _ScriptedOpener(
+            [urllib.error.URLError("connection reset"), b"<html>ok</html>"]
+        )
+        provider._opener = opener
+
+        body = provider._http_get("https://www.prijevodi-online.org/serije/index/g")
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(opener.calls, 2)
+        self.assertEqual(len(self.slept), 1)
+
+    def test_http_get_retries_timeout_then_succeeds(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        opener = _ScriptedOpener([socket.timeout("timed out"), b"payload"])
+        provider._opener = opener
+
+        body = provider._http_get("https://www.prijevodi-online.org/serije/index/g")
+
+        self.assertEqual(body, b"payload")
+        self.assertEqual(opener.calls, 2)
+
+    def test_http_get_retries_503_twice_then_succeeds(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        opener = _ScriptedOpener([_http_error(503), _http_error(503), b"finally"])
+        provider._opener = opener
+
+        body = provider._http_get("https://www.prijevodi-online.org/serije/index/g")
+
+        self.assertEqual(body, b"finally")
+        self.assertEqual(opener.calls, 3)
+        self.assertEqual(len(self.slept), 2)
+
+    def test_http_get_gives_up_after_three_attempts(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        opener = _ScriptedOpener(
+            [_http_error(500), _http_error(500), _http_error(500)]
+        )
+        provider._opener = opener
+
+        with self.assertRaises(urllib.error.HTTPError):
+            provider._http_get("https://www.prijevodi-online.org/serije/index/g")
+
+        self.assertEqual(opener.calls, 3)
+
+    def test_http_get_does_not_retry_404(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        opener = _ScriptedOpener([_http_error(404), b"never reached"])
+        provider._opener = opener
+
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            provider._http_get("https://www.prijevodi-online.org/serije/index/g")
+
+        self.assertEqual(ctx.exception.code, 404)
+        self.assertEqual(opener.calls, 1)
+        self.assertEqual(self.slept, [])
+
+    def test_http_get_does_not_retry_403(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        opener = _ScriptedOpener([_http_error(403), b"never reached"])
+        provider._opener = opener
+
+        with self.assertRaises(urllib.error.HTTPError):
+            provider._http_get("https://www.prijevodi-online.org/serije/index/g")
+
+        self.assertEqual(opener.calls, 1)
+
+    def test_http_post_retries_then_succeeds(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        opener = _ScriptedOpener([_http_error(502), b"post-ok"])
+        provider._opener = opener
+
+        body = provider._http_post(
+            "https://www.prijevodi-online.org/prijevod/get/33945", {"key": "abc"}
+        )
+
+        self.assertEqual(body, b"post-ok")
+        self.assertEqual(opener.calls, 2)
+
+    def test_429_honors_retry_after_header(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        opener = _ScriptedOpener([_http_error(429, retry_after="3"), b"after-429"])
+        provider._opener = opener
+
+        body = provider._http_get("https://www.prijevodi-online.org/serije/index/g")
+
+        self.assertEqual(body, b"after-429")
+        self.assertEqual(self.slept, [3.0])
+
+    def test_backoff_is_capped(self):
+        # A Retry-After far above the cap must still be clamped.
+        provider = self.mod.PrijevodiOnlineProvider()
+        opener = _ScriptedOpener([_http_error(429, retry_after="600"), b"ok"])
+        provider._opener = opener
+
+        provider._http_get("https://www.prijevodi-online.org/serije/index/g")
+
+        self.assertEqual(self.slept, [self.mod.RETRY_BACKOFF_CAP_SECONDS])
+
+    def test_value_error_is_not_retried(self):
+        # A non-network error from the transport must propagate on the first hit.
+        provider = self.mod.PrijevodiOnlineProvider()
+        opener = _ScriptedOpener([ValueError("not a network problem"), b"x"])
+        provider._opener = opener
+
+        with self.assertRaises(ValueError):
+            provider._http_get("https://www.prijevodi-online.org/serije/index/g")
+
+        self.assertEqual(opener.calls, 1)
+        self.assertEqual(self.slept, [])
 
 
 if __name__ == "__main__":
