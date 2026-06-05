@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "78ccd2b7f29b9b55a35867a7ccc0eb6a0a8f58a03dfe1aa49cfe729fa310345a",
+  "bundle_sha256": "58f56df6b1375ac4f37af920e9d354c555f3713953a6214192f2cdf9acab9ee0",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -296,7 +296,7 @@
   "entry_class": "WizdomProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "11bdf5bdd768e4df395e9d5758f0f6b56201293d78ea00352b42dbbf123d7b70"
+    "provider.py": "b6ab96bba7349145fe92c54f52384c17777e322bb76919797445ebcd1f103907"
   },
   "languages": [
     "heb"
@@ -318,5 +318,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.3"
+  "version": "0.1.4"
 }
