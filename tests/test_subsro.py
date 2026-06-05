@@ -2,11 +2,9 @@ import base64
 import hashlib
 import importlib.util
 import io
-import os
 import unittest
 import zipfile
 from pathlib import Path
-from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "subsro"
@@ -26,6 +24,10 @@ def _zip_body(filename, body):
     with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr(filename, body)
     return stream.getvalue()
+
+
+def _rar_body(payload=b"rar body"):
+    return b"Rar!\x1a\x07\x00" + payload
 
 
 class SubsRoConfigTests(unittest.TestCase):
@@ -357,14 +359,13 @@ class SubsRoProviderDownloadTests(unittest.TestCase):
         self.assertEqual(base64.b64decode(result["content_b64"]), body)
         self.assertEqual(result["content_sha256"], hashlib.sha256(body).hexdigest())
         self.assertEqual(result["format"], "srt")
+        self.assertNotIn("encoding", result)
+        self.assertNotIn("archive_b64", result)
 
-    def test_download_extracts_zip_archive(self):
+    def test_download_returns_raw_zip_archive_for_host_extraction(self):
         provider = self.mod.SubsRoProvider()
-        body = b"1\n00:00:01,000 --> 00:00:02,000\nSubtitle\n"
-        provider._http_get_bytes = lambda url, api_key, timeout=15: _zip_body(
-            "Inception.2010.en.srt",
-            body,
-        )
+        archive = _zip_body("Inception.2010.en.srt", b"1\n00:00:01,000 --> 00:00:02,000\nSubtitle\n")
+        provider._http_get_bytes = lambda url, api_key, timeout=15: archive
 
         result = provider.download(
             {
@@ -373,50 +374,74 @@ class SubsRoProviderDownloadTests(unittest.TestCase):
                 "subtitle_id": 101,
                 "download_url": "https://subs.ro/api/v1.0/subtitle/101/download",
                 "filename": "subsro.101.en.zip",
+                "episode": None,
             },
             {"alpha3": "eng", "alpha2": "en"},
             {"api_key": "key-one"},
         )
 
-        self.assertEqual(base64.b64decode(result["content_b64"]), body)
-        self.assertEqual(result["format"], "srt")
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertIsNone(result["episode"])
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
 
-    def test_download_extracts_rar_archive_via_bundled_py7zz(self):
+    def test_download_returns_raw_rar_archive_and_carries_episode(self):
         provider = self.mod.SubsRoProvider()
-        provider._http_get_bytes = lambda url, api_key, timeout=15: b"Rar!\x1a\x07\x00rar body"
-        with mock.patch.object(
-            self.mod,
-            "_extract_rar_files",
-            return_value=[("Game.of.Thrones.S01E01.ro.srt", b"1\nsubtitle\n")],
-        ) as extractor:
-            result = provider.download(
+        archive = _rar_body(b"binary rar payload")
+        provider._http_get_bytes = lambda url, api_key, timeout=15: archive
+
+        result = provider.download(
+            {
+                "provider": "subsro",
+                "schema": 1,
+                "subtitle_id": 202,
+                "download_url": "https://subs.ro/api/v1.0/subtitle/202/download",
+                "filename": "subsro.202.ro.rar",
+                "episode": 1,
+            },
+            {"alpha3": "ron", "alpha2": "ro"},
+            {"api_key": "key-one"},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["episode"], 1)
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
+
+    def test_download_raises_on_empty_body(self):
+        provider = self.mod.SubsRoProvider()
+        provider._http_get_bytes = lambda url, api_key, timeout=15: b"   \n"
+
+        with self.assertRaisesRegex(ValueError, "empty"):
+            provider.download(
                 {
                     "provider": "subsro",
                     "schema": 1,
-                    "subtitle_id": 202,
-                    "download_url": "https://subs.ro/api/v1.0/subtitle/202/download",
-                    "filename": "subsro.202.ro.rar",
-                    "episode": 1,
+                    "subtitle_id": 303,
+                    "download_url": "https://subs.ro/api/v1.0/subtitle/303/download",
+                    "filename": "subsro.303.ro.srt",
                 },
                 {"alpha3": "ron", "alpha2": "ro"},
                 {"api_key": "key-one"},
             )
 
-        extractor.assert_called_once()
-        self.assertEqual(base64.b64decode(result["content_b64"]), b"1\nsubtitle\n")
-        self.assertEqual(result["format"], "srt")
+    def test_download_raises_on_html_error_page(self):
+        provider = self.mod.SubsRoProvider()
+        provider._http_get_bytes = lambda url, api_key, timeout=15: b"<!DOCTYPE html><html><body>Not found</body></html>"
 
-    def test_rar_extraction_prefers_bundled_py7zz(self):
-        class FakePy7zz:
-            @staticmethod
-            def extract_archive(_archive_path, output_dir):
-                with open(os.path.join(output_dir, "episode.srt"), "wb") as handle:
-                    handle.write(b"subtitle")
-
-        with mock.patch.object(self.mod, "py7zz", FakePy7zz):
-            self.assertEqual(
-                self.mod._extract_rar_files(b"rar bytes"),
-                [("episode.srt", b"subtitle")],
+        with self.assertRaisesRegex(ValueError, "HTML"):
+            provider.download(
+                {
+                    "provider": "subsro",
+                    "schema": 1,
+                    "subtitle_id": 404,
+                    "download_url": "https://subs.ro/api/v1.0/subtitle/404/download",
+                    "filename": "subsro.404.ro.zip",
+                },
+                {"alpha3": "ron", "alpha2": "ro"},
+                {"api_key": "key-one"},
             )
 
 
