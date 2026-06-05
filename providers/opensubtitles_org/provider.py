@@ -431,20 +431,19 @@ def _score_from_matches(matches, include_hash=True):
     return min(score, 100)
 
 
-def _content_payload(content, format_=SUBTITLE_FORMAT, encoding=None):
+def _content_payload(content, format_=SUBTITLE_FORMAT):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     if isinstance(content, str):
-        content = content.encode(encoding or "utf-8")
-    digest = hashlib.sha256(content).hexdigest()
-    payload = {
+        content = content.encode("utf-8")
+    return {
         "content_b64": base64.b64encode(content).decode("ascii"),
-        "content_sha256": digest,
+        "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(format_),
         "empty": False,
         "format": format_,
     }
-    if encoding:
-        payload["encoding"] = encoding
-    return payload
 
 
 def _content_type(format_):
@@ -618,6 +617,8 @@ def _candidate(
             "filename": filename,
             "release_info": release_name,
             "moviehash": subtitle_hash or None,
+            "season": season,
+            "episode": episode,
         },
         "display": {
             "download_count": int(download_count or 0),
@@ -936,24 +937,42 @@ def _parse_subtitle_rows(html_text, movie_url):
     return subtitles
 
 
-def _extract_subtitle_from_zip(content, preferred_filename=None):
+def _select_zip_member(content, preferred_filename=None):
+    # List the archive with stdlib zipfile and pick a member, but leave the actual
+    # extraction and encoding detection to the host (Provider Hub v1.1+).
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
         names = [name for name in archive.namelist() if not name.endswith("/")]
-        subtitle_names = [
-            name
-            for name in names
-            if os.path.splitext(name.lower())[1] in {".srt", ".ass", ".ssa", ".vtt", ".sub"}
-        ]
-        if not subtitle_names:
-            raise ServiceUnavailable("OpenSubtitles.org archive contained no subtitle file")
-        selected = subtitle_names[0]
-        if preferred_filename:
-            preferred = os.path.basename(preferred_filename).lower()
-            for name in subtitle_names:
-                if os.path.basename(name).lower() == preferred:
-                    selected = name
-                    break
-        return archive.read(selected), selected
+    subtitle_names = [
+        name
+        for name in names
+        if os.path.splitext(name.lower())[1] in {".srt", ".ass", ".ssa", ".vtt", ".sub"}
+    ]
+    if not subtitle_names:
+        raise ServiceUnavailable("OpenSubtitles.org archive contained no subtitle file")
+    selected = subtitle_names[0]
+    if preferred_filename:
+        preferred = os.path.basename(preferred_filename).lower()
+        for name in subtitle_names:
+            if os.path.basename(name).lower() == preferred:
+                selected = name
+                break
+    return selected
+
+
+def _archive_payload(content, member):
+    return {
+        "archive_b64": base64.b64encode(content).decode("ascii"),
+        "archive_sha256": hashlib.sha256(content).hexdigest(),
+        "member": member,
+    }
+
+
+def _is_rar(content):
+    return content[:4] == b"Rar!"
+
+
+def _is_7z(content):
+    return content[:6] == b"7z\xbc\xaf\x27\x1c"
 
 
 def _episode_mismatch(item, context):
@@ -1054,9 +1073,9 @@ class OpenSubtitlesOrgProvider:
         response = self._http_get(direct_url, config or {})
         content = getattr(response, "content", b"") or b""
         content_type = (getattr(response, "headers", {}) or {}).get("content-type", "").lower()
-        if content.startswith(b"PK") or "zip" in content_type:
-            content, filename = _extract_subtitle_from_zip(content, payload.get("filename"))
-            return _content_payload(content, format_=os.path.splitext(filename)[1].lstrip(".") or SUBTITLE_FORMAT)
+        archive = self._archive_download(content, content_type, payload)
+        if archive is not None:
+            return archive
         if b"<html" in content[:200].lower():
             page_html = _response_text(response)
             match = _DOWNLOAD_LINK_RE.search(page_html)
@@ -1064,12 +1083,29 @@ class OpenSubtitlesOrgProvider:
                 raise ServiceUnavailable("OpenSubtitles.org download page contained no subtitle link")
             response = self._http_get(_absolute_url(match.group("href"), BASE_URL), config or {})
             content = getattr(response, "content", b"") or b""
-            if content.startswith(b"PK"):
-                content, filename = _extract_subtitle_from_zip(content, payload.get("filename"))
-                return _content_payload(content, format_=os.path.splitext(filename)[1].lstrip(".") or SUBTITLE_FORMAT)
+            archive = self._archive_download(content, "", payload)
+            if archive is not None:
+                return archive
         if not content:
             raise ServiceUnavailable("OpenSubtitles.org downloaded empty subtitle")
         return _content_payload(content, format_=os.path.splitext(payload.get("filename") or "")[1].lstrip(".") or SUBTITLE_FORMAT)
+
+    def _archive_download(self, content, content_type, payload):
+        # Host-side extraction (Provider Hub v1.1+): hand back the raw archive bytes.
+        # Zip members are cheap to list, so select the member here; for rar/7z let the
+        # host pick by episode. Either way the host extracts and detects the encoding.
+        if not content:
+            return None
+        if zipfile.is_zipfile(io.BytesIO(content)) or content.startswith(b"PK") or "zip" in content_type:
+            return _archive_payload(content, _select_zip_member(content, payload.get("filename")))
+        if _is_rar(content) or _is_7z(content):
+            archive = {
+                "archive_b64": base64.b64encode(content).decode("ascii"),
+                "archive_sha256": hashlib.sha256(content).hexdigest(),
+                "episode": payload.get("episode"),
+            }
+            return archive
+        return None
 
     def _build_hash_search_url(self, context):
         if not context.hash:
