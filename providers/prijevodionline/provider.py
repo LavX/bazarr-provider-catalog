@@ -6,20 +6,12 @@ import html
 import io
 import os
 import re
-import shutil
-import subprocess
-import tempfile
 import time
 import unicodedata
 import urllib.parse
 import urllib.request
 import zipfile
 from http.cookiejar import CookieJar
-
-try:
-    import py7zz
-except ImportError:  # pragma: no cover, dependency is declared in manifest
-    py7zz = None
 
 PROVIDER_ID = "prijevodionline"
 BASE_URL = "https://www.prijevodi-online.org"
@@ -61,7 +53,6 @@ _CELL_RE = re.compile(r"<t[dh]\b[^>]*>(?P<body>.*?)</t[dh]>", re.I | re.S)
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
 _NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
-_SXXEXX_RE = re.compile(r"\b(?:s(?P<s1>\d{1,2})e(?P<e1>\d{1,3})|(?P<s2>\d{1,2})x(?P<e2>\d{1,3}))\b", re.I)
 
 
 def parse_series_index(body):
@@ -338,166 +329,31 @@ class PrijevodiOnlineProvider:
         if not url:
             raise ValueError("prijevodionline download requires url")
         body = self._http_get(url, timeout=30)
-        return extract_download(body, payload.get("filename", ""), payload)
+        return _download_payload(body, payload)
 
 
-def extract_download(body, filename="", payload=None):
+def _download_payload(body, payload):
     payload = payload or {}
-    if not body:
-        return _content_payload(b"", _format_from_filename(filename), empty=True)
-    if _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        selected = select_subtitle_file([name for name, _data in files], payload)
-        return _content_payload(dict(files)[selected], _subtitle_extension(selected) or "srt")
-    stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist(), payload)
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
-    return _content_payload(body, _format_from_filename(filename))
+    # Reject broken responses up front: the download endpoint can answer with an empty
+    # stream or an HTML/error page that would otherwise look like a successful download.
+    if not body or not body.strip():
+        raise ValueError(f"prijevodionline empty download for subtitle {payload.get('subtitle_id')}")
+    if _is_html_body(body):
+        raise ValueError(f"prijevodionline returned an HTML/error page for subtitle {payload.get('subtitle_id')}")
+    if _is_archive_body(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
+        # the host, which lists it, picks the member by episode, and detects encoding.
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "episode": payload.get("episode"),
+        }
+    # Direct, non-archive subtitle body.
+    return _content_payload(body, _format_from_filename(payload.get("filename")))
 
 
-def select_subtitle_file(names, payload):
-    candidates = [name for name in names if _subtitle_extension(name)]
-    if not candidates:
-        raise ValueError("prijevodionline archive contains no supported subtitle files")
-    try:
-        season = int((payload or {}).get("season"))
-        episode = int((payload or {}).get("episode"))
-    except (TypeError, ValueError):
-        season = episode = None
-    releases = [_normalize_release(value) for value in (payload or {}).get("releases") or []]
-
-    def score(index_name):
-        index, name = index_name
-        del index
-        base = os.path.basename(name)
-        normalized = _normalize_release(base)
-        value = 0
-        if season is not None and episode is not None:
-            # Match episode tokens as standalone numbers so a single-digit
-            # episode (e1/1x1) never matches a longer one (e10/1x10) via a
-            # trailing-digit substring.
-            tokens = _episode_tokens(base)
-            if (season, episode) in tokens:
-                value += 100
-            elif any(token_episode == episode for _season, token_episode in tokens):
-                value += 80
-        if releases and any(release and release in normalized for release in releases):
-            value += 30
-        return value
-
-    return max(enumerate(candidates), key=score)[1]
-
-
-def _episode_tokens(name):
-    # Parse standalone SxxExx / NxNN markers so episode matching never relies
-    # on substring containment (which would let e1 match e10 or 1x1 match 1x10).
-    tokens = []
-    for match in _SXXEXX_RE.finditer(name or ""):
-        if match.group("s1") is not None:
-            season_value = int(match.group("s1"))
-            episode_value = int(match.group("e1"))
-        else:
-            season_value = int(match.group("s2"))
-            episode_value = int(match.group("e2"))
-        tokens.append((season_value, episode_value))
-    return tokens
-
-
-def _extract_rar_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"PrijevodiOnline RAR extraction failed: {details}") from errors[-1]
-    raise RuntimeError("PrijevodiOnline RAR extraction requires bundled py7zz")
-
-
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("PrijevodiOnline bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "prijevodionline.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_unar(body):
-    unar = shutil.which("unar")
-    if not unar:
-        raise RuntimeError("PrijevodiOnline RAR fallback requires unar")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "prijevodionline.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [unar, "-quiet", "-o", output_dir, archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"unar failed to extract PrijevodiOnline RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("PrijevodiOnline RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "prijevodionline.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [sevenzip, "x", "-y", f"-o{output_dir}", archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract PrijevodiOnline RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if not _subtitle_extension(rel):
-                continue
-            with open(path, "rb") as handle:
-                files.append((rel, handle.read()))
-    if not files:
-        raise ValueError("prijevodionline archive contains no supported subtitle files")
-    return files
+def _is_archive_body(body):
+    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
 
 
 def _episode_fields(body):
@@ -594,6 +450,20 @@ def _is_rar_archive(body):
     )
 
 
+def _is_html_body(body):
+    if not body:
+        return False
+    head = body[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or head.startswith(b"<!--")
+        or b"<body" in head
+        or b"<head" in head
+    )
+
+
 def _subtitle_extension(name):
     lowered = (name or "").lower()
     for extension in SUBTITLE_EXTENSIONS:
@@ -606,30 +476,15 @@ def _format_from_filename(filename):
     return _subtitle_extension(filename or "") or "srt"
 
 
-def _content_payload(content, subtitle_format, empty=False):
-    if empty:
-        return {
-            "content_b64": "",
-            "content_sha256": "",
-            "content_type": _content_type(subtitle_format),
-            "format": subtitle_format,
-            "encoding": "utf-8",
-            "empty": True,
-        }
-    encoding = "utf-8"
-    for candidate in ("utf-8", "cp1250", "latin-1"):
-        try:
-            content.decode(candidate)
-            encoding = candidate
-            break
-        except UnicodeDecodeError:
-            continue
+def _content_payload(content, subtitle_format):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 
