@@ -5,11 +5,7 @@ import hashlib
 import html
 import io
 import json
-import os
 import re
-import shutil
-import subprocess
-import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -20,11 +16,6 @@ try:
     import cloudscraper
 except ImportError:  # pragma: no cover, dependency is declared in manifest
     cloudscraper = None
-
-try:
-    import py7zz
-except ImportError:  # pragma: no cover, dependency is declared in manifest
-    py7zz = None
 
 PROVIDER_ID = "yavkanet"
 BASE_URL = "https://yavka.net"
@@ -257,63 +248,26 @@ def http_post(url, data=None, timeout=30, config=None, state=None, referer=None)
 def extract_download(body, payload=None):
     payload = payload or {}
     filename = payload.get("filename") or ""
+    # Reject broken responses up front: a 200 with an empty stream or an HTML/error
+    # page would otherwise look like a successful download.
     if not body:
-        return _content_payload(b"", _format_from_filename(filename), empty=True)
-    if _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        selected = select_subtitle_file([name for name, _data in files], payload)
-        return _content_payload(dict(files)[selected], _subtitle_extension(selected) or "srt")
-    stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist(), payload)
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
+        raise ValueError("yavkanet download returned an empty body")
     if _looks_like_html(body):
         raise ValueError("yavkanet download returned HTML instead of a subtitle archive")
+    if _is_archive_body(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
+        # the host, which lists it, picks the member by episode, and detects encoding.
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "episode": payload.get("episode"),
+        }
+    # Direct, non-archive subtitle body.
     return _content_payload(body, _format_from_filename(filename))
 
 
-def select_subtitle_file(names, payload=None):
-    payload = payload or {}
-    candidates = [name for name in names if _is_supported_subtitle_name(name)]
-    if not candidates:
-        raise ValueError("yavkanet archive contains no supported subtitle files")
-    video = payload.get("video") or {}
-    episode_required = video.get("kind") == "episode" and video.get("episode")
-    has_episode_markers = any(_has_episode_marker(name) or _is_numeric_episode_name(name) for name in candidates)
-
-    def score(name):
-        text = name
-        value = 0
-        if episode_required:
-            if _season_episode_matches(video.get("season"), video.get("episode"), text):
-                value += 120
-            elif _has_season_episode_marker(text):
-                return 0
-            elif _episode_matches(video.get("episode"), text):
-                value += 100
-            elif _numeric_episode_matches(video.get("episode"), text):
-                value += 100
-            elif _has_episode_marker(name):
-                return 0
-            elif _is_numeric_episode_name(name):
-                return 0
-        if (not episode_required and video.get("kind") == "episode" and _episode_matches(video.get("episode"), text)):
-            value += 100
-        if _token_in_text(video.get("resolution"), text):
-            value += 20
-        if _source_matches(video.get("source"), text):
-            value += 20
-        if _release_group_matches(video.get("release_group"), text):
-            value += 20
-        if _title_in_text(video.get("title") or video.get("series"), text):
-            value += 10
-        return value
-
-    selected = max(candidates, key=score)
-    if episode_required and has_episode_markers and score(selected) <= 0:
-        raise ValueError("yavkanet archive does not contain the requested episode")
-    return selected
+def _is_archive_body(body):
+    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
 
 
 class YavkaNetProvider:
@@ -428,6 +382,8 @@ def _result_from_row(video, row, form, language):
             "release": row["release"],
             "page_url": row["page_url"],
             "language": language["alpha3"],
+            "season": _safe_int((video or {}).get("season")),
+            "episode": _safe_int((video or {}).get("episode")),
             "video": _video_payload(video),
         },
     }
@@ -923,43 +879,8 @@ def _episode_matches(episode, text):
     return False
 
 
-def _season_episode_matches(season, episode, text):
-    try:
-        season_int = int(season)
-        episode_int = int(episode)
-    except (TypeError, ValueError):
-        return False
-    for match in _SXXEXX_RE.finditer(text or ""):
-        if int(match.group("season")) == season_int and int(match.group("episode")) == episode_int:
-            return True
-    return False
-
-
 def _has_season_episode_marker(text):
     return bool(_SXXEXX_RE.search(text or ""))
-
-
-def _numeric_episode_matches(episode, text):
-    try:
-        episode_int = int(episode)
-    except (TypeError, ValueError):
-        return False
-    return _numeric_episode_number(text) == episode_int
-
-
-def _is_numeric_episode_name(text):
-    return _numeric_episode_number(text) is not None
-
-
-def _numeric_episode_number(text):
-    stem = os.path.splitext(os.path.basename(text or ""))[0]
-    if re.fullmatch(r"\d{1,3}", stem or ""):
-        return int(stem)
-    return None
-
-
-def _has_episode_marker(text):
-    return bool(_SXXEXX_RE.search(text or "") or _EPISODE_RE.search(text or ""))
 
 
 def _release_group_matches(release_group, text):
@@ -995,7 +916,10 @@ def _same_int(left, right):
         return False
 
 
-def _content_payload(content, fmt, empty=False):
+def _content_payload(content, fmt):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     content = content or b""
     fmt = fmt or "srt"
     return {
@@ -1003,22 +927,8 @@ def _content_payload(content, fmt, empty=False):
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(fmt),
         "format": fmt,
-        "encoding": _detect_encoding(content),
-        "empty": bool(empty),
+        "empty": False,
     }
-
-
-def _detect_encoding(content):
-    # Yavka serves Cyrillic Bulgarian releases that are often Windows-1251
-    # rather than UTF-8, so report the encoding that actually decodes the bytes
-    # instead of always claiming UTF-8.
-    for candidate in ("utf-8", "cp1251", "windows-1251", "latin-1"):
-        try:
-            (content or b"").decode(candidate)
-            return candidate
-        except UnicodeDecodeError:
-            continue
-    return "utf-8"
 
 
 def _content_type(fmt):
@@ -1043,11 +953,6 @@ def _subtitle_extension(name):
     return None
 
 
-def _is_supported_subtitle_name(name):
-    base = os.path.basename(name or "")
-    return bool(base and not base.startswith(".") and _subtitle_extension(base))
-
-
 def _looks_like_html(body):
     sample = (body or b"").lstrip()[:1024].lower()
     return sample.startswith(b"<!doctype html") or sample.startswith(b"<html") or b"<body" in sample
@@ -1055,91 +960,6 @@ def _looks_like_html(body):
 
 def _is_rar_archive(body):
     return bool(body) and (body.startswith(b"Rar!\x1a\x07\x00") or body.startswith(b"Rar!\x1a\x07\x01\x00"))
-
-
-def _extract_rar_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"YavkaNet RAR extraction failed: {details}") from errors[-1]
-    raise RuntimeError("YavkaNet RAR extraction requires bundled py7zz")
-
-
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("YavkaNet bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "yavkanet.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_unar(body):
-    unar = shutil.which("unar")
-    if not unar:
-        raise RuntimeError("YavkaNet RAR fallback requires unar")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "yavkanet.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run([unar, "-quiet", "-o", output_dir, archive_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"unar failed to extract YavkaNet RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("YavkaNet RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "yavkanet.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run([sevenzip, "x", "-y", f"-o{output_dir}", archive_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract YavkaNet RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if not _is_supported_subtitle_name(rel):
-                continue
-            with open(path, "rb") as handle:
-                files.append((rel, handle.read()))
-    if not files:
-        raise ValueError("yavkanet archive contains no supported subtitle files")
-    return files
 
 
 def _sleep(config):
