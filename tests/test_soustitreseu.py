@@ -235,13 +235,12 @@ class SoustitreseuProviderTests(unittest.TestCase):
         self.assertEqual(provider.search({"kind": "episode", "series": "Game of Thrones"}, [{"alpha3": "fra"}], {}), [])
         self.assertEqual(provider.search({"kind": "movie", "title": "Dune"}, [{"alpha3": "deu"}], {}), [])
 
-    def test_download_selects_episode_language_from_zip_archive(self):
+    def test_download_zip_archive_returns_raw_archive_for_host(self):
         provider = self.mod.SoustitreseuProvider()
         body = _zip_body(
             {
                 "Game.Of.Thrones.101.ctu.720p.VF.NoTAG.srt": "french subtitle",
                 "Game.Of.Thrones.101.ctu.720p.VO.NoTAG.srt": "english subtitle",
-                "Game.Of.Thrones.102.ctu.720p.VO.NoTAG.srt": "wrong episode",
             }
         )
         provider._http_get = lambda url, timeout=30, referer=None: body
@@ -258,36 +257,117 @@ class SoustitreseuProviderTests(unittest.TestCase):
             {"alpha3": "eng", "alpha2": "en"},
             {},
         )
-        data = base64.b64decode(content["content_b64"])
 
-        self.assertEqual(data, b"english subtitle")
-        self.assertEqual(content["content_sha256"], hashlib.sha256(data).hexdigest())
-        self.assertEqual(content["format"], "srt")
+        # Archive mode: the worker hands the raw archive bytes back untouched.
+        self.assertEqual(base64.b64decode(content["archive_b64"]), body)
+        self.assertEqual(content["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(content["episode"], 1)
+        # No extraction, member selection, or encoding guessing happens worker-side.
+        self.assertNotIn("content_b64", content)
+        self.assertNotIn("member", content)
+        self.assertNotIn("encoding", content)
 
-    def test_download_prioritizes_episode_over_language_from_zip_archive(self):
+    def test_download_rar_archive_returns_raw_archive_for_host(self):
         provider = self.mod.SoustitreseuProvider()
-        body = _zip_body(
-            {
-                "Game.Of.Thrones.S01E01.VF.srt": "requested episode",
-                "Game.Of.Thrones.S01E02.VO.srt": "wrong episode",
-            }
-        )
+        # Minimal RAR4 signature; the host extracts, the worker only forwards bytes.
+        body = b"Rar!\x1a\x07\x00" + b"\x00" * 32
         provider._http_get = lambda url, timeout=30, referer=None: body
 
         content = provider.download(
             {
-                "url": "https://www.sous-titres.eu/series/download/1f7d3i5ypv2bv0m/Game.Of.Thrones.S01.ENFR.zip",
-                "filename": "Game.Of.Thrones.S01.ENFR.zip",
+                "url": "https://www.sous-titres.eu/series/download/1f7d3i5ypv2bv0m/Game.Of.Thrones.S01.ENFR.rar",
+                "filename": "Game.Of.Thrones.S01.ENFR.rar",
                 "media_type": "series",
                 "season": 1,
-                "episode": 1,
-                "release_info": "Game.Of.Thrones.S01.ENFR.zip",
+                "episode": 7,
+                "release_info": "Game.Of.Thrones.S01.ENFR.rar",
             },
             {"alpha3": "eng", "alpha2": "en"},
             {},
         )
 
-        self.assertEqual(base64.b64decode(content["content_b64"]), b"requested episode")
+        self.assertEqual(base64.b64decode(content["archive_b64"]), body)
+        self.assertEqual(content["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(content["episode"], 7)
+        self.assertNotIn("content_b64", content)
+
+    def test_download_archive_episode_is_none_for_movie(self):
+        provider = self.mod.SoustitreseuProvider()
+        body = _zip_body({"Dune.Part.One.2021.WEB.VF.srt": "movie subtitle"})
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        content = provider.download(
+            {
+                "url": "https://www.sous-titres.eu/films/download/krbse0p1duwc8oi/Dune.Part.One.(2021).Z2.WEB.zip",
+                "filename": "Dune.Part.One.(2021).Z2.WEB.zip",
+                "media_type": "film",
+                "season": None,
+                "episode": None,
+                "release_info": "Dune.Part.One.(2021).Z2.WEB.zip",
+            },
+            {"alpha3": "fra", "alpha2": "fr"},
+            {},
+        )
+
+        self.assertEqual(base64.b64decode(content["archive_b64"]), body)
+        self.assertIsNone(content["episode"])
+        self.assertNotIn("content_b64", content)
+
+    def test_download_direct_subtitle_body_returns_content_mode(self):
+        provider = self.mod.SoustitreseuProvider()
+        body = b"1\n00:00:01,000 --> 00:00:02,000\nText\n"
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        content = provider.download(
+            {
+                "url": "https://www.sous-titres.eu/series/download/abc/Game.Of.Thrones.1x01.srt",
+                "filename": "Game.Of.Thrones.1x01.srt",
+                "media_type": "series",
+                "season": 1,
+                "episode": 1,
+            },
+            {"alpha3": "eng", "alpha2": "en"},
+            {},
+        )
+        data = base64.b64decode(content["content_b64"])
+
+        self.assertEqual(data, body)
+        self.assertEqual(content["content_sha256"], hashlib.sha256(data).hexdigest())
+        self.assertEqual(content["format"], "srt")
+        # Direct content path must not ship a worker-guessed encoding; the host normalizes.
+        self.assertNotIn("encoding", content)
+        self.assertNotIn("archive_b64", content)
+
+    def test_download_rejects_html_error_page(self):
+        provider = self.mod.SoustitreseuProvider()
+        provider._http_get = lambda url, timeout=30, referer=None: (
+            b"<!DOCTYPE html>\n<html><head><title>404</title></head>"
+            b"<body>Subtitle not found</body></html>"
+        )
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {
+                    "url": "https://www.sous-titres.eu/series/download/abc/Game.Of.Thrones.1x01.zip",
+                    "filename": "Game.Of.Thrones.1x01.zip",
+                },
+                {"alpha3": "eng", "alpha2": "en"},
+                {},
+            )
+
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.SoustitreseuProvider()
+        provider._http_get = lambda url, timeout=30, referer=None: b"   \r\n  "
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {
+                    "url": "https://www.sous-titres.eu/series/download/abc/Game.Of.Thrones.1x01.zip",
+                    "filename": "Game.Of.Thrones.1x01.zip",
+                },
+                {"alpha3": "eng", "alpha2": "en"},
+                {},
+            )
 
 
 if __name__ == "__main__":
