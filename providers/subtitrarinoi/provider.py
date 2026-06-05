@@ -6,19 +6,11 @@ import html
 import io
 import os
 import re
-import shutil
-import subprocess
-import tempfile
 import time
 import unicodedata
 import urllib.parse
 import urllib.request
 import zipfile
-
-try:
-    import py7zz
-except ImportError:  # pragma: no cover, dependency is declared in manifest
-    py7zz = None
 
 PROVIDER_ID = "subtitrarinoi"
 BASE_URL = "https://www.subtitrari-noi.ro"
@@ -250,178 +242,27 @@ class SubtitrariNoiProvider:
 def extract_download(body, payload=None):
     payload = dict(payload or {})
     filename = payload.get("filename") or ""
+    # Reject broken responses up front: the download endpoint can answer with an empty
+    # stream or an HTML/error page that would otherwise look like a successful download.
     if not body:
-        return _content_payload(b"", _format_from_filename(filename), empty=True)
-    if _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        selected = select_subtitle_file([name for name, _content in files], payload)
-        return _content_payload(dict(files)[selected], _subtitle_extension(selected) or "srt")
-    stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist(), payload)
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
+        raise ValueError("subtitrarinoi download did not return a supported subtitle file")
+    if _is_archive_body(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
+        # the host, which lists it, picks the member by episode, and detects encoding.
+        return {
+            "archive_b64": _base64.b64encode(body).decode("ascii"),
+            "archive_sha256": _hashlib.sha256(body).hexdigest(),
+            "episode": payload.get("episode"),
+        }
     subtitle_format = _subtitle_extension(filename)
     if not subtitle_format or _looks_like_unavailable_text(body):
         raise ValueError("subtitrarinoi download did not return a supported subtitle file")
+    # Direct, non-archive subtitle body.
     return _content_payload(body, subtitle_format)
 
 
-def select_subtitle_file(names, payload):
-    candidates = [name for name in names if _subtitle_extension(name) and not os.path.basename(name).startswith(".")]
-    if not candidates:
-        raise ValueError("subtitrarinoi archive contains no supported subtitle files")
-    if _requested_episode(payload) != (None, None):
-        candidates = [name for name in candidates if _filename_matches_requested_episode(name, payload)]
-        if not candidates:
-            raise ValueError("subtitrarinoi archive contains no subtitle for the requested episode")
-    return max(enumerate(candidates), key=lambda item: _subtitle_score(item[0], item[1], payload))[1]
-
-
-def _subtitle_score(index, name, payload):
-    normalized = _normalize_release(name)
-    release_info = _normalize_release((payload or {}).get("release_info"))
-    score = -index
-    season, episode = _requested_episode(payload)
-    if season is not None and episode is not None:
-        if f"s{season:02d}e{episode:02d}" in normalized:
-            score += 200
-        elif f"{season}x{episode:02d}" in normalized or f"{season}x{episode}" in normalized:
-            score += 180
-        elif f"e{episode:02d}" in normalized or f"e{episode}" in normalized:
-            score += 100
-    for token in ("2160p", "1080p", "720p", "web dl", "bluray", "hdtv"):
-        if token in normalized and token in release_info:
-            score += 10
-    for token in _tokens(release_info):
-        if len(token) >= 3 and token in _tokens(normalized):
-            score += 2
-    return score
-
-
-def _requested_episode(payload):
-    try:
-        season = int((payload or {}).get("season"))
-        episode = int((payload or {}).get("episode"))
-    except (TypeError, ValueError):
-        return None, None
-    return season, episode
-
-
-def _filename_matches_requested_episode(name, payload):
-    season, episode = _requested_episode(payload)
-    if season is None or episode is None:
-        return True
-    normalized = _normalize_release(name)
-    return any(
-        re.search(rf"(?<!\d){re.escape(token)}(?!\d)", normalized)
-        for token in (
-            f"s{season:02d}e{episode:02d}",
-            f"{season}x{episode:02d}",
-            f"{season}x{episode}",
-            f"e{episode:02d}",
-            f"e{episode}",
-        )
-    )
-
-
-def _extract_rar_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"Subtitrari Noi RAR extraction failed: {details}") from errors[-1]
-    raise RuntimeError("Subtitrari Noi RAR extraction requires bundled py7zz")
-
-
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("Subtitrari Noi bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subtitrarinoi.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_unar(body):
-    return _extract_rar_files_with_command(body, "unar", ["unar", "-quiet", "-o"])
-
-
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("Subtitrari Noi RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subtitrarinoi.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [sevenzip, "x", "-y", f"-o{output_dir}", archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract Subtitrari Noi RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_command(body, command, args):
-    executable = shutil.which(command)
-    if not executable:
-        raise RuntimeError(f"Subtitrari Noi RAR fallback requires {command}")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subtitrarinoi.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [*args, output_dir, archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"{command} failed to extract Subtitrari Noi RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            relative_path = os.path.relpath(path, output_dir)
-            if not _subtitle_extension(relative_path):
-                continue
-            with open(path, "rb") as handle:
-                files.append((relative_path, handle.read()))
-    if not files:
-        raise ValueError("subtitrarinoi archive contains no supported subtitle files")
-    return files
+def _is_archive_body(body):
+    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
 
 
 def _first_content_main_link(chunk):
@@ -651,30 +492,15 @@ def _format_from_filename(filename):
     return _subtitle_extension(filename or "") or "srt"
 
 
-def _content_payload(content, subtitle_format, empty=False):
-    if empty:
-        return {
-            "content_b64": "",
-            "content_sha256": "",
-            "content_type": _content_type(subtitle_format),
-            "format": subtitle_format,
-            "encoding": "utf-8",
-            "empty": True,
-        }
-    encoding = "utf-8"
-    for candidate in ("utf-8", "cp1250", "latin-1"):
-        try:
-            content.decode(candidate)
-            encoding = candidate
-            break
-        except UnicodeDecodeError:
-            continue
+def _content_payload(content, subtitle_format):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     return {
         "content_b64": _base64.b64encode(content).decode("ascii"),
         "content_sha256": _hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 

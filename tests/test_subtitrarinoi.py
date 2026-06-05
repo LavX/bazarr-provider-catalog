@@ -239,13 +239,12 @@ class SubtitrariNoiProviderTests(unittest.TestCase):
         self.assertEqual(provider.search({"kind": "movie", "title": "Inception"}, [{"alpha3": "eng"}], {}), [])
         self.assertEqual(provider.search({"kind": "movie"}, [{"alpha3": "ron"}], {}), [])
 
-    def test_download_selects_requested_episode_from_zip(self):
+    def test_download_zip_archive_returns_raw_archive_for_host(self):
         provider = self.mod.SubtitrariNoiProvider()
         archive = _zip_body(
             {
                 "Sezonul 1/Breaking.Bad.S01E02.720p.BluRay.x264.DTS-SYLER.srt": b"wrong episode",
                 "Sezonul 1/Breaking.Bad.S01E01.2160p.NF.WEB-DL.DTS-HD.MA.5.1.HEVC-CRFW.srt": b"right episode",
-                "Sezonul 1/Breaking.Bad.S01E01.720p.BluRay.x264.DTS-SYLER.srt": b"right episode lower score",
             }
         )
         provider._http_get = lambda url, timeout=30, referer=None: archive
@@ -262,48 +261,56 @@ class SubtitrariNoiProviderTests(unittest.TestCase):
             {},
         )
 
-        decoded = base64.b64decode(result["content_b64"])
-        self.assertEqual(decoded, b"right episode")
-        self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
-        self.assertEqual(result["format"], "srt")
+        # Archive mode: the worker hands the raw archive bytes back untouched.
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["episode"], 1)
+        # No extraction, member selection, or encoding guessing happens worker-side.
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("member", result)
+        self.assertNotIn("encoding", result)
 
-    def test_download_rejects_episode_archive_without_requested_episode(self):
-        archive = _zip_body(
+    def test_download_rar_archive_returns_raw_archive_for_host(self):
+        provider = self.mod.SubtitrariNoiProvider()
+        # Minimal RAR4 signature; the host extracts, the worker only forwards bytes.
+        archive = b"Rar!\x1a\x07\x00" + b"\x00" * 32
+        provider._http_get = lambda url, timeout=30, referer=None: archive
+
+        result = provider.download(
             {
-                "Sezonul 1/Breaking.Bad.S01E02.720p.BluRay.x264.DTS-SYLER.srt": b"wrong episode",
-                "Sezonul 1/Breaking.Bad.S01E03.720p.BluRay.x264.DTS-SYLER.srt": b"wrong episode",
-            }
+                "url": "https://www.subtitrari-noi.ro/74168-example.rar",
+                "filename": "subtitrarinoi.breaking-bad.s01e07.ro.rar",
+                "season": 1,
+                "episode": 7,
+                "release_info": "Breaking Bad S01E07",
+            },
+            {"alpha3": "ron", "alpha2": "ro"},
+            {},
         )
 
-        with self.assertRaises(ValueError):
-            self.mod.extract_download(
-                archive,
-                {
-                    "filename": "subtitrarinoi.breaking-bad.s01e01.ro.zip",
-                    "season": 1,
-                    "episode": 1,
-                    "release_info": "Breaking Bad S01E01",
-                },
-            )
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["episode"], 7)
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
 
-    def test_download_rejects_later_episode_with_shared_digit_prefix(self):
-        archive = _zip_body(
+    def test_download_archive_episode_is_none_for_movie(self):
+        provider = self.mod.SubtitrariNoiProvider()
+        archive = _zip_body({"Inception.2010.720p.BluRay.srt": b"movie subtitle"})
+        provider._http_get = lambda url, timeout=30, referer=None: archive
+
+        result = provider.download(
             {
-                "Sezonul 1/Breaking.Bad.S01E10.720p.BluRay.x264.DTS-SYLER.srt": b"episode ten",
-                "Sezonul 1/Breaking.Bad.1x11.720p.BluRay.x264.DTS-SYLER.srt": b"episode eleven",
-            }
+                "url": "https://www.subtitrari-noi.ro/75177-inception.zip",
+                "filename": "subtitrarinoi.inception.ro.zip",
+            },
+            {"alpha3": "ron", "alpha2": "ro"},
+            {},
         )
 
-        with self.assertRaises(ValueError):
-            self.mod.extract_download(
-                archive,
-                {
-                    "filename": "subtitrarinoi.breaking-bad.s01e01.ro.zip",
-                    "season": 1,
-                    "episode": 1,
-                    "release_info": "Breaking Bad S01E01",
-                },
-            )
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertIsNone(result["episode"])
+        self.assertNotIn("content_b64", result)
 
     def test_download_returns_direct_subtitle_body(self):
         result = self.mod.extract_download(
@@ -314,12 +321,46 @@ class SubtitrariNoiProviderTests(unittest.TestCase):
         decoded = base64.b64decode(result["content_b64"])
         self.assertEqual(decoded, b"1\n00:00:01,000 --> 00:00:02,000\nSalut\n")
         self.assertEqual(result["format"], "srt")
+        # Direct content path must not ship a worker-guessed encoding; the host normalizes.
+        self.assertNotIn("encoding", result)
+        self.assertNotIn("archive_b64", result)
 
     def test_download_rejects_unavailable_text_for_archive_payload(self):
         with self.assertRaises(ValueError):
             self.mod.extract_download(
                 b"Ne pare rau, subtitrarea nu este disponibila momentan.",
                 {"filename": "movie.zip"},
+            )
+
+    def test_download_rejects_html_error_page(self):
+        provider = self.mod.SubtitrariNoiProvider()
+        provider._http_get = lambda url, timeout=30, referer=None: (
+            b"<!DOCTYPE html>\n<html><head><title>404</title></head>"
+            b"<body>Subtitle not found</body></html>"
+        )
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {
+                    "url": "https://www.subtitrari-noi.ro/74168-example.html",
+                    "filename": "subtitrarinoi-74168.zip",
+                },
+                {"alpha3": "ron", "alpha2": "ro"},
+                {},
+            )
+
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.SubtitrariNoiProvider()
+        provider._http_get = lambda url, timeout=30, referer=None: b""
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {
+                    "url": "https://www.subtitrari-noi.ro/74168-example.zip",
+                    "filename": "subtitrarinoi-74168.zip",
+                },
+                {"alpha3": "ron", "alpha2": "ro"},
+                {},
             )
 
     def _search_html_from_row(self, row):
