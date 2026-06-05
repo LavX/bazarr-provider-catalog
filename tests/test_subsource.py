@@ -56,6 +56,20 @@ class SubSourceLanguageTests(unittest.TestCase):
             "test-key",
         )
 
+    def test_persian_slash_display_name_is_normalized(self):
+        # SubSource returns "Farsi/Persian" for some Persian subtitles; a fas
+        # request must not be silently dropped.
+        language = self.mod._language_dict("Farsi/Persian")
+        self.assertIsNotNone(language)
+        self.assertEqual(language["alpha3"], "fas")
+
+    def test_brazilian_portuguese_result_carries_country_alpha2(self):
+        # The country must survive into the result language so Bazarr keeps
+        # pt-BR distinct from generic Portuguese.
+        language = self.mod._language_dict("Brazillian Portuguese")
+        self.assertEqual(language["alpha3"], "por")
+        self.assertEqual(language.get("country_alpha2"), "BR")
+
 
 class SubSourceSearchTests(unittest.TestCase):
     def setUp(self):
@@ -135,7 +149,9 @@ class SubSourceSearchTests(unittest.TestCase):
         self.assertEqual(first["display"]["uploader"], "SubSource User")
         self.assertEqual(first["provider_payload"]["subtitle_id"], 501)
         self.assertIn("title", first["matches"])
-        self.assertIn("imdb_id", first["matches"])
+        # IMDb lookup returned no result, so the text fallback selected this
+        # title; it must not claim an unverified imdb_id match.
+        self.assertNotIn("imdb_id", first["matches"])
 
     def test_episode_search_uses_season_and_episode_params(self):
         provider = self.mod.SubSourceProvider()
@@ -277,6 +293,122 @@ class SubSourceSearchTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertTrue(results[0]["provider_payload"]["is_pack"])
         self.assertIn("episode", results[0]["matches"])
+
+    def test_episode_without_season_episode_token_is_accepted(self):
+        # The subtitles request already filters by seasonNumber/episodeNumber,
+        # so a release whose name lacks an SxxEyy token (miniseries/DVD) must
+        # still reach Bazarr instead of being dropped as a mismatch.
+        provider = self.mod.SubSourceProvider()
+        item = {
+            "subtitleId": 901,
+            "language": "English",
+            "link": "/subtitles/show/english/901",
+            "releaseInfo": ["Show.DVDRip.XviD"],
+            "commentary": "",
+            "hearingImpaired": False,
+            "foreignParts": False,
+            "contributors": _contributors(),
+            "uploaderId": 20,
+        }
+
+        provider._http_get_json = lambda path, params, config: (
+            {"data": [{"movieId": 5005, "title": "Show", "releaseYear": 2020}]}
+            if path == "movies/search"
+            else {"success": True, "data": [item]}
+        )
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "Show",
+                "season": 2,
+                "episode": 4,
+                "year": 2020,
+            },
+            [{"alpha3": "eng"}],
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["id"], 901)
+        self.assertTrue(results[0]["provider_payload"]["is_pack"])
+
+    def test_episode_with_mismatching_season_token_is_rejected(self):
+        # A present-but-wrong season token must still be dropped.
+        provider = self.mod.SubSourceProvider()
+        item = {
+            "subtitleId": 902,
+            "language": "English",
+            "link": "/subtitles/show/english/902",
+            "releaseInfo": ["Show.S03E01.1080p.WEB"],
+            "commentary": "",
+            "hearingImpaired": False,
+            "foreignParts": False,
+            "contributors": _contributors(),
+            "uploaderId": 20,
+        }
+
+        provider._http_get_json = lambda path, params, config: (
+            {"data": [{"movieId": 5006, "title": "Show", "releaseYear": 2020}]}
+            if path == "movies/search"
+            else {"success": True, "data": [item]}
+        )
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "Show",
+                "season": 2,
+                "episode": 1,
+                "year": 2020,
+            },
+            [{"alpha3": "eng"}],
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(results, [])
+
+    def test_movie_imdb_match_only_claimed_when_result_selected_by_imdb(self):
+        # When the IMDb search itself returns the selected title, imdb_id is a
+        # real match; the text-fallback case is covered separately and must not
+        # claim it.
+        provider = self.mod.SubSourceProvider()
+        subtitle_item = {
+            "subtitleId": 1001,
+            "language": "English",
+            "link": "/subtitles/inception/english/1001",
+            "releaseInfo": ["Inception.2010.1080p.BluRay.x264"],
+            "commentary": "",
+            "hearingImpaired": False,
+            "foreignParts": False,
+            "contributors": _contributors(),
+            "uploaderId": 20,
+        }
+
+        def stub(path, params, config):
+            del config
+            if path == "movies/search" and params["searchType"] == "imdb":
+                return {
+                    "data": [
+                        {"movieId": 7007, "title": "Inception", "releaseYear": 2010}
+                    ]
+                }
+            if path == "subtitles":
+                return {"success": True, "data": [subtitle_item]}
+            raise AssertionError(f"unexpected call: {path} {params}")
+
+        provider._http_get_json = stub
+        results = provider.search(
+            {
+                "kind": "movie",
+                "title": "Inception",
+                "year": 2010,
+                "imdb_id": "tt1375666",
+            },
+            [{"alpha3": "eng"}],
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertIn("imdb_id", results[0]["matches"])
 
 
 class SubSourceDownloadTests(unittest.TestCase):

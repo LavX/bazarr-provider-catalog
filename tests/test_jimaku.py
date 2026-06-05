@@ -118,6 +118,64 @@ class JimakuFilterTests(unittest.TestCase):
 
         self.assertEqual([row["name"] for row in rows], ["Sousou.no.Frieren.S01.JP.zip"])
 
+    def test_single_non_japanese_language_is_rejected(self):
+        # An English-only file must not be exposed as a Japanese result.
+        self.assertEqual(
+            self.mod.detect_subtitle_languages("Episode.EN.srt"),
+            ["eng"],
+        )
+        rows = self.mod.filter_file_entries(
+            [
+                {
+                    "name": "Sousou.no.Frieren.S01E05.EN.srt",
+                    "size": 12345,
+                    "url": "https://jimaku.cc/files/frieren-s01e05-en.srt",
+                }
+            ],
+            enable_archives_download=False,
+            enable_ai_subs=False,
+            only_archives=False,
+        )
+
+        self.assertEqual(rows, [])
+
+    def test_plain_whisper_filename_is_filtered_as_ai_subtitle(self):
+        rows = self.mod.filter_file_entries(
+            [
+                {
+                    "name": "Show.S01E05.Whisper.JA.srt",
+                    "size": 12345,
+                    "url": "https://jimaku.cc/files/show-s01e05-whisper.srt",
+                }
+            ],
+            enable_archives_download=False,
+            enable_ai_subs=False,
+            only_archives=False,
+        )
+
+        self.assertEqual(rows, [])
+
+    def test_unsupported_companion_does_not_suppress_archive_only_entry(self):
+        rows = self.mod.filter_file_entries(
+            [
+                {
+                    "name": "Sousou.no.Frieren.S01.JP.zip",
+                    "size": 50000,
+                    "url": "https://jimaku.cc/files/frieren-pack.zip",
+                },
+                {
+                    "name": "readme.txt",
+                    "size": 1024,
+                    "url": "https://jimaku.cc/files/readme.txt",
+                },
+            ],
+            enable_archives_download=False,
+            enable_ai_subs=False,
+            only_archives=False,
+        )
+
+        self.assertEqual([row["name"] for row in rows], ["Sousou.no.Frieren.S01.JP.zip"])
+
 
 class JimakuProviderSearchTests(unittest.TestCase):
     def setUp(self):
@@ -341,3 +399,27 @@ class JimakuDownloadTests(unittest.TestCase):
 
         extractor.assert_called_once_with(b"rar bytes")
         self.assertEqual(base64.b64decode(result["content_b64"]), SRT_BODY)
+
+    def test_download_rejects_archive_missing_requested_episode(self):
+        provider = self.mod.JimakuProvider()
+        archive = _zip_body(
+            {
+                "Sousou.no.Frieren.S01E04.JA.srt": b"wrong",
+                "Sousou.no.Frieren.S01E06.JA.srt": b"also wrong",
+            }
+        )
+        provider._http_get = lambda url, config=None: archive
+
+        with self.assertRaisesRegex(ValueError, "episode 5"):
+            provider.download(
+                {
+                    "provider": "jimaku",
+                    "schema": 1,
+                    "url": "https://jimaku.cc/files/frieren-pack.zip",
+                    "filename": "Sousou.no.Frieren.S01.JP.zip",
+                    "is_archive": True,
+                    "video": {"kind": "episode", "season": 1, "episode": 5},
+                },
+                {"alpha3": "jpn", "alpha2": "ja"},
+                {"api_key": "secret"},
+            )

@@ -641,7 +641,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "e8d5839c9f3df5f032d30bc9cb111613e139da2e64daad6e6b9c7352d49ad9c8",
+        "bundle_sha256": "fe42f5678d8293fa8227c6df6d66a049a187296bfe015c875d8366738710131f",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -662,6 +662,12 @@
               "description": "Path to the ffprobe binary used to inspect embedded subtitle streams.",
               "title": "ffprobe path",
               "type": "string"
+            },
+            "hi_fallback": {
+              "default": false,
+              "description": "When the only tracks for a requested language are hearing impaired, treat them as normal subtitles so a non-HI request is still satisfied.",
+              "title": "HI fallback",
+              "type": "boolean"
             },
             "included_codecs": {
               "default": "ass,subrip,webvtt,mov_text",
@@ -693,7 +699,7 @@
         "entry_class": "EmbeddedSubtitlesProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "44fdd44989621f7bf477e6aae63b43c49bfa65121e6f8348e1a35f2decfd889b"
+          "provider.py": "02d3d8ab42dc4654bb538b17e4ab63e3299495c325bd10894c83a583352eadfa"
         },
         "languages": [
           "afr",
@@ -813,7 +819,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.2"
+        "version": "0.1.3"
       }
     },
     {
@@ -1296,7 +1302,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "1baafbfe6f2db8ce4304e9613fb951259732f32bc9e53033cef952a3dab4a6f5",
+        "bundle_sha256": "bf5cab1172a4e23c69395b1f3155774c65e0b4a41846ca7c8df086b625c55737",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1318,7 +1324,7 @@
         "entry_class": "ISubtitlesProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "b58d3d27c97c68a46abf9b5dfc2f14439c8c74d1227ee270b32319d373323d2f"
+          "provider.py": "724a7c9627b3cd886cb81b8014c45693e321f6c09bdd6f8a72549f3146940426"
         },
         "languages": [
           "aze",
@@ -1369,6 +1375,7 @@
           "pan",
           "pol",
           "por",
+          "pt-BR",
           "pus",
           "rhg",
           "ron",
@@ -1410,13 +1417,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.1"
+        "version": "0.1.2"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "fd4683352792184a93b34ba99addefaa2a7fa196ced91339d870586b9b25d6d2",
+        "bundle_sha256": "a4508276a6447cbc3ff98929efbecdf7f9c752b9ed241d480ebdb0f7ca0529a5",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1569,7 +1576,7 @@
         "entry_class": "JimakuProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "bd22a639f7819520e272a042c15c20f62863c5a69c4320a68b100fbf842ff82b"
+          "provider.py": "61d913c20093d5ad473424321e90fea8f504ce813f74607b3f13d8dfccd89043"
         },
         "languages": [
           "jpn"
@@ -1593,7 +1600,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.0"
+        "version": "0.1.1"
       }
     },
     {
@@ -2334,7 +2341,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "c70d2aad73e7b06d6eaff834127338379c090a8f57d9daacab4f2934b778a7ab",
+        "bundle_sha256": "039c5c2620516e6350b4ae4dfc5f12690d8523bcd4981d71dc3aee1b622bd7bc",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -2468,7 +2475,7 @@
         "entry_class": "NekurProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "3bf1e270ae7c485ce52aa99956ec5b7eff9162b3f41b2594c518fceb4ddd5be7"
+          "provider.py": "c68ce4cbc4b52b35f7aeb8f99d6da792f3372b92b2b1967881ff0f6caa320074"
         },
         "languages": [
           "lav"
@@ -2489,7 +2496,7 @@
         "supported_media": [
           "movie"
         ],
-        "version": "0.1.1"
+        "version": "0.1.2"
       }
     },
     {
@@ -3454,7 +3461,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "8e42f25a1976c33b487c2c6366d8bcdde463626dca6173bcf16b552deafdbcef",
+        "bundle_sha256": "cd312d2d9f2098c6ceaaf96aab142d8d2486741dfcb01c90249bd7a0f6f4bc5f",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -3588,12 +3595,12 @@
         "entry_class": "PrijevodiOnlineProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "3d9e0052294df1647130240071bb11b219f069381d761a8b7cd09ce37764bd75"
+          "provider.py": "e70988ea819d3471da97244856d26e289609efd57ebb4558f184b6735f5221a0"
         },
         "languages": [
+          "cnr",
           "hbs",
           "hrv",
-          "mne",
           "srp"
         ],
         "name": "Prijevodi-Online",
@@ -3612,13 +3619,13 @@
         "supported_media": [
           "episode"
         ],
-        "version": "0.1.1"
+        "version": "0.1.2"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "caff6d88208bb2b5ad77f8b52b2662df0592f8e069771d13674f771e5b425268",
+        "bundle_sha256": "bf5c6304d686d701b660b36f5bb486d7bbe21482b89595669f65484aab62ed43",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -3640,7 +3647,7 @@
         "entry_class": "RegieLiveProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "81770379c497df89f9390a24f4e20aa22b66cc3a399e06e30c5782c6d0811dcc"
+          "provider.py": "68b2c51cba33e57cbb6c55c3d1f4188daf70f17fcd49f949cdf1bba2127d76d2"
         },
         "languages": [
           "ron"
@@ -3662,7 +3669,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.1"
+        "version": "0.1.2"
       }
     },
     {
@@ -4635,7 +4642,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "af9b67c2c4f7852c970b226d487abdbfe6adb13b6575ca7f3e60fe8cde7be011",
+        "bundle_sha256": "5b294797c894765b86ddb05694b3f2458e815dce58286dbea9b5fe11c92b689a",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -4647,6 +4654,7 @@
             },
             "api_key": {
               "description": "SubDL API key from your SubDL account.",
+              "secret": true,
               "title": "API key",
               "type": "string"
             },
@@ -4671,7 +4679,7 @@
         "entry_class": "SubDLProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "72cd72bd375de99d31acabea3e3dac43f24ce5d648cd79b38511e76946f927fd"
+          "provider.py": "66563fd805df845b0a6a6ffa93e22f908cb9d86091a70757b6947559fb929495"
         },
         "languages": [
           "ara",
@@ -4751,13 +4759,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.0"
+        "version": "0.1.1"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "bfc7f480af34c85dd9c1377ff7735416a7c6570520cd79f6e0f0697609fd6d0d",
+        "bundle_sha256": "9261482f18832c3eca8932644f2c4f02dc3b2cb37fc748d3017516459cc5db55",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -4791,7 +4799,7 @@
         "entry_class": "SubF2MProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "9e5fc8b1210883c636883aa6fbe7b5ac496cf5a247beb239979a76ffbbe6bdc6"
+          "provider.py": "3029a3770755c3e6a68c10e00b5b36054292eda51e3e3da205c51fedc87e056e"
         },
         "languages": [
           "ara",
@@ -4844,7 +4852,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.1"
+        "version": "0.1.2"
       }
     },
     {
@@ -5659,12 +5667,13 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "0a0d126fc5e5b48468fe9d127b45bdbd0d57804d73b990adafa5730e0daab4a9",
+        "bundle_sha256": "d8a35dff28865161ddd5148fa95e81a7d47762f06384459a72eae4f436765c9b",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
             "api_key": {
               "description": "SubSource API key from your SubSource account profile.",
+              "secret": true,
               "title": "API key",
               "type": "string"
             },
@@ -5689,7 +5698,7 @@
         "entry_class": "SubSourceProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "66cebc1bdbf2de8096e737c874cd1e7bfa36f4860a963689f31479ad8572ea8e"
+          "provider.py": "dd4a61a126010094e51a71fb423c740e529d7b37ebca5884bcae31570a819a28"
         },
         "languages": [
           "abk",
@@ -5798,7 +5807,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.0"
+        "version": "0.1.1"
       }
     },
     {
@@ -5978,7 +5987,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "331b04b01a8a95cedaa14a9b745cd1bdd6008cf66208d743ed2589aa5a11a6d7",
+        "bundle_sha256": "f6adfb883034b66496f2c560a073bb37c893142a1c4a30f477feccbf4df8b0c8",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -6112,7 +6121,7 @@
         "entry_class": "SubsSabBzProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "1cf0dd6b90c17f610315877251aa09bffcbbab5d87996c702cc2244387221331"
+          "provider.py": "35eaec03367c665b204053eb5d7dccea08eaea644a69cc08c13ee7657e36dc2f"
         },
         "languages": [
           "bul",
@@ -6135,13 +6144,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.1"
+        "version": "0.1.2"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "37d08212993010118d130380a74206ed5d01899ed7d86e53fb64d8878b9e35d9",
+        "bundle_sha256": "eefa419318d2ad04b62a8873d50c4f12d1eb0a5b8a750854701f658d52324402",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -6275,7 +6284,7 @@
         "entry_class": "SubsUnacsProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "9dc58064d09a4ba6d5fc304f64839847f1f5fa988081559bd152927189857625"
+          "provider.py": "e1dbb0e1322e044172baead0dafe7cd9d3ab8f1d91d0b9bd490182028c66c8c8"
         },
         "languages": [
           "bul",
@@ -6298,7 +6307,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.1"
+        "version": "0.1.2"
       }
     },
     {
@@ -7431,6 +7440,7 @@
           "hrv",
           "mkd",
           "slv",
+          "sr-Cyrl",
           "srp"
         ],
         "name": "Titlovi",
@@ -7453,7 +7463,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.1"
+        "version": "0.1.2"
       }
     },
     {
@@ -9210,7 +9220,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "631488dafff0066a6f1609e38f82a5873169a7e9eeaa3f59d04ee3c2f4264f1d",
+        "bundle_sha256": "caae2b77ac1c834dafbef31bedf441f88a2b4fcaeb052a931b28fcb47573baf7",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -9232,7 +9242,7 @@
         "entry_class": "YifySubtitlesProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "fd467cd368f8e6a5b6f5d3841d91687ead18c8a6ac9e1affab3bcc7f709daa62"
+          "provider.py": "be3fac229f617330e1f56deb9c095d4072b82e46c1eaf44071a2a469d78892c9"
         },
         "languages": [
           "ara",
@@ -9289,13 +9299,13 @@
         "supported_media": [
           "movie"
         ],
-        "version": "0.1.1"
+        "version": "0.1.2"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "2b6cfe79ecda003e2f54000afe9bbfacd3c2cda8f2656e596c5e87d238ac96a0",
+        "bundle_sha256": "0ffdf2c75174563066a42dce2a88be8e94ea0021825ef00493fc0802d1727a35",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -9453,11 +9463,11 @@
             }
           ]
         },
-        "description": "Scrapes Zimuku / srtku.com for Chinese and English movie and episode subtitles. Includes native Yunsuo image verification, no-image coordinate fallback, optional helper fallback, and ZIP, RAR, or direct subtitle downloads.",
+        "description": "Scrapes Zimuku / srtku.com for Chinese and English movie and episode subtitles. Includes native Yunsuo image verification, no-image coordinate fallback, optional helper fallback, and ZIP, RAR, 7z, or direct subtitle downloads.",
         "entry_class": "ZimukuProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "4595279a3841267118651f8bb4004ecb10ab52dab1e1d4798a49820d3cdecf0e",
+          "provider.py": "d4d7c9fa3d9727bd0846358d72cdc5f6ea0e7591a8b32e5f7e630e549491e1a3",
           "yunsuo_templates.py": "abad0d629bb24b28c40f7dc5a0257660266e6be449fbd8cda81a044d26c4959d"
         },
         "languages": [
@@ -9486,7 +9496,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.3"
+        "version": "0.1.4"
       }
     }
   ],
