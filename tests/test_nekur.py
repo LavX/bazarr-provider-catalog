@@ -156,7 +156,7 @@ class NekurProviderTests(unittest.TestCase):
                 "Dune.Part.One.2021.BD.forced.lv.srt": "forced subtitle",
             }
         )
-        provider._http_get = lambda url, timeout=10: body
+        provider._http_get = lambda url, timeout=10: (body, {})
 
         content = provider.download(
             {
@@ -209,6 +209,95 @@ class NekurProviderTests(unittest.TestCase):
         data = base64.b64decode(content["content_b64"])
         self.assertTrue(data.startswith(b"1\n00:00:01"))
         self.assertEqual(content["content_type"], "application/x-subrip")
+
+    def test_download_keeps_direct_subtitle_despite_zip_filename(self):
+        # Regression: the synthetic ".zip" filename must not reject a direct
+        # subtitle. The real format comes from the Content-Disposition header.
+        provider = self.mod.NekurProvider()
+        subtitle = b"1\r\n00:00:01,000 --> 00:00:02,000\r\nSveiki\r\n"
+        provider._http_get = lambda url, timeout=10: (
+            subtitle,
+            {"Content-Disposition": 'attachment; filename="Dune.Part.One.2021.lv.srt"'},
+        )
+
+        content = provider.download(
+            {
+                "download_url": "https://subtitri.nekur.net/filmu-subtitri/download/abc",
+                "filename": "nekur.dune-part-one.2021.lv.zip",
+                "title": "Dune: Part One",
+                "year": 2021,
+            },
+            {"alpha3": "lav", "alpha2": "lv"},
+            {},
+        )
+
+        data = base64.b64decode(content["content_b64"])
+        self.assertEqual(data, subtitle)
+        self.assertEqual(content["format"], "srt")
+        self.assertFalse(content["empty"])
+
+    def test_download_sniffs_direct_subtitle_without_disposition(self):
+        # Even without a usable filename, a body that is plainly SubRip must be
+        # accepted rather than rejected because of the ".zip" extension.
+        provider = self.mod.NekurProvider()
+        subtitle = b"1\n00:00:01,000 --> 00:00:02,000\nSveiki\n"
+        provider._http_get = lambda url, timeout=10: (subtitle, {})
+
+        content = provider.download(
+            {
+                "download_url": "https://subtitri.nekur.net/filmu-subtitri/download/abc",
+                "filename": "nekur.dune-part-one.2021.lv.zip",
+            },
+            {"alpha3": "lav", "alpha2": "lv"},
+            {},
+        )
+
+        data = base64.b64decode(content["content_b64"])
+        self.assertEqual(data, subtitle)
+        self.assertEqual(content["format"], "srt")
+
+    def test_download_skips_macosx_sidecar_files(self):
+        # Regression: AppleDouble sidecars (__MACOSX / ._*) must not be selected
+        # over the real subtitle even when archive order places them first.
+        real = b"1\n00:00:01,000 --> 00:00:02,000\nReal subtitle\n"
+        body = _zip_body(
+            {
+                "__MACOSX/._Dune.Part.One.2021.lv.srt": b"\x00\x05\x16\x07binary metadata",
+                "Dune.Part.One.2021.lv.srt": real,
+            }
+        )
+
+        content = self.mod.extract_download(
+            body,
+            "nekur.dune-part-one.2021.zip",
+            {"title": "Dune: Part One", "year": 2021},
+        )
+        data = base64.b64decode(content["content_b64"])
+
+        self.assertEqual(data, real)
+        self.assertEqual(content["format"], "srt")
+
+    def test_download_prefers_better_single_over_weaker_multipart(self):
+        # Regression: a low-scoring CD1/CD2 pair must not shadow a better
+        # matching single-file subtitle.
+        body = _zip_body(
+            {
+                "Extras.CD1.lv.srt": b"1\n00:00:01,000 --> 00:00:02,000\nExtras one\n",
+                "Extras.CD2.lv.srt": b"1\n00:00:03,000 --> 00:00:04,000\nExtras two\n",
+                "Dune.Part.One.2021.lv.srt": b"1\n00:00:05,000 --> 00:00:06,000\nMain movie\n",
+            }
+        )
+
+        content = self.mod.extract_download(
+            body,
+            "nekur.dune-part-one.2021.zip",
+            {"title": "Dune: Part One", "year": 2021},
+        )
+        data = base64.b64decode(content["content_b64"])
+
+        self.assertIn(b"Main movie", data)
+        self.assertNotIn(b"Extras one", data)
+        self.assertNotIn(b"Extras two", data)
 
 
 if __name__ == "__main__":

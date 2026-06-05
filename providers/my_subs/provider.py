@@ -231,8 +231,6 @@ _LANGUAGE_NAME_TO_ALPHA2 = {
     "german": "de",
     "italian": "it",
     "portuguese": "pt",
-    "portuguese brazilian": "pt",
-    "brazilian portuguese": "pt",
     "polish": "pl",
     "russian": "ru",
     "turkish": "tr",
@@ -269,6 +267,17 @@ _LANGUAGE_NAME_TO_ALPHA2 = {
     "urdu": "ur",
     "bengali": "bn",
 }
+# Portuguese variants resolve to the same alpha2 but carry a country so that
+# Brazilian Portuguese stays distinct (alpha3 "por" + country_alpha2 "BR").
+_BRAZILIAN_PORTUGUESE_NAMES = frozenset(
+    {
+        "brazilian portuguese",
+        "portuguese brazilian",
+        "portuguese brazil",
+        "portuguese br",
+        "brazilian",
+    }
+)
 _FLAG_TO_ALPHA2 = {
     "gb": "en",
     "uk": "en",
@@ -334,25 +343,50 @@ _ALPHA3_TO_ALPHA2 = {
 _ALPHA2_TO_ALPHA3 = {value: key for key, value in _ALPHA3_TO_ALPHA2.items()}
 
 
-def _language_alpha2(flag, title, label=""):
-    title_text = _normalize(title or label).replace(" ", " ")
-    if title_text in _LANGUAGE_NAME_TO_ALPHA2:
-        return _LANGUAGE_NAME_TO_ALPHA2[title_text]
+def _language_code(flag, title, label=""):
+    """Resolve a my-subs flag/title/label to an (alpha2, country) pair.
+
+    The country is None for everything except Brazilian Portuguese, which keeps
+    alpha2 "pt" but carries country "BR" so it does not collapse into generic
+    Portuguese (alpha3 "por" + country_alpha2 "BR").
+    """
+    title_text = _normalize(title or label)
     cleaned = re.sub(r"\s+", " ", re.sub(r"[()]", " ", title_text)).strip()
-    if cleaned in _LANGUAGE_NAME_TO_ALPHA2:
-        return _LANGUAGE_NAME_TO_ALPHA2[cleaned]
     flag_code = (flag or "").lower().split("-", 1)[0]
-    return _FLAG_TO_ALPHA2.get(flag_code, flag_code if len(flag_code) == 2 else None)
+    if title_text in _BRAZILIAN_PORTUGUESE_NAMES or cleaned in _BRAZILIAN_PORTUGUESE_NAMES:
+        return "pt", "BR"
+    if flag_code == "br":
+        return "pt", "BR"
+    if title_text in _LANGUAGE_NAME_TO_ALPHA2:
+        return _LANGUAGE_NAME_TO_ALPHA2[title_text], None
+    if cleaned in _LANGUAGE_NAME_TO_ALPHA2:
+        return _LANGUAGE_NAME_TO_ALPHA2[cleaned], None
+    alpha2 = _FLAG_TO_ALPHA2.get(flag_code, flag_code if len(flag_code) == 2 else None)
+    return alpha2, None
 
 
-def _alpha2_for(language):
+def _requested_country(language):
+    country = language.get("country_alpha2") or language.get("country")
+    if isinstance(country, str) and country.strip():
+        return country.strip().upper()
+    return None
+
+
+def _language_key_for(language):
+    """Return the requested (alpha2, country) pair, or None when unresolvable."""
     if not isinstance(language, dict):
         return None
-    alpha2 = (language.get("alpha2") or "").lower()
-    if alpha2:
-        return alpha2
     alpha3 = (language.get("alpha3") or "").lower()
-    return _ALPHA3_TO_ALPHA2.get(alpha3)
+    alpha2 = (language.get("alpha2") or "").lower()
+    if not alpha2:
+        alpha2 = _ALPHA3_TO_ALPHA2.get(alpha3, "")
+    if not alpha2:
+        return None
+    country = _requested_country(language)
+    # Only Portuguese carries a country distinction for this site (pt vs pt-BR).
+    if alpha2 != "pt":
+        country = None
+    return alpha2, country
 
 
 def _alpha3_for(alpha2):
@@ -374,7 +408,8 @@ def _downloads_count(pattern, data):
     return int(match.group("count"))
 
 
-def _entry_from_parts(page_url, media_title, release, alpha2, download_url, count, hi):
+def _entry_from_parts(page_url, media_title, release, code, download_url, count, hi):
+    alpha2, country = code
     alpha3 = _alpha3_for(alpha2)
     if not alpha3:
         return None
@@ -382,6 +417,7 @@ def _entry_from_parts(page_url, media_title, release, alpha2, download_url, coun
     return {
         "language_alpha2": alpha2,
         "language_alpha3": alpha3,
+        "language_country": country,
         "release_info": release_info,
         "download_url": download_url,
         "downloads": count,
@@ -402,18 +438,18 @@ def _parse_episode_entries(html_bytes, page_url, media_title):
         if not version_match or not lang_match or not download_match:
             continue
         release = _clean_text(version_match.group("version"))
-        language = _language_alpha2(
+        code = _language_code(
             _decode(lang_match.group("flag")),
             _decode(lang_match.group("title")),
             _strip_tags(lang_match.group("label") or b""),
         )
-        if not language:
+        if not code[0]:
             continue
         entry = _entry_from_parts(
             page_url,
             media_title,
             release,
-            language,
+            code,
             _absolute_url(download_match.group("href")),
             _downloads_count(_EPISODE_DOWNLOADS_RE, chunk),
             version_match.group("class").lower() == b"version-hearing"
@@ -433,18 +469,18 @@ def _parse_movie_entries(html_bytes, page_url, media_title):
         release_match = _STRONG_RE.search(body)
         if not lang_match or not release_match:
             continue
-        alpha2 = _language_alpha2(
+        code = _language_code(
             _decode(lang_match.group("flag")),
             _decode(lang_match.group("title")),
             _strip_tags(lang_match.group("label") or b""),
         )
-        if not alpha2:
+        if not code[0]:
             continue
         entry = _entry_from_parts(
             page_url,
             media_title,
             _strip_tags(release_match.group("value")),
-            alpha2,
+            code,
             _absolute_url(_href_from_attrs(attrs)),
             _downloads_count(_PULL_DOWNLOADS_RE, body),
             False,
@@ -579,9 +615,9 @@ class MySubsProvider:
 
     def search(self, video, languages, config):
         config = dict(config or {})
-        requested_alpha2 = {_alpha2_for(lang) for lang in languages or []}
-        requested_alpha2.discard(None)
-        if not requested_alpha2:
+        requested_keys = {_language_key_for(lang) for lang in languages or []}
+        requested_keys.discard(None)
+        if not requested_keys:
             return []
         queries = build_queries(video)
         if not queries:
@@ -609,9 +645,14 @@ class MySubsProvider:
                     continue
                 media_title = self._media_title(video, candidate)
                 for entry in parse_subtitle_entries(detail_html, detail_url, media_title):
-                    if entry["language_alpha2"] not in requested_alpha2:
+                    entry_key = (entry["language_alpha2"], entry.get("language_country"))
+                    if entry_key not in requested_keys:
                         continue
-                    payload_key = (entry["download_url"], entry["language_alpha3"])
+                    payload_key = (
+                        entry["download_url"],
+                        entry["language_alpha3"],
+                        entry.get("language_country"),
+                    )
                     if payload_key in seen_payloads:
                         continue
                     seen_payloads.add(payload_key)
@@ -656,18 +697,34 @@ class MySubsProvider:
         score = compute_score(video, candidate_title)
         alpha3 = entry["language_alpha3"]
         alpha2 = entry["language_alpha2"]
+        country = entry.get("language_country")
+        lang_suffix = f"{alpha3}-{country}" if country else alpha3
+        file_lang = f"{alpha2}-{country.lower()}" if country else alpha2
         download_id = _hashlib.sha1(entry["download_url"].encode("utf-8")).hexdigest()[:16]
+        language = {
+            "alpha3": alpha3,
+            "alpha2": alpha2,
+            "hi": entry["hearing_impaired"],
+            "forced": False,
+        }
+        if country:
+            language["country_alpha2"] = country
+        provider_payload = {
+            "provider": PROVIDER_ID,
+            "schema": 1,
+            "download_url": entry["download_url"],
+            "page_url": entry["page_url"],
+            "language": alpha3,
+            "release_info": entry["release_info"],
+        }
+        if country:
+            provider_payload["country_alpha2"] = country
         return {
             "provider": PROVIDER_ID,
-            "id": f"my-subs-{download_id}-{alpha3}",
-            "language": {
-                "alpha3": alpha3,
-                "alpha2": alpha2,
-                "hi": entry["hearing_impaired"],
-                "forced": False,
-            },
+            "id": f"my-subs-{download_id}-{lang_suffix}",
+            "language": language,
             "release_info": entry["release_info"],
-            "filename": f"my-subs.{download_id}.{alpha2}.srt",
+            "filename": f"my-subs.{download_id}.{file_lang}.srt",
             "matches": derive_matches(video, candidate_title),
             "score": score,
             "score_without_hash": score,
@@ -683,14 +740,7 @@ class MySubsProvider:
                 "detail_url": entry["page_url"],
                 "downloads": entry["downloads"],
             },
-            "provider_payload": {
-                "provider": PROVIDER_ID,
-                "schema": 1,
-                "download_url": entry["download_url"],
-                "page_url": entry["page_url"],
-                "language": alpha3,
-                "release_info": entry["release_info"],
-            },
+            "provider_payload": provider_payload,
         }
 
     def download(self, provider_payload, language, config):

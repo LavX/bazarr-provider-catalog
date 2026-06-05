@@ -2,10 +2,12 @@ import base64
 import importlib.util
 import io
 import json
+import os
 import unittest
 import zlib
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "zimuku"
@@ -94,7 +96,7 @@ class ZimukuParserTests(unittest.TestCase):
     def test_parse_episode_page_expands_language_rows(self):
         rows = self.mod.parse_episode_page(EPISODE_HTML, 2011)
 
-        self.assertEqual([row["language"] for row in rows], ["zho", "zho-TW", "eng"])
+        self.assertEqual([row["language"] for row in rows], ["zho-CN", "zho-TW", "eng"])
         self.assertEqual(rows[0]["release_info"], "Game.of.Thrones.S01E01.HDTV.XviD-FEVER.CHS.CHT")
         self.assertEqual(rows[0]["year"], 2011)
         self.assertEqual(rows[2]["detail_url"], "https://srtku.com/subtitle/game-of-thrones-s01e01-eng.html")
@@ -102,7 +104,7 @@ class ZimukuParserTests(unittest.TestCase):
     def test_parse_current_search_page_subtitle_rows(self):
         rows = self.mod.parse_search_subtitle_rows(CURRENT_SEARCH_HTML, {"kind": "movie", "title": "Dune", "year": 2021})
 
-        self.assertEqual([row["language"] for row in rows], ["zho-TW", "zho", "eng"])
+        self.assertEqual([row["language"] for row in rows], ["zho-TW", "zho-CN", "eng"])
         self.assertEqual(rows[0]["detail_url"], "https://zimuku.org/detail/210615.html")
         self.assertEqual(rows[0]["release_info"], "Dune.2021")
         self.assertEqual(rows[0]["year"], 2021)
@@ -113,6 +115,81 @@ class ZimukuParserTests(unittest.TestCase):
 
         self.assertIn("simplified bilingual", self.mod._decode_payload_text(simplified))
         self.assertIn("traditional", self.mod._decode_payload_text(traditional))
+
+    def test_extract_download_unpacks_7z_archive(self):
+        # Finding 1: a 7z response must be extracted, not returned as raw archive
+        # bytes labeled srt.
+        class FakePy7zz:
+            @staticmethod
+            def extract_archive(_archive_path, output_dir):
+                with open(os.path.join(output_dir, "Dune.2021.chs.srt"), "wb") as handle:
+                    handle.write(b"1\nsimplified subtitle\n")
+
+        body = b"7z\xbc\xaf\x27\x1c" + b"\x00" * 32
+        with mock.patch.object(self.mod, "py7zz", FakePy7zz):
+            result = self.mod.extract_download(body, {"language": "zho-CN", "filename": "dune.7z"})
+
+        self.assertTrue(self.mod._is_7z_archive(body))
+        self.assertEqual(result["format"], "srt")
+        self.assertIn("simplified subtitle", self.mod._decode_payload_text(result))
+        self.assertNotEqual(base64.b64decode(result["content_b64"]), body)
+
+    def test_content_payload_reports_gbk_encoding(self):
+        # Finding 2: GBK/Big5 subtitles must not be mislabeled utf-8.
+        gbk_text = (
+            "1\n00:00:01,000 --> 00:00:04,000\n你好世界，欢迎收看本剧第一集。\n\n"
+            "2\n00:00:05,000 --> 00:00:08,000\n这是一段简体中文字幕，用于测试编码检测功能是否正常工作。\n\n"
+            "3\n00:00:09,000 --> 00:00:12,000\n我们希望它能够正确地识别出国标编码而不是其他语言的编码。\n"
+        )
+        big5_text = (
+            "1\n00:00:01,000 --> 00:00:04,000\n你好世界，歡迎收看本劇第一集。\n\n"
+            "2\n00:00:05,000 --> 00:00:08,000\n這是一段繁體中文字幕，用於測試編碼偵測功能是否正常運作。\n\n"
+            "3\n00:00:09,000 --> 00:00:12,000\n我們希望它能夠正確地識別出大五碼而不是其他語言的編碼。\n"
+        )
+        gbk_bytes = gbk_text.encode("gbk")
+        big5_bytes = big5_text.encode("big5")
+
+        with self.assertRaises(UnicodeDecodeError):
+            gbk_bytes.decode("utf-8")
+        gbk_payload = self.mod._content_payload(gbk_bytes, "srt")
+        big5_payload = self.mod._content_payload(big5_bytes, "srt")
+        utf8_payload = self.mod._content_payload("hello world".encode("utf-8"), "srt")
+
+        self.assertEqual(gbk_payload["encoding"], "gb18030")
+        self.assertEqual(utf8_payload["encoding"], "utf-8")
+        # Big5 cannot be told apart from gb18030 by a plain decode probe, so this
+        # leg depends on the bundled charset-normalizer detector.
+        if self.mod.charset_normalizer is not None:
+            self.assertEqual(big5_payload["encoding"], "big5")
+        else:  # pragma: no cover, dependency is declared in provider.json
+            self.assertEqual(big5_payload["encoding"], "gb18030")
+
+    def test_languages_from_row_merges_flag_and_bilingual_text(self):
+        # Finding 3: a Chinese flag plus a *.CHS.ENG release must still expose
+        # the English/bilingual half.
+        row = (
+            '<td class="tac lang"><img src="/static/images/china.gif" alt="简体"></td>'
+            '<td><a href="/subtitle/x.html">Show.S01E01.CHS.ENG.srt</a></td>'
+        )
+        languages = self.mod._languages_from_row(row, "Show.S01E01.CHS.ENG.srt")
+
+        self.assertIn("eng", languages)
+        self.assertIn("zho-CN", languages)
+
+    def test_languages_from_row_emits_zho_cn_for_simplified(self):
+        # Finding 4: simplified rows must be returned for zho-CN requests.
+        row = (
+            '<td class="tac lang"><img src="/static/images/china.gif" alt="简体"></td>'
+            '<td><a href="/subtitle/x.html">Show.S01E01.CHS.srt</a></td>'
+        )
+        languages = self.mod._languages_from_row(row, "Show.S01E01.CHS.srt")
+
+        self.assertEqual(languages, ["zho-CN"])
+        self.assertTrue(self.mod._requested("zho-CN", {"zho-CN"}))
+        # A generic zho request must still accept the zho-CN row.
+        self.assertTrue(self.mod._requested("zho-CN", {"zho"}))
+        # A zho-CN request must not pull in traditional rows.
+        self.assertFalse(self.mod._requested("zho-TW", {"zho-CN"}))
 
 
 class ZimukuProviderTests(unittest.TestCase):
@@ -153,7 +230,7 @@ class ZimukuProviderTests(unittest.TestCase):
         self.assertIn("https://srtku.com/search?q=Dune%202021&security_verify_img=31323334", calls)
         cookies = {cookie.name: cookie.value for cookie in provider._cookie_jar}
         self.assertEqual(cookies["srcurl"], self.mod.string_to_hex("https://srtku.com/search?q=Dune 2021"))
-        self.assertEqual({item["provider_payload"]["language"] for item in results}, {"zho", "zho-TW"})
+        self.assertEqual({item["provider_payload"]["language"] for item in results}, {"zho-CN", "zho-TW"})
         self.assertTrue(all(item["provider"] == "zimuku" for item in results))
 
     def test_search_uses_current_inline_search_rows(self):
@@ -180,7 +257,7 @@ class ZimukuProviderTests(unittest.TestCase):
         )
 
         self.assertEqual(calls, ["https://srtku.com/search?q=Dune+2021"])
-        self.assertEqual({item["provider_payload"]["language"] for item in results}, {"zho", "zho-TW"})
+        self.assertEqual({item["provider_payload"]["language"] for item in results}, {"zho-CN", "zho-TW"})
         self.assertEqual({item["provider_payload"]["detail_url"] for item in results}, {"https://zimuku.org/detail/210615.html"})
 
     def test_yunsuo_bypass_allows_multiple_challenge_retries(self):
@@ -324,6 +401,81 @@ class ZimukuProviderTests(unittest.TestCase):
         self.assertEqual(calls[1][1], "https://srtku.com/subtitle/game-of-thrones-s01e01-chs-cht.html")
         self.assertEqual(calls[2][1], "https://srtku.com/subtitle/game-of-thrones-s01e01-chs-cht.html")
         self.assertIn("traditional", self.mod._decode_payload_text(result))
+
+    def test_search_filters_wrong_episode_rows(self):
+        # Finding 5: a season result listing sibling episodes must not offer the
+        # wrong-episode subtitle for a single-episode request.
+        provider = self.mod.ZimukuProvider()
+        search_html = (
+            '<div class="item prel clearfix">'
+            '<div class="title"><p class="tt clearfix">'
+            '<a href="//srtku.com/subs/1.html"><b>Game of Thrones 第一季 (2011)</b></a></p>'
+            '<div class="sublist"><table><tbody>'
+            '<tr class="odd"><td class="first">'
+            '<img alt="简体" src="/images/v2/flag/china.gif">'
+            '<a href="//srtku.com/detail/e01.html" title="Game.of.Thrones.S01E01.HDTV.chs.srt">'
+            '<b>Game.of.Thrones.S01E01.HDTV.chs.srt</b></a></td></tr>'
+            '<tr class="even"><td class="first">'
+            '<img alt="简体" src="/images/v2/flag/china.gif">'
+            '<a href="//srtku.com/detail/e02.html" title="Game.of.Thrones.S01E02.HDTV.chs.srt">'
+            '<b>Game.of.Thrones.S01E02.HDTV.chs.srt</b></a></td></tr>'
+            "</tbody></table></div></div></div>"
+        ).encode("utf-8")
+        search_url = "https://srtku.com/search?q=Game+of+Thrones.S01"
+        responses = {search_url: [self.mod.HttpResponse(200, search_html, {}, search_url)]}
+
+        def response_stub(url, timeout=30, referer=None, allow_redirects=True):
+            del timeout, referer, allow_redirects
+            if url not in responses or not responses[url]:
+                raise AssertionError(f"unexpected URL: {url}")
+            return responses[url].pop(0)
+
+        provider._http_get_response = response_stub
+        results = provider.search(
+            {"kind": "episode", "series": "Game of Thrones", "season": 1, "episode": 1, "year": 2011},
+            [{"alpha3": "zho", "alpha2": "zh", "country": "CN"}],
+            {"request_delay_ms": 0},
+        )
+
+        detail_urls = {item["provider_payload"]["detail_url"] for item in results}
+        self.assertEqual(detail_urls, {"https://srtku.com/detail/e01.html"})
+
+    def test_http_get_response_honors_disabled_redirects(self):
+        # Finding 6: the Yunsuo verification request must not follow its 302.
+        provider = self.mod.ZimukuProvider()
+        used = []
+
+        class FakeResponse:
+            status = 302
+            headers = {"Location": "/the-subtitle-file"}
+
+            def read(self):
+                return b""
+
+            def geturl(self):
+                return "https://srtku.com/verify"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        class FakeOpener:
+            def __init__(self, name):
+                self.name = name
+
+            def open(self, request, timeout=None):
+                used.append(self.name)
+                return FakeResponse()
+
+        provider._opener = FakeOpener("follow")
+        provider._no_redirect_opener = FakeOpener("no-redirect")
+
+        response = provider._http_get_response("https://srtku.com/verify", allow_redirects=False)
+
+        self.assertEqual(used, ["no-redirect"])
+        self.assertEqual(response.status, 302)
 
 
 if __name__ == "__main__":

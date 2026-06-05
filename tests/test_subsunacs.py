@@ -99,6 +99,54 @@ DETAIL_SINGLE_FILE = b"""
 </html>
 """
 
+SEARCH_SHOW_S01E05_BG = b"""
+<!doctype html>
+<html>
+<body>
+<table>
+  <tr bgcolor="#333333" onmouseover="this.style.backgroundColor='#454545'">
+    <td class="tdMovie">
+      <a href="/subtitles/Some_Show_01x05-80808/" class="tooltip"
+         title="&lt;div&gt;&lt;b&gt;Movie: Some Show - 01x05&lt;/b&gt;&lt;br&gt;some.show.release&lt;/div&gt;">Some Show - 01x05</a>
+      <span class="smGray">&nbsp;(2015)</span>
+    </td>
+    <td>1</td>
+    <td>23.976</td>
+    <td><a href="/subtitles/Some_Show_01x05-80808/!" target="_blank">----</a></td>
+    <td><a href="/subtitles/Some_Show_01x05-80808/!#comments" target="_blank">0</a></td>
+    <td><a href="/search.php?t=1&amp;u=naliareev">naliareev</a></td>
+    <td>24533</td>
+    <td><a href="/subtitles/Some_Show_01x05-80808/!" target="_blank"><span class="sm">download</span></a></td>
+    <td align="center">---</td>
+    <td><input class="filesChk" type="checkbox" name="ids[]" value="80808" /></td>
+  </tr>
+</table>
+</body>
+</html>
+"""
+
+DETAIL_GENERIC_RESOLUTION_FILE = b"""
+<!doctype html>
+<html>
+<body>
+<div class="rarview">
+  <label><a href="/getentry.php?id=80808&amp;ei=0">Some.Show.720p.HDTV.x264.srt</a></label>
+</div>
+</body>
+</html>
+"""
+
+DETAIL_FORCED_ONLY = b"""
+<!doctype html>
+<html>
+<body>
+<div class="rarview">
+  <label><a href="/getentry.php?id=144478&amp;ei=0">Dune.2021.1080p.WEBRip.DD5.1.x264-SHITBOX_FORCED.srt</a></label>
+</div>
+</body>
+</html>
+"""
+
 
 def _zip_body(files):
     stream = io.BytesIO()
@@ -142,7 +190,7 @@ class SubsUnacsParserTests(unittest.TestCase):
 
         files = self.mod.extract_archive_files(body)
 
-        self.assertEqual(files, [{"filename": "Movie.srt", "content": b"subtitle"}])
+        self.assertEqual(files, [{"filename": "Movie.srt", "path": "Movie.srt", "content": b"subtitle"}])
 
     def test_extract_archive_files_ignores_oversized_file_lists(self):
         body = _zip_body({f"readme-{index}.txt": "ignored" for index in range(self.mod.ARCHIVE_FILE_COUNT_LIMIT + 1)})
@@ -298,7 +346,7 @@ class SubsUnacsProviderTests(unittest.TestCase):
     def test_search_preserves_requested_language_variants_when_deduping(self):
         provider = self.mod.SubsUnacsProvider()
         provider._http_post = lambda url, data, timeout=10, referer=None: SEARCH_DUNE_EN
-        provider._http_get = lambda url, timeout=10, referer=None: DETAIL_SINGLE_FILE
+        provider._http_get = lambda url, timeout=10, referer=None: DETAIL_DUNE
 
         results = provider.search(
             {"kind": "movie", "title": "Dune", "year": 2021},
@@ -312,6 +360,9 @@ class SubsUnacsProviderTests(unittest.TestCase):
         self.assertEqual(len(results), 2)
         self.assertEqual({item["language"]["forced"] for item in results}, {False, True})
         self.assertEqual(len({item["id"] for item in results}), 2)
+        by_forced = {item["language"]["forced"]: item["filename"] for item in results}
+        self.assertEqual(by_forced[False], "Dune.2021.1080p.WEBRip.DD5.1.x264-SHITBOX.srt")
+        self.assertEqual(by_forced[True], "Dune.2021.1080p.WEBRip.DD5.1.x264-SHITBOX_FORCED.srt")
 
     def test_download_fetches_direct_entry_and_normalizes_line_endings(self):
         provider = self.mod.SubsUnacsProvider()
@@ -330,6 +381,59 @@ class SubsUnacsProviderTests(unittest.TestCase):
         self.assertEqual(data, b"1\nText\n")
         self.assertEqual(content["content_sha256"], hashlib.sha256(data).hexdigest())
         self.assertEqual(content["format"], "srt")
+
+    def test_search_keeps_generic_resolution_file_for_other_episodes(self):
+        # Without the fix, "720p" is parsed as S07E20 and the file is dropped for S01E05.
+        provider = self.mod.SubsUnacsProvider()
+        provider._http_post = lambda url, data, timeout=10, referer=None: SEARCH_SHOW_S01E05_BG
+        provider._http_get = lambda url, timeout=10, referer=None: DETAIL_GENERIC_RESOLUTION_FILE
+
+        results = provider.search(
+            {"kind": "episode", "series": "Some Show", "season": 1, "episode": 5},
+            [{"alpha3": "bul", "alpha2": "bg"}],
+            {},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["filename"], "Some.Show.720p.HDTV.x264.srt")
+
+    def test_search_does_not_label_forced_file_for_normal_request(self):
+        # Without the fix, a normal request returns the _FORCED file as forced: false.
+        provider = self.mod.SubsUnacsProvider()
+        provider._http_post = lambda url, data, timeout=10, referer=None: SEARCH_DUNE_EN
+        provider._http_get = lambda url, timeout=10, referer=None: DETAIL_FORCED_ONLY
+
+        results = provider.search(
+            {"kind": "movie", "title": "Dune", "year": 2021},
+            [{"alpha3": "eng", "alpha2": "en", "forced": False, "hi": False}],
+            {},
+        )
+
+        self.assertEqual(results, [])
+
+    def test_search_keeps_archive_members_with_colliding_basenames(self):
+        # Without the fix, both members collapse to the same basename key and one is dropped,
+        # and a download cannot select the intended directory's file.
+        provider = self.mod.SubsUnacsProvider()
+        archive = _zip_body({"cd1/Movie.srt": "first", "cd2/Movie.srt": "second"})
+        provider._http_post = lambda url, data, timeout=10, referer=None: SEARCH_DUNE_EN
+        provider._http_get = lambda url, timeout=10, referer=None: archive
+
+        results = provider.search(
+            {"kind": "movie", "title": "Dune", "year": 2021},
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {},
+        )
+
+        self.assertEqual(len(results), 2)
+        paths = {item["provider_payload"]["path"] for item in results}
+        self.assertEqual(paths, {"cd1/Movie.srt", "cd2/Movie.srt"})
+        self.assertEqual(len({item["id"] for item in results}), 2)
+
+        wanted = next(item for item in results if item["provider_payload"]["path"] == "cd2/Movie.srt")
+        provider._http_get = lambda url, timeout=10, referer=None: archive
+        content = provider.download(wanted["provider_payload"], {"alpha3": "eng", "alpha2": "en"}, {})
+        self.assertEqual(base64.b64decode(content["content_b64"]), b"second")
 
 
 if __name__ == "__main__":

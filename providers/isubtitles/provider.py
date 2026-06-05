@@ -106,6 +106,11 @@ _SLUG_TO_ALPHA3.update(
 )
 _ALPHA2_TO_ALPHA3 = {value["alpha2"]: key for key, value in LANGUAGES.items()}
 
+# isubtitles.org lists Brazilian Portuguese on a separate slug from the generic
+# Portuguese page. Bazarr+ requests carry country_alpha2 "BR" (alpha3 "por") for it.
+_BRAZIL_SLUG = "brazillian-portuguese"
+_BRAZIL_COUNTRY = "BR"
+
 _MOVIE_LINK_RE = re.compile(
     rb"<h3>\s*<a\b[^>]*href=['\"](?P<href>/[^'\"]+-subtitles)['\"][^>]*>(?P<title>.*?)</a>\s*</h3>",
     re.I | re.S,
@@ -250,9 +255,8 @@ class ISubtitlesProvider:
             return response.read()
 
     def search(self, video, languages, config):
-        requested = [_alpha3_for_language(language) for language in languages or []]
-        requested = [language for language in requested if language in LANGUAGES]
-        if not requested:
+        plans = _language_plans(languages)
+        if not plans:
             return []
         results = []
         seen = set()
@@ -261,19 +265,20 @@ class ISubtitlesProvider:
             search_url = f"{BASE_URL}/search?{urllib.parse.urlencode({'kwd': query})}"
             title_pages = _rank_title_pages(video, parse_search_results(self._http_get(search_url)))
             for title_page in title_pages[:MAX_TITLE_PAGES]:
-                for alpha3 in requested:
-                    language_slug = LANGUAGES[alpha3]["slug"]
-                    list_url = f"{BASE_URL}/{title_page['slug']}/{language_slug}"
+                for plan in plans:
+                    list_url = f"{BASE_URL}/{title_page['slug']}/{plan['slug']}"
                     _sleep(config)
                     rows = parse_subtitle_rows(self._http_get(list_url, referer=search_url))
                     for row in rows:
-                        if row["language"] != alpha3 or not _row_matches_video(video, row, title_page):
+                        if not _row_matches_plan(row, plan):
                             continue
-                        key = (row["subtitle_id"], row["language"])
+                        if not _row_matches_video(video, row, title_page):
+                            continue
+                        key = (row["subtitle_id"], row["language"], plan.get("country") or "")
                         if key in seen:
                             continue
                         seen.add(key)
-                        results.append(self._result(video, title_page, row))
+                        results.append(self._result(video, title_page, row, plan.get("country")))
                         if len(results) >= MAX_RESULTS:
                             return _sort_results(results)
                 if results:
@@ -282,21 +287,26 @@ class ISubtitlesProvider:
                 return _sort_results(results)
         return _sort_results(results)
 
-    def _result(self, video, title_page, row):
+    def _result(self, video, title_page, row, country=None):
         language = LANGUAGES[row["language"]]
         candidate_title = f"{title_page['title']} {row['release_info']} {row.get('comment', '')}"
         matches = derive_matches(video, candidate_title)
         score = _score_from_matches(video, matches, row)
         filename = f"isubtitles.{_slug(row['release_info'])}.{language['alpha2']}.zip"
+        language_block = {
+            "alpha3": row["language"],
+            "alpha2": language["alpha2"],
+            "hi": _looks_hearing_impaired(row),
+            "forced": False,
+        }
+        result_id = f"isubtitles-{row['subtitle_id']}-{row['language']}"
+        if country:
+            language_block["country_alpha2"] = country
+            result_id = f"{result_id}-{country}"
         return {
             "provider": PROVIDER_ID,
-            "id": f"isubtitles-{row['subtitle_id']}-{row['language']}",
-            "language": {
-                "alpha3": row["language"],
-                "alpha2": language["alpha2"],
-                "hi": _looks_hearing_impaired(row),
-                "forced": False,
-            },
+            "id": result_id,
+            "language": language_block,
             "release_info": row["release_info"],
             "filename": filename,
             "matches": matches,
@@ -324,6 +334,7 @@ class ISubtitlesProvider:
                 "season": (video or {}).get("season"),
                 "episode": (video or {}).get("episode"),
                 "language": row["language"],
+                **({"country_alpha2": country} if country else {}),
             },
         }
 
@@ -559,10 +570,54 @@ def _content_type(subtitle_format):
 def _alpha3_for_language(language):
     if not isinstance(language, dict):
         return None
+    alpha3, _country = _alpha3_country_for_language(language)
+    return alpha3
+
+
+def _alpha3_country_for_language(language):
+    if not isinstance(language, dict):
+        return None, None
     alpha3 = (language.get("alpha3") or "").lower()
-    if alpha3:
-        return alpha3
-    return _ALPHA2_TO_ALPHA3.get((language.get("alpha2") or "").lower())
+    country = (language.get("country_alpha2") or language.get("country") or "").upper()
+    if "-" in alpha3 and not country:
+        alpha3, suffix = alpha3.split("-", 1)
+        country = suffix.upper()
+    if not alpha3:
+        alpha3 = _ALPHA2_TO_ALPHA3.get((language.get("alpha2") or "").lower())
+    return alpha3, (country or None)
+
+
+def _language_plans(languages):
+    """Map requested language payloads to listing-page fetch plans.
+
+    Brazilian Portuguese (alpha3 "por" + country_alpha2 "BR") lives on its own
+    slug, so it gets a dedicated plan that targets the brazillian-portuguese page
+    and carries the BR country through to the result shape.
+    """
+    plans = []
+    seen = set()
+    for language in languages or []:
+        alpha3, country = _alpha3_country_for_language(language)
+        if alpha3 not in LANGUAGES:
+            continue
+        if alpha3 == "por" and country == _BRAZIL_COUNTRY:
+            plan = {"alpha3": "por", "slug": _BRAZIL_SLUG, "country": _BRAZIL_COUNTRY}
+        else:
+            plan = {"alpha3": alpha3, "slug": LANGUAGES[alpha3]["slug"], "country": None}
+        key = (plan["alpha3"], plan["slug"], plan["country"] or "")
+        if key in seen:
+            continue
+        seen.add(key)
+        plans.append(plan)
+    return plans
+
+
+def _row_matches_plan(row, plan):
+    if row.get("language") != plan["alpha3"]:
+        return False
+    is_brazil_row = row.get("language_slug") == _BRAZIL_SLUG
+    wants_brazil = plan.get("country") == _BRAZIL_COUNTRY
+    return is_brazil_row == wants_brazil
 
 
 def _sleep(config):

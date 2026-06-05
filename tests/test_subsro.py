@@ -176,6 +176,86 @@ class SubsRoProviderSearchTests(unittest.TestCase):
         self.assertEqual(first["provider_payload"]["season"], 1)
         self.assertEqual(first["provider_payload"]["episode"], 1)
 
+    def test_episode_match_not_awarded_for_wrong_episode_in_same_season(self):
+        provider = self.mod.SubsRoProvider()
+
+        def stub(url, params, api_key, timeout=15):
+            del url, params, api_key, timeout
+            return {
+                "status": 200,
+                "items": [
+                    {
+                        "id": 404,
+                        "title": "Game of Thrones - Sezonul 1",
+                        "year": 2011,
+                        "description": "Game.of.Thrones.S01E03.1080p.WEB-DL",
+                        "downloadLink": "https://subs.ro/api/v1.0/subtitle/404/download",
+                        "imdbid": "tt0944947",
+                        "language": "ro",
+                        "type": "series",
+                    }
+                ],
+            }
+
+        provider._http_get_json = stub
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "Game of Thrones",
+                "season": 1,
+                "episode": 5,
+                "series_imdb_id": "tt0944947",
+            },
+            [{"alpha3": "ron", "alpha2": "ro"}],
+            {"api_key": "key-one", "request_delay_ms": 0},
+        )
+
+        self.assertEqual(len(results), 1)
+        first = results[0]
+        self.assertIn("imdb_id", first["matches"])
+        self.assertIn("season", first["matches"])
+        self.assertNotIn("episode", first["matches"])
+
+    def test_episode_match_falls_back_for_season_pack_without_episode_number(self):
+        provider = self.mod.SubsRoProvider()
+
+        def stub(url, params, api_key, timeout=15):
+            del url, params, api_key, timeout
+            return {
+                "status": 200,
+                "items": [
+                    {
+                        "id": 405,
+                        "title": "Game of Thrones - Sezonul 1",
+                        "year": 2011,
+                        "description": "Game.of.Thrones.Sezonul.1.Complete.1080p.WEB-DL",
+                        "downloadLink": "https://subs.ro/api/v1.0/subtitle/405/download",
+                        "imdbid": "tt0944947",
+                        "language": "ro",
+                        "type": "series",
+                    }
+                ],
+            }
+
+        provider._http_get_json = stub
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "Game of Thrones",
+                "season": 1,
+                "episode": 5,
+                "series_imdb_id": "tt0944947",
+            },
+            [{"alpha3": "ron", "alpha2": "ro"}],
+            {"api_key": "key-one", "request_delay_ms": 0},
+        )
+
+        self.assertEqual(len(results), 1)
+        first = results[0]
+        self.assertIn("imdb_id", first["matches"])
+        self.assertIn("season", first["matches"])
+        self.assertIn("episode", first["matches"])
+
     def test_search_falls_back_to_legacy_numeric_imdb_id_when_current_id_has_no_items(self):
         provider = self.mod.SubsRoProvider()
         calls = []
