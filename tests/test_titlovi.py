@@ -313,6 +313,7 @@ class TitloviProviderTests(unittest.TestCase):
     def test_http_get_converts_urllib_http_error_to_response(self):
         provider = self.mod.TitloviProvider()
         original_urlopen = self.mod.urllib.request.urlopen
+        original_sleep = self.mod.time.sleep
 
         def raise_http_error(request, timeout=10):
             del request, timeout
@@ -325,13 +326,162 @@ class TitloviProviderTests(unittest.TestCase):
             )
 
         self.mod.urllib.request.urlopen = raise_http_error
+        self.mod.time.sleep = lambda *_args, **_kwargs: None
         try:
             response = provider._http_get("https://kodi.titlovi.com/api/subtitles/search")
         finally:
             self.mod.urllib.request.urlopen = original_urlopen
+            self.mod.time.sleep = original_sleep
 
         self.assertEqual(response.status_code, 429)
         self.assertEqual(response.body, b"limited")
+
+
+class _FakeResponse:
+    def __init__(self, status, body, headers=None):
+        self._status = status
+        self._body = body
+        self.headers = _FakeHeaders(headers or {})
+
+    def getcode(self):
+        return self._status
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _FakeHeaders:
+    def __init__(self, mapping):
+        self._mapping = dict(mapping)
+
+    def items(self):
+        return self._mapping.items()
+
+
+class TitloviTransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.sleeps = []
+        self.mod.time.sleep = lambda seconds=0, *a, **k: self.sleeps.append(seconds)
+
+    def test_http_get_retries_transient_urlerror_then_succeeds(self):
+        provider = self.mod.TitloviProvider()
+        calls = []
+
+        def fake_urlopen(request, timeout=10):
+            del request, timeout
+            calls.append(1)
+            if len(calls) < 3:
+                raise self.mod.urllib.error.URLError("connection reset")
+            return _FakeResponse(200, b'{"ok": true}', {})
+
+        self.mod.urllib.request.urlopen = fake_urlopen
+        response = provider._http_get("https://kodi.titlovi.com/api/subtitles/search")
+
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.body, b'{"ok": true}')
+        # Two backoff sleeps before the third, successful attempt.
+        self.assertEqual(len(self.sleeps), 2)
+
+    def test_http_get_retries_503_then_succeeds(self):
+        provider = self.mod.TitloviProvider()
+        calls = []
+
+        def fake_urlopen(request, timeout=10):
+            del timeout
+            calls.append(1)
+            if len(calls) == 1:
+                raise self.mod.urllib.error.HTTPError(
+                    request.full_url, 503, "Service Unavailable", {}, io.BytesIO(b"down")
+                )
+            return _FakeResponse(200, b'{"SubtitleResults": []}', {})
+
+        self.mod.urllib.request.urlopen = fake_urlopen
+        response = provider._http_get("https://kodi.titlovi.com/api/subtitles/search")
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_http_post_retries_transient_then_succeeds(self):
+        provider = self.mod.TitloviProvider()
+        calls = []
+
+        def fake_urlopen(request, timeout=10):
+            del request, timeout
+            calls.append(1)
+            if len(calls) < 2:
+                raise self.mod.socket.timeout("timed out")
+            return _FakeResponse(200, _fixture("titlovi_login.json"), {})
+
+        self.mod.urllib.request.urlopen = fake_urlopen
+        response = provider._http_post(self.mod.TOKEN_URL, params={"username": "u"})
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_http_get_does_not_retry_404(self):
+        provider = self.mod.TitloviProvider()
+        calls = []
+
+        def fake_urlopen(request, timeout=10):
+            del timeout
+            calls.append(1)
+            raise self.mod.urllib.error.HTTPError(
+                request.full_url, 404, "Not Found", {}, io.BytesIO(b"missing")
+            )
+
+        self.mod.urllib.request.urlopen = fake_urlopen
+        response = provider._http_get("https://kodi.titlovi.com/api/subtitles/search")
+
+        # 4xx other than 429 is converted on the first attempt and never retried.
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.body, b"missing")
+        self.assertEqual(self.sleeps, [])
+
+    def test_http_get_propagates_urlerror_after_exhausting_attempts(self):
+        provider = self.mod.TitloviProvider()
+        calls = []
+
+        def fake_urlopen(request, timeout=10):
+            del request, timeout
+            calls.append(1)
+            raise self.mod.urllib.error.URLError("dns failure")
+
+        self.mod.urllib.request.urlopen = fake_urlopen
+        with self.assertRaises(self.mod.urllib.error.URLError):
+            provider._http_get("https://kodi.titlovi.com/api/subtitles/search")
+
+        self.assertEqual(len(calls), self.mod.HTTP_MAX_ATTEMPTS)
+        self.assertEqual(len(self.sleeps), self.mod.HTTP_MAX_ATTEMPTS - 1)
+
+    def test_http_get_honors_retry_after_on_429(self):
+        provider = self.mod.TitloviProvider()
+        calls = []
+
+        def fake_urlopen(request, timeout=10):
+            del timeout
+            calls.append(1)
+            if len(calls) == 1:
+                raise self.mod.urllib.error.HTTPError(
+                    request.full_url, 429, "Too Many Requests", {"Retry-After": "2"}, io.BytesIO(b"slow")
+                )
+            return _FakeResponse(200, b"{}", {})
+
+        self.mod.urllib.request.urlopen = fake_urlopen
+        response = provider._http_get("https://kodi.titlovi.com/api/subtitles/search")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.sleeps, [2.0])
 
 
 if __name__ == "__main__":

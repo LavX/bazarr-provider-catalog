@@ -6,6 +6,7 @@ import html
 import io
 import json
 import re
+import socket
 import time
 import unicodedata
 import urllib.error
@@ -18,6 +19,13 @@ API_BASE_URL = "https://kodi.titlovi.com/api/subtitles"
 TOKEN_URL = f"{API_BASE_URL}/gettoken"
 SEARCH_URL = f"{API_BASE_URL}/search"
 HTTP_TIMEOUT_SECONDS = 15
+# Transport-level retry for transient network blips (mirrors upstream subliminal's
+# RetryingSession/ProviderRetryMixin: a few attempts with exponential backoff). Only
+# raw transport errors and 5xx/429 are retried; every other failure propagates as-is.
+HTTP_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_MAX_SECONDS = 8.0
+RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt")
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -150,21 +158,13 @@ class TitloviProvider:
             separator = "&" if urllib.parse.urlparse(url).query else "?"
             url = f"{url}{separator}{query}"
         request = urllib.request.Request(url, headers=_headers(headers))
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                return HttpResponse(response.getcode(), response.read(), dict(response.headers.items()))
-        except urllib.error.HTTPError as error:
-            return _http_error_response(error)
+        return _urlopen_with_retry(request, timeout)
 
     def _http_post(self, url, params=None, headers=None, timeout=HTTP_TIMEOUT_SECONDS):
         query = urllib.parse.urlencode(params or {})
         separator = "&" if urllib.parse.urlparse(url).query else "?"
         request = urllib.request.Request(f"{url}{separator}{query}", data=b"", headers=_headers(headers), method="POST")
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                return HttpResponse(response.getcode(), response.read(), dict(response.headers.items()))
-        except urllib.error.HTTPError as error:
-            return _http_error_response(error)
+        return _urlopen_with_retry(request, timeout)
 
 
 def _results_from_api(video, api_results):
@@ -395,6 +395,53 @@ def _http_error_response(error):
     finally:
         error.close()
     return HttpResponse(error.code, body, _http_error_headers(error))
+
+
+def _urlopen_with_retry(request, timeout):
+    # Perform the raw urllib call with a bounded retry on transient transport failures.
+    # The retry wraps the existing behaviour: a successful response and a non-retriable
+    # HTTPError (4xx other than 429) return exactly what the helper returned before, and
+    # 5xx/429 are still converted to an HttpResponse so callers keep their 429 -> error
+    # mapping and _raise_for_status handling. Only genuine network blips are retried.
+    last_error = None
+    for attempt in range(1, HTTP_MAX_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return HttpResponse(response.getcode(), response.read(), dict(response.headers.items()))
+        except urllib.error.HTTPError as error:
+            response = _http_error_response(error)
+            if response.status_code in RETRY_STATUS_CODES and attempt < HTTP_MAX_ATTEMPTS:
+                _sleep_backoff(attempt, response)
+                continue
+            return response
+        except (socket.timeout, TimeoutError, urllib.error.URLError) as error:
+            last_error = error
+            if attempt >= HTTP_MAX_ATTEMPTS:
+                raise
+            _sleep_backoff(attempt, None)
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("titlovi retry loop exited without a result")
+
+
+def _sleep_backoff(attempt, response):
+    delay = min(RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1)), RETRY_BACKOFF_MAX_SECONDS)
+    retry_after = _retry_after_seconds(response)
+    if retry_after is not None:
+        delay = min(retry_after, RETRY_BACKOFF_MAX_SECONDS)
+    time.sleep(delay)
+
+
+def _retry_after_seconds(response):
+    if response is None or response.status_code != 429:
+        return None
+    value = (response.headers or {}).get("Retry-After")
+    if value is None:
+        return None
+    seconds = _float(value)
+    if seconds is None or seconds < 0:
+        return None
+    return seconds
 
 
 def _json_body(body, message):
