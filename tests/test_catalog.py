@@ -179,12 +179,15 @@ class SdkCliTests(unittest.TestCase):
         }
         sdk_cli.validate_dependency_lock("manifest.json", multi)  # must not raise
 
-    def test_validate_allows_single_wheel_dependency_exception(self):
+    def test_validate_rejects_bundled_archive_library(self):
         from sdk import cli as sdk_cli
 
-        # py7zz publishes no aarch64 wheel, so a single pinned hash is acceptable.
-        py7zz = {"requirements": [{"name": "py7zz", "version": "1.1.4", "hashes": ["sha256:" + "c" * 64]}]}
-        sdk_cli.validate_dependency_lock("manifest.json", py7zz)  # must not raise
+        # Archive extraction is host-side now, so a worker must never bundle py7zz,
+        # py7zr, or rarfile. The host extracts zip/rar/7z from an archive_b64 payload.
+        for name in ("py7zz", "py7zr", "rarfile"):
+            lock = {"requirements": [{"name": name, "version": "1.0.0", "hashes": ["sha256:" + "c" * 64]}]}
+            with self.assertRaisesRegex(sdk_cli.CatalogError, name):
+                sdk_cli.validate_dependency_lock("manifest.json", lock)
 
     def test_readme_python_badge_matches_runtime_matrix(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

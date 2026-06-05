@@ -54,9 +54,10 @@ KNOWN_MULTIWHEEL_PACKAGES = frozenset({
     "cryptography", "frozenlist", "multidict", "propcache", "psutil",
     "pycryptodome", "pycryptodomex", "yarl",
 })
-# Packages that legitimately publish only a single-platform wheel (no aarch64 wheel
-# exists on PyPI). Tracked as a known dependency limitation, not a manifest error.
-SINGLE_WHEEL_PACKAGES = frozenset({"py7zz"})
+# Archive libraries must not be bundled: the Bazarr+ host extracts zip/rar/7z members
+# itself (see docs/provider-bulk-creation-guide.md "Archive extraction"), so a worker
+# never carries py7zz (which has no aarch64 wheel) or another archive backend.
+BUNDLED_ARCHIVE_PACKAGES = frozenset({"py7zz", "py7zr", "rarfile"})
 
 
 class CatalogError(Exception):
@@ -134,7 +135,12 @@ def validate_dependency_lock(manifest_path, dependencies):
         for digest in hashes:
             if not isinstance(digest, str) or not digest.startswith("sha256:") or not _HEX_SHA256_RE.match(digest[7:]):
                 raise CatalogError(f"{manifest_path} dependency {name} has invalid hash")
-        if name in KNOWN_MULTIWHEEL_PACKAGES and name not in SINGLE_WHEEL_PACKAGES and len(hashes) < 2:
+        if name in BUNDLED_ARCHIVE_PACKAGES:
+            raise CatalogError(
+                f"{manifest_path} must not bundle archive library {name}; the Bazarr+ host "
+                f"extracts zip/rar/7z members (return an archive_b64 download payload)"
+            )
+        if name in KNOWN_MULTIWHEEL_PACKAGES and len(hashes) < 2:
             raise CatalogError(
                 f"{manifest_path} dependency {name} ships ABI-specific wheels but pins only "
                 f"{len(hashes)} hash; include the cp312/cp313/cp314 manylinux x86_64+aarch64 "
