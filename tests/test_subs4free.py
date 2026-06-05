@@ -1,3 +1,5 @@
+import base64
+import hashlib
 import importlib.util
 import io
 import unittest
@@ -117,23 +119,61 @@ class Subs4FreeParserTests(unittest.TestCase):
         self.assertEqual(form["width"], 200)
         self.assertEqual(form["height"], 58)
 
-    def test_extract_download_reads_zip_subtitle_and_skips_hidden_files(self):
-        payload = self.mod.extract_download(_zip_body(), {"filename": "inception.el.zip"})
+    def test_extract_download_zip_returns_raw_archive_for_host(self):
+        body = _zip_body()
+        payload = self.mod.extract_download(body, {"filename": "inception.el.zip", "episode": None})
+
+        # Archive mode: the worker hands the raw archive bytes back untouched.
+        self.assertEqual(base64.b64decode(payload["archive_b64"]), body)
+        self.assertEqual(payload["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertIsNone(payload["episode"])
+        # No extraction, member selection, or encoding guessing happens worker-side.
+        self.assertNotIn("content_b64", payload)
+        self.assertNotIn("member", payload)
+        self.assertNotIn("encoding", payload)
+
+    def test_extract_download_rar_returns_raw_archive_for_host(self):
+        # Minimal RAR4 signature; the host extracts, the worker only forwards bytes.
+        body = b"Rar!\x1a\x07\x00" + b"\x00" * 32
+        payload = self.mod.extract_download(body, {"filename": "inception.el.rar", "episode": 3})
+
+        self.assertEqual(base64.b64decode(payload["archive_b64"]), body)
+        self.assertEqual(payload["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(payload["episode"], 3)
+        self.assertNotIn("content_b64", payload)
+        self.assertNotIn("encoding", payload)
+
+    def test_extract_download_movie_archive_carries_none_episode(self):
+        body = _zip_body_with("Inception.2010.srt", "one\r\ntwo\r\n")
+        payload = self.mod.extract_download(body, {"filename": "inception.el.zip"})
+
+        self.assertEqual(base64.b64decode(payload["archive_b64"]), body)
+        self.assertIsNone(payload["episode"])
+
+    def test_extract_download_direct_subtitle_normalizes_line_endings(self):
+        body = b"1\r\n00:00:01,000 --> 00:00:02,000\r\nText\r\n"
+        payload = self.mod.extract_download(body, {"filename": "inception.el.srt"})
 
         self.assertEqual(payload["format"], "srt")
-        self.assertEqual(payload["encoding"], "utf-8")
         self.assertEqual(payload["empty"], False)
-        self.assertIn("one\ntwo\n", self.mod._decode_payload_text(payload))
+        data = base64.b64decode(payload["content_b64"])
+        self.assertEqual(data, b"1\n00:00:01,000 --> 00:00:02,000\nText\n")
+        self.assertEqual(payload["content_sha256"], hashlib.sha256(data).hexdigest())
+        # Direct content path must not ship a worker-guessed encoding; the host normalizes.
+        self.assertNotIn("encoding", payload)
+        self.assertNotIn("archive_b64", payload)
 
-    def test_extract_download_falls_back_to_latin1_on_invalid_utf8(self):
-        body = "Acentuado ü".encode("latin-1")
-        payload = self.mod.extract_download(
-            _zip_body_with("Inception.2010.srt", body),
-            {"filename": "inception.el.zip"},
+    def test_extract_download_rejects_empty_body(self):
+        with self.assertRaises(ValueError):
+            self.mod.extract_download(b"   \r\n  ", {"filename": "inception.el.zip"})
+
+    def test_extract_download_rejects_html_error_page(self):
+        body = (
+            b"<!DOCTYPE html>\n<html><head><title>404</title></head>"
+            b"<body>Subtitle not found</body></html>"
         )
-
-        self.assertEqual(payload["format"], "srt")
-        self.assertEqual(payload["encoding"], "latin-1")
+        with self.assertRaises(ValueError):
+            self.mod.extract_download(body, {"filename": "inception.el.zip"})
 
 
 class Subs4FreeProviderTests(unittest.TestCase):
@@ -176,6 +216,10 @@ class Subs4FreeProviderTests(unittest.TestCase):
         self.assertIn("year", first["matches"])
         self.assertIn("resolution", first["matches"])
         self.assertEqual(first["provider_payload"]["detail_url"], results[0]["page_link"])
+        # Host-side member selection needs episode (and season) in the payload; movies carry None.
+        self.assertIn("episode", first["provider_payload"])
+        self.assertIsNone(first["provider_payload"]["episode"])
+        self.assertIsNone(first["provider_payload"]["season"])
 
     def test_search_uses_matching_suggestion_pages_when_present(self):
         provider = self.mod.Subs4FreeProvider()
@@ -353,10 +397,12 @@ class Subs4FreeProviderTests(unittest.TestCase):
                 return b"ok"
             raise AssertionError(f"unexpected GET: {url}")
 
+        archive = _zip_body()
+
         def post_stub(url, data, timeout=15, referer=None):
             del timeout
             posts.append((url, data, referer))
-            return _zip_body()
+            return archive
 
         provider._http_get = get_stub
         provider._http_post = post_stub
@@ -364,6 +410,7 @@ class Subs4FreeProviderTests(unittest.TestCase):
             {
                 "detail_url": "https://www.subs4free.info/greek-subtitles/s3591aab93d/inception",
                 "filename": "inception.el.zip",
+                "episode": None,
             },
             {"alpha3": "ell", "alpha2": "el"},
             {"request_delay_ms": 0},
@@ -373,7 +420,12 @@ class Subs4FreeProviderTests(unittest.TestCase):
         self.assertEqual(posts[0][1]["id"], "tkMTc4MDI0MDQ5MTE4NTk1MjUxMTg2MTg5NjQ2MTg5")
         self.assertEqual(posts[0][2], "https://www.subs4free.info/greek-subtitles/s3591aab93d/inception")
         self.assertTrue(any("favicon.ico" in item[0] for item in seen_gets))
-        self.assertIn("one\ntwo\n", self.mod._decode_payload_text(result))
+        # Archive mode: download() forwards the raw archive bytes for host-side extraction.
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertIsNone(result["episode"])
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
 
 
 if __name__ == "__main__":
