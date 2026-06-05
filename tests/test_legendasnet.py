@@ -3,7 +3,9 @@ import hashlib
 import importlib.util
 import io
 import json
+import socket
 import unittest
+import urllib.error
 import zipfile
 from pathlib import Path
 
@@ -449,6 +451,191 @@ class LegendasNetDownloadTests(unittest.TestCase):
                 {"alpha3": "por-BR"},
                 {"username": "user", "password": "pass"},
             )
+
+
+class _FakeUrlopenResponse:
+    def __init__(self, status, body, headers):
+        self.status = status
+        self._body = body
+        self.headers = _FakeHeaders(headers)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return self._body
+
+
+class _FakeHeaders:
+    def __init__(self, headers):
+        self._headers = dict(headers or {})
+
+    def items(self):
+        return self._headers.items()
+
+
+class LegendasNetTransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.slept = []
+        self._real_sleep = self.mod.time.sleep
+        self.mod.time.sleep = lambda seconds: self.slept.append(seconds)
+        self._real_urlopen = self.mod.urllib.request.urlopen
+
+    def tearDown(self):
+        self.mod.time.sleep = self._real_sleep
+        self.mod.urllib.request.urlopen = self._real_urlopen
+
+    def _install_urlopen(self, outcomes):
+        calls = {"count": 0}
+
+        def fake_urlopen(request, timeout=None):
+            del request, timeout
+            outcome = outcomes[calls["count"]]
+            calls["count"] += 1
+            if isinstance(outcome, Exception):
+                raise outcome
+            status, body, headers = outcome
+            return _FakeUrlopenResponse(status, body, headers)
+
+        self.mod.urllib.request.urlopen = fake_urlopen
+        return calls
+
+    def test_http_get_retries_transient_urlerror_then_succeeds(self):
+        provider = self.mod.LegendasNetProvider()
+        calls = self._install_urlopen(
+            [
+                urllib.error.URLError("connection reset"),
+                (200, b"subtitle-bytes", {"content-type": "text/plain"}),
+            ]
+        )
+
+        response = provider._http_get("https://legendas.net/download/movie/101")
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.body, b"subtitle-bytes")
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(len(self.slept), 1)
+
+    def test_http_get_retries_timeout_twice_then_succeeds(self):
+        provider = self.mod.LegendasNetProvider()
+        calls = self._install_urlopen(
+            [
+                socket.timeout("timed out"),
+                socket.timeout("timed out"),
+                (200, b"ok", {}),
+            ]
+        )
+
+        response = provider._http_get("https://legendas.net/download/movie/101")
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(calls["count"], 3)
+        self.assertEqual(len(self.slept), 2)
+
+    def test_http_get_retries_on_503_then_succeeds(self):
+        provider = self.mod.LegendasNetProvider()
+
+        def make_503():
+            return urllib.error.HTTPError(
+                "https://legendas.net/download/movie/101", 503, "Service Unavailable", {}, io.BytesIO(b"down")
+            )
+
+        calls = self._install_urlopen(
+            [
+                make_503(),
+                (200, b"recovered", {}),
+            ]
+        )
+
+        response = provider._http_get("https://legendas.net/download/movie/101")
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.body, b"recovered")
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(len(self.slept), 1)
+
+    def test_http_get_does_not_retry_404(self):
+        provider = self.mod.LegendasNetProvider()
+
+        def make_404():
+            return urllib.error.HTTPError(
+                "https://legendas.net/download/movie/101", 404, "Not Found", {}, io.BytesIO(b"missing")
+            )
+
+        calls = self._install_urlopen([make_404()])
+
+        response = provider._http_get("https://legendas.net/download/movie/101")
+
+        # 4xx (other than 429) is converted to a status-bearing response on the
+        # first attempt and never retried.
+        self.assertEqual(response.status, 404)
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(self.slept, [])
+
+    def test_http_get_does_not_retry_after_final_transient_failure(self):
+        provider = self.mod.LegendasNetProvider()
+        calls = self._install_urlopen(
+            [
+                urllib.error.URLError("reset"),
+                urllib.error.URLError("reset"),
+                urllib.error.URLError("reset"),
+            ]
+        )
+
+        with self.assertRaises(urllib.error.URLError):
+            provider._http_get("https://legendas.net/download/movie/101")
+
+        # Exactly HTTP_MAX_ATTEMPTS attempts, then the same transport error
+        # propagates unchanged.
+        self.assertEqual(calls["count"], self.mod.HTTP_MAX_ATTEMPTS)
+        self.assertEqual(len(self.slept), self.mod.HTTP_MAX_ATTEMPTS - 1)
+
+    def test_http_get_honors_retry_after_on_429(self):
+        provider = self.mod.LegendasNetProvider()
+
+        def make_429():
+            return urllib.error.HTTPError(
+                "https://legendas.net/download/movie/101",
+                429,
+                "Too Many Requests",
+                {"Retry-After": "5"},
+                io.BytesIO(b"slow down"),
+            )
+
+        self._install_urlopen(
+            [
+                make_429(),
+                (200, b"ok", {}),
+            ]
+        )
+
+        response = provider._http_get("https://legendas.net/download/movie/101")
+
+        self.assertEqual(response.status, 200)
+        # Retry-After (5s) wins over the small backoff base on the 429 retry.
+        self.assertEqual(self.slept, [5.0])
+
+    def test_http_json_retries_transient_urlerror_then_succeeds(self):
+        provider = self.mod.LegendasNetProvider()
+        calls = self._install_urlopen(
+            [
+                urllib.error.URLError("dns failure"),
+                (200, b'{"access_token": "unit-token"}', {}),
+            ]
+        )
+
+        response = provider._http_json(
+            "POST", "https://legendas.net/api/v1/login", json_body={"email": "u", "password": "p"}
+        )
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.body, b'{"access_token": "unit-token"}')
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(len(self.slept), 1)
 
 
 if __name__ == "__main__":
