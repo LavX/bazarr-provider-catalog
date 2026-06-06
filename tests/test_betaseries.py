@@ -258,14 +258,47 @@ class BetaSeriesProviderTests(unittest.TestCase):
             {"token": "secret-key"},
         )
 
-        # Archive mode: the worker hands the raw archive bytes back untouched.
+        # Archive mode: the worker hands the raw bytes back untouched, but pins the
+        # member matching the scored release_group so the host extracts that release
+        # rather than guessing by episode (both members share S01E01).
         self.assertEqual(base64.b64decode(result["archive_b64"]), body)
         self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
-        self.assertEqual(result["episode"], 1)
-        # No extraction, member selection, or encoding guessing happens worker-side.
+        self.assertEqual(result["member"], "Blue.Lights.S01E01.ETHEL.srt")
+        # No worker-side extraction or encoding guessing; episode is unused once pinned.
         self.assertNotIn("content_b64", result)
-        self.assertNotIn("member", result)
+        self.assertNotIn("episode", result)
         self.assertNotIn("encoding", result)
+
+    def test_download_zip_archive_without_release_group_falls_back_to_episode(self):
+        provider = self.mod.BetaSeriesProvider()
+        body = _zip_body(
+            {
+                "Blue.Lights.S01E01.OTHER.srt": b"1\n00:00:01,000 --> 00:00:02,000\nOne\n",
+                "Blue.Lights.S01E01.ELSE.srt": b"1\n00:00:01,000 --> 00:00:02,000\nTwo\n",
+            }
+        )
+        provider._http_get_bytes = lambda url, timeout=10, config=None: body
+
+        result = provider.download(
+            {
+                "provider": "betaseries",
+                "schema": 1,
+                "subtitle_id": "101",
+                "download_url": "https://betaseries.test/download/blue-lights.zip",
+                "filename": "Blue.Lights.S01E01.zip",
+                "season": 1,
+                "episode": 1,
+            },
+            {"alpha3": "eng"},
+            {"token": "secret-key"},
+        )
+
+        # No release_group to disambiguate: hand the whole archive over and let the
+        # host pick the member by episode.
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["episode"], 1)
+        self.assertNotIn("member", result)
+        self.assertNotIn("content_b64", result)
 
     def test_download_rar_archive_returns_raw_archive_for_host(self):
         provider = self.mod.BetaSeriesProvider()

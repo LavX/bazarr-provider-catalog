@@ -293,6 +293,94 @@ class SoustitreseuProviderTests(unittest.TestCase):
         self.assertEqual(content["episode"], 7)
         self.assertNotIn("content_b64", content)
 
+    def test_download_pins_language_member_when_archive_mixes_languages(self):
+        provider = self.mod.SoustitreseuProvider()
+        body = _zip_body(
+            {
+                "Game.Of.Thrones.101.ctu.720p.VF.NoTAG.srt": "french subtitle",
+                "Game.Of.Thrones.101.ctu.720p.VO.NoTAG.srt": "english subtitle",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        content = provider.download(
+            {
+                "url": "https://www.sous-titres.eu/series/download/x/Game.Of.Thrones.1x01.ENFR.FBK.zip",
+                "filename": "Game.Of.Thrones.1x01.ENFR.FBK.zip",
+                "media_type": "series",
+                "season": 1,
+                "episode": 1,
+                "language": "fra",
+                "release_info": "Game.Of.Thrones.1x01.ENFR.FBK.zip",
+            },
+            {"alpha3": "fra", "alpha2": "fr"},
+            {},
+        )
+
+        # The archive carries both VO (English) and VF (French); a French request must
+        # pin the VF member rather than let the host stream the English one.
+        self.assertEqual(content["member"], "Game.Of.Thrones.101.ctu.720p.VF.NoTAG.srt")
+        self.assertNotIn("episode", content)
+        self.assertNotIn("content_b64", content)
+
+    def test_download_pins_language_episode_member_in_season_pack(self):
+        provider = self.mod.SoustitreseuProvider()
+        body = _zip_body(
+            {
+                "Game.Of.Thrones.S01E01.VF.srt": "fr e1",
+                "Game.Of.Thrones.S01E01.VO.srt": "en e1",
+                "Game.Of.Thrones.S01E02.VF.srt": "fr e2",
+                "Game.Of.Thrones.S01E02.VO.srt": "en e2",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        content = provider.download(
+            {
+                "url": "https://www.sous-titres.eu/series/download/x/Game.Of.Thrones.S01.ENFR.zip",
+                "filename": "Game.Of.Thrones.S01.ENFR.zip",
+                "media_type": "series",
+                "season": 1,
+                "episode": 2,
+                "language": "eng",
+                "release_info": "Game.Of.Thrones.S01.ENFR.zip",
+            },
+            {"alpha3": "eng", "alpha2": "en"},
+            {},
+        )
+
+        # Both languages and both episodes present: resolve language and episode together.
+        self.assertEqual(content["member"], "Game.Of.Thrones.S01E02.VO.srt")
+        self.assertNotIn("episode", content)
+
+    def test_download_single_language_archive_defers_to_host(self):
+        provider = self.mod.SoustitreseuProvider()
+        body = _zip_body(
+            {
+                "Game.Of.Thrones.S01E01.VF.srt": "fr e1",
+                "Game.Of.Thrones.S01E02.VF.srt": "fr e2",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        content = provider.download(
+            {
+                "url": "https://www.sous-titres.eu/series/download/x/Game.Of.Thrones.S01.FR.zip",
+                "filename": "Game.Of.Thrones.S01.FR.zip",
+                "media_type": "series",
+                "season": 1,
+                "episode": 2,
+                "language": "fra",
+                "release_info": "Game.Of.Thrones.S01.FR.zip",
+            },
+            {"alpha3": "fra", "alpha2": "fr"},
+            {},
+        )
+
+        # Only one language present: nothing to disambiguate, let the host pick by episode.
+        self.assertNotIn("member", content)
+        self.assertEqual(content["episode"], 2)
+
     def test_download_archive_episode_is_none_for_movie(self):
         provider = self.mod.SoustitreseuProvider()
         body = _zip_body({"Dune.Part.One.2021.WEB.VF.srt": "movie subtitle"})

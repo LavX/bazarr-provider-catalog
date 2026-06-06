@@ -201,18 +201,47 @@ def _download_payload(body, payload=None):
         raise ValueError(f"betaseries returned an HTML/error page for subtitle {payload.get('subtitle_id')}")
     if _is_archive_body(body):
         # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
-        # the host, which lists it, picks the member by episode, and detects encoding.
-        return {
+        # the host. When we can cheaply list a zip, pin the member matching the scored
+        # release_group so the host downloads that release instead of guessing by episode;
+        # otherwise (rar, or no release_group match) let the host pick the member by episode.
+        archive = {
             "archive_b64": base64.b64encode(body).decode("ascii"),
             "archive_sha256": hashlib.sha256(body).hexdigest(),
-            "episode": payload.get("episode"),
         }
+        member = _select_zip_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = payload.get("episode")
+        return archive
     # Direct, non-archive subtitle body.
     return _content_payload(_normalize_line_endings(body), _subtitle_extension(payload.get("filename")) or "srt")
 
 
 def _is_archive_body(body):
     return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
+
+
+def _select_zip_member(body, payload):
+    # Name the zip member matching the scored release_group. Listing only, no extraction
+    # or decoding: the host reads the named member and runs chardet. Returns None for rar
+    # (not stdlib-listable), no release_group, or no match, so the caller falls back to
+    # host-side episode selection.
+    release_group = str((payload or {}).get("release_group") or "")
+    if not release_group or not zipfile.is_zipfile(io.BytesIO(body)):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        names = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/")
+            and _subtitle_extension(name)
+            and not os.path.basename(name).startswith(".")
+        ]
+    for name in names:
+        if release_group in name:
+            return name
+    return None
 
 
 def _is_html_body(body):

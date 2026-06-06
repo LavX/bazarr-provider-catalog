@@ -467,16 +467,19 @@ def smoke_test(
         content = provider.download(last_candidate["provider_payload"], {"alpha3": "eng"}, config)
     except Exception as exc:
         raise CatalogError(f"{provider_id} download failed: {exc}") from exc
-    if not isinstance(content, dict) or content.get("empty") is not False:
+    if not isinstance(content, dict):
         raise CatalogError(f"{provider_id} download must return a content or archive payload")
     if "archive_b64" in content:
+        # Archive payloads do not carry `empty`; the host extracts the member.
         _validate_archive_download(provider_id, content)
-    else:
+    elif content.get("empty") is False:
         data = base64.b64decode(content["content_b64"].encode("ascii"), validate=True)
         if hashlib.sha256(data).hexdigest() != content.get("content_sha256"):
             raise CatalogError(f"{provider_id} download hash mismatch")
         if is_official_smoke and data.decode("utf-8") != EXPECTED_SMOKE_SUBTITLE:
             raise CatalogError(f"{provider_id} download content does not match fixed SRT")
+    else:
+        raise CatalogError(f"{provider_id} download must return a content or archive payload")
     _assert_secret_not_leaked(config, secret_fields, content, f"{provider_id} download")
     return provider_id
 

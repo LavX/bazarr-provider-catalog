@@ -266,18 +266,90 @@ def extract_download(body, payload=None):
         raise ValueError("yavkanet download returned HTML instead of a subtitle archive")
     if _is_archive_body(body):
         # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
-        # the host, which lists it, picks the member by episode, and detects encoding.
-        return {
+        # the host. A pack can hold several members for the same episode (different
+        # release group / resolution / source); the host's episode-only pick cannot tell
+        # them apart, so when we can list a zip we pin the member matching the fields the
+        # result was scored on. Otherwise (rar, single member, or no clear winner) let the
+        # host pick the member by episode.
+        archive = {
             "archive_b64": base64.b64encode(body).decode("ascii"),
             "archive_sha256": hashlib.sha256(body).hexdigest(),
-            "episode": payload.get("episode"),
         }
+        member = _select_zip_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = payload.get("episode")
+        return archive
     # Direct, non-archive subtitle body.
     return _content_payload(body, _format_from_filename(filename))
 
 
 def _is_archive_body(body):
     return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
+
+
+def _select_zip_member(body, payload):
+    # Pin the zip member matching the scored release group / resolution / source. Listing
+    # only, no extraction or decoding: the host reads the named member and runs chardet.
+    # Returns None for rar (not stdlib-listable), a single member (nothing to
+    # disambiguate), or when no field breaks the tie, so the caller falls back to
+    # host-side episode selection.
+    payload = payload or {}
+    if _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body)):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        members = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/")
+            and _subtitle_extension(name)
+            and not name.rsplit("/", 1)[-1].startswith(".")
+        ]
+    if len(members) < 2:
+        return None  # a lone member: the host's episode pick already lands here
+    # Narrow to the requested episode first; the host can already do this, but a pack with
+    # several release groups per episode leaves it guessing among the matches.
+    season = _safe_int(payload.get("season"))
+    episode = _safe_int(payload.get("episode"))
+    pool = members
+    if season is not None and episode is not None:
+        episode_pool = [name for name in members if _member_has_episode(name, season, episode)]
+        if episode_pool:
+            pool = episode_pool
+    if len(pool) < 2:
+        return None  # a single episode match: host episode selection already lands here
+    # Break the tie with the same fields the result was scored on. Pin only a unique winner.
+    video = payload.get("video") or {}
+    best, best_score, tied = None, 0, False
+    for name in pool:
+        score = _member_match_score(name, video)
+        if score > best_score:
+            best, best_score, tied = name, score, False
+        elif score == best_score and best is not None:
+            tied = True
+    if best is None or best_score == 0 or tied:
+        return None  # cannot confidently disambiguate; let the host pick by episode
+    return best
+
+
+def _member_has_episode(name, season, episode):
+    text = name.lower()
+    return bool(
+        re.search(rf"s0*{season}e0*{episode}(?!\d)", text)
+        or re.search(rf"(?<!\d){season}x0*{episode}(?!\d)", text)
+    )
+
+
+def _member_match_score(name, video):
+    score = 0
+    if _release_group_matches(video.get("release_group"), name):
+        score += 3
+    if _token_in_text(video.get("resolution"), name):
+        score += 2
+    if _source_matches(video.get("source"), name):
+        score += 2
+    return score
 
 
 class YavkaNetProvider:

@@ -261,12 +261,20 @@ def extract_download(body, payload=None):
         raise ValueError("titlovi download did not return a supported subtitle file")
     if _is_archive_body(body):
         # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
-        # the host, which lists it, picks the member by episode, and detects encoding.
-        return {
+        # the host. A Serbian archive can carry both Latin and Cyrillic members for the
+        # same episode, which the host's episode-based pick cannot tell apart, so when we
+        # can list a zip we pin the script-matched member; otherwise (rar, no script, or a
+        # single script present) let the host pick the member by episode.
+        archive = {
             "archive_b64": base64.b64encode(body).decode("ascii"),
             "archive_sha256": hashlib.sha256(body).hexdigest(),
-            "episode": payload.get("episode"),
         }
+        member = _select_script_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = payload.get("episode")
+        return archive
     # Direct, non-archive subtitle body.
     subtitle_format = _direct_subtitle_format(body, payload)
     if not subtitle_format:
@@ -276,6 +284,48 @@ def extract_download(body, payload=None):
 
 def _is_archive_body(body):
     return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
+
+
+def _select_script_member(body, payload):
+    # Pin the Serbian script the user requested (Cyrl vs Latin). The host cannot tell the
+    # two alphabets apart, so we only step in for Serbian zips that actually mix scripts;
+    # rar (not stdlib-listable), single-script, or non-Serbian archives return None and the
+    # caller falls back to host-side episode selection.
+    payload = payload or {}
+    if payload.get("language") != "srp" or _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body)):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        candidates = [name for name in archive.namelist() if _subtitle_extension(name)]
+    if len(candidates) < 2:
+        return None
+    cyrillic, latin = [], []
+    for name in candidates:
+        lowered = name.lower()
+        if ".cyr" in lowered or ".cir" in lowered or "cyr)" in lowered:
+            cyrillic.append(name)
+        else:
+            latin.append(name)
+    if not (cyrillic and latin):
+        return None  # single script: the host's episode pick is enough
+    # Latin Serbian has no `script` key, so anything other than "Cyrl" means Latin.
+    pool = cyrillic if payload.get("script") == "Cyrl" else latin
+    # A season pack carries several episodes per script; the host cannot combine episode
+    # and script, so resolve the episode here as well before pinning a single member.
+    season = _safe_int(payload.get("season"))
+    episode = _safe_int(payload.get("episode"))
+    if season is not None and episode is not None:
+        episode_pool = [name for name in pool if _member_has_episode(name, season, episode)]
+        # Episode missing from the requested script: defer to host episode selection.
+        return episode_pool[0] if episode_pool else None
+    return pool[0]
+
+
+def _member_has_episode(name, season, episode):
+    text = name.lower()
+    return bool(
+        re.search(rf"s0*{season}e0*{episode}(?!\d)", text)
+        or re.search(rf"(?<!\d){season}x0*{episode}(?!\d)", text)
+    )
 
 
 def derive_matches(video, title, alt_title, release, season=None, episode=None, year=None):

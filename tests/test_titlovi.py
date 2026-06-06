@@ -191,6 +191,73 @@ class TitloviProviderTests(unittest.TestCase):
         self.assertEqual(base64.b64decode(result["archive_b64"]), body)
         self.assertIsNone(result["episode"])
 
+    def test_extract_download_pins_cyrillic_member_when_both_scripts_present(self):
+        body = _zip_body(
+            {
+                "Chernobyl.S01E01.lat.srt": b"1\n00:00:01,000 --> 00:00:02,000\nLatin\n",
+                "Chernobyl.S01E01.cyr.srt": b"1\n00:00:01,000 --> 00:00:02,000\nCyrillic\n",
+            }
+        )
+
+        result = self.mod.extract_download(
+            body, {"language": "srp", "script": "Cyrl", "season": 1, "episode": 1}
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["member"], "Chernobyl.S01E01.cyr.srt")
+        self.assertNotIn("episode", result)
+
+    def test_extract_download_pins_latin_member_for_latin_script(self):
+        body = _zip_body(
+            {
+                "Chernobyl.S01E01.cyr.srt": b"1\n00:00:01,000 --> 00:00:02,000\nCyrillic\n",
+                "Chernobyl.S01E01.lat.srt": b"1\n00:00:01,000 --> 00:00:02,000\nLatin\n",
+            }
+        )
+
+        # Latin Serbian carries no `script` key; its absence selects the Latin member.
+        result = self.mod.extract_download(
+            body, {"language": "srp", "season": 1, "episode": 1}
+        )
+
+        self.assertEqual(result["member"], "Chernobyl.S01E01.lat.srt")
+        self.assertNotIn("episode", result)
+
+    def test_extract_download_pins_script_member_for_correct_episode_in_pack(self):
+        body = _zip_body(
+            {
+                "Chernobyl.S01E01.lat.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE1 latin\n",
+                "Chernobyl.S01E01.cyr.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE1 cyr\n",
+                "Chernobyl.S01E02.lat.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE2 latin\n",
+                "Chernobyl.S01E02.cyr.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE2 cyr\n",
+            }
+        )
+
+        # Both scripts and several episodes: the host can do neither axis, so the provider
+        # resolves episode and script together and pins exactly one member.
+        result = self.mod.extract_download(
+            body, {"language": "srp", "script": "Cyrl", "season": 1, "episode": 2}
+        )
+
+        self.assertEqual(result["member"], "Chernobyl.S01E02.cyr.srt")
+        self.assertNotIn("episode", result)
+
+    def test_extract_download_single_script_pack_defers_to_episode(self):
+        body = _zip_body(
+            {
+                "Chernobyl.S01E01.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE1\n",
+                "Chernobyl.S01E02.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE2\n",
+            }
+        )
+
+        # Only one script present: nothing for us to disambiguate, host picks by episode.
+        result = self.mod.extract_download(
+            body, {"language": "srp", "season": 1, "episode": 1}
+        )
+
+        self.assertEqual(result["episode"], 1)
+        self.assertNotIn("member", result)
+
     def test_extract_download_accepts_direct_subtitle_body(self):
         body = b"1\r\n00:00:01,000 --> 00:00:02,000\r\nDirect subtitle\r\n"
 

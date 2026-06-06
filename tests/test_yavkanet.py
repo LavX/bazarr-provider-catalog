@@ -777,6 +777,77 @@ class YavkaNetProviderTests(unittest.TestCase):
         self.assertEqual(result["episode"], 2)
         self.assertNotIn("encoding", result)
 
+    def test_extract_download_pins_member_by_release_group(self):
+        # Two members for the same episode differ only by release group; the host's
+        # episode-only pick cannot tell them apart, so the worker pins the scored one.
+        body = _zip_with(
+            {
+                "Example.S01E02.720p.WEB.NTb.srt": b"wrong group",
+                "Example.S01E02.1080p.WEB.FLUX.srt": SRT_BODY,
+            }
+        )
+
+        result = self.mod.extract_download(
+            body,
+            {
+                "filename": "Example.S01E02.zip",
+                "season": 1,
+                "episode": 2,
+                "video": {"release_group": "FLUX", "resolution": "1080p", "source": "Web"},
+            },
+        )
+
+        self.assertEqual(result["member"], "Example.S01E02.1080p.WEB.FLUX.srt")
+        self.assertNotIn("episode", result)
+        self.assertNotIn("content_b64", result)
+
+    def test_extract_download_pins_member_for_requested_episode_in_pack(self):
+        # A season pack with several release groups per episode: resolve episode and
+        # release group together so the pinned member matches the scored candidate.
+        body = _zip_with(
+            {
+                "Example.S01E01.1080p.WEB.FLUX.srt": b"e1 flux",
+                "Example.S01E02.720p.WEB.NTb.srt": b"e2 ntb",
+                "Example.S01E02.1080p.WEB.FLUX.srt": SRT_BODY,
+            }
+        )
+
+        result = self.mod.extract_download(
+            body,
+            {
+                "filename": "Example.S01.zip",
+                "season": 1,
+                "episode": 2,
+                "video": {"release_group": "FLUX", "resolution": "1080p", "source": "Web"},
+            },
+        )
+
+        self.assertEqual(result["member"], "Example.S01E02.1080p.WEB.FLUX.srt")
+        self.assertNotIn("episode", result)
+
+    def test_extract_download_falls_back_to_episode_without_field_match(self):
+        # Members differ but none matches the scored fields: ambiguous, so defer to the
+        # host's episode selection rather than guessing.
+        body = _zip_with(
+            {
+                "Example.S01E02.720p.HDTV.NTb.srt": b"one",
+                "Example.S01E02.XviD.AC3.srt": b"two",
+            }
+        )
+
+        result = self.mod.extract_download(
+            body,
+            {
+                "filename": "Example.S01E02.zip",
+                "season": 1,
+                "episode": 2,
+                "video": {"release_group": "FLUX", "resolution": "1080p", "source": "Bluray"},
+            },
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 2)
+
     def test_extract_download_rejects_empty_body(self):
         with self.assertRaisesRegex(ValueError, "empty"):
             self.mod.extract_download(b"", {"filename": "Dune.2021.WEB.zip"})

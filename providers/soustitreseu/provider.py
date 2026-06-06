@@ -340,18 +340,100 @@ def _download_payload(body, payload):
         raise ValueError(f"soustitreseu returned an HTML/error page for {payload.get('url')}")
     if _is_archive_body(body):
         # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
-        # the host, which lists it, picks the member by episode, and detects encoding.
-        return {
+        # the host. A Soustitres.eu archive can bundle several languages (French +
+        # English) for the same release, which the host's episode-only pick cannot tell
+        # apart, so when we can list a zip we pin the language-matched member; otherwise
+        # (rar, single language, or no match) let the host pick the member by episode.
+        archive = {
             "archive_b64": base64.b64encode(body).decode("ascii"),
             "archive_sha256": hashlib.sha256(body).hexdigest(),
-            "episode": payload.get("episode"),
         }
+        member = _select_language_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = payload.get("episode")
+        return archive
     # Direct, non-archive subtitle body.
     return _content_payload(body, _format_from_filename(payload.get("filename")))
 
 
 def _is_archive_body(body):
     return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
+
+
+def _select_language_member(body, payload):
+    # Pin the member matching the requested language. Listing only, no extraction or
+    # decoding: the host reads the named member and runs chardet. Returns None for rar
+    # (not stdlib-listable), a single-language archive, or no language match, so the
+    # caller falls back to host-side episode selection.
+    payload = payload or {}
+    language = payload.get("language")
+    if not language or _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body)):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        members = [name for name in archive.namelist() if _subtitle_extension(name)]
+    tagged = {name: _language_from_subtitle_filename(name) for name in members}
+    present = {lang for lang in tagged.values() if lang}
+    # Only step in when the archive actually mixes languages and we requested one of them;
+    # a single-language archive leaves nothing for us to disambiguate.
+    if len(present) < 2 or language not in present:
+        return None
+    pool = [name for name in members if tagged[name] == language]
+    # A season pack carries several episodes per language; the host cannot combine episode
+    # and language, so resolve the episode here as well before pinning a single member.
+    season = _safe_int(payload.get("season"))
+    episode = _safe_int(payload.get("episode"))
+    if season is not None and episode is not None:
+        episode_pool = [
+            name
+            for name in pool
+            if _file_matches_episode(_normalize_release(os.path.basename(name)), season, episode)
+        ]
+        if episode_pool:
+            return episode_pool[0]
+        # Episode markers present but none matches the requested one: defer to the host.
+        if any(
+            _file_has_episode_marker(_normalize_release(os.path.basename(name)))
+            for name in pool
+        ):
+            return None
+    return pool[0] if len(pool) == 1 else None
+
+
+def _language_from_subtitle_filename(name):
+    compact = "." + _normalize_release(name) + "."
+    if ".vo." in compact or ".en." in compact or ".eng." in compact:
+        return "eng"
+    if ".vf." in compact or ".fr." in compact or ".fre." in compact:
+        return "fra"
+    return None
+
+
+def _file_matches_episode(normalized_name, season, episode):
+    compact = normalized_name.lower()
+    if f"s{season:02d}e{episode:02d}" in compact:
+        return True
+    if f"{season}x{episode:02d}" in compact or f"{season}x{episode}" in compact:
+        return True
+    episode_code = f"{season}{episode:02d}"
+    return bool(re.search(rf"(?<!\d){re.escape(episode_code)}(?!\d)", compact))
+
+
+def _file_has_episode_marker(normalized_name):
+    compact = normalized_name.lower()
+    return bool(
+        re.search(r"s\d{1,2}e\d{1,3}", compact)
+        or re.search(r"(?<!\d)\d{1,2}x\d{1,3}", compact)
+        or re.search(r"(?<!\d)\d{3}(?!\d)", compact)
+    )
+
+
+def _safe_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _is_html_body(body):
