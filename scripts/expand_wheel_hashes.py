@@ -81,10 +81,11 @@ def has_pure(filenames):
     return any(wheel_tags(fn)[1] == "none" and wheel_tags(fn)[2] == "any" for fn in filenames)
 
 
-def main(root="."):
+def main(root=".", strict=False):
     changed = []
     expanded = {}
     gaps = {}
+    fetch_failures = []
     for manifest_path in sorted(glob.glob(os.path.join(root, "providers", "*", "provider.json"))):
         manifest = json.load(open(manifest_path))
         requirements = manifest.get("dependencies", {}).get("requirements", [])
@@ -95,6 +96,7 @@ def main(root="."):
                 data = fetch(name, version)
             except Exception as exc:  # noqa: BLE001 - report and continue
                 print("  WARN fetch {}=={}: {}".format(name, version, exc), file=sys.stderr)
+                fetch_failures.append((name, version, str(exc)))
                 continue
             files = data["urls"]
             if not is_target(files):
@@ -120,8 +122,28 @@ def main(root="."):
         print("\naarch64 coverage gaps (no aarch64 wheel on PyPI; needs a dependency decision):")
         for (name, version), missing in sorted(gaps.items()):
             print("  {}=={}: missing {}".format(name, version, missing))
+    if fetch_failures:
+        print(
+            "\n{} dependency fetch(es) failed; wheel coverage was NOT verified.".format(
+                len(fetch_failures)
+            ),
+            file=sys.stderr,
+        )
+        if strict:
+            return 1
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1] if len(sys.argv) > 1 else "."))
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("root", nargs="?", default=".", help="catalog root directory")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="exit non-zero if any PyPI fetch fails, so a network/lookup failure "
+        "cannot silently pass the CI freshness gate",
+    )
+    args = parser.parse_args()
+    sys.exit(main(args.root, strict=args.strict))

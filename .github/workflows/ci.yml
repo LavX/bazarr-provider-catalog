@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13"]
+        python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -43,6 +43,8 @@ jobs:
         with:
           python-version: "3.12"
       - name: Compiled dependency wheels cover the worker matrix
+        # --strict so a PyPI/network fetch failure fails the gate instead of
+        # silently passing on an empty (no-drift) diff.
         run: |
-          python3 scripts/expand_wheel_hashes.py
+          python3 scripts/expand_wheel_hashes.py --strict
           git diff --exit-code -- providers
