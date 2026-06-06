@@ -31,9 +31,16 @@ def fetch(name, version):
         url = "https://pypi.org/pypi/{}/{}/json".format(
             urllib.parse.quote(name), urllib.parse.quote(version)
         )
-        with urllib.request.urlopen(url, timeout=30) as response:
-            _cache[key] = json.load(response)
-    return _cache[key]
+        try:
+            with urllib.request.urlopen(url, timeout=30) as response:
+                _cache[key] = json.load(response)
+        except Exception as exc:  # noqa: BLE001 - cache the failure so we retry it at most once
+            _cache[key] = exc
+            raise
+    cached = _cache[key]
+    if isinstance(cached, Exception):
+        raise cached
+    return cached
 
 
 def wheel_tags(filename):
@@ -85,7 +92,7 @@ def main(root=".", strict=False):
     changed = []
     expanded = {}
     gaps = {}
-    fetch_failures = []
+    fetch_failures = {}
     for manifest_path in sorted(glob.glob(os.path.join(root, "providers", "*", "provider.json"))):
         manifest = json.load(open(manifest_path))
         requirements = manifest.get("dependencies", {}).get("requirements", [])
@@ -95,8 +102,9 @@ def main(root=".", strict=False):
             try:
                 data = fetch(name, version)
             except Exception as exc:  # noqa: BLE001 - report and continue
-                print("  WARN fetch {}=={}: {}".format(name, version, exc), file=sys.stderr)
-                fetch_failures.append((name, version, str(exc)))
+                if (name, version) not in fetch_failures:
+                    print("  WARN fetch {}=={}: {}".format(name, version, exc), file=sys.stderr)
+                fetch_failures[(name, version)] = str(exc)
                 continue
             files = data["urls"]
             if not is_target(files):
