@@ -6960,7 +6960,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "26a3ebab794e8fc91fdf9fd77e670ba5bade8cd311527fcef5c79e14a490559a",
+        "bundle_sha256": "6b100eb0582bcf717869866e14146c8a67827629e4b9ff93b0e45d9e527b20b8",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -7011,7 +7011,7 @@
         "entry_class": "WhisperAIProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "5c78cf8d085ffecf77c674b2e9f5a0c8bae03c9957a3087185b8bd660b0be5d2"
+          "provider.py": "27124489fcb4f079f3a4206a6f4faa5d7a00b7e6513439c84483151af211219f"
         },
         "languages": [
           "afr",
