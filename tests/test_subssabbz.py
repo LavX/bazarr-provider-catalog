@@ -549,6 +549,231 @@ class SubsSabBzProviderTests(unittest.TestCase):
                 {},
             )
 
+    def test_download_pins_exact_member_for_multi_member_zip(self):
+        provider = self.mod.SubsSabBzProvider()
+        archive = _zip_body(
+            {
+                "Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.srt": "right",
+                "Game.of.Thrones.S01E02.720p.HDTV.x264-CTU.srt": "wrong episode",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: archive
+
+        result = provider.download(
+            {
+                "download_url": "http://subs.sab.bz/index.php?act=download&attach_id=88001",
+                "filename": "Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.srt",
+                "release_info": "Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.srt",
+                "season": 1,
+                "episode": 1,
+            },
+            {"alpha3": "bul", "alpha2": "bg"},
+            {},
+        )
+
+        self.assertEqual(result["member"], "Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.srt")
+        self.assertNotIn("episode", result)
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+
+    def test_download_pins_release_winner_when_filename_absent(self):
+        provider = self.mod.SubsSabBzProvider()
+        archive = _zip_body(
+            {
+                "Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.srt": "ctu",
+                "Game.of.Thrones.S01E01.720p.HDTV.x264-IMMERSE.srt": "immerse",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: archive
+
+        result = provider.download(
+            {
+                "download_url": "http://subs.sab.bz/index.php?act=download&attach_id=88001",
+                # Search picked the CTU member; its exact filename narrows the pack even
+                # though the host only sees one episode across both members.
+                "filename": "Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.different.srt",
+                "release_info": "Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.different.srt",
+                "season": 1,
+                "episode": 1,
+            },
+            {"alpha3": "bul", "alpha2": "bg"},
+            {},
+        )
+
+        self.assertEqual(result["member"], "Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.srt")
+        self.assertNotIn("episode", result)
+
+    def test_download_defers_when_release_tie_is_ambiguous(self):
+        provider = self.mod.SubsSabBzProvider()
+        archive = _zip_body(
+            {
+                "Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.srt": "ctu",
+                "Game.of.Thrones.S01E01.1080p.WEB.x265-NTb.srt": "ntb",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: archive
+
+        result = provider.download(
+            {
+                "download_url": "http://subs.sab.bz/index.php?act=download&attach_id=88001",
+                # Filename is not a member and release_info shares no release tag with
+                # either member: no confident winner, so defer to host episode selection.
+                "filename": "Game.of.Thrones.S01E01.srt",
+                "release_info": "Game.of.Thrones.S01E01.srt",
+                "season": 1,
+                "episode": 1,
+            },
+            {"alpha3": "bul", "alpha2": "bg"},
+            {},
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 1)
+
+    def test_download_does_not_pin_wrong_season_for_repeated_episode(self):
+        provider = self.mod.SubsSabBzProvider()
+        # Season pack repeats episode 5 across seasons: episode-only must not cross seasons.
+        archive = _zip_body(
+            {
+                "Show.S01E05.720p.HDTV.x264-CTU.srt": "season one",
+                "Show.S02E05.720p.HDTV.x264-CTU.srt": "season two",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: archive
+
+        result = provider.download(
+            {
+                "download_url": "http://subs.sab.bz/index.php?act=download&attach_id=88001",
+                # Filename not present (forces scoring); both members share the CTU tag, so
+                # only the season+episode narrowing keeps the right one and breaks the tie.
+                "filename": "Show.S02E05.HDTV.srt",
+                "release_info": "Show.S02E05.720p.HDTV.x264-CTU.srt",
+                "season": 2,
+                "episode": 5,
+            },
+            {"alpha3": "bul", "alpha2": "bg"},
+            {},
+        )
+
+        self.assertEqual(result["member"], "Show.S02E05.720p.HDTV.x264-CTU.srt")
+
+    def test_download_ignores_sidecar_and_release_token_collisions(self):
+        provider = self.mod.SubsSabBzProvider()
+        archive = _zip_body(
+            {
+                "__MACOSX/._Game.of.Thrones.S01E01.srt": "macos sidecar",
+                "Game.of.Thrones.S07E20.720p.HDTV.x264-CTU.srt": "wrong episode",
+                "Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.srt": "right episode",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: archive
+
+        result = provider.download(
+            {
+                "download_url": "http://subs.sab.bz/index.php?act=download&attach_id=88001",
+                # "720p" / "x264" must not be read as S07E20 / 2x64; the sidecar must be
+                # excluded; the right episode must win on its exact filename.
+                "filename": "Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.srt",
+                "release_info": "Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.srt",
+                "season": 1,
+                "episode": 1,
+            },
+            {"alpha3": "bul", "alpha2": "bg"},
+            {},
+        )
+
+        self.assertEqual(result["member"], "Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.srt")
+
+    def test_download_does_not_pin_forced_member_for_non_forced_request(self):
+        provider = self.mod.SubsSabBzProvider()
+        # The forced member shares every release tag with the request, so without a forced
+        # penalty its token overlap outranks the plain member and the host would silently
+        # deliver a foreign-parts-only track for a NON-forced request.
+        archive = _zip_body(
+            {
+                "Show.S01E01.720p.WEB.x264-CAKES.forced.srt": "forced foreign parts",
+                "Show.S01E01.WEB.srt": "full subtitle",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: archive
+
+        result = provider.download(
+            {
+                "download_url": "http://subs.sab.bz/index.php?act=download&attach_id=88001",
+                # Filename is not an exact member, so member selection falls to release scoring.
+                "filename": "Show.S01E01.720p.WEB.x264-CAKES.different.srt",
+                "release_info": "Show.S01E01.720p.WEB.x264-CAKES.srt",
+                "season": 1,
+                "episode": 1,
+                "forced": False,
+            },
+            {"alpha3": "bul", "alpha2": "bg"},
+            {},
+        )
+
+        # Must pin the non-forced member (or defer), never the forced one.
+        self.assertEqual(result.get("member"), "Show.S01E01.WEB.srt")
+        self.assertNotEqual(result.get("member"), "Show.S01E01.720p.WEB.x264-CAKES.forced.srt")
+
+    def test_download_pins_forced_member_for_forced_request(self):
+        provider = self.mod.SubsSabBzProvider()
+        archive = _zip_body(
+            {
+                "Show.S01E01.720p.WEB.x264-CAKES.forced.srt": "forced foreign parts",
+                "Show.S01E01.WEB.srt": "full subtitle",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: archive
+
+        result = provider.download(
+            {
+                "download_url": "http://subs.sab.bz/index.php?act=download&attach_id=88001",
+                # Not an exact member, so release scoring decides; a forced request must keep
+                # the forced member in play and pin it.
+                "filename": "Show.S01E01.720p.WEB.x264-CAKES.forced.extra.srt",
+                "release_info": "Show.S01E01.720p.WEB.x264-CAKES.forced.srt",
+                "season": 1,
+                "episode": 1,
+                "forced": True,
+            },
+            {"alpha3": "bul", "alpha2": "bg"},
+            {},
+        )
+
+        self.assertEqual(result.get("member"), "Show.S01E01.720p.WEB.x264-CAKES.forced.srt")
+
+    def test_member_has_episode_token_matching(self):
+        # Delimited SxxExx with optional separators, NxNN, and the contiguous code form.
+        self.assertTrue(self.mod._member_has_episode("Show.S01E02.srt", 1, 2))
+        self.assertTrue(self.mod._member_has_episode("Show.S01.E02.srt", 1, 2))
+        self.assertTrue(self.mod._member_has_episode("Show.S01 E02.srt", 1, 2))
+        self.assertTrue(self.mod._member_has_episode("Show.1x02.srt", 1, 2))
+        self.assertTrue(self.mod._member_has_episode("Show.102.srt", 1, 2))
+        # Release tags must not be misread as episode codes.
+        self.assertFalse(self.mod._member_has_episode("Show.720p.x264.srt", 7, 20))
+        self.assertFalse(self.mod._member_has_episode("Show.x264.srt", 2, 64))
+        # Wrong season for the same episode number must not match.
+        self.assertFalse(self.mod._member_has_episode("Show.S02E05.srt", 1, 5))
+
+    def test_download_defers_for_rar_archive(self):
+        provider = self.mod.SubsSabBzProvider()
+        archive = b"Rar!\x1a\x07\x00" + b"payload"
+        provider._http_get = lambda url, timeout=30, referer=None: archive
+
+        result = provider.download(
+            {
+                "download_url": "http://subs.sab.bz/index.php?act=download&attach_id=88002",
+                "filename": "Game.of.Thrones.S01E01.srt",
+                "season": 1,
+                "episode": 1,
+            },
+            {"alpha3": "bul", "alpha2": "bg"},
+            {},
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 1)
+
     def test_search_stores_episode_in_provider_payload(self):
         provider = self.mod.SubsSabBzProvider()
         archive = _zip_body({"Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.srt": "subtitle"})

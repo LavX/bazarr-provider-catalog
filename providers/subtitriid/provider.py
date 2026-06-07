@@ -203,6 +203,8 @@ class SubtitriIdProvider:
                 "provider": PROVIDER_ID,
                 "schema": 1,
                 "entry_id": row["entry_id"],
+                "title": row.get("title"),
+                "year": row.get("year"),
                 "url": row["download_url"],
                 "page_url": row["page_url"],
                 "filename": filename,
@@ -234,8 +236,17 @@ def extract_download(body, payload=None):
     if _looks_like_html(body):
         raise ValueError("subtitriid download returned an HTML page instead of a subtitle")
     if _is_archive_body(body):
-        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
-        # the host, which lists it, picks the member by episode, and detects encoding.
+        # A multi-part movie subtitle (CD1/CD2 ...) has to be concatenated, which the
+        # single-member host contract cannot do: an episode/member pick would return only
+        # one disc and lose half the subtitle. When we can list a zip and it holds a
+        # multipart set, join those members here and return direct content.
+        multipart = _multipart_content(body, payload)
+        if multipart is not None:
+            return multipart
+        # Otherwise host-side extraction (Provider Hub v1.1+): hand the raw archive bytes
+        # back to the host, which lists it, picks the member by episode, and detects
+        # encoding. RAR is not stdlib-listable (and bundling rarfile/py7zz is banned), so a
+        # multipart rar cannot be concatenated worker-side and also falls back to the host.
         return {
             "archive_b64": base64.b64encode(body).decode("ascii"),
             "archive_sha256": hashlib.sha256(body).hexdigest(),
@@ -249,6 +260,116 @@ def extract_download(body, payload=None):
 
 def _is_archive_body(body):
     return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
+
+
+def _multipart_content(body, payload=None):
+    # Concatenate a CD1/CD2-style multipart subtitle from a zip into one content payload.
+    # Listing only (no host-banned rar/7z libs). Returns None when the archive is not a
+    # listable zip, holds no multipart set, or a coexisting full (non-part) subtitle should
+    # win, so the caller falls back to the host single-member path.
+    if _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body or b"")):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        names = [
+            name
+            for name in archive.namelist()
+            if _subtitle_extension(name)
+            and not _is_sidecar(name)
+            and not _is_vobsub_sidecar(name, archive.namelist())
+        ]
+        multipart = _multipart_subset(names, payload)
+        if not multipart:
+            return None
+        # A stray CD1/CD2 pair must never shadow a real full-movie subtitle. When a
+        # non-part single subtitle coexists with the multipart group, only prefer the
+        # group if it scores strictly better than that single (i.e. its members match the
+        # payload title/year better). Otherwise return None so the caller defers to the
+        # host's single-member selection, which fails loudly, instead of silently joining
+        # the wrong pair and discarding the real subtitle.
+        non_part_singles = [name for name in names if _part_index(name) <= 0]
+        if non_part_singles:
+            best_single_score = max(
+                _subtitle_file_score(name, payload) for name in non_part_singles
+            )
+            if _group_score(multipart, payload) <= best_single_score:
+                return None
+        content = b"\n\n".join(archive.read(name) for name in multipart)
+    return _content_payload(content, _subtitle_extension(multipart[0]) or "srt")
+
+
+def _group_score(names, payload):
+    return max(_subtitle_file_score(name, payload) for name in names)
+
+
+def _subtitle_file_score(name, payload):
+    # Heuristic match of a zip member against the payload title/year. Used only to decide
+    # whether to prefer a worker-joined multipart group over a coexisting full single; the
+    # host still does the exact, loud member pin. Token-delimited so "720" never matches
+    # "720p" and the year is matched as a whole token, never as a substring.
+    payload = payload or {}
+    title_tokens = _tokens(payload.get("title"))
+    year = str(payload.get("year") or "")
+    tokens = set(_tokens(name and os.path.basename(name)))
+    value = 0
+    if title_tokens and all(token in tokens for token in title_tokens):
+        value += 80
+    if year and year in tokens:
+        value += 50
+    return value
+
+
+def _is_sidecar(name):
+    parts = (name or "").replace("\\", "/").split("/")
+    if any(part == "__MACOSX" for part in parts):
+        return True
+    if name.endswith("/"):
+        return True
+    return os.path.basename(name).startswith(".")
+
+
+def _is_vobsub_sidecar(name, names):
+    path = urllib.parse.urlparse(name or "").path.lower()
+    if not path.endswith(".sub"):
+        return False
+    idx_path = f"{os.path.splitext(path)[0]}.idx"
+    normalized_names = {urllib.parse.urlparse(item or "").path.lower() for item in names or []}
+    return idx_path in normalized_names
+
+
+def _multipart_subset(names, payload=None):
+    groups = {}
+    for name in names:
+        if _part_index(name) <= 0:
+            continue
+        groups.setdefault((_multipart_key(name), _subtitle_extension(name)), []).append(name)
+    valid_groups = []
+    for group in groups.values():
+        part_numbers = [_part_index(name) for name in group]
+        if len(group) > 1 and len(set(part_numbers)) == len(part_numbers):
+            valid_groups.append(group)
+    if not valid_groups:
+        return []
+    best_group = max(
+        valid_groups,
+        key=lambda group: (
+            _group_score(group, payload),
+            len(group),
+            -min(_part_index(name) for name in group),
+        ),
+    )
+    return sorted(best_group, key=lambda name: (_part_index(name), name.lower()))
+
+
+def _part_index(name):
+    normalized = _normalize(os.path.basename(name or ""))
+    match = re.search(r"\b(?:cd|part|disc|disk)\s*0*(\d+)\b", normalized)
+    return int(match.group(1)) if match else 0
+
+
+def _multipart_key(name):
+    stem = os.path.splitext(os.path.basename(name or ""))[0]
+    normalized = _normalize(stem)
+    return re.sub(r"\b(?:cd|part|disc|disk)\s*0*\d+\b", "", normalized).strip()
 
 
 def _parse_titles(text):
@@ -453,6 +574,10 @@ def _title_matches(wanted, candidate):
 
 def _normalize(value):
     return _NON_ALNUM_RE.sub(" ", _coerce_text(value).lower() if _coerce_text(value) else "").strip()
+
+
+def _tokens(value):
+    return [token for token in _normalize(value).split(" ") if token]
 
 
 def _safe_int(value):

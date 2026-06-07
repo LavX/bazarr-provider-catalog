@@ -589,14 +589,76 @@ def _download_payload(body, payload):
         raise ValueError(f"subsunacs returned an HTML/error page for {payload.get('download_url')}")
     if _is_archive_body(body):
         # Host-side extraction (Provider Hub v1.1+): hand the raw zip/rar/7z bytes back to
-        # the host, which lists it, picks the member by episode, and detects encoding.
-        return {
+        # the host, which lists it, decodes the chosen member, and detects encoding.
+        archive = {
             "archive_b64": base64.b64encode(body).decode("ascii"),
             "archive_sha256": hashlib.sha256(body).hexdigest(),
-            "episode": payload.get("episode"),
         }
+        # A season-pack zip can hold several episodes; the host's episode-only pick can
+        # land on the wrong member when the same number repeats across seasons. When we can
+        # list the zip and a single member matches BOTH the requested season and episode,
+        # pin it; otherwise (rar/7z, movies, no/ambiguous match) defer to host episode
+        # selection, which fails loudly on a true no-match.
+        member = _select_zip_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = payload.get("episode")
+        return archive
     # Direct, non-archive subtitle body.
     return _content_payload(_normalize_line_endings(body), _subtitle_extension(payload.get("filename")) or "srt")
+
+
+def _select_zip_member(body, payload):
+    # Pin the zip member matching the requested season+episode. Listing only, no extraction
+    # or decoding: the host reads the named member (an exact namelist match that hard-fails
+    # on mismatch) and runs chardet. Returns None for rar/7z (not stdlib-listable), a single
+    # member (nothing to disambiguate), movies (no episode to narrow on), or when the match
+    # is not a unique winner, so the caller falls back to host-side episode selection.
+    payload = payload or {}
+    if _is_rar_archive(body) or _is_7z_archive(body) or not zipfile.is_zipfile(io.BytesIO(body or b"")):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        members = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/")
+            and _is_subtitle_file(name)
+            and not os.path.basename(name).startswith(".")
+        ]
+    if len(members) < 2:
+        return None  # a lone member: the host's episode pick already lands here
+    season = _safe_int(payload.get("season"))
+    episode = _safe_int(payload.get("episode"))
+    if season is None or episode is None:
+        return None  # movie or unknown episode: nothing to narrow on, defer to the host
+    matches = [name for name in members if _member_has_episode(name, season, episode)]
+    if len(matches) == 1:
+        return matches[0]
+    # Zero matches (pinning a wrong member would hard-fail the host download) or several
+    # tied matches (cannot confidently disambiguate): defer to host episode selection.
+    return None
+
+
+def _member_has_episode(name, season, episode):
+    # Match the requested SxxEyy as a delimited token, tolerating a separator between the
+    # season and episode parts (S01E02, S01.E02, S01 E02, S01-E02), the NxNN form (1x02),
+    # and the whole-token "{season}{episode:02d}" form (e.g. 101). The (?!\d) guard stops a
+    # 3-digit code from matching a longer number; for the bare-digit form the digits must be
+    # a standalone token (delimited on both sides) so "720" never matches "720p"/"x264".
+    text = (name or "").lower()
+    return bool(
+        re.search(rf"(?<![a-z0-9])s0*{season}[\s._-]*e0*{episode}(?!\d)", text)
+        or re.search(rf"(?<!\d){season}x0*{episode}(?!\d)", text)
+        or re.search(rf"(?<![a-z0-9]){season}{episode:02d}(?![a-z0-9])", text)
+    )
+
+
+def _safe_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _is_html_body(body):

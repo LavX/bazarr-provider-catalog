@@ -40,6 +40,14 @@ def _zip_body_with(name, content):
     return stream.getvalue()
 
 
+def _zip_body_members(names):
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as archive:
+        for name in names:
+            archive.writestr(name, "1\r\n00:00:01,000 --> 00:00:02,000\r\nText\r\n")
+    return stream.getvalue()
+
+
 def _row(language, release, identifier):
     if language == "ell":
         language_name = "Greek"
@@ -162,6 +170,119 @@ class Subs4FreeParserTests(unittest.TestCase):
         # Direct content path must not ship a worker-guessed encoding; the host normalizes.
         self.assertNotIn("encoding", payload)
         self.assertNotIn("archive_b64", payload)
+
+    def test_extract_download_pins_release_member_in_multi_member_zip(self):
+        # A multi-member zip with no episode signal: reproduce the old release-based pick by
+        # pinning the member whose tokens overlap the scored release_info.
+        body = _zip_body_members([
+            "Inception.2010.1080p.BluRay.RARBG.srt",
+            "Inception.2010.720p.WEBRip.YIFY.srt",
+        ])
+        payload = self.mod.extract_download(
+            body,
+            {
+                "filename": "inception.el.zip",
+                "release_info": "Inception 2010 1080p BluRay H264 AAC-RARBG",
+                "episode": None,
+            },
+        )
+
+        self.assertEqual(payload["member"], "Inception.2010.1080p.BluRay.RARBG.srt")
+        self.assertNotIn("episode", payload)
+        self.assertEqual(base64.b64decode(payload["archive_b64"]), body)
+        self.assertEqual(payload["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertNotIn("content_b64", payload)
+
+    def test_extract_download_defers_when_no_unique_release_winner(self):
+        # Two members tie on release_info overlap: cannot disambiguate, so defer to the host
+        # episode path rather than pin a coin-flip member.
+        body = _zip_body_members([
+            "Inception.2010.1080p.BluRay.srt",
+            "Inception.2010.1080p.BluRay.Director.srt",
+        ])
+        payload = self.mod.extract_download(
+            body,
+            {
+                "filename": "inception.el.zip",
+                "release_info": "Inception 2010 1080p BluRay",
+                "episode": None,
+            },
+        )
+
+        self.assertNotIn("member", payload)
+        self.assertIsNone(payload["episode"])
+
+    def test_extract_download_does_not_pin_wrong_release_member(self):
+        # The release_info points at the BluRay cut; the WEBRip member must never be pinned.
+        body = _zip_body_members([
+            "Inception.2010.1080p.BluRay.RARBG.srt",
+            "Different.Movie.2011.720p.WEBRip.srt",
+        ])
+        payload = self.mod.extract_download(
+            body,
+            {
+                "filename": "inception.el.zip",
+                "release_info": "Inception 2010 1080p BluRay RARBG",
+                "episode": None,
+            },
+        )
+
+        self.assertEqual(payload["member"], "Inception.2010.1080p.BluRay.RARBG.srt")
+
+    def test_extract_download_skips_sidecars_and_directories(self):
+        # __MACOSX/dotfile sidecars and directory entries must not count as members: only the
+        # real subtitle remains, so a lone member defers to the host (no pin).
+        body = _zip_body_members([
+            "subs/",
+            "__MACOSX/._Inception.2010.BluRay.srt",
+            ".DS_Store",
+            "subs/Inception.2010.1080p.BluRay.RARBG.srt",
+        ])
+        payload = self.mod.extract_download(
+            body,
+            {
+                "filename": "inception.el.zip",
+                "release_info": "Inception 2010 1080p BluRay RARBG",
+                "episode": None,
+            },
+        )
+
+        self.assertNotIn("member", payload)
+        self.assertIsNone(payload["episode"])
+
+    def test_extract_download_does_not_pin_forced_over_main(self):
+        # A forced sidecar shares release tokens with the main track; the forced penalty keeps
+        # the main subtitle as the pinned member.
+        body = _zip_body_members([
+            "Inception.2010.1080p.BluRay.RARBG.srt",
+            "Inception.2010.1080p.BluRay.RARBG.forced.srt",
+        ])
+        payload = self.mod.extract_download(
+            body,
+            {
+                "filename": "inception.el.zip",
+                "release_info": "Inception 2010 1080p BluRay RARBG",
+                "episode": None,
+            },
+        )
+
+        self.assertEqual(payload["member"], "Inception.2010.1080p.BluRay.RARBG.srt")
+
+    def test_extract_download_rar_multi_member_defers_to_host(self):
+        # RAR is not stdlib-listable: never pin, always hand the archive to the host.
+        body = b"Rar!\x1a\x07\x00" + b"\x00" * 64
+        payload = self.mod.extract_download(
+            body,
+            {
+                "filename": "inception.el.rar",
+                "release_info": "Inception 2010 1080p BluRay RARBG",
+                "episode": None,
+            },
+        )
+
+        self.assertNotIn("member", payload)
+        self.assertIsNone(payload["episode"])
+        self.assertEqual(base64.b64decode(payload["archive_b64"]), body)
 
     def test_extract_download_rejects_empty_body(self):
         with self.assertRaises(ValueError):

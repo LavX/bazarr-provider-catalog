@@ -192,6 +192,25 @@ _WS_RE = re.compile(r"\s+")
 _SEASON_EPISODE_RE = re.compile(r"\bS(?P<season>\d{1,2})E(?P<episode>\d{1,4})\b", re.I)
 _ALT_EPISODE_RE = re.compile(r"\b(?P<season>\d{1,2})x(?P<episode>\d{1,4})\b", re.I)
 _SEASON_RE = re.compile(r"\bS(?P<season>\d{1,2})(?!E\d)\b", re.I)
+# Member-level episode matcher. Tolerates a separator between the season and
+# episode parts (S01E02, S01.E02, S01 E02, S01-E02) and the NxNN form, plus the
+# contiguous whole-token "{season}{episode:02d}" form (e.g. "101" for S01E01).
+# The (?!\d) / delimited guards stop "720" matching "720p" or "264" matching
+# "x264", and stop "e02" matching "e020".
+
+
+def _member_has_episode(name, season, episode):
+    if season is None or episode is None:
+        return False
+    text = _coerce_text(name).lower()
+    return bool(
+        re.search(rf"\bs0*{season}[\s._-]*e0*{episode}(?!\d)", text)
+        or re.search(rf"(?<!\d){season}x0*{episode}(?!\d)", text)
+        # Whole-token "{season}{episode:02d}" form (e.g. "101"). Require a
+        # non-alphanumeric boundary on both sides so "720" never matches inside
+        # "720p" and "264" never matches inside "x264".
+        or re.search(rf"(?<![a-z0-9]){season}{episode:02d}(?![a-z0-9])", text)
+    )
 
 
 def _coerce_int(value):
@@ -526,36 +545,45 @@ def _candidate_from_item(video, requested_languages, item, matched_imdb=False):
     }
 
 
-def _filename_episode_matches(name, payload):
-    text = _coerce_text(name)
-    target_season = _coerce_int((payload or {}).get("season"))
-    target_episode = _coerce_int((payload or {}).get("episode"))
-    match = _SEASON_EPISODE_RE.search(text) or _ALT_EPISODE_RE.search(text)
-    if not match:
-        return 0
-    season = int(match.group("season"))
-    episode = int(match.group("episode"))
-    return 2 if season == target_season and episode == target_episode else 0
+def _is_subtitle_member(name):
+    # Real subtitle members only: skip directory entries, archive sidecars
+    # (__MACOSX/._x.srt, .DS_Store) and any AppleDouble/dotfile whose basename
+    # starts with ".". The host does an exact "member in namelist" check and
+    # hard-fails on a mismatch, so pinning one of these would silently deliver a
+    # garbage resource fork instead of the subtitle.
+    if name.endswith("/"):
+        return False
+    if not name.lower().endswith(SUBTITLE_EXTENSIONS):
+        return False
+    return not os.path.basename(name).startswith(".")
 
 
 def _select_zip_member(data, payload):
     # List the archive with stdlib zipfile and pick the member ourselves; the host
-    # extracts and decodes it. For an episode pack we keep the SxxEyy match; only when
-    # no member matches confidently do we hand selection to the host via guessit.
+    # then reads the named member and decodes it. We only pin a member on a
+    # confident, unique match (the requested episode in a pack, or a lone
+    # subtitle); otherwise we return None so the caller defers to host-side
+    # episode selection, which fails loudly on a true no-match instead of
+    # silently delivering the wrong member.
+    payload = payload or {}
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
-        names = [
-            name for name in archive.namelist()
-            if not name.endswith("/") and name.lower().endswith(SUBTITLE_EXTENSIONS)
-        ]
+        names = [name for name in archive.namelist() if _is_subtitle_member(name)]
     if not names:
         return None
-    if (payload or {}).get("is_pack") and (payload or {}).get("kind") == "episode":
-        names.sort(key=lambda name: (_filename_episode_matches(name, payload), name), reverse=True)
-        if _filename_episode_matches(names[0], payload) > 0:
-            return names[0]
+    if payload.get("is_pack") and payload.get("kind") == "episode":
+        season = _coerce_int(payload.get("season"))
+        episode = _coerce_int(payload.get("episode"))
+        episode_names = [name for name in names if _member_has_episode(name, season, episode)]
+        # Pin only when exactly one member carries the requested season+episode.
+        # Zero matches or several ambiguous matches defer to the host.
+        if len(episode_names) == 1:
+            return episode_names[0]
         return None
-    names.sort()
-    return names[0]
+    # Non-pack (movie or single episode): pin only a lone subtitle. A multi-member
+    # archive has nothing here to disambiguate it confidently, so defer.
+    if len(names) == 1:
+        return names[0]
+    return None
 
 
 def _is_archive_body(body):

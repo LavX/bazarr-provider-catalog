@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "1b2f828ec8d8512fbcd0186810c457b0e58a159e623c3f772c2b08c0ba40f24e",
+  "bundle_sha256": "408fb866b3f2f1d2bc808c0c22f35282065644a0a8a0974bee6582e0a8dd8cb9",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -333,7 +333,7 @@
   "entry_class": "Subs4SeriesProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "66339cf1d712c45f0cf8ddbf2e273d75b8f765fb268e11ce8695bb7d40198d7f"
+    "provider.py": "004a881933589e2d7cbea60b6c430189d776f994f581dee2eb74d5d6d742b791"
   },
   "languages": [
     "ell",
@@ -358,5 +358,5 @@
   "supported_media": [
     "episode"
   ],
-  "version": "0.1.4"
+  "version": "0.1.6"
 }

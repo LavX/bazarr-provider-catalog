@@ -4,6 +4,7 @@ import base64
 import hashlib
 import io
 import json
+import os
 import re
 import time
 import unicodedata
@@ -24,6 +25,8 @@ SUPPORTED_ALPHA2 = "es"
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
 ARCHIVE_EXTENSIONS = (".zip", ".rar")
 SPAIN_KEYWORDS = ("espana", "iberico", "castellano", "gallego", "castilla", "europea", "europeo")
+_SXXEYY_RE = re.compile(r"\bs0*(?P<season>\d{1,2})[\s._-]*e0*(?P<episode>\d{1,3})(?!\d)", re.I)
+_NXNN_RE = re.compile(r"(?<!\d)(?P<season>\d{1,2})x0*(?P<episode>\d{1,3})(?!\d)", re.I)
 
 
 class RateLimited(RuntimeError):
@@ -459,12 +462,83 @@ def build_download_payload(body, filename="", payload=None):
     if not body:
         raise ValueError("subx downloaded empty subtitle")
     if _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body)):
-        return {
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes
+        # back to the host. SubX serves season packs (multiple episodes in one
+        # zip), so when we can cheaply list a zip and find the unique member for
+        # the requested season+episode, pin it; the host then reads that exact
+        # member instead of guessing by episode. RAR is not stdlib-listable, and
+        # an ambiguous/missing match defers to host-side episode selection.
+        archive = {
             "archive_b64": base64.b64encode(body).decode("ascii"),
             "archive_sha256": hashlib.sha256(body).hexdigest(),
-            "episode": _int_or_none(payload.get("episode")),
         }
+        member = _select_zip_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = _int_or_none(payload.get("episode"))
+        return archive
     return _content_payload(body, _format_from_filename(filename))
+
+
+def _select_zip_member(body, payload):
+    # List the zip (no extraction or decoding) and pin the member for the
+    # requested season+episode. The host does an exact namelist match that
+    # hard-fails on mismatch, so only return a name on a confident unique match;
+    # otherwise return None so the caller defers to host episode selection.
+    payload = payload or {}
+    if not zipfile.is_zipfile(io.BytesIO(body)):
+        return None
+    season = _int_or_none(payload.get("season"))
+    episode = _int_or_none(payload.get("episode"))
+    # Require both season and episode: SubX season packs reuse episode numbers
+    # across seasons, so episode alone is not a confident pin. Movies and
+    # season-unaware payloads defer to host-side selection.
+    if season is None or episode is None:
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        names = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/")
+            and _subtitle_extension(name)
+            and not os.path.basename(name).startswith(".")
+        ]
+    if not names:
+        return None
+    matches = [name for name in names if _member_has_episode(name, season, episode)]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _member_has_episode(name, season, episode):
+    # Match the episode as a delimited token in the member's basename, tolerating
+    # a separator between the season and episode parts. When the season is known,
+    # require it too (season packs reuse episode numbers across seasons); only
+    # fall back to bare episode markers when the season is unknown.
+    text = _normalize_member(os.path.basename(name))
+    for regex in (_SXXEYY_RE, _NXNN_RE):
+        for match in regex.finditer(text):
+            if _int_or_none(match.group("episode")) != episode:
+                continue
+            if season is not None and _int_or_none(match.group("season")) != season:
+                continue
+            return True
+    # Whole-token "{season}{episode:02d}" form, e.g. "101" for S01E01. Require a
+    # non-alphanumeric boundary (not just non-digit) so "720" (S07E20) cannot
+    # match "720p" and "264" cannot match "x264".
+    if season is not None and re.search(rf"(?<![a-z0-9]){season}{episode:02d}(?![a-z0-9])", text):
+        return True
+    if season is None and re.search(rf"\be0*{episode}(?!\d)", text):
+        return True
+    return False
+
+
+def _normalize_member(name):
+    text = unicodedata.normalize("NFKD", str(name or ""))
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    return text.lower()
 
 
 def _is_rar_archive(body):

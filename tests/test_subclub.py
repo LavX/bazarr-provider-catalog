@@ -152,10 +152,13 @@ class SubclubProviderTests(unittest.TestCase):
 
     def test_download_zip_archive_returns_raw_archive_for_host(self):
         provider = self.mod.SubclubProvider()
+        # Two members but no release signal to disambiguate on (generic synthetic filename,
+        # no release_info/release_hints): the worker forwards the raw archive and defers
+        # member selection to the host's episode pick.
         body = _zip_body(
             {
-                "Game.of.Thrones.S01E01.720p.BluRay.X264-REWARD.srt": "wrong release",
-                "Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.srt": "right release",
+                "Game.of.Thrones.S01E01.first.srt": "subtitle a",
+                "Game.of.Thrones.S01E01.second.srt": "subtitle b",
             }
         )
         provider._http_get = lambda url, timeout=30, referer=None: body
@@ -164,7 +167,7 @@ class SubclubProviderTests(unittest.TestCase):
             {
                 "archive_url": "https://www.subclub.eu/down.php?id=11232",
                 "archive_id": "11232",
-                "filename": "Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.srt",
+                "filename": "subclub-11232.zip",
                 "season": 1,
                 "episode": 1,
             },
@@ -257,7 +260,7 @@ class SubclubProviderTests(unittest.TestCase):
                 {},
             )
 
-    def test_search_synthetic_fallback_carries_episode_in_payload(self):
+    def test_search_synthetic_fallback_carries_release_hints_in_payload(self):
         provider = self.mod.SubclubProvider()
         # Search HTML has a matching episode row, but the archive-content endpoint
         # answers with no subtitle links, forcing the synthetic fallback archive.
@@ -285,8 +288,14 @@ class SubclubProviderTests(unittest.TestCase):
         # The host needs episode (and season) to pick the archive member.
         self.assertEqual(payload["season"], 1)
         self.assertEqual(payload["episode"], 1)
+        # The generic synthetic filename carries no release signal, so the video's release
+        # hints are carried into the payload for worker-side member selection.
+        self.assertIn("720p", payload["release_hints"])
+        self.assertIn("hdtv", payload["release_hints"])
+        self.assertIn("ctu", payload["release_hints"])
 
-        # The archive body is forwarded raw with the episode carried through.
+        # Happy path: the synthetic archive holds both releases of the same episode; the
+        # worker pins the member matching the scored release hints (HDTV/CTU), not BluRay.
         body = _zip_body(
             {
                 "Game.of.Thrones.S01E01.720p.BluRay.X264-REWARD.srt": "wrong release",
@@ -297,7 +306,203 @@ class SubclubProviderTests(unittest.TestCase):
         content = provider.download(payload, {"alpha3": "est", "alpha2": "et"}, {})
 
         self.assertEqual(base64.b64decode(content["archive_b64"]), body)
+        self.assertEqual(content["member"], "Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.srt")
+        # Member pinned, so episode selection is not deferred to the host.
+        self.assertNotIn("episode", content)
+        self.assertNotIn("content_b64", content)
+
+
+class SubclubMemberSelectionTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def _download_archive(self, files, payload):
+        provider = self.mod.SubclubProvider()
+        body = _zip_body(files)
+        provider._http_get = lambda url, timeout=30, referer=None: body
+        base = {"archive_url": "https://www.subclub.eu/down.php?id=1", "archive_id": "1"}
+        content = provider.download({**base, **payload}, {"alpha3": "est", "alpha2": "et"}, {})
+        return content, body
+
+    def test_pins_member_matching_release_hints(self):
+        # Two releases of the requested episode; the release hints (HDTV/CTU) pick one.
+        content, body = self._download_archive(
+            {
+                "Game.of.Thrones.S01E01.720p.BluRay.x264-REWARD.srt": "wrong",
+                "Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.srt": "right",
+            },
+            {
+                "filename": "subclub-1.zip",
+                "release_hints": "720p.hdtv.ctu",
+                "season": 1,
+                "episode": 1,
+            },
+        )
+
+        self.assertEqual(content["member"], "Game.of.Thrones.S01E01.720p.HDTV.x264-CTU.srt")
+        self.assertNotIn("episode", content)
+        self.assertEqual(base64.b64decode(content["archive_b64"]), body)
+
+    def test_season_pack_narrows_by_season_and_episode(self):
+        # A pack that repeats episode 5 across two seasons must be matched on BOTH axes.
+        # Episode-only narrowing would leave both S01E05 and S02E05 in the pool.
+        content, _ = self._download_archive(
+            {
+                "Show.S01E05.HDTV.x264-GRP.srt": "s1",
+                "Show.S02E05.HDTV.x264-GRP.srt": "s2",
+            },
+            {
+                "filename": "subclub-1.zip",
+                "release_hints": "hdtv.grp",
+                "season": 2,
+                "episode": 5,
+            },
+        )
+
+        # Only S02E05 survives the season+episode narrowing, so it is pinned even though
+        # both members share the same release hints.
+        self.assertEqual(content["member"], "Show.S02E05.HDTV.x264-GRP.srt")
+
+    def test_separated_sxxexx_token_matches(self):
+        # S01.E02 / S01 E02 / S01-E02 / 1x02 must all be recognised as the episode marker.
+        # Two members share episode 2 (the wanted one via a SEPARATED marker), so episode
+        # narrowing keeps both and the release hint (CTU) pins the separated-marker member.
+        for marker in ("S01.E02", "S01 E02", "S01-E02", "1x02"):
+            content, _ = self._download_archive(
+                {
+                    f"Show.{marker}.HDTV-CTU.srt": "wanted",
+                    "Show.S01E02.HDTV-REWARD.srt": "other release of same episode",
+                },
+                {
+                    "filename": "subclub-1.zip",
+                    "release_hints": "ctu",
+                    "season": 1,
+                    "episode": 2,
+                },
+            )
+            self.assertEqual(content["member"], f"Show.{marker}.HDTV-CTU.srt", marker)
+
+    def test_defers_on_release_hint_tie(self):
+        # Two members of the requested episode share the hint score: no confident winner,
+        # so defer to host episode selection rather than pin a coin-flip.
+        content, _ = self._download_archive(
+            {
+                "Show.S01E01.720p.HDTV.srt": "a",
+                "Show.S01E01.720p.HDTV.srt.copy.srt": "b",
+            },
+            {
+                "filename": "subclub-1.zip",
+                "release_hints": "720p.hdtv",
+                "season": 1,
+                "episode": 1,
+            },
+        )
+
+        self.assertNotIn("member", content)
         self.assertEqual(content["episode"], 1)
+
+    def test_defers_when_requested_episode_absent(self):
+        # The wanted episode is in no member; pinning a wrong-episode member would hard-fail
+        # the host download, so defer instead of mispicking.
+        content, _ = self._download_archive(
+            {
+                "Show.S01E01.HDTV-CTU.srt": "a",
+                "Show.S01E02.HDTV-CTU.srt": "b",
+            },
+            {
+                "filename": "subclub-1.zip",
+                "release_hints": "hdtv.ctu",
+                "season": 1,
+                "episode": 7,
+            },
+        )
+
+        self.assertNotIn("member", content)
+        self.assertEqual(content["episode"], 7)
+
+    def test_excludes_macosx_sidecar_and_dotfiles(self):
+        # Sidecar/dotfiles and directory entries must never be pinned.
+        content, _ = self._download_archive(
+            {
+                "__MACOSX/._Show.S01E01.720p.HDTV.x264-CTU.srt": "junk",
+                ".DS_Store": "junk",
+                "subs/": "",
+                "Show.S01E01.720p.HDTV.x264-CTU.srt": "real",
+                "Show.S01E01.720p.BluRay.x264-REWARD.srt": "other",
+            },
+            {
+                "filename": "subclub-1.zip",
+                "release_hints": "720p.hdtv.ctu",
+                "season": 1,
+                "episode": 1,
+            },
+        )
+
+        self.assertEqual(content["member"], "Show.S01E01.720p.HDTV.x264-CTU.srt")
+
+    def test_three_digit_code_does_not_match_resolution_token(self):
+        # S07E20 ("720") must NOT match "720p", and the wanted episode is genuinely absent,
+        # so the download defers instead of mispicking the 720p member.
+        content, _ = self._download_archive(
+            {
+                "Show.720p.HDTV.x264-CTU.srt": "a",
+                "Show.1080p.HDTV.x264-CTU.srt": "b",
+            },
+            {
+                "filename": "subclub-1.zip",
+                "release_hints": "hdtv.ctu",
+                "season": 7,
+                "episode": 20,
+            },
+        )
+
+        self.assertNotIn("member", content)
+        self.assertEqual(content["episode"], 20)
+
+    def test_defers_without_release_hints(self):
+        # No release signal at all: nothing to break the tie, so defer to the host.
+        content, _ = self._download_archive(
+            {
+                "Show.S01E01.first.srt": "a",
+                "Show.S01E01.second.srt": "b",
+            },
+            {"filename": "subclub-1.zip", "season": 1, "episode": 1},
+        )
+
+        self.assertNotIn("member", content)
+        self.assertEqual(content["episode"], 1)
+
+    def test_rar_archive_defers_to_host_episode(self):
+        # RAR is not stdlib-listable; always defer to the host episode pick.
+        provider = self.mod.SubclubProvider()
+        body = b"Rar!\x1a\x07\x00" + b"\x00" * 32
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        content = provider.download(
+            {
+                "archive_url": "https://www.subclub.eu/down.php?id=1",
+                "archive_id": "1",
+                "filename": "subclub-1.zip",
+                "release_hints": "720p.hdtv.ctu",
+                "season": 1,
+                "episode": 3,
+            },
+            {"alpha3": "est", "alpha2": "et"},
+            {},
+        )
+
+        self.assertNotIn("member", content)
+        self.assertEqual(content["episode"], 3)
+
+    def test_movie_archive_single_member_defers(self):
+        # A movie archive (episode None) with one member has nothing to disambiguate.
+        content, _ = self._download_archive(
+            {"Inception.2010.720p.BluRay.srt": "movie"},
+            {"filename": "subclub-1.zip", "release_hints": "720p.bluray", "season": None, "episode": None},
+        )
+
+        self.assertNotIn("member", content)
+        self.assertIsNone(content["episode"])
 
 
 class _FakeResponse:

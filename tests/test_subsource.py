@@ -505,6 +505,176 @@ class SubSourceDownloadTests(unittest.TestCase):
         self.assertNotIn("member", result)
         self.assertEqual(result["episode"], 5)
 
+    def test_download_pins_episode_member_with_separated_token(self):
+        # A pack whose member spells the episode with a separator (S01.E03) must
+        # still be pinned; the old contiguous-only matcher would have missed it
+        # and deferred unnecessarily.
+        provider = self.mod.SubSourceProvider()
+        archive = _zip_bytes(
+            {
+                "Show.S01.E02.1080p.WEB.srt": b"episode two",
+                "Show.S01.E03.1080p.WEB.srt": b"episode three",
+            }
+        )
+
+        provider._http_get_bytes = lambda path, config: archive
+        result = provider.download(
+            {
+                "provider": "subsource",
+                "schema": 1,
+                "subtitle_id": 810,
+                "is_pack": True,
+                "kind": "episode",
+                "season": 1,
+                "episode": 3,
+            },
+            {"alpha3": "eng"},
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(result["member"], "Show.S01.E03.1080p.WEB.srt")
+
+    def test_download_pack_ignores_apple_double_and_macosx_sidecars(self):
+        # The requested episode's real member must be pinned even when AppleDouble
+        # / __MACOSX sidecars share the episode token; pinning a "._" resource
+        # fork would hand the host a garbage member that fails the exact match.
+        provider = self.mod.SubSourceProvider()
+        archive = _zip_bytes(
+            {
+                "__MACOSX/._Show.S02E05.srt": b"garbage resource fork",
+                "._Show.S02E05.srt": b"garbage apple double",
+                "Show.S02E05.1080p.WEB.srt": b"real episode five",
+            }
+        )
+
+        provider._http_get_bytes = lambda path, config: archive
+        result = provider.download(
+            {
+                "provider": "subsource",
+                "schema": 1,
+                "subtitle_id": 820,
+                "is_pack": True,
+                "kind": "episode",
+                "season": 2,
+                "episode": 5,
+            },
+            {"alpha3": "eng"},
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(result["member"], "Show.S02E05.1080p.WEB.srt")
+
+    def test_download_cross_season_pack_narrows_by_season(self):
+        # A pack repeating episode 5 across seasons must pin the requested season,
+        # not the other season's S01E05; episode alone would be ambiguous.
+        provider = self.mod.SubSourceProvider()
+        archive = _zip_bytes(
+            {
+                "Show.S01E05.srt": b"season one episode five",
+                "Show.S02E05.srt": b"season two episode five",
+            }
+        )
+
+        provider._http_get_bytes = lambda path, config: archive
+        result = provider.download(
+            {
+                "provider": "subsource",
+                "schema": 1,
+                "subtitle_id": 830,
+                "is_pack": True,
+                "kind": "episode",
+                "season": 2,
+                "episode": 5,
+            },
+            {"alpha3": "eng"},
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(result["member"], "Show.S02E05.srt")
+
+    def test_download_does_not_mispick_resolution_token_as_episode(self):
+        # "720p" must not be read as S07E20: with no real episode member the pack
+        # defers to host episode selection rather than pinning the wrong file.
+        provider = self.mod.SubSourceProvider()
+        archive = _zip_bytes(
+            {
+                "Show.S01E01.720p.WEB.x264.srt": b"episode one",
+                "Show.S01E02.720p.WEB.x264.srt": b"episode two",
+            }
+        )
+
+        provider._http_get_bytes = lambda path, config: archive
+        result = provider.download(
+            {
+                "provider": "subsource",
+                "schema": 1,
+                "subtitle_id": 840,
+                "is_pack": True,
+                "kind": "episode",
+                "season": 7,
+                "episode": 20,
+            },
+            {"alpha3": "eng"},
+            {"api_key": "test-key"},
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 20)
+
+    def test_download_movie_multi_member_defers_to_host(self):
+        # A movie archive with several release members has nothing to
+        # disambiguate worker-side, so we defer instead of blindly pinning the
+        # alphabetically first member.
+        provider = self.mod.SubSourceProvider()
+        archive = _zip_bytes(
+            {
+                "Movie.2020.1080p.BluRay.srt": b"bluray",
+                "Movie.2020.1080p.WEB.srt": b"web",
+            }
+        )
+
+        provider._http_get_bytes = lambda path, config: archive
+        result = provider.download(
+            {
+                "provider": "subsource",
+                "schema": 1,
+                "subtitle_id": 850,
+                "kind": "movie",
+            },
+            {"alpha3": "eng"},
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertNotIn("member", result)
+        # Movies carry no episode, so the host falls back to guessit on the archive.
+        self.assertIsNone(result["episode"])
+
+    def test_download_movie_skips_apple_double_to_pin_lone_member(self):
+        # A single real subtitle alongside an AppleDouble sidecar must still pin
+        # the real member, not the "._" file that sorts first.
+        provider = self.mod.SubSourceProvider()
+        archive = _zip_bytes(
+            {
+                "._Movie.2020.srt": b"garbage apple double",
+                "Movie.2020.1080p.BluRay.srt": b"real subtitle",
+            }
+        )
+
+        provider._http_get_bytes = lambda path, config: archive
+        result = provider.download(
+            {
+                "provider": "subsource",
+                "schema": 1,
+                "subtitle_id": 860,
+                "kind": "movie",
+            },
+            {"alpha3": "eng"},
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(result["member"], "Movie.2020.1080p.BluRay.srt")
+
     def test_download_returns_rar_archive_for_host_picking(self):
         provider = self.mod.SubSourceProvider()
         body = b"Rar!\x1a\x07\x00rar-archive-bytes"

@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "6d7eba56356f0562c41ce896084b324b223c751dd3376c1d015ea4f0ff9c3d89",
+  "bundle_sha256": "96afd4efe48aa4d24d695163da10da65175458e8f8bab35672ef81901a967367",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -22,7 +22,7 @@
   "entry_class": "SuperSubtitlesProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "c5c4c41cc5f99f1b79bb8c4f45304bd8c0524b76257aef82d76b2f19b75f1720"
+    "provider.py": "5b2c1ac5f8e148ab540716120767feeb7f5fbb78f41b82c56251cd8173f36f52"
   },
   "languages": [
     "eng",
@@ -45,5 +45,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.2"
+  "version": "0.1.4"
 }

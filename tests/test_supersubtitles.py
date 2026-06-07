@@ -369,6 +369,232 @@ class SuperSubtitlesProviderTests(unittest.TestCase):
         self.assertEqual(result["format"], "srt")
         self.assertNotIn("encoding", result)
 
+    def test_download_pins_zip_member_by_release_group_for_same_episode(self):
+        # A pack with two release groups for the requested episode: the host's episode-only
+        # pick cannot tell them apart, so the worker pins the scored release group member.
+        archive = _zip_body(
+            {
+                "La.Brea.S02E13.720p.WEB.H264-CAKES.srt": b"cakes",
+                "La.Brea.S02E13.1080p.WEB.H264-FLUX.srt": b"flux",
+            }
+        )
+
+        result = self.mod.extract_download(
+            archive,
+            {
+                "filename": "La.Brea.S02.WEB.720p.ENG.zip",
+                "season": 2,
+                "episode": 13,
+                "release_info": "La Brea (WEB.720p-CAKES)",
+            },
+        )
+
+        self.assertEqual(result["member"], "La.Brea.S02E13.720p.WEB.H264-CAKES.srt")
+        self.assertNotIn("episode", result)
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+
+    def test_download_pins_zip_member_with_separated_season_episode_token(self):
+        archive = _zip_body(
+            {
+                "La.Brea.S02.E13.720p.WEB-CAKES.srt": b"cakes",
+                "La.Brea.S02.E13.1080p.WEB-FLUX.srt": b"flux",
+            }
+        )
+
+        result = self.mod.extract_download(
+            archive,
+            {
+                "filename": "La.Brea.S02.zip",
+                "season": 2,
+                "episode": 13,
+                "release_info": "La Brea (WEB.720p-CAKES)",
+            },
+        )
+
+        self.assertEqual(result["member"], "La.Brea.S02.E13.720p.WEB-CAKES.srt")
+        self.assertNotIn("episode", result)
+
+    def test_download_defers_when_no_release_field_breaks_the_tie(self):
+        # Two members for the requested episode but nothing to disambiguate: defer to the
+        # host episode pick rather than guess (which could deliver the wrong file).
+        archive = _zip_body(
+            {
+                "La.Brea.S02E13.eng.srt": b"a",
+                "La.Brea.S02E13.alt.srt": b"b",
+            }
+        )
+
+        result = self.mod.extract_download(
+            archive,
+            {"filename": "La.Brea.S02.zip", "season": 2, "episode": 13, "release_info": "La Brea"},
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 13)
+
+    def test_download_defers_for_single_episode_member(self):
+        archive = _zip_body(
+            {
+                "La.Brea.S02E12.720p.WEB-CAKES.srt": b"wrong",
+                "La.Brea.S02E13.720p.WEB-CAKES.srt": b"right",
+            }
+        )
+
+        result = self.mod.extract_download(
+            archive,
+            {
+                "filename": "La.Brea.S02.zip",
+                "season": 2,
+                "episode": 13,
+                "release_info": "La Brea (WEB.720p-CAKES)",
+            },
+        )
+
+        # Only one member carries S02E13, so the host episode pick already lands there.
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 13)
+
+    def test_download_does_not_mispick_member_from_a_different_season(self):
+        # A repeated episode number across seasons: requesting S02E05 must never pin S01E05.
+        archive = _zip_body(
+            {
+                "Show.S01E05.720p.WEB-CAKES.srt": b"season1",
+                "Show.S03E09.720p.WEB-CAKES.srt": b"season3",
+            }
+        )
+
+        result = self.mod.extract_download(
+            archive,
+            {
+                "filename": "Show.complete.zip",
+                "season": 2,
+                "episode": 5,
+                "release_info": "Show (WEB.720p-CAKES)",
+            },
+        )
+
+        # No member carries S02E05; pinning S01E05 would hard-fail the host, so defer.
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 5)
+
+    def test_download_ignores_sidecar_and_directory_members(self):
+        archive = _zip_body(
+            {
+                "subs/": b"",
+                "__MACOSX/._La.Brea.S02E13.srt": b"junk",
+                ".DS_Store": b"junk",
+                "La.Brea.S02E13.720p.WEB-CAKES.srt": b"cakes",
+                "La.Brea.S02E13.1080p.WEB-FLUX.srt": b"flux",
+            }
+        )
+
+        result = self.mod.extract_download(
+            archive,
+            {
+                "filename": "La.Brea.S02.zip",
+                "season": 2,
+                "episode": 13,
+                "release_info": "La Brea (WEB.720p-CAKES)",
+            },
+        )
+
+        self.assertEqual(result["member"], "La.Brea.S02E13.720p.WEB-CAKES.srt")
+
+    def test_download_resolution_token_does_not_match_episode_digits(self):
+        # "720" (S07E20) must not be matched against "720p"; the episode guard must hold.
+        archive = _zip_body(
+            {
+                "Show.S07E20.1080p.WEB-CAKES.srt": b"e20",
+                "Show.S07E21.720p.WEB-CAKES.srt": b"e21",
+            }
+        )
+
+        result = self.mod.extract_download(
+            archive,
+            {
+                "filename": "Show.S07.zip",
+                "season": 7,
+                "episode": 20,
+                "release_info": "Show (WEB.720p-CAKES)",
+            },
+        )
+
+        # Only S07E20 is a real episode match; the "720p" on the other member must not win.
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 20)
+
+    def test_download_does_not_pin_forced_member_for_non_forced_request(self):
+        # A non-forced request must never pin a member carrying a delimited "forced" token.
+        # The forced member matches the requested release group/resolution/source, so without
+        # forced-awareness it outscores the non-forced member and gets pinned, silently
+        # delivering a forced subtitle (the host's exact "member in namelist" check honours
+        # whatever we pin). The fix drops the forced member and defers to host episode pick.
+        archive = _zip_body(
+            {
+                "La.Brea.S02E13.720p.WEB-CAKES.forced.srt": b"forced",
+                "La.Brea.S02E13.eng.srt": b"normal",
+            }
+        )
+
+        result = self.mod.extract_download(
+            archive,
+            {
+                "filename": "La.Brea.S02.zip",
+                "season": 2,
+                "episode": 13,
+                "forced": False,
+                "release_info": "La Brea (WEB.720p-CAKES)",
+            },
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 13)
+
+    def test_download_pins_forced_member_for_forced_request(self):
+        # The mirror case: a forced request must still resolve the forced member.
+        archive = _zip_body(
+            {
+                "La.Brea.S02E13.720p.WEB-CAKES.forced.srt": b"forced",
+                "La.Brea.S02E13.1080p.WEB-FLUX.srt": b"normal",
+            }
+        )
+
+        result = self.mod.extract_download(
+            archive,
+            {
+                "filename": "La.Brea.S02.zip",
+                "season": 2,
+                "episode": 13,
+                "forced": True,
+                "release_info": "La Brea (WEB.720p-CAKES)",
+            },
+        )
+
+        self.assertEqual(result["member"], "La.Brea.S02E13.720p.WEB-CAKES.forced.srt")
+
+    def test_release_group_parses_last_hyphen_token_for_titled_release(self):
+        # A hyphen in the title must not steal the release group: the LAST hyphen token wins.
+        self.assertEqual(
+            self.mod._release_group_from_text("Spider-Man.2002.720p.WEB-SPARKS"),
+            "SPARKS",
+        )
+        self.assertEqual(
+            self.mod._release_group_from_text("Spider-Man.2002.1080p.BluRay.x264-AMIABLE.mkv"),
+            "AMIABLE",
+        )
+
+    def test_download_rar_archive_defers_to_episode_path(self):
+        archive = b"Rar!\x1a\x07\x00" + b"binary rar payload"
+
+        result = self.mod.extract_download(
+            archive,
+            {"filename": "La.Brea.S02E13.rar", "season": 2, "episode": 13, "release_info": "La Brea (WEB.720p-CAKES)"},
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 13)
+
     def test_request_url_encodes_raw_spaces_without_breaking_query_separators(self):
         result = self.mod._request_url(
             "https://feliratok.eu/index.php?action=letolt&fnev=Dune (2021).hun.srt&felirat=1735404922"

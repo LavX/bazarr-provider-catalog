@@ -354,12 +354,15 @@ class JimakuDownloadTests(unittest.TestCase):
         self.assertNotIn("encoding", result)
         self.assertNotIn("archive_b64", result)
 
-    def test_download_returns_raw_zip_archive_with_episode(self):
+    def test_download_pins_season_episode_member_from_pack(self):
+        # A season pack carries every episode; pin the unique S01E05 member so the host
+        # reads it by name instead of guessing among all the members.
         provider = self.mod.JimakuProvider()
         archive = _zip_body(
             {
                 "Sousou.no.Frieren.S01E04.JA.srt": b"wrong",
                 "Sousou.no.Frieren.S01E05.JA.srt": SRT_BODY,
+                "Sousou.no.Frieren.S01E06.JA.srt": b"wrong",
             }
         )
         provider._http_get = lambda url, config=None: archive
@@ -380,9 +383,186 @@ class JimakuDownloadTests(unittest.TestCase):
 
         self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
         self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
-        self.assertEqual(result["episode"], 5)
+        self.assertEqual(result["member"], "Sousou.no.Frieren.S01E05.JA.srt")
+        self.assertNotIn("episode", result)
         self.assertNotIn("content_b64", result)
         self.assertNotIn("encoding", result)
+
+    def test_download_pins_bare_episode_member(self):
+        # Single-season packs often label members with a bare E05 and no season token.
+        provider = self.mod.JimakuProvider()
+        archive = _zip_body(
+            {
+                "[Group] Frieren - E04 [JA].ass": b"wrong",
+                "[Group] Frieren - E05 [JA].ass": SRT_BODY,
+            }
+        )
+        provider._http_get = lambda url, config=None: archive
+
+        result = provider.download(
+            {
+                "provider": "jimaku",
+                "schema": 1,
+                "url": "https://jimaku.cc/files/frieren-pack.zip",
+                "filename": "Frieren.S01.JP.zip",
+                "is_archive": True,
+                "episode": 5,
+                "video": {"kind": "episode", "season": 1, "episode": 5},
+            },
+            {"alpha3": "jpn", "alpha2": "ja"},
+            {"api_key": "secret"},
+        )
+
+        self.assertEqual(result["member"], "[Group] Frieren - E05 [JA].ass")
+        self.assertNotIn("episode", result)
+
+    def test_download_narrows_by_season_across_repeated_episode(self):
+        # A pack that repeats episode 05 across seasons must pin by BOTH season and episode.
+        provider = self.mod.JimakuProvider()
+        archive = _zip_body(
+            {
+                "Show.S01E05.JA.srt": b"wrong",
+                "Show.S02E05.JA.srt": SRT_BODY,
+            }
+        )
+        provider._http_get = lambda url, config=None: archive
+
+        result = provider.download(
+            {
+                "provider": "jimaku",
+                "schema": 1,
+                "url": "https://jimaku.cc/files/show-pack.zip",
+                "filename": "Show.Complete.JP.zip",
+                "is_archive": True,
+                "episode": 5,
+                "video": {"kind": "episode", "season": 2, "episode": 5},
+            },
+            {"alpha3": "jpn", "alpha2": "ja"},
+            {"api_key": "secret"},
+        )
+
+        self.assertEqual(result["member"], "Show.S02E05.JA.srt")
+
+    def test_download_defers_when_requested_episode_absent(self):
+        # The pack carries episode markers but not episode 5: pinning a wrong member would
+        # hard-fail the host download, so defer to host episode selection.
+        provider = self.mod.JimakuProvider()
+        archive = _zip_body(
+            {
+                "Show.S01E04.JA.srt": b"e04",
+                "Show.S01E06.JA.srt": b"e06",
+            }
+        )
+        provider._http_get = lambda url, config=None: archive
+
+        result = provider.download(
+            {
+                "provider": "jimaku",
+                "schema": 1,
+                "url": "https://jimaku.cc/files/show-pack.zip",
+                "filename": "Show.S01.JP.zip",
+                "is_archive": True,
+                "episode": 5,
+                "video": {"kind": "episode", "season": 1, "episode": 5},
+            },
+            {"alpha3": "jpn", "alpha2": "ja"},
+            {"api_key": "secret"},
+        )
+
+        self.assertEqual(result["episode"], 5)
+        self.assertNotIn("member", result)
+        self.assertNotIn("content_b64", result)
+
+    def test_download_defers_when_only_other_season_carries_episode(self):
+        # season=2 episode=5 against a single-season-1 pack. _normalize turns "Show.S01.E05"
+        # into "show s01 e05", so the bare-E branch must NOT pin the S01E05 member: that would
+        # silently deliver a wrong-season subtitle through the host's exact namelist match.
+        # The member carries an S01 token that disagrees with the request, so defer instead.
+        provider = self.mod.JimakuProvider()
+        archive = _zip_body(
+            {
+                "Show.S01.E05.JA.srt": b"wrong-season",
+                "Show.S01.E04.JA.srt": b"e04",
+            }
+        )
+        provider._http_get = lambda url, config=None: archive
+
+        result = provider.download(
+            {
+                "provider": "jimaku",
+                "schema": 1,
+                "url": "https://jimaku.cc/files/show-pack.zip",
+                "filename": "Show.S01.JP.zip",
+                "is_archive": True,
+                "episode": 5,
+                "video": {"kind": "episode", "season": 2, "episode": 5},
+            },
+            {"alpha3": "jpn", "alpha2": "ja"},
+            {"api_key": "secret"},
+        )
+
+        self.assertEqual(result["episode"], 5)
+        self.assertNotIn("member", result)
+        self.assertNotIn("content_b64", result)
+
+    def test_download_defers_when_multiple_members_claim_episode(self):
+        # Two members claim S01E05 (different release groups); without a release signal the
+        # worker cannot disambiguate, so defer rather than pin the wrong one.
+        provider = self.mod.JimakuProvider()
+        archive = _zip_body(
+            {
+                "Show.S01E05.GroupA.JA.srt": b"a",
+                "Show.S01E05.GroupB.JA.srt": b"b",
+            }
+        )
+        provider._http_get = lambda url, config=None: archive
+
+        result = provider.download(
+            {
+                "provider": "jimaku",
+                "schema": 1,
+                "url": "https://jimaku.cc/files/show-pack.zip",
+                "filename": "Show.S01.JP.zip",
+                "is_archive": True,
+                "episode": 5,
+                "video": {"kind": "episode", "season": 1, "episode": 5},
+            },
+            {"alpha3": "jpn", "alpha2": "ja"},
+            {"api_key": "secret"},
+        )
+
+        self.assertEqual(result["episode"], 5)
+        self.assertNotIn("member", result)
+
+    def test_download_ignores_sidecars_and_substring_episode_collisions(self):
+        # __MACOSX/dot sidecars must never be pinned, and "720p"/"x264" must not be read as
+        # episode 720/264. Only the real delimited S01E05 token may match.
+        provider = self.mod.JimakuProvider()
+        archive = _zip_body(
+            {
+                "__MACOSX/._Show.S01E05.JA.srt": b"junk",
+                ".DS_Store": b"junk",
+                "Show.S01E05.1080p.x264.JA.srt": SRT_BODY,
+                "Show.S01E20.720p.JA.srt": b"wrong",
+            }
+        )
+        provider._http_get = lambda url, config=None: archive
+
+        result = provider.download(
+            {
+                "provider": "jimaku",
+                "schema": 1,
+                "url": "https://jimaku.cc/files/show-pack.zip",
+                "filename": "Show.S01.JP.zip",
+                "is_archive": True,
+                "episode": 5,
+                "video": {"kind": "episode", "season": 1, "episode": 5},
+            },
+            {"alpha3": "jpn", "alpha2": "ja"},
+            {"api_key": "secret"},
+        )
+
+        self.assertEqual(result["member"], "Show.S01E05.1080p.x264.JA.srt")
 
     def test_download_returns_raw_rar_archive_with_episode(self):
         provider = self.mod.JimakuProvider()

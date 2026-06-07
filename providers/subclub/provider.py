@@ -236,6 +236,15 @@ class SubclubProvider:
             "media_type": item.get("media_type"),
             "release_info": filename,
         }
+        # A synthetic fallback archive only has the generic "subclub-<id>.zip" name, so its
+        # release_info carries no release signal. Carry the video's release hints into the
+        # payload so worker-side member selection (and the host's episode pick) have
+        # something to disambiguate a multi-member archive on. Without this, a season pack
+        # or a multi-release movie archive would be picked blindly.
+        if item.get("synthetic_archive"):
+            hints = _video_release_hints(video)
+            if hints:
+                payload["release_hints"] = hints
         return {
             "provider": PROVIDER_ID,
             "id": f"subclub-{item['archive_id']}-{hashlib.sha1(filename.encode('utf-8')).hexdigest()[:12]}",
@@ -284,14 +293,124 @@ def _download_payload(body, payload):
         raise ValueError(f"subclub returned an HTML/error page for archive {payload.get('archive_id')}")
     if _is_archive_body(body):
         # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
-        # the host, which lists it, picks the member by episode, and detects encoding.
-        return {
+        # the host, which lists it, detects encoding, and picks the member.
+        #
+        # The archive path is only reached for the synthetic fallback, where the listing
+        # endpoint returned no direct file links, so the archive can hold several subtitle
+        # members (a full-season pack, or one movie with multiple release variants). The
+        # host's episode-only pick cannot tell a season pack's S01E05 from S02E05, and for a
+        # movie episode is None so it has nothing to select on. When we can list the zip we
+        # pin the member matching season+episode and the scored release hints; otherwise
+        # (rar/7z, single member, or no confident winner) we defer to the host episode pick.
+        archive = {
             "archive_b64": base64.b64encode(body).decode("ascii"),
             "archive_sha256": hashlib.sha256(body).hexdigest(),
-            "episode": payload.get("episode"),
         }
+        member = _select_zip_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = payload.get("episode")
+        return archive
     # Direct, non-archive subtitle body.
     return _content_payload(_normalize_line_endings(body), _format_from_filename(payload.get("filename")))
+
+
+def _select_zip_member(body, payload):
+    # Pin the zip member matching the requested season+episode and the scored release hints.
+    # Listing only, no extraction or decoding: the host reads the named member and runs
+    # chardet. Returns None for rar (not stdlib-listable), a single member (nothing to
+    # disambiguate), or when no field breaks the tie, so the caller falls back to host-side
+    # episode selection. Pinning the WRONG member hard-fails the host download with no
+    # fallback, so we only pin a confident unique winner.
+    payload = payload or {}
+    if _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body or b"")):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        members = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/")
+            and _subtitle_extension(name)
+            and not name.rsplit("/", 1)[-1].startswith(".")
+        ]
+    if len(members) < 2:
+        return None  # a lone member: the host's episode pick already lands here
+    season = _safe_int(payload.get("season"))
+    episode = _safe_int(payload.get("episode"))
+    pool = members
+    if season is not None and episode is not None:
+        # Narrow to the requested episode, using the season-aware SxxExx form so a season
+        # pack that repeats an episode number across seasons (S01E05 vs S02E05) is matched on
+        # both axes, not on episode alone.
+        episode_pool = [name for name in members if _member_has_episode(name, season, episode)]
+        if not episode_pool:
+            # Episode requested but absent from every member: pinning a member from another
+            # episode would hard-fail the host download, so defer to host episode selection.
+            return None
+        if len(episode_pool) == 1:
+            # A unique season+episode match on a delimited SxxExx token is confident. Pin it
+            # rather than defer: the host's fallback pick carries only the episode number
+            # (no season), so for a cross-season pack it could land on the wrong season.
+            return episode_pool[0]
+        pool = episode_pool
+    # Several members survive (a multi-release episode, or a movie archive with several
+    # release variants). Break the tie with the same release hints the result was scored on.
+    # Pin only a unique winner; ties or a zero score defer to the host.
+    hint_tokens = _release_hint_tokens(payload)
+    if not hint_tokens:
+        return None
+    best, best_score, tied = None, 0, False
+    for name in pool:
+        score = _member_hint_score(name, hint_tokens)
+        if score > best_score:
+            best, best_score, tied = name, score, False
+        elif score == best_score and best is not None:
+            tied = True
+    if best is None or best_score == 0 or tied:
+        return None  # cannot confidently disambiguate; let the host pick by episode
+    return best
+
+
+def _member_has_episode(name, season, episode):
+    # Match the episode as a DELIMITED token, tolerating a separator between the season and
+    # episode parts (S01E02, S01.E02, S01 E02, S01-E02), plus NxNN (1x02) and the bare
+    # "{season}{episode:02d}" form (e.g. 101). The (?!\d) guard stops a 3-digit code from
+    # matching a substring ("720" must not match "720p", "101" must not match "1010").
+    text = _normalize_release(name).replace(".", " ")
+    return bool(
+        # S01E02 / S01 E02 / S01-E02 (separator already collapsed to a space).
+        re.search(rf"(?<![a-z0-9])s0*{season}[\s]*e0*{episode}(?!\d)", text)
+        # 1x02.
+        or re.search(rf"(?<![a-z0-9]){season}x0*{episode}(?!\d)", text)
+        # Bare "{season}{episode:02d}" (e.g. 101). Require a non-alnum boundary on BOTH sides
+        # so "720" (S07E20) never matches "720p" and "264" never matches "x264".
+        or re.search(rf"(?<![a-z0-9]){season}{episode:02d}(?![a-z0-9])", text)
+    )
+
+
+def _release_hint_tokens(payload):
+    payload = payload or {}
+    sources = (
+        _normalize_release(payload.get("release_info") or payload.get("filename")),
+        _normalize_release(payload.get("release_hints")),
+    )
+    return {token for source in sources for token in source.split(".") if len(token) > 2}
+
+
+def _member_hint_score(name, hint_tokens):
+    # Score on release-hint token overlap only. The extension (.srt) is not a release signal,
+    # so it must never break a real tie between two equally-matching releases.
+    normalized = _normalize_release(name.rsplit("/", 1)[-1])
+    member_tokens = {token for token in normalized.split(".") if len(token) > 2}
+    return sum(1 for token in hint_tokens if token in member_tokens)
+
+
+def _safe_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _is_archive_body(body):
@@ -503,3 +622,13 @@ def _normalize_release(value):
     decomposed = unicodedata.normalize("NFKD", str(value))
     folded = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
     return re.sub(r"[^a-z0-9]+", ".", folded.lower()).strip(".")
+
+
+def _video_release_hints(video):
+    video = video or {}
+    parts = []
+    for key in ("filename", "name", "release_group", "source", "resolution", "video_codec", "audio_codec"):
+        value = video.get(key)
+        if value:
+            parts.append(str(value))
+    return _normalize_release(".".join(parts))

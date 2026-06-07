@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "4cb66b5876f5be5c381a69707c42372e1ab56cadea463ca8b8f2ceed52634c88",
+  "bundle_sha256": "2d115d0686bcb93737ea3538646dfba50c87778234f8f88586a67d433d920b18",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -316,7 +316,7 @@
   "entry_class": "TurkceAltyaziOrgProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "302db590e3ebd7aa5fdb15dde57c543a880f9c5b19e0b33d82a67691a46fdbd9"
+    "provider.py": "22fb337ae921fbe4e048f5cfe84ae425f97f3a49151d8250472a2910141812e1"
   },
   "languages": [
     "tur",
@@ -341,5 +341,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.6"
+  "version": "0.1.7"
 }

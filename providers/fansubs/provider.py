@@ -251,29 +251,118 @@ def _is_html_body(body):
     )
 
 
-def _archive_payload(body, episode):
-    return {
-        "archive_b64": base64.b64encode(body).decode("ascii"),
-        "archive_sha256": hashlib.sha256(body).hexdigest(),
-        "episode": episode,
-    }
-
-
-def extract_download(body, filename="", content_type="", episode=None):
+def extract_download(body, filename="", content_type="", episode=None, season=None):
     del content_type
     if not body or not body.strip():
         raise ValueError("fansubs download returned an empty body")
 
     stream = io.BytesIO(body)
     if zipfile.is_zipfile(stream) or _is_rar_archive(body):
-        # Hand the raw archive to the host, which extracts the member and detects
-        # the encoding (Provider Hub v1.1 host-side archive extraction).
-        return _archive_payload(body, episode)
+        # Host-side archive extraction (Provider Hub v1.1+): hand the raw archive
+        # back to the host, which extracts the member and detects the encoding.
+        # A single fansubs subtitle row can be an episode pack ("ONA 1-12") whose
+        # zip holds one file per episode; the old worker selected that file by its
+        # episode number. The host's generic episode pick (guessit) does not align
+        # with fansubs' bare-number anime naming, so when we can list the zip we pin
+        # the member matching the requested episode. Otherwise (rar, a single
+        # member, or no unique winner) we defer to host-side episode selection.
+        archive = {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+        }
+        member = _select_zip_member(body, season, episode)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = episode
+        return archive
 
     if _is_html_body(body):
         raise ValueError("fansubs download returned an HTML/error page")
 
     return _content_payload(body, _format_from_filename(filename))
+
+
+def _select_zip_member(body, season, episode):
+    # Pin the zip member that carries the requested episode. Listing only, no
+    # extraction or decoding: the host reads the named member and runs chardet.
+    # Returns None for rar (not stdlib-listable), a single member (nothing to
+    # disambiguate), or when no member uniquely matches the episode, so the caller
+    # falls back to host-side episode selection (which fails loudly on no match).
+    if _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body)):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        members = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/")
+            and _subtitle_extension(name)
+            and not name.rsplit("/", 1)[-1].startswith(".")
+        ]
+    if len(members) < 2:
+        return None  # a lone member: the host's episode pick already lands here
+    try:
+        episode_int = int(episode)
+    except (TypeError, ValueError):
+        return None  # no episode to disambiguate on (movie); defer to the host
+    try:
+        season_int = int(season)
+    except (TypeError, ValueError):
+        season_int = None
+    matches = [
+        name for name in members if _member_has_episode(name, season_int, episode_int)
+    ]
+    if len(matches) != 1:
+        # Zero matches: pinning a member from another episode would hard-fail the
+        # host download, so defer. Several matches: cannot confidently disambiguate
+        # (the fields scored here do not separate them), so defer too.
+        return None
+    return matches[0]
+
+
+# Bare 1-3 digit episode numbers (fansubs anime members are named "Title - 08.ass",
+# not SxxExx), guarded so 720/264 cannot match inside 720p/x264.
+_MEMBER_NUMBER_RE = re.compile(r"(?<![a-z0-9])0*(\d{1,3})(?![a-z0-9])")
+_MEMBER_RANGE_RE = re.compile(r"(?<![a-z0-9])0*(\d{1,3})\s*-\s*0*(\d{1,3})(?![a-z0-9])")
+
+
+def _member_has_episode(name, season, episode):
+    # Match the requested episode in a member basename. Anime members usually carry
+    # only a bare episode number, but tolerate SxxExx/NxNN packs that also encode the
+    # season. A separator between the season and episode part is optional, and the
+    # (?!\d) guard keeps "e02" from matching "e020" and "720" from matching "720p".
+    base = name.rsplit("/", 1)[-1].lower()
+    if season is not None:
+        if re.search(rf"s0*{season}[\s._-]*e0*{episode}(?!\d)", base):
+            return True
+        if re.search(rf"(?<!\d){season}x0*{episode}(?!\d)", base):
+            return True
+        # Contiguous whole-token "{season}{episode:02d}" form, e.g. "108" for S01E08.
+        if re.search(rf"(?<![a-z0-9]){season}{episode:02d}(?![a-z0-9])", base):
+            return True
+    # A member that carries an SxxExx marker for a DIFFERENT season must not be
+    # matched on its bare episode number alone (S02E08 is not the S01E08 we want).
+    if season is not None and _member_has_other_season_episode(base, season, episode):
+        return False
+    for start, end in _MEMBER_RANGE_RE.findall(base):
+        if int(start) <= episode <= int(end):
+            return True
+    for number in _MEMBER_NUMBER_RE.findall(base):
+        if int(number) == episode:
+            return True
+    return False
+
+
+_MEMBER_SXXEXX_RE = re.compile(r"s0*(\d{1,2})[\s._-]*e0*(\d{1,3})(?!\d)", re.IGNORECASE)
+
+
+def _member_has_other_season_episode(base, season, episode):
+    # True when the member encodes this episode under a season that is NOT the one
+    # requested (so the bare-number fallback must not claim it).
+    for found_season, found_episode in _MEMBER_SXXEXX_RE.findall(base):
+        if int(found_episode) == episode and int(found_season) != season:
+            return True
+    return False
 
 
 def _format_from_filename(filename):
@@ -521,11 +610,15 @@ class FansubsProvider:
         episode = payload.get("episode")
         if episode is None:
             episode = (payload.get("video") or {}).get("episode")
+        season = payload.get("season")
+        if season is None:
+            season = (payload.get("video") or {}).get("season")
         return extract_download(
             body,
             filename=filename,
             content_type=headers.get("content-type", ""),
             episode=episode,
+            season=season,
         )
 
 

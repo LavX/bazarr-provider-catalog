@@ -31,6 +31,10 @@ DEFAULT_FLARESOLVERR_TIMEOUT_MS = 60000
 MAX_FLARESOLVERR_TIMEOUT_MS = 60000
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
 SUPPORTED_LANGUAGE_CODES = {"tur", "eng"}
+# Delimited SxxExx token tolerating a separator between the season and episode
+# parts (S01E02, S01.E02, S01 E02, S01-E02). The \b guards keep "e02" from
+# matching inside "e020" and stop the season digits bleeding into a longer run.
+_SXXEYY_RE = re.compile(r"\bs0*(?P<season>\d{1,2})[\s._-]*e0*(?P<episode>\d{1,3})\b", re.I)
 _META_REFRESH_RE = re.compile(
     r"""<meta\s+http-equiv=["']refresh["']\s+content=["'](?P<delay>\d+);\s*url=(?P<url>[^"']+)["']""",
     re.I,
@@ -814,13 +818,22 @@ def _download_payload(body, payload, page_url):
         raise ValueError("turkcealtyaziorg returned an HTML/error page instead of a subtitle")
     if _is_archive_body(body):
         # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back
-        # to the host, which lists it, picks the member by episode, and detects
-        # encoding. The worker no longer extracts or guesses an encoding.
-        return {
+        # to the host, which lists it, picks the member, and detects encoding. The
+        # worker no longer extracts or guesses an encoding. When we can cheaply list
+        # a zip and a single member uniquely matches the requested season+episode we
+        # pin it (a season pack repeats an episode number across seasons, which the
+        # host's episode-only pick cannot disambiguate); otherwise (rar, single
+        # member, or no confident winner) we defer to host-side episode selection.
+        archive = {
             "archive_b64": base64.b64encode(body).decode("ascii"),
             "archive_sha256": hashlib.sha256(body).hexdigest(),
-            "episode": _int_or_none(payload.get("episode")),
         }
+        member = _select_zip_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = _int_or_none(payload.get("episode"))
+        return archive
     # Direct, non-archive subtitle body.
     filename = payload.get("filename") or page_url
     return _content_payload(_normalize_line_endings(body), _format_from_filename(filename))
@@ -828,6 +841,58 @@ def _download_payload(body, payload, page_url):
 
 def _is_archive_body(body):
     return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
+
+
+def _select_zip_member(body, payload):
+    # Pin the zip member matching the requested season+episode. Listing only, no
+    # extraction or decoding: the host reads the named member (an exact namelist
+    # match that hard-fails on mismatch) and runs chardet. Returns None for rar
+    # (not stdlib-listable), a single member (nothing to disambiguate), or when no
+    # single member uniquely matches, so the caller falls back to host-side episode
+    # selection (which fails loudly on a true no-match instead of mis-picking).
+    payload = payload or {}
+    if _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body or b"")):
+        return None
+    season = _int_or_none(payload.get("season"))
+    episode = _int_or_none(payload.get("episode"))
+    if season is None or episode is None:
+        # Movies (and rows without a parsed episode) have nothing to disambiguate
+        # by; defer so the host applies its own member-by-episode heuristics.
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        members = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/")
+            and _subtitle_extension(name)
+            and not name.rsplit("/", 1)[-1].startswith(".")
+        ]
+    if len(members) < 2:
+        return None  # a lone member: the host's episode pick already lands here
+    matches = [name for name in members if _member_has_episode(name, season, episode)]
+    if len(matches) == 1:
+        return matches[0]
+    # Zero matches (pinning would hard-fail), or several members that all carry the
+    # same SxxExx marker (cannot tell them apart): defer to host episode selection.
+    return None
+
+
+def _member_has_episode(name, season, episode):
+    # Match the season+episode as delimited tokens, tolerating a separator between
+    # the season and episode parts (S01E02, S01.E02, S01 E02, S01-E02), an NxNN
+    # form (1x02), and a contiguous "{season}{episode:02d}" code (e.g. 102). The
+    # SxxExx/NxNN forms anchor on s/x so a digit guard suffices; the bare numeric
+    # code needs a full alphanumeric boundary so "720" (S07E20) cannot match the
+    # "720p" in a release name and "264" cannot match the "x264" in a codec tag.
+    text = str(name or "").lower()
+    if _SXXEYY_RE.search(text):
+        for match in _SXXEYY_RE.finditer(text):
+            if _int_or_none(match.group("season")) == season and _int_or_none(match.group("episode")) == episode:
+                return True
+        return False
+    if re.search(rf"(?<!\d){season}x0*{episode}(?!\d)", text):
+        return True
+    return bool(re.search(rf"(?<![a-z0-9]){season}{episode:02d}(?![a-z0-9])", text))
 
 
 def _is_rar_archive(body):

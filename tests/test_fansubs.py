@@ -263,7 +263,7 @@ class FansubsProviderDownloadTests(unittest.TestCase):
         # The host normalizes encoding; the worker must not guess a codepage.
         self.assertNotIn("encoding", result)
 
-    def test_download_returns_zip_archive_for_host_extraction(self):
+    def test_download_pins_zip_member_matching_requested_episode(self):
         archive = io.BytesIO()
         with zipfile.ZipFile(archive, "w") as zf:
             zf.writestr("Devil May Cry - 01.ass", b"episode one")
@@ -293,8 +293,210 @@ class FansubsProviderDownloadTests(unittest.TestCase):
         self.assertEqual(
             result["archive_sha256"], hashlib.sha256(archive_bytes).hexdigest()
         )
-        self.assertEqual(result["episode"], 8)
+        # A multi-member episode pack pins the member carrying the requested
+        # episode rather than deferring to the host's generic episode pick.
+        self.assertEqual(result["member"], "Devil May Cry - 08.ass")
+        self.assertNotIn("episode", result)
         self.assertNotIn("encoding", result)
+
+    def test_download_defers_when_no_member_carries_requested_episode(self):
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("Devil May Cry - 01.ass", b"episode one")
+            zf.writestr("Devil May Cry - 02.ass", b"episode two")
+        provider = self._provider_with_download_body(
+            archive.getvalue(),
+            {"content-disposition": 'attachment; filename="devil_may_cry.zip"'},
+        )
+
+        result = provider.download(
+            {
+                "provider": "fansubs",
+                "schema": 1,
+                "subtitle_id": "13605",
+                "format": "ass",
+                "season": 1,
+                "episode": 8,
+            },
+            {"alpha3": "rus", "alpha2": "ru"},
+            {},
+        )
+
+        # Episode 8 is absent from every member: pinning a wrong member would
+        # hard-fail the host download, so defer to host-side episode selection.
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 8)
+
+    def test_download_defers_when_multiple_members_carry_episode(self):
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("Devil May Cry - 08 [Katsura].ass", b"group one")
+            zf.writestr("Devil May Cry - 08 [Other].ass", b"group two")
+        provider = self._provider_with_download_body(
+            archive.getvalue(),
+            {"content-disposition": 'attachment; filename="devil_may_cry.zip"'},
+        )
+
+        result = provider.download(
+            {
+                "provider": "fansubs",
+                "schema": 1,
+                "subtitle_id": "13605",
+                "format": "ass",
+                "season": 1,
+                "episode": 8,
+            },
+            {"alpha3": "rus", "alpha2": "ru"},
+            {},
+        )
+
+        # Two members both carry episode 8 and nothing breaks the tie: defer
+        # instead of pinning an arbitrary one.
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 8)
+
+    def test_download_ignores_sidecar_and_resolution_lookalikes(self):
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as zf:
+            # 720p must not match episode 720; the real episode-8 member must win,
+            # and the __MACOSX sidecar must be skipped entirely.
+            zf.writestr("__MACOSX/._Devil May Cry - 08.ass", b"junk")
+            zf.writestr("Devil May Cry - 08 [720p].ass", b"episode eight")
+            zf.writestr("Devil May Cry - 09 [720p].ass", b"episode nine")
+        provider = self._provider_with_download_body(
+            archive.getvalue(),
+            {"content-disposition": 'attachment; filename="devil_may_cry.zip"'},
+        )
+
+        result = provider.download(
+            {
+                "provider": "fansubs",
+                "schema": 1,
+                "subtitle_id": "13605",
+                "format": "ass",
+                "season": 1,
+                "episode": 8,
+            },
+            {"alpha3": "rus", "alpha2": "ru"},
+            {},
+        )
+
+        self.assertEqual(result["member"], "Devil May Cry - 08 [720p].ass")
+
+    def test_download_defers_when_codec_token_looks_like_episode(self):
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as zf:
+            # "x264" must NOT satisfy a request for episode 264: pinning this
+            # member would silently deliver episode 5 for a request for 264.
+            zf.writestr("Devil May Cry - 05 [x264].ass", b"episode five")
+            zf.writestr("Devil May Cry - 06.ass", b"episode six")
+        provider = self._provider_with_download_body(
+            archive.getvalue(),
+            {"content-disposition": 'attachment; filename="devil_may_cry.zip"'},
+        )
+
+        result = provider.download(
+            {
+                "provider": "fansubs",
+                "schema": 1,
+                "subtitle_id": "13605",
+                "format": "ass",
+                "season": 1,
+                "episode": 264,
+            },
+            {"alpha3": "rus", "alpha2": "ru"},
+            {},
+        )
+
+        # No member carries episode 264; the codec tag "x264" is not a match, so
+        # defer to host-side episode selection instead of pinning a wrong member.
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 264)
+
+    def test_download_defers_when_resolution_token_looks_like_episode(self):
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as zf:
+            # "720p" must NOT satisfy a request for episode 720: pinning this
+            # member would silently deliver episode 12 for a request for 720.
+            zf.writestr("Devil May Cry - 12 [720p].ass", b"episode twelve")
+            zf.writestr("Devil May Cry - 13.ass", b"episode thirteen")
+        provider = self._provider_with_download_body(
+            archive.getvalue(),
+            {"content-disposition": 'attachment; filename="devil_may_cry.zip"'},
+        )
+
+        result = provider.download(
+            {
+                "provider": "fansubs",
+                "schema": 1,
+                "subtitle_id": "13605",
+                "format": "ass",
+                "season": 1,
+                "episode": 720,
+            },
+            {"alpha3": "rus", "alpha2": "ru"},
+            {},
+        )
+
+        # No member carries episode 720; the resolution tag "720p" is not a match,
+        # so defer to host-side episode selection instead of pinning a wrong member.
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 720)
+
+    def test_download_defers_when_match_is_only_in_wrong_season(self):
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("Series S02E08.srt", b"season two episode eight")
+            zf.writestr("Series S02E09.srt", b"season two episode nine")
+        provider = self._provider_with_download_body(
+            archive.getvalue(),
+            {"content-disposition": 'attachment; filename="series.zip"'},
+        )
+
+        result = provider.download(
+            {
+                "provider": "fansubs",
+                "schema": 1,
+                "subtitle_id": "13605",
+                "format": "srt",
+                "season": 1,
+                "episode": 8,
+            },
+            {"alpha3": "rus", "alpha2": "ru"},
+            {},
+        )
+
+        # The only episode-8 member is tagged S02; the request is S01E08, so the
+        # bare-number fallback must not claim it. Defer to host episode selection.
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 8)
+
+    def test_download_pins_member_by_season_episode_marker(self):
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("Series S01E08.srt", b"season one episode eight")
+            zf.writestr("Series S02E08.srt", b"season two episode eight")
+        provider = self._provider_with_download_body(
+            archive.getvalue(),
+            {"content-disposition": 'attachment; filename="series.zip"'},
+        )
+
+        result = provider.download(
+            {
+                "provider": "fansubs",
+                "schema": 1,
+                "subtitle_id": "13605",
+                "format": "srt",
+                "season": 1,
+                "episode": 8,
+            },
+            {"alpha3": "rus", "alpha2": "ru"},
+            {},
+        )
+
+        # A pack repeating episode 8 across seasons must pin by BOTH season and
+        # episode, not the bare number.
+        self.assertEqual(result["member"], "Series S01E08.srt")
 
     def test_download_carries_episode_from_nested_video_payload(self):
         archive = io.BytesIO()

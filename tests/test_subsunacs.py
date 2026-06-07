@@ -461,6 +461,190 @@ class SubsUnacsProviderTests(unittest.TestCase):
                 {},
             )
 
+    def test_download_zip_pins_member_matching_season_and_episode(self):
+        # A season-pack zip carries several episodes; pin the member matching BOTH the
+        # requested season and episode so the host reads the right one instead of guessing.
+        provider = self.mod.SubsUnacsProvider()
+        archive = _zip_body(
+            {
+                "Some.Show.S01E04.HDTV.x264.srt": "ep4",
+                "Some.Show.S01E05.HDTV.x264.srt": "ep5",
+                "Some.Show.S01E06.HDTV.x264.srt": "ep6",
+            }
+        )
+        provider._http_get = lambda url, timeout=10, referer=None: archive
+
+        content = provider.download(
+            {
+                "download_url": "https://subsunacs.net/subtitles/Some_Show_01x05-80808/!",
+                "season": 1,
+                "episode": 5,
+            },
+            {"alpha3": "bul", "alpha2": "bg"},
+            {},
+        )
+
+        self.assertEqual(content["member"], "Some.Show.S01E05.HDTV.x264.srt")
+        self.assertEqual(base64.b64decode(content["archive_b64"]), archive)
+        self.assertEqual(content["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertNotIn("episode", content)
+
+    def test_download_zip_defers_when_requested_episode_absent(self):
+        # The requested S02E05 is in a different season; pinning a wrong member would
+        # hard-fail the host download, so defer to host episode selection.
+        provider = self.mod.SubsUnacsProvider()
+        archive = _zip_body(
+            {
+                "Some.Show.S01E05.HDTV.x264.srt": "s1e5",
+                "Some.Show.S03E05.HDTV.x264.srt": "s3e5",
+            }
+        )
+        provider._http_get = lambda url, timeout=10, referer=None: archive
+
+        content = provider.download(
+            {
+                "download_url": "https://subsunacs.net/subtitles/Some_Show-80808/!",
+                "season": 2,
+                "episode": 5,
+            },
+            {"alpha3": "bul", "alpha2": "bg"},
+            {},
+        )
+
+        self.assertNotIn("member", content)
+        self.assertEqual(content["episode"], 5)
+        self.assertEqual(base64.b64decode(content["archive_b64"]), archive)
+
+    def test_download_zip_does_not_pin_wrong_season_for_repeated_episode(self):
+        # The same episode number repeats across seasons; narrowing by BOTH season and
+        # episode pins S02E05, never the S01E05 member.
+        provider = self.mod.SubsUnacsProvider()
+        archive = _zip_body(
+            {
+                "Some.Show.S01E05.720p.WEB.srt": "s1e5",
+                "Some.Show.S02E05.720p.WEB.srt": "s2e5",
+            }
+        )
+        provider._http_get = lambda url, timeout=10, referer=None: archive
+
+        content = provider.download(
+            {
+                "download_url": "https://subsunacs.net/subtitles/Some_Show_02x05-80808/!",
+                "season": 2,
+                "episode": 5,
+            },
+            {"alpha3": "bul", "alpha2": "bg"},
+            {},
+        )
+
+        self.assertEqual(content["member"], "Some.Show.S02E05.720p.WEB.srt")
+
+    def test_download_zip_ignores_macosx_sidecar_when_pinning(self):
+        # __MACOSX/._ sidecars and dotfiles must never be pinned; only the real member is.
+        provider = self.mod.SubsUnacsProvider()
+        archive = _zip_body(
+            {
+                "Some.Show.S01E05.HDTV.srt": "real",
+                "__MACOSX/._Some.Show.S01E05.HDTV.srt": "sidecar",
+                "Some.Show.S01E06.HDTV.srt": "other",
+            }
+        )
+        provider._http_get = lambda url, timeout=10, referer=None: archive
+
+        content = provider.download(
+            {
+                "download_url": "https://subsunacs.net/subtitles/Some_Show_01x05-80808/!",
+                "season": 1,
+                "episode": 5,
+            },
+            {"alpha3": "bul", "alpha2": "bg"},
+            {},
+        )
+
+        self.assertEqual(content["member"], "Some.Show.S01E05.HDTV.srt")
+
+    def test_download_zip_episode_token_does_not_match_resolution(self):
+        # "720" (S07E20) must not match "720p"; the real S07E20 member is pinned, not the
+        # S01E01 720p member.
+        provider = self.mod.SubsUnacsProvider()
+        archive = _zip_body(
+            {
+                "Some.Show.S01E01.720p.WEB.srt": "wrong",
+                "Some.Show.S07E20.HDTV.srt": "right",
+            }
+        )
+        provider._http_get = lambda url, timeout=10, referer=None: archive
+
+        content = provider.download(
+            {
+                "download_url": "https://subsunacs.net/subtitles/Some_Show_07x20-80808/!",
+                "season": 7,
+                "episode": 20,
+            },
+            {"alpha3": "bul", "alpha2": "bg"},
+            {},
+        )
+
+        self.assertEqual(content["member"], "Some.Show.S07E20.HDTV.srt")
+
+    def test_download_zip_matches_separated_season_episode_token(self):
+        # Tolerate a separator between the season and episode parts (S01.E05).
+        provider = self.mod.SubsUnacsProvider()
+        archive = _zip_body(
+            {
+                "Some.Show.S01.E05.HDTV.srt": "ep5",
+                "Some.Show.S01.E06.HDTV.srt": "ep6",
+            }
+        )
+        provider._http_get = lambda url, timeout=10, referer=None: archive
+
+        content = provider.download(
+            {
+                "download_url": "https://subsunacs.net/subtitles/Some_Show_01x05-80808/!",
+                "season": 1,
+                "episode": 5,
+            },
+            {"alpha3": "bul", "alpha2": "bg"},
+            {},
+        )
+
+        self.assertEqual(content["member"], "Some.Show.S01.E05.HDTV.srt")
+
+    def test_download_zip_defers_for_movie_multimember_archive(self):
+        # Movies carry no episode to narrow on; a multi-member zip defers to the host.
+        provider = self.mod.SubsUnacsProvider()
+        archive = _zip_body({"cd1/Movie.srt": "first", "cd2/Movie.srt": "second"})
+        provider._http_get = lambda url, timeout=10, referer=None: archive
+
+        content = provider.download(
+            {"download_url": "https://subsunacs.net/subtitles/Dune-144478/!"},
+            {"alpha3": "eng", "alpha2": "en"},
+            {},
+        )
+
+        self.assertNotIn("member", content)
+        self.assertIsNone(content["episode"])
+        self.assertEqual(base64.b64decode(content["archive_b64"]), archive)
+
+    def test_download_rar_multimember_defers_to_episode_path(self):
+        # rar is not stdlib-listable: always defer to host episode selection.
+        provider = self.mod.SubsUnacsProvider()
+        archive = b"Rar!\x1a\x07\x00" + b"rar-season-pack"
+        provider._http_get = lambda url, timeout=10, referer=None: archive
+
+        content = provider.download(
+            {
+                "download_url": "https://subsunacs.net/subtitles/Some_Show_01x05-80808/!",
+                "season": 1,
+                "episode": 5,
+            },
+            {"alpha3": "bul", "alpha2": "bg"},
+            {},
+        )
+
+        self.assertNotIn("member", content)
+        self.assertEqual(content["episode"], 5)
+
     def test_download_seven_zip_returns_archive_bytes_and_carries_episode(self):
         # The host extraction stack now covers 7z too, so a .7z body is handed back as the
         # raw archive instead of being extracted in the worker.

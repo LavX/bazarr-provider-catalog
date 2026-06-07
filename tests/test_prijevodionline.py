@@ -217,11 +217,14 @@ class PrijevodiOnlineProviderTests(unittest.TestCase):
             [],
         )
 
-    def test_download_returns_zip_archive_bytes_for_host_extraction(self):
+    def test_download_pins_release_member_for_requested_episode(self):
+        # Happy path: a multi-member zip with a release that uniquely matches the scored
+        # releases must pin that member (not just defer the whole archive by episode).
         provider = self.mod.PrijevodiOnlineProvider()
         body = _zip_body(
             {
                 "Game.of.Thrones.S01E02.HDTV.srt": "wrong episode",
+                "Game.of.Thrones.S01E01.HDTV.XviD-FEVER.srt": "wrong release",
                 "Game.of.Thrones.S01E01.720p.HDTV.CTU.srt": "right subtitle",
             }
         )
@@ -240,12 +243,170 @@ class PrijevodiOnlineProviderTests(unittest.TestCase):
             {},
         )
 
-        # Archive mode: the worker hands the raw bytes back, the host extracts.
+        # Archive mode: the worker hands the raw bytes back, the host extracts the pinned
+        # member. No content extraction or decoding happens on the worker.
         self.assertNotIn("content_b64", result)
         self.assertEqual(base64.b64decode(result["archive_b64"]), body)
         self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
-        self.assertEqual(result["episode"], 1)
+        self.assertEqual(result["member"], "Game.of.Thrones.S01E01.720p.HDTV.CTU.srt")
+        self.assertNotIn("episode", result)
         self.assertNotIn("encoding", result)
+
+    def test_download_defers_to_episode_when_release_tie_is_ambiguous(self):
+        # Defer: two members for the requested episode tie on releases overlap (or carry
+        # no release tokens at all), so we must NOT pin a member and instead let the host
+        # pick by episode. Pinning the wrong member would silently deliver a bad subtitle.
+        provider = self.mod.PrijevodiOnlineProvider()
+        body = _zip_body(
+            {
+                "Game.of.Thrones.S01E01.HDTV.part1.srt": "a",
+                "Game.of.Thrones.S01E01.HDTV.part2.srt": "b",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        result = provider.download(
+            {
+                "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/got-s01e01-hr",
+                "filename": "prijevodionline.game-of-thrones.s01e01.hr.zip",
+                "subtitle_id": "18050",
+                "season": 1,
+                "episode": 1,
+                "releases": ["HDTV"],
+            },
+            {"alpha3": "hrv", "alpha2": "hr"},
+            {},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 1)
+
+    def test_download_does_not_pin_wrong_season_member(self):
+        # A season pack repeats the episode number across seasons. The requested S02E05
+        # must never be served the S01E05 member: with no S02E05 present but episode
+        # markers around, defer to the host (which fails loudly on a true no-match)
+        # instead of pinning the wrong season.
+        provider = self.mod.PrijevodiOnlineProvider()
+        body = _zip_body(
+            {
+                "Show.S01E05.720p.WEB.CTU.srt": "season 1",
+                "Show.S03E05.720p.WEB.CTU.srt": "season 3",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        result = provider.download(
+            {
+                "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/show-s02e05-hr",
+                "filename": "prijevodionline.show.s02e05.hr.zip",
+                "subtitle_id": "18050",
+                "season": 2,
+                "episode": 5,
+                "releases": ["720p.WEB.CTU"],
+            },
+            {"alpha3": "hrv", "alpha2": "hr"},
+            {},
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 5)
+
+    def test_download_pins_lone_season_match_in_cross_season_pack(self):
+        # A cross-season pack repeats the episode number across seasons (S01E05 and S02E05).
+        # When exactly one member matches the requested season+episode, the worker must pin
+        # it: handing the host a season-blind episode pick could silently deliver the other
+        # season's same-numbered episode (a wrong-season subtitle). Request S02E05 -> pin the
+        # S02E05 member, never the S01E05 one.
+        provider = self.mod.PrijevodiOnlineProvider()
+        body = _zip_body(
+            {
+                "Show.S01E05.720p.WEB-DL-CTU.srt": "season 1",
+                "Show.S02E05.720p.WEB-DL-CTU.srt": "season 2",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        result = provider.download(
+            {
+                "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/show-s02e05-hr",
+                "filename": "prijevodionline.show.s02e05.hr.zip",
+                "subtitle_id": "18050",
+                "season": 2,
+                "episode": 5,
+                "releases": ["720p.WEB-DL-CTU"],
+            },
+            {"alpha3": "hrv", "alpha2": "hr"},
+            {},
+        )
+
+        self.assertEqual(result["member"], "Show.S02E05.720p.WEB-DL-CTU.srt")
+        self.assertNotIn("episode", result)
+
+    def test_download_does_not_mispin_on_unbounded_episode_marker(self):
+        # Left-boundary guard: a bonus member like "Show.Extras1E02..." must NOT be read as
+        # the SxxExx marker for S01E02 just because "s1e02" appears inside "extraS1E02".
+        # Without the boundary the decoy is wrongly pooled for the requested episode and, on
+        # a release-token overlap, gets pinned instead of the genuine S01E02 member.
+        provider = self.mod.PrijevodiOnlineProvider()
+        body = _zip_body(
+            {
+                "Show.Extras1E02.WEB-DL-CTU.srt": "bonus reel, not S01E02",
+                "Show.S01E02.HDTV-FEVER.srt": "the real S01E02 subtitle",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        result = provider.download(
+            {
+                "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/show-s01e02-hr",
+                "filename": "prijevodionline.show.s01e02.hr.zip",
+                "subtitle_id": "18050",
+                "season": 1,
+                "episode": 2,
+                "releases": ["WEB-DL-CTU"],
+            },
+            {"alpha3": "hrv", "alpha2": "hr"},
+            {},
+        )
+
+        # The decoy's release tokens overlap the requested release, so a season/episode pool
+        # that wrongly includes it would pin it. The boundary keeps it out, leaving only the
+        # genuine member to pin.
+        self.assertEqual(result["member"], "Show.S01E02.HDTV-FEVER.srt")
+        self.assertNotIn("episode", result)
+
+    def test_download_ignores_sidecar_and_separated_token_members(self):
+        # __MACOSX/dot sidecars must be excluded, and a 3-digit episode code must not match
+        # a resolution substring: "720p" must NOT satisfy a request for S07E20. Here only
+        # the genuine S07E20 member (written with a separator) is the real candidate.
+        provider = self.mod.PrijevodiOnlineProvider()
+        body = _zip_body(
+            {
+                "__MACOSX/._Show.S07E20.srt": "mac sidecar",
+                ".hidden.srt": "dotfile",
+                "Show.720p.WEB-DL.srt": "resolution decoy (no S07E20 token)",
+                "Show.S07.E20.HDTV-FEVER.srt": "right episode, wrong release",
+                "Show.S07.E20.WEB-DL-CTU.srt": "right subtitle",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        result = provider.download(
+            {
+                "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/show-s07e20-hr",
+                "filename": "prijevodionline.show.s07e20.hr.zip",
+                "subtitle_id": "18050",
+                "season": 7,
+                "episode": 20,
+                "releases": ["WEB-DL-CTU"],
+            },
+            {"alpha3": "hrv", "alpha2": "hr"},
+            {},
+        )
+
+        self.assertEqual(result["member"], "Show.S07.E20.WEB-DL-CTU.srt")
+        self.assertNotIn("episode", result)
 
     def test_download_returns_rar_archive_bytes_for_host_extraction(self):
         provider = self.mod.PrijevodiOnlineProvider()

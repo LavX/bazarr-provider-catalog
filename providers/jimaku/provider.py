@@ -515,14 +515,113 @@ def _download_payload(body, payload):
         raise ValueError(f"jimaku returned an HTML/error page for {payload.get('filename') or payload.get('url')}")
     if _is_archive_body(body):
         # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
-        # the host, which lists it, picks the member by episode, and detects encoding.
-        return {
+        # the host, which lists it, detects encoding, and either reads the named member or
+        # picks one by episode.
+        archive = {
             "archive_b64": _base64.b64encode(body).decode("ascii"),
             "archive_sha256": _hashlib.sha256(body).hexdigest(),
-            "episode": payload.get("episode"),
         }
+        member = _select_zip_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = payload.get("episode")
+        return archive
     # Direct, non-archive subtitle body.
     return _content_payload(body, _format_from_filename(payload.get("filename")))
+
+
+def _safe_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+# Left boundary (?<![a-z0-9]) stops "s01e05" matching inside a glued token like "abcs01e05".
+_SXXEYY_RE = re.compile(r"(?<![a-z0-9])s0*(?P<season>\d{1,2})[\s._-]*e0*(?P<episode>\d{1,3})(?!\d)", re.I)
+_NXNN_RE = re.compile(r"(?<![a-z0-9])(?P<season>\d{1,2})x0*(?P<episode>\d{1,3})(?!\d)", re.I)
+
+
+def _member_has_episode(name, season, episode):
+    # Match the requested episode as a delimited token. Tolerate a separator between the
+    # season and episode parts (S01E05, S01.E05, S01 E05, S01-E05), the NxNN form (1x05),
+    # and a bare Exx when the season is implicit (jimaku packs are usually single-season).
+    # The (?!\d) guards stop "e05" matching "e050" and "720"/"264" from matching "720p"/"x264".
+    text = _normalize(name)
+    if season is not None:
+        carries_season = False
+        for match in _SXXEYY_RE.finditer(text):
+            carries_season = True
+            if _safe_int(match.group("season")) == season and _safe_int(match.group("episode")) == episode:
+                return True
+        for match in _NXNN_RE.finditer(text):
+            carries_season = True
+            if _safe_int(match.group("season")) == season and _safe_int(match.group("episode")) == episode:
+                return True
+        # A member that carries an explicit season token (SxxEyy / NxNN) whose season
+        # disagrees with the request must NOT fall through to the bare-E branch. Because
+        # _normalize turns "Show.S01.E05" into "show s01 e05", a season=2 request would
+        # otherwise let the bare-E branch pin the S01E05 member, and the host's exact
+        # "member in namelist" check delivers that wrong-season file silently (no loud
+        # failure). Only seasonless members may use the bare-E fallback below; season-
+        # bearing members defer to host episode selection.
+        if carries_season:
+            return False
+    return bool(re.search(rf"(?<![a-z\d])e0*{episode}(?!\d)", text))
+
+
+def _member_carries_episode_markers(names, season):
+    # True when at least one member encodes an SxxExx, NxNN, or bare-Exx token. Used to
+    # decide whether a missing requested episode means "defer to host" (markers present but
+    # not ours) versus "let the host pick" (no episode structure at all, e.g. a movie pack).
+    for name in names:
+        text = _normalize(name)
+        if _SXXEYY_RE.search(text):
+            return True
+        if season is not None and re.search(rf"(?<!\d){season}x\d{{1,3}}(?!\d)", text):
+            return True
+        if re.search(r"(?<![a-z\d])e\d{1,3}(?!\d)", text):
+            return True
+    return False
+
+
+def _select_zip_member(body, payload):
+    # Pin the lone zip member that matches the requested season+episode. Listing only, no
+    # extraction or decoding: the host reads the named member (an exact namelist match that
+    # hard-fails on mismatch) and runs chardet. Returns None for rar (not stdlib-listable),
+    # a single subtitle member (nothing to disambiguate), or when no confident unique match
+    # exists, so the caller falls back to host-side episode selection.
+    payload = payload or {}
+    if _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body or b"")):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        members = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/")
+            and _subtitle_extension(name)
+            and not name.rsplit("/", 1)[-1].startswith(".")
+        ]
+    if len(members) < 2:
+        return None  # a lone member: the host's episode pick already lands here
+    video = payload.get("video") or {}
+    season = _safe_int(video.get("season"))
+    episode = _safe_int(payload.get("episode"))
+    if episode is None:
+        episode = _safe_int(video.get("episode"))
+    if episode is None:
+        return None  # no episode to disambiguate (movie pack); defer to the host
+    matches = [name for name in members if _member_has_episode(name, season, episode)]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches and _member_carries_episode_markers(members, season):
+        # The pack carries episode markers but not the requested one: pinning a wrong
+        # member would hard-fail the host download, so defer to episode selection.
+        return None
+    # Zero matches without markers, or several members claiming the same episode: cannot
+    # confidently disambiguate, so let the host pick by episode.
+    return None
 
 
 def _is_archive_body(body):

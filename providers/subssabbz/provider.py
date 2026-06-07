@@ -315,18 +315,148 @@ def _download_payload(body, payload):
         raise ValueError(f"subssabbz returned an HTML/error page for {payload.get('download_url')}")
     if _is_archive_body(body):
         # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
-        # the host, which lists it, picks the member by episode, and detects encoding.
-        return {
+        # the host. Search emits one result per archive member and stores that member's
+        # exact filename in the payload, so when we can list a zip we pin that member.
+        # The host then reads the named member and runs chardet. RAR is not stdlib-listable
+        # and a lone/ambiguous member is left to the host's episode pick.
+        archive = {
             "archive_b64": base64.b64encode(body).decode("ascii"),
             "archive_sha256": hashlib.sha256(body).hexdigest(),
-            "episode": payload.get("episode"),
         }
+        member = _select_zip_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = payload.get("episode")
+        return archive
     # Direct, non-archive subtitle body.
     return _content_payload(_normalize_line_endings(body), _format_from_filename(payload.get("filename")))
 
 
 def _is_archive_body(body):
     return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
+
+
+def _select_zip_member(body, payload):
+    # Reproduce the pre-migration select_subtitle_file: pin the exact member that search
+    # scored (payload["filename"]), else break the tie with release_info token overlap.
+    # Listing only, no extraction or decoding. Returns None for rar (not stdlib-listable),
+    # a single member, or when nothing breaks the tie, so the caller defers to the host's
+    # episode selection (which fails loudly on a true no-match, unlike a wrong member pin).
+    payload = payload or {}
+    if _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body or b"")):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        members = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/")
+            and _subtitle_extension(name)
+            and not name.rsplit("/", 1)[-1].startswith(".")
+        ]
+    if len(members) < 2:
+        return None  # a lone member: the host's episode pick already lands here
+    # Strongest signal: the exact member filename search picked for this result.
+    wanted = _normalize_member_path(payload.get("filename"))
+    if wanted:
+        exact = [name for name in members if _normalize_member_path(name) == wanted]
+        if len(exact) == 1:
+            return exact[0]
+        if len(exact) > 1:
+            return None  # duplicate names cannot be told apart; defer to the host
+    # Narrow to the requested season+episode before scoring so a multi-episode pack does
+    # not let release tags from another episode win the tie.
+    season = _parse_int_value(payload.get("season"))
+    episode = _parse_int_value(payload.get("episode"))
+    pool = members
+    if episode is not None:
+        episode_pool = [name for name in members if _member_has_episode(name, season, episode)]
+        if not episode_pool:
+            # Episode requested but absent from every member: pinning a member from another
+            # episode would hard-fail the host download, so defer to host episode selection.
+            return None
+        if len(episode_pool) == 1:
+            # A unique season+episode member. Pin it rather than deferring: the host's
+            # episode-only pick could otherwise cross seasons in a pack that repeats the
+            # episode number (S01E05 vs S02E05).
+            return episode_pool[0]
+        pool = episode_pool
+    if len(pool) < 2:
+        return None  # nothing left to disambiguate; let the host pick by episode
+    # Break the tie with the same release_info tokens the pre-migration scorer used.
+    release_info = _normalize_release(payload.get("release_info") or payload.get("filename"))
+    forced = bool(payload.get("forced"))
+    best, best_score, tied = None, 0, False
+    for name in pool:
+        score = _member_release_score(name, release_info, forced=forced)
+        if score > best_score:
+            best, best_score, tied = name, score, False
+        elif score == best_score and best is not None:
+            tied = True
+    if best is None or best_score == 0 or tied:
+        return None  # cannot confidently disambiguate; let the host pick by episode
+    return best
+
+
+def _member_has_episode(name, season, episode):
+    # Match SxxExx as a delimited token tolerating a separator between the season and
+    # episode parts (S01E02, S01.E02, S01 E02, S01-E02), the NxNN form (1x02), and a
+    # whole-token "{season}{episode:02d}" code (e.g. "102"). The (?!\d) / (?<!\d) guards
+    # stop a 3-digit release tag from matching a substring ("720p", "x264").
+    text = _normalize_release(name)
+    if episode is None:
+        return False
+    if season is not None:
+        if re.search(rf"(?<!\d)s0*{season}[\s._-]*e0*{episode}(?!\d)", text):
+            return True
+        if re.search(rf"(?<!\d){season}x0*{episode}(?!\d)", text):
+            return True
+        # Contiguous "{season}{episode:02d}" code, e.g. "102". Require non-alnum
+        # delimiters so a release tag like "720p" / "x264" cannot match a substring.
+        if re.search(rf"(?<![a-z0-9]){season}{episode:02d}(?![a-z0-9])", text):
+            return True
+        return False
+    # No season known: only the episode-bearing forms we can anchor unambiguously.
+    if re.search(rf"(?<!\d)s\d{{1,2}}[\s._-]*e0*{episode}(?!\d)", text):
+        return True
+    if re.search(rf"(?<!\d)\d{{1,2}}x0*{episode}(?!\d)", text):
+        return True
+    return False
+
+
+def _member_release_score(name, release_info, forced=False):
+    # Mirror the pre-migration scorer: count release_info tokens longer than two chars that
+    # appear in the member name, then nudge .srt ahead of .sub on a tie. A member carrying a
+    # delimited "forced" token is a foreign-parts-only track: heavily penalize it for a
+    # non-forced request so the host never silently pins it (mirrors providers/titulky and
+    # providers/subtitrarinoi). A forced request keeps the forced member in play.
+    normalized = _normalize_release(name)
+    score = 0
+    if release_info:
+        for token in (part for part in release_info.split(".") if len(part) > 2):
+            if token in normalized:
+                score += 4
+    if name.lower().endswith(".srt"):
+        score += 1
+    if not forced and _member_is_forced(name):
+        # Drive the score below the initial best_score (0) so a forced member can never win
+        # the tie for a non-forced request; a forced-only pool then defers to host selection.
+        score -= 1000
+    return score
+
+
+def _member_is_forced(name):
+    # A delimited "forced" token on the member basename marks a foreign-parts-only track.
+    # Match it as a whole token so "enforced"/"unforced" never trip the penalty.
+    basename = _normalize_member_path(name).rsplit("/", 1)[-1]
+    return "forced" in _normalize_release(basename).split(".")
+
+
+def _parse_int_value(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _result_id(item, language):

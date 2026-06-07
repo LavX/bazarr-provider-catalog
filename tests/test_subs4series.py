@@ -36,6 +36,17 @@ def _zip_body():
     return stream.getvalue()
 
 
+def _multi_release_zip():
+    # Two releases for the same episode (FEVER vs KILLERS) plus a hidden sidecar that must
+    # be ignored. release_info token overlap disambiguates the two real members.
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as archive:
+        archive.writestr("__MACOSX/._Game.of.Thrones.S01E01.HDTV.XviD-FEVER.srt", "junk")
+        archive.writestr("Game.of.Thrones.S01E01.HDTV.XviD-FEVER.srt", "1\r\nfever\r\n")
+        archive.writestr("Game.of.Thrones.S01E01.720p.WEB-DL.KILLERS.srt", "1\r\nkillers\r\n")
+    return stream.getvalue()
+
+
 class FakeScraperResponse:
     def __init__(self, status_code, headers, content, url="https://www.subs4series.com/search_report.php"):
         self.status_code = status_code
@@ -152,6 +163,147 @@ class Subs4SeriesParserTests(unittest.TestCase):
                 b"<body>Subtitle not found</body></html>",
                 {"filename": "subs4series.zip"},
             )
+
+    def test_extract_download_pins_member_matching_release_info(self):
+        # Multi-release zip for the same episode: the host's episode-only pick cannot tell
+        # the FEVER and KILLERS releases apart, so the worker pins the release_info match.
+        body = _multi_release_zip()
+
+        payload = self.mod.extract_download(
+            body,
+            {
+                "release_info": "Game Of Thrones S01E01 hdtv xvid-fever",
+                "season": 1,
+                "episode": 1,
+            },
+        )
+
+        self.assertEqual(payload["member"], "Game.of.Thrones.S01E01.HDTV.XviD-FEVER.srt")
+        self.assertNotIn("episode", payload)
+        self.assertNotIn("content_b64", payload)
+        self.assertEqual(base64.b64decode(payload["archive_b64"]), body)
+        self.assertEqual(payload["archive_sha256"], hashlib.sha256(body).hexdigest())
+
+    def test_extract_download_defers_when_release_info_does_not_disambiguate(self):
+        # Two releases for the episode but the release_info overlaps neither group: a tie on
+        # the shared episode tokens must defer to the host instead of pinning a guess.
+        body = _multi_release_zip()
+
+        payload = self.mod.extract_download(
+            body,
+            {
+                "release_info": "Game Of Thrones S01E01",
+                "season": 1,
+                "episode": 1,
+            },
+        )
+
+        self.assertNotIn("member", payload)
+        self.assertEqual(payload["episode"], 1)
+
+    def test_extract_download_excludes_sidecars_and_pins_real_member(self):
+        # __MACOSX/dotfile sidecars and directory entries must never be pinned; with one
+        # real member left there is nothing to disambiguate, so defer to the host.
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("subs/", "")
+            archive.writestr("__MACOSX/._Game.of.Thrones.S01E01.srt", "junk")
+            archive.writestr(".DS_Store", "junk")
+            archive.writestr("subs/Game.of.Thrones.S01E01.HDTV.XviD-FEVER.srt", "1\nsub\n")
+        body = stream.getvalue()
+
+        payload = self.mod.extract_download(
+            body,
+            {"release_info": "Game Of Thrones S01E01 hdtv xvid-fever", "season": 1, "episode": 1},
+        )
+
+        self.assertNotIn("member", payload)
+        self.assertEqual(payload["episode"], 1)
+
+    def test_extract_download_defers_on_wrong_episode_season_pack(self):
+        # Season pack: the requested S01E02 is absent. Episode markers are present for other
+        # episodes, so pinning any of them would hard-fail the host; defer instead.
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("Show.S01E01.HDTV.srt", "1\nsub\n")
+            archive.writestr("Show.S01E03.HDTV.srt", "1\nsub\n")
+        body = stream.getvalue()
+
+        payload = self.mod.extract_download(
+            body,
+            {"release_info": "Show S01E02 hdtv", "season": 1, "episode": 2},
+        )
+
+        self.assertNotIn("member", payload)
+        self.assertEqual(payload["episode"], 2)
+
+    def test_extract_download_narrows_season_pack_by_season_and_episode(self):
+        # A pack that repeats episode 5 across seasons: pinning on episode alone is ambiguous,
+        # so narrow by BOTH season and episode and pick the S02E05 member.
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("Show.S01E05.HDTV.XviD-FEVER.srt", "1\nsub\n")
+            archive.writestr("Show.S02E05.HDTV.XviD-FEVER.srt", "1\nsub\n")
+        body = stream.getvalue()
+
+        payload = self.mod.extract_download(
+            body,
+            {"release_info": "Show S02E05 hdtv xvid-fever", "season": 2, "episode": 5},
+        )
+
+        self.assertEqual(payload["member"], "Show.S02E05.HDTV.XviD-FEVER.srt")
+        self.assertNotIn("episode", payload)
+
+    def test_extract_download_does_not_match_resolution_digits_as_episode(self):
+        # "720" (S07E20 compact form) must not match inside "720p"; with the requested
+        # episode genuinely absent the markers force a defer.
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("Show.S07E19.720p.WEB.srt", "1\nsub\n")
+            archive.writestr("Show.S07E21.720p.WEB.srt", "1\nsub\n")
+        body = stream.getvalue()
+
+        payload = self.mod.extract_download(
+            body,
+            {"release_info": "Show S07E20 720p web", "season": 7, "episode": 20},
+        )
+
+        self.assertNotIn("member", payload)
+        self.assertEqual(payload["episode"], 20)
+
+    def test_extract_download_does_not_pin_member_on_title_digit_boundary(self):
+        # "The.Originals1E02" must NOT be read as S01E02: the "s" belongs to the title word
+        # "Originals", not a season marker. Without a left alpha/digit boundary the SxxExx
+        # regex pins this placeholder member (a lone episode match is pinned outright), so the
+        # host hard-fails the "member in namelist" check or silently delivers the wrong
+        # subtitle. The real S01.E03 member proves no requested-episode match exists, forcing
+        # a defer to host episode selection.
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("The.Originals1E02.placeholder.srt", "1\nsub\n")
+            archive.writestr("The.Originals.S01.E03.eng.srt", "1\nsub\n")
+        body = stream.getvalue()
+
+        payload = self.mod.extract_download(
+            body,
+            {"release_info": "The Originals S01E02", "season": 1, "episode": 2},
+        )
+
+        self.assertNotEqual(payload.get("member"), "The.Originals1E02.placeholder.srt")
+        self.assertNotIn("member", payload)
+        self.assertEqual(payload["episode"], 2)
+
+    def test_extract_download_rar_defers_to_host_episode_path(self):
+        # RAR is not stdlib-listable: always fall back to the host episode path.
+        body = b"Rar!\x1a\x07\x00" + b"\x00" * 32
+
+        payload = self.mod.extract_download(
+            body,
+            {"release_info": "Show S01E01 hdtv", "season": 1, "episode": 1},
+        )
+
+        self.assertNotIn("member", payload)
+        self.assertEqual(payload["episode"], 1)
 
 
 class Subs4SeriesProviderTests(unittest.TestCase):

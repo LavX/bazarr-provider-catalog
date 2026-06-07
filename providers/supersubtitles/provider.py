@@ -292,13 +292,22 @@ def extract_download(body, payload=None):
     if _is_html_body(body):
         raise ValueError("supersubtitles returned an HTML/error page")
     if _is_archive_body(body):
-        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
-        # the host, which lists it, picks the member by episode, and detects encoding.
-        return {
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to the
+        # host. A feliratok.eu season pack zip can hold one subtitle per episode (and per
+        # release group); the host's episode-only pick cannot tell several release groups
+        # for the same episode apart, so when we can list a zip we pin the member matching
+        # the season+episode and the release fields the result was scored on. Otherwise
+        # (rar, single member, or no clear winner) let the host pick the member by episode.
+        archive = {
             "archive_b64": base64.b64encode(body).decode("ascii"),
             "archive_sha256": hashlib.sha256(body).hexdigest(),
-            "episode": _safe_int(payload.get("episode")),
         }
+        member = _select_zip_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = _safe_int(payload.get("episode"))
+        return archive
     # Direct, non-archive subtitle body.
     subtitle_format = _subtitle_extension(filename) or ("srt" if _looks_like_subtitle(body) else "")
     if not subtitle_format:
@@ -308,6 +317,109 @@ def extract_download(body, payload=None):
 
 def _is_archive_body(body):
     return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
+
+
+def _select_zip_member(body, payload):
+    # Pin the zip member matching the requested season+episode and the scored release
+    # group / resolution / source. Listing only, no extraction or decoding: the host reads
+    # the named member and runs chardet. Returns None for rar (not stdlib-listable), a
+    # single member (nothing to disambiguate), or when no field breaks the tie, so the
+    # caller falls back to host-side episode selection.
+    payload = payload or {}
+    if _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body or b"")):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        members = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/")
+            and _subtitle_extension(name)
+            and not name.rsplit("/", 1)[-1].startswith(".")
+        ]
+    if len(members) < 2:
+        return None  # a lone member: the host's episode pick already lands here
+    # Narrow to the requested episode first. The host can already do this, but a pack with
+    # several release groups per episode leaves it guessing among the matches.
+    season = _safe_int(payload.get("season"))
+    episode = _safe_int(payload.get("episode"))
+    pool = members
+    if season is not None and episode is not None:
+        episode_pool = [name for name in members if _member_has_episode(name, season, episode)]
+        if not episode_pool:
+            # Episode requested but absent from every member: pinning a member from another
+            # episode would hard-fail the host download, so defer to host episode selection.
+            return None
+        pool = episode_pool
+    if len(pool) < 2:
+        return None  # a single episode match: host episode selection already lands here
+    # Break the tie with the same fields the result was scored on, pulled from the release
+    # info / filename the search built. Pin only a unique winner.
+    release_text = " ".join([_coerce_text(payload.get("release_info")), _coerce_text(payload.get("filename"))])
+    forced = bool(payload.get("forced"))
+    best, best_score, tied = None, 0, False
+    for name in pool:
+        score = _member_release_score(name, release_text, forced)
+        if score > best_score:
+            best, best_score, tied = name, score, False
+        elif score == best_score and best is not None:
+            tied = True
+    if best is None or best_score == 0 or tied:
+        return None  # cannot confidently disambiguate; let the host pick by episode
+    return best
+
+
+def _member_has_episode(name, season, episode):
+    # Match SxxExx as a delimited token, tolerating a separator between the season and
+    # episode parts (S01E02, S01.E02, S01 E02, S01-E02), plus the NxNN form (1x02). The
+    # (?!\d) guard stops a code from matching a longer number ("e2" not matching "e20").
+    # We deliberately do NOT match a bare "{season}{episode:02d}" form (e.g. "213"): it
+    # collides with release tokens like "720p" (S07E20 vs 720p) since the digit-only
+    # lookahead still passes on a trailing letter, which is the exact regression we guard.
+    text = _normalize(os.path.basename(name))
+    return bool(
+        re.search(rf"\bs0*{season}[\s._-]*e0*{episode}(?!\d)", text)
+        or re.search(rf"(?<!\d){season}x0*{episode}(?!\d)", text)
+    )
+
+
+def _member_release_score(name, release_text, forced=False):
+    # Mirror the pre-migration _subtitle_file_score weights: release group dominates,
+    # then resolution, then source. Match delimited tokens, case-insensitively.
+    normalized_name = _normalize(os.path.basename(name))
+    # A non-forced request must never pin a member whose basename carries a delimited
+    # "forced" token: the host's exact "member in namelist" check would then silently
+    # deliver a forced subtitle. Drop it below the score floor so it is never chosen
+    # (the caller still defers when nothing else wins). Forced requests keep resolving
+    # their forced member normally.
+    if not forced and re.search(r"\bforced\b", normalized_name):
+        return -1
+    score = 0
+    release_group = _release_group_from_text(release_text)
+    if release_group and re.search(rf"\b{re.escape(_normalize(release_group))}\b", normalized_name):
+        score += 50
+    resolution = _resolution_from_text(release_text)
+    if resolution and re.search(rf"\b{re.escape(resolution)}\b", normalized_name):
+        score += 15
+    source = _source_token(release_text)
+    if source and re.search(rf"\b{re.escape(source)}\b", normalized_name):
+        score += 5
+    return score
+
+
+def _release_group_from_text(value):
+    text = _coerce_text(value).strip()
+    # Drop a trailing file extension so the group is not parsed as e.g. "SPARKS.mkv".
+    text = re.sub(r"\.[A-Za-z0-9]{2,4}$", "", text)
+    # The release group is the LAST hyphen-delimited token. Anchoring to the first match
+    # mis-parses titled releases: "Spider-Man.2002.720p.WEB-SPARKS" must yield "SPARKS",
+    # not "Man.2002.720p.WEB" (the title hyphen).
+    matches = re.findall(r"-([A-Za-z0-9][A-Za-z0-9._]+)\b", text)
+    return matches[-1] if matches else ""
+
+
+def _resolution_from_text(value):
+    match = re.search(r"\b(?:480p|576p|720p|1080p|2160p|4k)\b", _coerce_text(value), re.I)
+    return match.group(0).lower() if match else ""
 
 
 def _movie_matches(video, row):
@@ -794,7 +906,7 @@ def _source_token(value):
         return "bluray"
     if "hdtv" in normalized:
         return "hdtv"
-    return normalized
+    return ""
 
 
 def _sleep(config):

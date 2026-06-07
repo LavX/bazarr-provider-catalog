@@ -152,14 +152,71 @@ def extract_download(body, payload=None):
         raise ValueError("subs4free returned an HTML/error page instead of a subtitle")
     if _is_archive_body(body):
         # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to the
-        # host, which lists it, picks the member, and detects encoding.
-        return {
+        # host, which lists it, detects encoding, and picks the member. A subs4free zip is
+        # one release for one movie in one language, but it can still bundle several subtitle
+        # members (e.g. variant cuts). This is a movie-only provider, so there is no episode
+        # to select on: the host's episode pick has no signal. When we can list a zip we pin
+        # the member whose filename overlaps the scored release_info (the old
+        # select_subtitle_file intent); on rar, a single member, or no unique winner we fall
+        # back to the host (carrying the always-None movie episode).
+        archive = {
             "archive_b64": base64.b64encode(body).decode("ascii"),
             "archive_sha256": hashlib.sha256(body).hexdigest(),
-            "episode": payload.get("episode"),
         }
+        member = _select_release_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = payload.get("episode")
+        return archive
     # Direct, non-archive subtitle body.
     return _content_payload(body, _format_from_filename(payload.get("filename")))
+
+
+def _select_release_member(body, payload):
+    # Pin the zip member matching the scored release_info, reproducing the old
+    # select_subtitle_file() intent: choose the filename whose tokens overlap the provider's
+    # release_info (its filename slug carries the same release string). Listing only, no
+    # extraction or decoding: the host reads the named member and runs chardet. Returns None
+    # for rar (not stdlib-listable), a single member (nothing to disambiguate), no
+    # release_info to score on, or no unique winner, so the caller defers to the host.
+    payload = payload or {}
+    if _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body)):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        members = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/")
+            and _subtitle_extension(name)
+            and not name.rsplit("/", 1)[-1].startswith(".")
+        ]
+    if len(members) < 2:
+        return None  # a lone member: the host's episode pick already lands here
+    release_tokens = set(_tokens(payload.get("release_info") or payload.get("filename")))
+    if not release_tokens:
+        return None  # nothing to disambiguate on; let the host pick
+    best, best_score, tied = None, 0, False
+    for name in members:
+        score = _member_release_score(name, release_tokens)
+        if score > best_score:
+            best, best_score, tied = name, score, False
+        elif score == best_score and best is not None:
+            tied = True
+    if best is None or best_score <= 0 or tied:
+        return None  # cannot confidently disambiguate; defer to the host
+    return best
+
+
+def _member_release_score(name, release_tokens):
+    # Mirror the old select_subtitle_file scoring: overlap count between the release_info
+    # tokens and the member filename tokens, with a heavy penalty for forced tracks so a
+    # forced sidecar never outranks the main subtitle.
+    name_tokens = set(_tokens(name.rsplit("/", 1)[-1]))
+    score = len(release_tokens.intersection(name_tokens))
+    if "forced" in name_tokens:
+        score -= 5
+    return score
 
 
 def _is_archive_body(body):

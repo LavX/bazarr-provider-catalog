@@ -241,6 +241,128 @@ class SubtitriIdProviderTests(unittest.TestCase):
         self.assertNotIn("content_b64", result)
         self.assertNotIn("encoding", result)
 
+    def test_download_concatenates_zip_multipart_subtitle(self):
+        # Write CD2 before CD1 in the archive so a passing order assertion actually proves
+        # the parts are reordered by disc index, not just left in archive (insertion) order.
+        archive = _zip_body(
+            {
+                "Inception.2010.CD2.lv.srt": b"1\n00:00:03,000 --> 00:00:04,000\nDala divi\n",
+                "Inception.2010.CD1.lv.srt": b"1\n00:00:01,000 --> 00:00:02,000\nDala viens\n",
+            }
+        )
+
+        result = self.mod.extract_download(
+            archive,
+            {"filename": "subtitriid.inception.2010.lv.zip", "episode": None},
+        )
+
+        # The two discs are joined worker-side into one direct subtitle, in CD order.
+        self.assertNotIn("archive_b64", result)
+        decoded = base64.b64decode(result["content_b64"])
+        self.assertIn(b"Dala viens", decoded)
+        self.assertIn(b"Dala divi", decoded)
+        self.assertLess(decoded.index(b"Dala viens"), decoded.index(b"Dala divi"))
+        self.assertEqual(result["format"], "srt")
+        self.assertNotIn("encoding", result)
+
+    def test_download_defers_when_real_single_coexists_with_stray_part_pair(self):
+        # A zip holding the real full-movie subtitle plus a stray Trailer CD1/CD2 pair must
+        # not join the trailer pair and discard the real subtitle. The multipart group only
+        # wins when it out-scores the coexisting full single (matching the payload
+        # title/year); here it does not, so the whole archive defers to the host's
+        # single-member selection rather than silently delivering the wrong content.
+        archive = _zip_body(
+            {
+                "Trailer.CD1.lv.srt": b"1\n00:00:01,000 --> 00:00:02,000\nReklama viens\n",
+                "Trailer.CD2.lv.srt": b"1\n00:00:03,000 --> 00:00:04,000\nReklama divi\n",
+                "Inception.2010.lv.srt": b"1\n00:00:05,000 --> 00:00:06,000\nIstais subtitrs\n",
+            }
+        )
+
+        result = self.mod.extract_download(
+            archive,
+            {
+                "filename": "subtitriid.inception.2010.lv.zip",
+                "title": "Inception",
+                "year": 2010,
+                "episode": None,
+            },
+        )
+
+        self.assertIn("archive_b64", result)
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertNotIn("content_b64", result)
+
+    def test_download_multipart_skips_macosx_and_dot_sidecars(self):
+        archive = _zip_body(
+            {
+                "__MACOSX/._Movie.CD1.lv.srt": b"junk",
+                ".Movie.CD2.lv.srt": b"junk",
+                "Movie.CD1.lv.srt": b"1\nPirma dala\n",
+                "Movie.CD2.lv.srt": b"1\nOtra dala\n",
+            }
+        )
+
+        result = self.mod.extract_download(
+            archive,
+            {"filename": "subtitriid.movie.lv.zip", "episode": None},
+        )
+
+        decoded = base64.b64decode(result["content_b64"])
+        self.assertEqual(decoded.count(b"junk"), 0)
+        self.assertIn(b"Pirma dala", decoded)
+        self.assertIn(b"Otra dala", decoded)
+
+    def test_download_single_member_zip_defers_to_host(self):
+        # A lone subtitle is not a multipart set, so the archive is handed to the host
+        # episode/list path rather than mispicked or concatenated worker-side.
+        archive = _zip_body(
+            {
+                "poster.jpg": b"not a subtitle",
+                "Inception.2010.lv.srt": b"1\n00:00:01,000 --> 00:00:02,000\nSveiki\n",
+            }
+        )
+
+        result = self.mod.extract_download(
+            archive,
+            {"filename": "subtitriid.inception.2010.lv.zip", "episode": None},
+        )
+
+        self.assertIn("archive_b64", result)
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertNotIn("content_b64", result)
+
+    def test_download_multipart_rar_falls_back_to_host(self):
+        # RAR is not stdlib-listable, so a multipart rar cannot be concatenated and
+        # must defer to the host instead of being silently truncated to one disc.
+        archive = b"Rar!\x1a\x07\x00CD1...CD2..."
+        result = self.mod.extract_download(
+            archive,
+            {"filename": "subtitriid.movie.lv.rar", "episode": None},
+        )
+
+        self.assertIn("archive_b64", result)
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertNotIn("content_b64", result)
+
+    def test_download_does_not_treat_resolution_token_as_multipart(self):
+        # "720p"/"1080p" must not be read as a CD/part index; with no real multipart
+        # group these single files defer to the host rather than being concatenated.
+        archive = _zip_body(
+            {
+                "Inception.2010.720p.lv.srt": b"1\n720 cut\n",
+                "Inception.2010.1080p.lv.srt": b"1\n1080 cut\n",
+            }
+        )
+
+        result = self.mod.extract_download(
+            archive,
+            {"filename": "subtitriid.inception.2010.lv.zip", "episode": None},
+        )
+
+        self.assertIn("archive_b64", result)
+        self.assertNotIn("content_b64", result)
+
     def test_download_returns_rar_archive_unextracted(self):
         archive = b"Rar!\x1a\x07\x00rar body bytes"
         provider = self.mod.SubtitriIdProvider()

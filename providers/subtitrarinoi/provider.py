@@ -248,12 +248,24 @@ def extract_download(body, payload=None):
         raise ValueError("subtitrarinoi download did not return a supported subtitle file")
     if _is_archive_body(body):
         # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
-        # the host, which lists it, picks the member by episode, and detects encoding.
-        return {
+        # the host, which lists it, detects encoding, and picks the member. A Subtitrari
+        # Noi archive is often a season pack ("Sezoanele 1-5 complete") that bundles one
+        # member per episode, and sometimes several releases for the same episode; the
+        # host's episode-only pick cannot tell repeated episode numbers across seasons or
+        # several releases apart. When we can list a zip we pin the member matching the
+        # requested season+episode and the scored release_info (the old select_subtitle_file
+        # intent). Otherwise (rar, single member, the requested episode absent, or no unique
+        # winner) let the host pick the member by episode.
+        archive = {
             "archive_b64": _base64.b64encode(body).decode("ascii"),
             "archive_sha256": _hashlib.sha256(body).hexdigest(),
-            "episode": payload.get("episode"),
         }
+        member = _select_zip_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = payload.get("episode")
+        return archive
     subtitle_format = _subtitle_extension(filename)
     if not subtitle_format or _looks_like_unavailable_text(body):
         raise ValueError("subtitrarinoi download did not return a supported subtitle file")
@@ -263,6 +275,96 @@ def extract_download(body, payload=None):
 
 def _is_archive_body(body):
     return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
+
+
+def _select_zip_member(body, payload):
+    # Pin the zip member matching the requested season+episode and the scored release_info,
+    # reproducing the old select_subtitle_file() intent: narrow a season pack to the right
+    # episode, then break any remaining tie by the filename whose tokens overlap the
+    # provider's release_info. Listing only, no extraction or decoding: the host reads the
+    # named member and runs chardet. Returns None for rar (not stdlib-listable), a single
+    # member (nothing to disambiguate), the requested episode being absent, or no unique
+    # overlap winner, so the caller falls back to host-side episode selection.
+    payload = payload or {}
+    if _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body)):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        members = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/")
+            and _subtitle_extension(name)
+            and not name.rsplit("/", 1)[-1].startswith(".")
+        ]
+    if len(members) < 2:
+        return None  # a lone member: the host's episode pick already lands here
+    # Narrow to the requested episode first. The season pack repeats episode numbers across
+    # seasons, so match the season+episode together (SxxExx / NxNN / compact NNN) and never
+    # on a bare episode number that would collide with a different season.
+    season = _safe_int(payload.get("season"))
+    episode = _safe_int(payload.get("episode"))
+    pool = members
+    if season is not None and episode is not None:
+        episode_pool = [name for name in members if _member_matches_episode(name, season, episode)]
+        if episode_pool:
+            pool = episode_pool
+        elif any(_member_has_episode_marker(name) for name in members):
+            # Episode markers present but none matches the requested one: pinning a member
+            # from another episode would hard-fail the host download, so defer.
+            return None
+    if len(pool) < 2:
+        return None  # a single candidate: host episode selection already lands here
+    # Break the remaining tie by release_info token overlap. Pin only a unique winner with a
+    # positive score; ties or no overlap mean defer to the host.
+    release_tokens = set(_tokens(payload.get("release_info")))
+    if not release_tokens:
+        return None  # nothing to disambiguate on; let the host pick by episode
+    best, best_score, tied = None, 0, False
+    for name in pool:
+        score = _member_release_score(name, release_tokens)
+        if score > best_score:
+            best, best_score, tied = name, score, False
+        elif score == best_score and best is not None:
+            tied = True
+    if best is None or best_score <= 0 or tied:
+        return None  # cannot confidently disambiguate; let the host pick by episode
+    return best
+
+
+def _member_release_score(name, release_tokens):
+    # Overlap count between the release_info tokens and the member filename tokens, with a
+    # heavy penalty for forced tracks so a forced sidecar never outranks the main subtitle.
+    # Only count tokens longer than two characters (as providers/subssabbz does): a stray
+    # short/common token such as "1", "2", or a part marker that appears in just one of two
+    # same-episode members must never become the sole differentiator that pins a wrong
+    # release. Bare short tokens are dropped so a real tie defers instead of guessing.
+    name_tokens = set(_tokens(name))
+    overlap = [token for token in release_tokens.intersection(name_tokens) if len(token) > 2]
+    score = len(overlap)
+    if "forced" in name_tokens:
+        score -= 5
+    return score
+
+
+def _member_matches_episode(name, season, episode):
+    # Tolerate separated SxxExx tokens (S01.E02, S01 E02, S01-E02) as well as contiguous
+    # S01E02; keep (?!\d) so "e02" never matches "e020".
+    text = (name or "").lower()
+    if re.search(rf"s0*{season}[\s._-]*e0*{episode}(?!\d)", text):
+        return True
+    if re.search(rf"(?<!\d){season}x0*{episode}(?!\d)", text):
+        return True
+    # Whole-token NNN form (e.g. S07E20 written as "720"): compare against delimited tokens
+    # so "720" never matches inside "720p" and "264" never matches inside "x264".
+    compact = f"{season}{episode:02d}"
+    return compact in _tokens(name)
+
+
+def _member_has_episode_marker(name):
+    text = (name or "").lower()
+    if re.search(r"s\d{1,2}[\s._-]*e\d{1,3}", text) or re.search(r"(?<!\d)\d{1,2}x\d{1,3}", text):
+        return True
+    return any(token.isdigit() and len(token) == 3 for token in _tokens(name))
 
 
 def _first_content_main_link(chunk):

@@ -133,6 +133,14 @@ def _zip_body():
     return stream.getvalue()
 
 
+def _zip_with(names):
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name in names:
+            archive.writestr(name, "1\r\n00:00:01,000 --> 00:00:02,000\r\nMerhaba\r\n")
+    return stream.getvalue()
+
+
 class FakeCookieJar(dict):
     def set(self, name, value, domain=None, path=None):
         self[name] = {"value": value, "domain": domain, "path": path}
@@ -748,6 +756,220 @@ class TurkceAltyaziDownloadTests(unittest.TestCase):
                 {"alpha3": "tur"},
                 {},
             )
+
+    def test_download_pins_zip_member_for_season_pack_episode(self):
+        # A season pack carries every episode of the season; the host's episode-only
+        # pick cannot tell S02E05 from S01E05, so the worker pins the unique match.
+        body = _zip_with(
+            [
+                "Show.S02E04.1080p.WEB-DL.srt",
+                "Show.S02E05.1080p.WEB-DL.srt",
+                "Show.S02E06.1080p.WEB-DL.srt",
+            ]
+        )
+        provider = self._provider_with_archive(body)
+
+        result = provider.download(
+            {
+                "page_url": "https://turkcealtyazi.org/serie/201/season-pack.html",
+                "filename": "season-pack.zip",
+                "season": 2,
+                "episode": 5,
+                "is_pack": True,
+            },
+            {"alpha3": "tur"},
+            {},
+        )
+
+        self.assertEqual(result["member"], "Show.S02E05.1080p.WEB-DL.srt")
+        self.assertNotIn("episode", result)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+
+    def test_download_pins_member_with_separated_season_episode_token(self):
+        body = _zip_with(
+            [
+                "Show.S01.E01.HDTV.srt",
+                "Show.S01.E02.HDTV.srt",
+            ]
+        )
+        provider = self._provider_with_archive(body)
+
+        result = provider.download(
+            {
+                "page_url": "https://turkcealtyazi.org/serie/200/s01e02.html",
+                "filename": "pack.zip",
+                "season": 1,
+                "episode": 2,
+                "is_pack": True,
+            },
+            {"alpha3": "tur"},
+            {},
+        )
+
+        self.assertEqual(result["member"], "Show.S01.E02.HDTV.srt")
+
+    def test_download_defers_to_episode_when_wrong_season_only(self):
+        # The episode number repeats across seasons; only S03E05 exists here, so
+        # pinning the requested S02E05 would hard-fail. Defer to host selection.
+        body = _zip_with(
+            [
+                "Show.S03E04.srt",
+                "Show.S03E05.srt",
+            ]
+        )
+        provider = self._provider_with_archive(body)
+
+        result = provider.download(
+            {
+                "page_url": "https://turkcealtyazi.org/serie/201/season-pack.html",
+                "filename": "season-pack.zip",
+                "season": 2,
+                "episode": 5,
+                "is_pack": True,
+            },
+            {"alpha3": "tur"},
+            {},
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 5)
+
+    def test_download_does_not_mispick_3digit_resolution_or_codec(self):
+        # S07E20 -> "720"; it must not match the "720p" resolution or "x264" codec
+        # tokens. Neither member carries a real S07E20 marker, so defer.
+        body = _zip_with(
+            [
+                "Show.720p.x264.part1.srt",
+                "Show.720p.x264.part2.srt",
+            ]
+        )
+        provider = self._provider_with_archive(body)
+
+        result = provider.download(
+            {
+                "page_url": "https://turkcealtyazi.org/serie/201/season-pack.html",
+                "filename": "season-pack.zip",
+                "season": 7,
+                "episode": 20,
+                "is_pack": True,
+            },
+            {"alpha3": "tur"},
+            {},
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 20)
+
+    def test_download_ignores_macosx_sidecar_member(self):
+        # The __MACOSX/._ sidecar mirrors the real member's S01E02 marker; it must
+        # be excluded so the genuine subtitle stays the unique winner.
+        body = _zip_with(
+            [
+                "Show.S01E02.srt",
+                "Show.S01E03.srt",
+                "__MACOSX/._Show.S01E02.srt",
+            ]
+        )
+        provider = self._provider_with_archive(body)
+
+        result = provider.download(
+            {
+                "page_url": "https://turkcealtyazi.org/serie/200/s01e02.html",
+                "filename": "pack.zip",
+                "season": 1,
+                "episode": 2,
+                "is_pack": True,
+            },
+            {"alpha3": "tur"},
+            {},
+        )
+
+        self.assertEqual(result["member"], "Show.S01E02.srt")
+
+    def test_download_defers_for_single_member_zip(self):
+        body = _zip_with(["Show.S01E02.srt"])
+        provider = self._provider_with_archive(body)
+
+        result = provider.download(
+            {
+                "page_url": "https://turkcealtyazi.org/serie/200/s01e02.html",
+                "filename": "pack.zip",
+                "season": 1,
+                "episode": 2,
+            },
+            {"alpha3": "tur"},
+            {},
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 2)
+
+    def test_download_defers_for_ambiguous_same_episode_members(self):
+        # Two releases of the same episode: no field disambiguates them, so pinning
+        # either could be wrong. Defer to host episode selection.
+        body = _zip_with(
+            [
+                "Show.S01E02.WEB-DL.srt",
+                "Show.S01E02.HDTV.srt",
+            ]
+        )
+        provider = self._provider_with_archive(body)
+
+        result = provider.download(
+            {
+                "page_url": "https://turkcealtyazi.org/serie/200/s01e02.html",
+                "filename": "pack.zip",
+                "season": 1,
+                "episode": 2,
+                "is_pack": True,
+            },
+            {"alpha3": "tur"},
+            {},
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 2)
+
+    def test_download_rar_pack_defers_to_episode(self):
+        # RAR is not stdlib-listable; always defer to host-side episode selection.
+        body = b"Rar!\x1a\x07\x00" + b"\x00" * 32
+        provider = self._provider_with_archive(body)
+
+        result = provider.download(
+            {
+                "page_url": "https://turkcealtyazi.org/serie/201/season-pack.html",
+                "filename": "season-pack.rar",
+                "season": 1,
+                "episode": 5,
+                "is_pack": True,
+            },
+            {"alpha3": "tur"},
+            {},
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 5)
+
+    def test_download_movie_zip_defers_without_episode(self):
+        body = _zip_with(
+            [
+                "Inception.1080p.srt",
+                "Inception.720p.srt",
+            ]
+        )
+        provider = self._provider_with_archive(body)
+
+        result = provider.download(
+            {
+                "page_url": "https://turkcealtyazi.org/mov/123/inception.html",
+                "filename": "inception.zip",
+            },
+            {"alpha3": "tur"},
+            {},
+        )
+
+        self.assertNotIn("member", result)
+        self.assertIsNone(result["episode"])
 
     def test_search_episode_carries_season_and_episode_in_payload(self):
         provider = self.mod.TurkceAltyaziOrgProvider()
