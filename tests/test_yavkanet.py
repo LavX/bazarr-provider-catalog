@@ -872,6 +872,32 @@ class YavkaNetProviderTests(unittest.TestCase):
         self.assertNotIn("member", result)
         self.assertEqual(result["episode"], 2)
 
+    def test_extract_download_narrows_separated_episode_tokens(self):
+        # Members can separate the season and episode tokens (S01.E02); narrowing must
+        # recognize that form. With two S01.E02 releases, recognizing the separated token
+        # is what lets the release_group/resolution/source scoring pin the scored member
+        # instead of falling back to host episode-only selection.
+        body = _zip_with(
+            {
+                "Example.S01.E01.1080p.WEB.FLUX.srt": b"e1",
+                "Example.S01.E02.720p.WEB.NTb.srt": b"e2 ntb",
+                "Example.S01.E02.1080p.WEB.FLUX.srt": SRT_BODY,
+            }
+        )
+
+        result = self.mod.extract_download(
+            body,
+            {
+                "filename": "Example.S01.zip",
+                "season": 1,
+                "episode": 2,
+                "video": {"release_group": "FLUX", "resolution": "1080p", "source": "Web"},
+            },
+        )
+
+        self.assertEqual(result["member"], "Example.S01.E02.1080p.WEB.FLUX.srt")
+        self.assertNotIn("episode", result)
+
     def test_extract_download_rejects_empty_body(self):
         with self.assertRaisesRegex(ValueError, "empty"):
             self.mod.extract_download(b"", {"filename": "Dune.2021.WEB.zip"})

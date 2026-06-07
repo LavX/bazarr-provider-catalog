@@ -51,7 +51,7 @@ _ITEM_RE = re.compile(
 _ANCHOR_RE = re.compile(r"<a\b[^>]*>(?P<text>.*?)</a>", re.I | re.S)
 _ROW_RE = re.compile(r"<tr\b[^>]*>(?P<body>.*?)</tr>", re.I | re.S)
 _IMG_RE = re.compile(r"<img\b[^>]*>", re.I | re.S)
-_SXXEXX_RE = re.compile(r"\bs0*(?P<season>\d{1,2})e0*(?P<episode>\d{1,3})\b", re.I)
+_SXXEXX_RE = re.compile(r"\bs0*(?P<season>\d{1,2})[\s._-]*e0*(?P<episode>\d{1,3})\b", re.I)
 _X_EPISODE_RE = re.compile(r"\b0*(?P<season>\d{1,2})x0*(?P<episode>\d{1,3})\b", re.I)
 
 
@@ -1063,7 +1063,9 @@ def _file_matches_episode(normalized_name, season, episode):
     # "{season}{episode:02d}" form (S01E01 written as "101") is matched against split
     # tokens; a substring match would read the "720" in "720p" as S07E20.
     compact = normalized_name.lower()
-    if f"s{season:02d}e{episode:02d}" in compact:
+    # SxxExx, tolerating the separator _normalize leaves between season and episode
+    # (S01.E02 / S01 E02 normalize to "s01 e02"), as well as contiguous S01E02.
+    if re.search(rf"s0*{season}[\s._-]*e0*{episode}(?!\d)", compact):
         return True
     tokens = compact.split()
     if f"{season}x{episode:02d}" in tokens or f"{season}x{episode}" in tokens:
@@ -1074,7 +1076,7 @@ def _file_matches_episode(normalized_name, season, episode):
 def _file_has_episode_marker(normalized_name):
     compact = normalized_name.lower()
     return bool(
-        re.search(r"\bs\d{1,2}e\d{1,3}\b", compact)
+        re.search(r"\bs\d{1,2}[\s._-]*e\d{1,3}\b", compact)
         or re.search(r"\b\d{1,2}x\d{1,3}\b", compact)
         or any(token.isdigit() and len(token) == 3 for token in compact.split())
     )

@@ -374,8 +374,10 @@ def _member_release_score(name, release_tokens):
 
 
 def _member_matches_episode(name, season, episode):
+    # Tolerate separated SxxExx tokens (S01.E02, S01 E02, S01-E02) as well as contiguous
+    # S01E02; keep (?!\d) so "e02" never matches "e020".
     text = (name or "").lower()
-    if re.search(rf"s0*{season}e0*{episode}(?!\d)", text):
+    if re.search(rf"s0*{season}[\s._-]*e0*{episode}(?!\d)", text):
         return True
     if re.search(rf"(?<!\d){season}x0*{episode}(?!\d)", text):
         return True
@@ -387,7 +389,7 @@ def _member_matches_episode(name, season, episode):
 
 def _member_has_episode_marker(name):
     text = (name or "").lower()
-    if re.search(r"s\d{1,2}e\d{1,3}", text) or re.search(r"(?<!\d)\d{1,2}x\d{1,3}", text):
+    if re.search(r"s\d{1,2}[\s._-]*e\d{1,3}", text) or re.search(r"(?<!\d)\d{1,2}x\d{1,3}", text):
         return True
     return any(token.isdigit() and len(token) == 3 for token in _tokens(name))
 

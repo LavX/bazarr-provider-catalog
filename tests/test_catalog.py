@@ -189,6 +189,16 @@ class SdkCliTests(unittest.TestCase):
             with self.assertRaisesRegex(sdk_cli.CatalogError, name):
                 sdk_cli.validate_dependency_lock("manifest.json", lock)
 
+    def test_validate_rejects_bundled_archive_library_regardless_of_casing(self):
+        from sdk import cli as sdk_cli
+
+        # The ban compares PEP 503 normalized names, so a different casing (Py7zz, RarFile)
+        # must not slip a banned archive library past the gate.
+        for name in ("Py7zz", "PY7ZR", "RarFile", "PY7zz", "RARFILE"):
+            lock = {"requirements": [{"name": name, "version": "1.0.0", "hashes": ["sha256:" + "c" * 64]}]}
+            with self.assertRaises(sdk_cli.CatalogError):
+                sdk_cli.validate_dependency_lock("manifest.json", lock)
+
     def test_readme_python_badge_matches_runtime_matrix(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 

@@ -259,11 +259,11 @@ def _member_has_episode(name, season, episode):
     text = name.lower()
     if season is None:
         return bool(
-            re.search(rf"s\d{{1,2}}e0*{episode}(?!\d)", text)
+            re.search(rf"s\d{{1,2}}[\s._-]*e0*{episode}(?!\d)", text)
             or re.search(rf"(?<!\d)\d{{1,2}}x0*{episode}(?!\d)", text)
         )
     return bool(
-        re.search(rf"s0*{season}e0*{episode}(?!\d)", text)
+        re.search(rf"s0*{season}[\s._-]*e0*{episode}(?!\d)", text)
         or re.search(rf"(?<!\d){season}x0*{episode}(?!\d)", text)
     )
 

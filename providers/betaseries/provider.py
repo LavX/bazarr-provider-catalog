@@ -21,7 +21,7 @@ LANGUAGES = {
     "vo": {"alpha3": "eng", "alpha2": "en"},
     "vf": {"alpha3": "fra", "alpha2": "fr"},
 }
-_SXXEYY_RE = re.compile(r"\bs0*(?P<season>\d{1,2})\s*e0*(?P<episode>\d{1,3})\b", re.I)
+_SXXEYY_RE = re.compile(r"\bs0*(?P<season>\d{1,2})[\s._-]*e0*(?P<episode>\d{1,3})\b", re.I)
 _WS_RE = re.compile(r"\s+")
 _NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
 

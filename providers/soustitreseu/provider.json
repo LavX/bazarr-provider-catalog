@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "8acca3cab7ef42eeeed1129951fdb3091f78ecfa1f6e13cab06496f2255f0949",
+  "bundle_sha256": "bc713ec90863d8db845a5658885137f4c31c1f873e551bbc68c4bac8d1562442",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -22,7 +22,7 @@
   "entry_class": "SoustitreseuProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "af1220ba562c7a57d6b3ea324ab7a68d0b8bf07a1075053db5408c11a042dee2"
+    "provider.py": "728e58a62b1f063ba1b8ccb593a06519ef0aab8f3b3fa9fdbe176b1cc63cafb1"
   },
   "languages": [
     "eng",
@@ -45,5 +45,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.7"
+  "version": "0.1.8"
 }

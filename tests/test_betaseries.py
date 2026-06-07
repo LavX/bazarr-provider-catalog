@@ -388,6 +388,37 @@ class BetaSeriesProviderTests(unittest.TestCase):
 
         self.assertEqual(result["member"], "Blue.Lights.S01E01.ethel.srt")
 
+    def test_download_zip_narrows_separated_episode_tokens(self):
+        # Pack members can use a separator between the season and episode tokens
+        # (S01.E02). The narrowing must recognize it, or it would keep the whole
+        # namelist and pin the first release-group match (the S01.E01 member).
+        provider = self.mod.BetaSeriesProvider()
+        body = _zip_body(
+            {
+                "Blue.Lights.S01.E01-ETHEL.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE1\n",
+                "Blue.Lights.S01.E02-ETHEL.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE2\n",
+            }
+        )
+        provider._http_get_bytes = lambda url, timeout=10, config=None: body
+
+        result = provider.download(
+            {
+                "provider": "betaseries",
+                "schema": 1,
+                "subtitle_id": "101",
+                "download_url": "https://betaseries.test/download/blue-lights-s01.zip",
+                "filename": "Blue.Lights.S01.WEB-ETHEL.zip",
+                "release_group": "ETHEL",
+                "season": 1,
+                "episode": 2,
+            },
+            {"alpha3": "eng"},
+            {"token": "secret-key"},
+        )
+
+        self.assertEqual(result["member"], "Blue.Lights.S01.E02-ETHEL.srt")
+        self.assertNotIn("episode", result)
+
     def test_download_rar_archive_returns_raw_archive_for_host(self):
         provider = self.mod.BetaSeriesProvider()
         # Minimal RAR4 signature; the host extracts, the worker only forwards bytes.

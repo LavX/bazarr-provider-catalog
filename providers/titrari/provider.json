@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "04abd1115e7a17009411caff461111838ffdf932bf6d6ca291867df408aa35e5",
+  "bundle_sha256": "b8c8e3e52e4cf9052d139065ecc9daad874187137bfc87f776baca6d62c43f0f",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -22,7 +22,7 @@
   "entry_class": "TitrariProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "361c1a28636f555538723b4fb833f317202f83d5b4c86e89496e38ac4695c8a0"
+    "provider.py": "ce46056efcf2c729ae35f0d339cd2ca5bb072f3401a9223818f6858fa9cd3f54"
   },
   "languages": [
     "ron",
@@ -45,5 +45,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.4"
+  "version": "0.1.5"
 }

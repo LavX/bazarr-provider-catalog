@@ -278,6 +278,26 @@ class TitloviProviderTests(unittest.TestCase):
         )
         self.assertEqual(lat["member"], "The.Circle.S01E01.lat.srt")
 
+    def test_extract_download_pins_script_member_for_separated_episode_token(self):
+        # A season pack can name members with a separator between season and episode
+        # (S01.E02). The script picker must still resolve the requested episode, or it
+        # would defer and lose the Serbian-script disambiguation.
+        body = _zip_body(
+            {
+                "Chernobyl.S01.E01.lat.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE1 lat\n",
+                "Chernobyl.S01.E01.cyr.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE1 cyr\n",
+                "Chernobyl.S01.E02.lat.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE2 lat\n",
+                "Chernobyl.S01.E02.cyr.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE2 cyr\n",
+            }
+        )
+
+        result = self.mod.extract_download(
+            body, {"language": "srp", "script": "Cyrl", "season": 1, "episode": 2}
+        )
+
+        self.assertEqual(result["member"], "Chernobyl.S01.E02.cyr.srt")
+        self.assertNotIn("episode", result)
+
     def test_extract_download_ignores_macosx_sidecar(self):
         # An AppleDouble sidecar (binary, listed first) must not be pinned as a member.
         body = _zip_body(

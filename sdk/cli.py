@@ -135,7 +135,9 @@ def validate_dependency_lock(manifest_path, dependencies):
         for digest in hashes:
             if not isinstance(digest, str) or not digest.startswith("sha256:") or not _HEX_SHA256_RE.match(digest[7:]):
                 raise CatalogError(f"{manifest_path} dependency {name} has invalid hash")
-        if name in BUNDLED_ARCHIVE_PACKAGES:
+        if re.sub(r"[-_.]+", "-", name).lower() in BUNDLED_ARCHIVE_PACKAGES:
+            # Compare PEP 503 normalized names so a different casing/separator (Py7zz,
+            # RarFile, py_7zz) cannot smuggle a banned archive library past the gate.
             raise CatalogError(
                 f"{manifest_path} must not bundle archive library {name}; the Bazarr+ host "
                 f"extracts zip/rar/7z members (return an archive_b64 download payload)"

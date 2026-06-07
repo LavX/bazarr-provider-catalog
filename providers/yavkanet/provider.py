@@ -337,9 +337,11 @@ def _select_zip_member(body, payload):
 
 
 def _member_has_episode(name, season, episode):
+    # Tolerate separated SxxExx tokens (S01.E02, S01 E02, S01-E02) as well as contiguous
+    # S01E02, while keeping the (?!\d) guard so "e02" never matches "e020".
     text = name.lower()
     return bool(
-        re.search(rf"s0*{season}e0*{episode}(?!\d)", text)
+        re.search(rf"s0*{season}[\s._-]*e0*{episode}(?!\d)", text)
         or re.search(rf"(?<!\d){season}x0*{episode}(?!\d)", text)
     )
 

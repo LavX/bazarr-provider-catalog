@@ -301,7 +301,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "3ffbee33eca2691bfd1291570ced4775a1b9884e16cdc20bef77ab5d332a128f",
+        "bundle_sha256": "3aa969bf55c6afa67deaf36acbbf62b99c64c0ac538e774e67910c3a76774258",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -323,7 +323,7 @@
         "entry_class": "BetaSeriesProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "09a38428861bd120b33bd122d9fa8b0875d1cee6b162f06096c4244b29d9a697"
+          "provider.py": "5640b7777cc0fd006530830a744ba0b520c5d76566190a48fb0e1a3cc4850508"
         },
         "languages": [
           "eng",
@@ -347,7 +347,7 @@
         "supported_media": [
           "episode"
         ],
-        "version": "0.1.5"
+        "version": "0.1.6"
       }
     },
     {
@@ -3160,7 +3160,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "8acca3cab7ef42eeeed1129951fdb3091f78ecfa1f6e13cab06496f2255f0949",
+        "bundle_sha256": "bc713ec90863d8db845a5658885137f4c31c1f873e551bbc68c4bac8d1562442",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -3182,7 +3182,7 @@
         "entry_class": "SoustitreseuProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "af1220ba562c7a57d6b3ea324ab7a68d0b8bf07a1075053db5408c11a042dee2"
+          "provider.py": "728e58a62b1f063ba1b8ccb593a06519ef0aab8f3b3fa9fdbe176b1cc63cafb1"
         },
         "languages": [
           "eng",
@@ -3205,7 +3205,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.7"
+        "version": "0.1.8"
       }
     },
     {
@@ -5397,7 +5397,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "d6d8574981368b20d276df4eca99a1bc7d9617173147e30cca3ed48ff9aeb9fe",
+        "bundle_sha256": "87cfd5e664a164f54682653b9dc69e6367c4fd77343675cef357a7a7d72d0d3f",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -5433,7 +5433,7 @@
         "entry_class": "TitloviProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "dbee6ece00b7b8e217c91c18f9e517b348a17faf39d94aead930a4562646ac15"
+          "provider.py": "0dd2cac3805c32a2e51d675b355ea0fae8131b8f0bab1d96b94b4c80817081ed"
         },
         "languages": [
           "bos",
@@ -5464,13 +5464,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.6"
+        "version": "0.1.7"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "04abd1115e7a17009411caff461111838ffdf932bf6d6ca291867df408aa35e5",
+        "bundle_sha256": "b8c8e3e52e4cf9052d139065ecc9daad874187137bfc87f776baca6d62c43f0f",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -5492,7 +5492,7 @@
         "entry_class": "TitrariProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "361c1a28636f555538723b4fb833f317202f83d5b4c86e89496e38ac4695c8a0"
+          "provider.py": "ce46056efcf2c729ae35f0d339cd2ca5bb072f3401a9223818f6858fa9cd3f54"
         },
         "languages": [
           "ron",
@@ -5515,13 +5515,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.4"
+        "version": "0.1.5"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "12359b23a3a239513c5983b10b089fb0a91b1e9d34bac69acd27a05faffaa5b6",
+        "bundle_sha256": "9298f2988297810d730198e2fb9ffca8994a7686fa6faa804c898d1afc3d57fb",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -5569,7 +5569,7 @@
         "entry_class": "TitulkyProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "e9c320210de057dac1fb2e6e78d228d99e6e30df80d7bffa3f6583326236bb22"
+          "provider.py": "92e5426df6c351907acd5abfa4f124d2ca69069ad7cd84f6aa40debd6878584f"
         },
         "languages": [
           "ces",
@@ -5595,7 +5595,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.5"
+        "version": "0.1.6"
       }
     },
     {
@@ -6520,7 +6520,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "66bbfdf974d3e3b1e28bd5c9030da36583cad0f36f51ee64dcb502e18db8bff2",
+        "bundle_sha256": "4a2858232d66896e5523d51e6fdebb6ee9170f739b71b9ed4510b36c49f4fefb",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -6825,7 +6825,7 @@
         "entry_class": "YavkaNetProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "6970b86701cc32ff0ab0ecb8886a3350dcfc6a7e2c1ebf38d72583af2e608f3f"
+          "provider.py": "a5d003fa58cea5dc4b5794802324739096fa9eda6d10373b491a89461acbc035"
         },
         "languages": [
           "bul",
@@ -6851,7 +6851,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.9"
+        "version": "0.1.10"
       }
     },
     {
@@ -6942,7 +6942,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "b82971bae360383f660f8b9290937c06e9db50e6c187e6d1455e60f71f6209b4",
+        "bundle_sha256": "fb2bf68cff95c1a3ce8be0509255aeb41f84f43bc2b3f3d60600665e7f0f1ea1",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -6992,7 +6992,7 @@
         "entry_class": "ZimukuProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "018ae2dd8ae790f6ae15b178f3eda78d86ffdcdc46f2ffd03531242142731923",
+          "provider.py": "640f00e8c4ffd481ff673cd68b74f205f3a9520da78f0d6409827067720121f4",
           "yunsuo_templates.py": "abad0d629bb24b28c40f7dc5a0257660266e6be449fbd8cda81a044d26c4959d"
         },
         "languages": [
@@ -7021,7 +7021,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.6"
+        "version": "0.1.7"
       }
     }
   ],

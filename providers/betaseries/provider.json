@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "3ffbee33eca2691bfd1291570ced4775a1b9884e16cdc20bef77ab5d332a128f",
+  "bundle_sha256": "3aa969bf55c6afa67deaf36acbbf62b99c64c0ac538e774e67910c3a76774258",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -22,7 +22,7 @@
   "entry_class": "BetaSeriesProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "09a38428861bd120b33bd122d9fa8b0875d1cee6b162f06096c4244b29d9a697"
+    "provider.py": "5640b7777cc0fd006530830a744ba0b520c5d76566190a48fb0e1a3cc4850508"
   },
   "languages": [
     "eng",
@@ -46,5 +46,5 @@
   "supported_media": [
     "episode"
   ],
-  "version": "0.1.5"
+  "version": "0.1.6"
 }

@@ -422,7 +422,9 @@ def _file_matches_episode(normalized_name, season, episode):
     # "{season}{episode:02d}" form (Soustitres.eu writes S01E01 as "101") against whole
     # tokens. A substring/regex match would read the "720" in "720p" as S07E20.
     compact = normalized_name.lower()
-    if f"s{season:02d}e{episode:02d}" in compact:
+    # SxxExx, tolerating the separator _normalize_release leaves between season and
+    # episode (S01.E02 / S01 E02 normalize to "s01.e02"), as well as contiguous S01E02.
+    if re.search(rf"s0*{season}[\s._-]*e0*{episode}(?!\d)", compact):
         return True
     if f"{season}x{episode:02d}" in compact or f"{season}x{episode}" in compact:
         return True
@@ -432,7 +434,7 @@ def _file_matches_episode(normalized_name, season, episode):
 def _file_has_episode_marker(normalized_name):
     compact = normalized_name.lower()
     return bool(
-        re.search(r"s\d{1,2}e\d{1,3}", compact)
+        re.search(r"s\d{1,2}[\s._-]*e\d{1,3}", compact)
         or re.search(r"(?<!\d)\d{1,2}x\d{1,3}", compact)
         or any(token.isdigit() and len(token) == 3 for token in compact.split("."))
     )
