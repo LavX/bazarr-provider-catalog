@@ -287,6 +287,52 @@ class ArchiveDownloadValidationTests(unittest.TestCase):
             },
         )  # must not raise
 
+    def test_validate_archive_download_returns_zip_member_names(self):
+        from sdk import cli as sdk_cli
+
+        raw = self._zip(["a.srt", "b.srt", "readme.txt"])
+        names = sdk_cli._validate_archive_download(
+            "x", {"archive_b64": base64.b64encode(raw).decode("ascii")}
+        )
+        self.assertEqual(sorted(names), ["a.srt", "b.srt", "readme.txt"])
+
+    def test_smoke_select_archive_member_accepts_valid_pin(self):
+        from sdk import cli as sdk_cli
+
+        class Prov:
+            def select_archive_member(self, provider_payload, language, members, config):
+                return {"member": members[0], "decision": "pin"}
+
+        sdk_cli._smoke_select_archive_member(
+            "x", Prov(), {"provider_payload": {}}, ["a.srt", "b.srt"], {}
+        )  # must not raise
+
+    def test_smoke_select_archive_member_requires_method(self):
+        from sdk import cli as sdk_cli
+
+        with self.assertRaises(sdk_cli.CatalogError):
+            sdk_cli._smoke_select_archive_member("x", object(), {"provider_payload": {}}, ["a.srt"], {})
+
+    def test_smoke_select_archive_member_rejects_bad_decision(self):
+        from sdk import cli as sdk_cli
+
+        class Prov:
+            def select_archive_member(self, provider_payload, language, members, config):
+                return {"decision": "weird"}
+
+        with self.assertRaises(sdk_cli.CatalogError):
+            sdk_cli._smoke_select_archive_member("x", Prov(), {"provider_payload": {}}, ["a.srt"], {})
+
+    def test_smoke_select_archive_member_rejects_pin_not_in_members(self):
+        from sdk import cli as sdk_cli
+
+        class Prov:
+            def select_archive_member(self, provider_payload, language, members, config):
+                return {"member": "ghost.srt", "decision": "pin"}
+
+        with self.assertRaises(sdk_cli.CatalogError):
+            sdk_cli._smoke_select_archive_member("x", Prov(), {"provider_payload": {}}, ["a.srt"], {})
+
     def test_archive_download_rejects_missing_member(self):
         from sdk import cli as sdk_cli
 

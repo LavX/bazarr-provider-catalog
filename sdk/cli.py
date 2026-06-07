@@ -473,7 +473,9 @@ def smoke_test(
         raise CatalogError(f"{provider_id} download must return a content or archive payload")
     if "archive_b64" in content:
         # Archive payloads do not carry `empty`; the host extracts the member.
-        _validate_archive_download(provider_id, content)
+        names = _validate_archive_download(provider_id, content)
+        if content.get("select_member"):
+            _smoke_select_archive_member(provider_id, provider, last_candidate, names, config)
     elif content.get("empty") is False:
         data = base64.b64decode(content["content_b64"].encode("ascii"), validate=True)
         if hashlib.sha256(data).hexdigest() != content.get("content_sha256"):
@@ -522,6 +524,31 @@ def _validate_archive_download(provider_id, content):
         name.lower().endswith((".srt", ".sub", ".ssa", ".ass", ".vtt")) for name in names
     ):
         raise CatalogError(f"{provider_id} download archive has no subtitle member")
+    return names
+
+
+def _smoke_select_archive_member(provider_id, provider, candidate, names, config):
+    """Exercise the select_archive_member op that a select_member download asks the host
+    to call after listing the archive members."""
+    selector = getattr(provider, "select_archive_member", None)
+    if selector is None:
+        raise CatalogError(
+            f"{provider_id} download set select_member but exposes no select_archive_member method"
+        )
+    members = list(names) if names is not None else []
+    try:
+        decision = selector(candidate["provider_payload"], {"alpha3": "eng"}, members, config)
+    except Exception as exc:
+        raise CatalogError(f"{provider_id} select_archive_member failed: {exc}") from exc
+    if not isinstance(decision, dict) or decision.get("decision") not in ("pin", "defer", "reject"):
+        raise CatalogError(
+            f"{provider_id} select_archive_member must return {{'member', 'decision': pin|defer|reject}}"
+        )
+    chosen = decision.get("member")
+    if decision["decision"] == "pin" and (chosen is None or (names is not None and chosen not in names)):
+        raise CatalogError(
+            f"{provider_id} select_archive_member pinned a member not in the archive: {chosen!r}"
+        )
 
 
 def command_validate(args):
