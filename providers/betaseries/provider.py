@@ -223,11 +223,13 @@ def _is_archive_body(body):
 
 
 def _select_zip_member(body, payload):
-    # Name the zip member matching the scored release_group. Listing only, no extraction
-    # or decoding: the host reads the named member and runs chardet. Returns None for rar
-    # (not stdlib-listable), no release_group, or no match, so the caller falls back to
-    # host-side episode selection.
-    release_group = str((payload or {}).get("release_group") or "")
+    # Name the zip member matching the requested episode and scored release_group. Listing
+    # only, no extraction or decoding: the host reads the named member (an exact namelist
+    # match that hard-fails on mismatch) and runs chardet. Returns None for rar (not
+    # stdlib-listable), no release_group, or no confident match, so the caller falls back
+    # to host-side episode selection.
+    payload = payload or {}
+    release_group = str(payload.get("release_group") or "")
     if not release_group or not zipfile.is_zipfile(io.BytesIO(body)):
         return None
     with zipfile.ZipFile(io.BytesIO(body)) as archive:
@@ -238,8 +240,20 @@ def _select_zip_member(body, payload):
             and _subtitle_extension(name)
             and not os.path.basename(name).startswith(".")
         ]
+    # A season pack carries several episodes; the release group alone would match the first
+    # episode's member, so narrow to the requested episode before matching the group.
+    season = _safe_int(payload.get("season"))
+    episode = _safe_int(payload.get("episode"))
+    if season is not None and episode is not None:
+        episode_names = [name for name in names if _text_has_episode(name, season, episode)]
+        if episode_names:
+            names = episode_names
+        elif any(_SXXEYY_RE.search(_normalize(name)) for name in names):
+            # The archive carries episode markers but not the requested one: pinning a
+            # wrong name would hard-fail the host download, so defer to episode selection.
+            return None
     for name in names:
-        if release_group in name:
+        if release_group.lower() in name.lower():
             return name
     return None
 

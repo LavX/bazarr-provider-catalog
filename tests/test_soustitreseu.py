@@ -381,6 +381,92 @@ class SoustitreseuProviderTests(unittest.TestCase):
         self.assertNotIn("member", content)
         self.assertEqual(content["episode"], 2)
 
+    def test_download_does_not_read_resolution_as_episode(self):
+        # S07E20 yields episode code "720", which must not match the "720p" resolution in a
+        # wrong-episode member. The requested episode is absent, so defer to the host.
+        provider = self.mod.SoustitreseuProvider()
+        body = _zip_body(
+            {
+                "Show.S03E05.720p.VF.srt": "fr wrong episode",
+                "Show.S03E05.720p.VO.srt": "en wrong episode",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        content = provider.download(
+            {
+                "url": "https://www.sous-titres.eu/series/download/x/Show.S07.ENFR.zip",
+                "filename": "Show.S07.ENFR.zip",
+                "media_type": "series",
+                "season": 7,
+                "episode": 20,
+                "language": "fra",
+                "release_info": "Show.S07.ENFR.zip",
+            },
+            {"alpha3": "fra", "alpha2": "fr"},
+            {},
+        )
+
+        self.assertNotIn("member", content)
+        self.assertEqual(content["episode"], 20)
+
+    def test_download_does_not_mislabel_french_word_as_english(self):
+        # "Asterix.en.Bretagne" is a French (VF) release; the bare ".en." token must not
+        # tag it English, so an English request pins the real VO member.
+        provider = self.mod.SoustitreseuProvider()
+        body = _zip_body(
+            {
+                "Asterix.en.Bretagne.VF.srt": "french",
+                "Asterix.in.Britain.VO.srt": "english",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        content = provider.download(
+            {
+                "url": "https://www.sous-titres.eu/films/download/x/Asterix.ENFR.zip",
+                "filename": "Asterix.ENFR.zip",
+                "media_type": "film",
+                "season": None,
+                "episode": None,
+                "language": "eng",
+                "release_info": "Asterix.ENFR.zip",
+            },
+            {"alpha3": "eng", "alpha2": "en"},
+            {},
+        )
+
+        self.assertEqual(content["member"], "Asterix.in.Britain.VO.srt")
+
+    def test_download_ignores_macosx_sidecar(self):
+        # An AppleDouble sidecar (listed first) matching the requested episode and language
+        # must not be pinned in place of the real subtitle member.
+        provider = self.mod.SoustitreseuProvider()
+        body = _zip_body(
+            {
+                "__MACOSX/._Show.S01E01.VF.srt": "\x00\x05binary",
+                "Show.S01E01.VO.srt": "english",
+                "Show.S01E01.VF.srt": "french",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        content = provider.download(
+            {
+                "url": "https://www.sous-titres.eu/series/download/x/Show.S01E01.ENFR.zip",
+                "filename": "Show.S01E01.ENFR.zip",
+                "media_type": "series",
+                "season": 1,
+                "episode": 1,
+                "language": "fra",
+                "release_info": "Show.S01E01.ENFR.zip",
+            },
+            {"alpha3": "fra", "alpha2": "fr"},
+            {},
+        )
+
+        self.assertEqual(content["member"], "Show.S01E01.VF.srt")
+
     def test_download_archive_episode_is_none_for_movie(self):
         provider = self.mod.SoustitreseuProvider()
         body = _zip_body({"Dune.Part.One.2021.WEB.VF.srt": "movie subtitle"})

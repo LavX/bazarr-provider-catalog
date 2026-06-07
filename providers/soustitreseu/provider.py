@@ -372,7 +372,11 @@ def _select_language_member(body, payload):
     if not language or _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body)):
         return None
     with zipfile.ZipFile(io.BytesIO(body)) as archive:
-        members = [name for name in archive.namelist() if _subtitle_extension(name)]
+        members = [
+            name
+            for name in archive.namelist()
+            if _subtitle_extension(name) and not os.path.basename(name).startswith(".")
+        ]
     tagged = {name: _language_from_subtitle_filename(name) for name in members}
     present = {lang for lang in tagged.values() if lang}
     # Only step in when the archive actually mixes languages and we requested one of them;
@@ -402,22 +406,27 @@ def _select_language_member(body, payload):
 
 
 def _language_from_subtitle_filename(name):
+    # Soustitres.eu tags English as VO and French as VF. Match those and the explicit
+    # three-letter ISO codes only: the bare two-letter ".en."/".fr." tokens collide with
+    # ordinary French words (e.g. "Asterix.en.Bretagne") and would mislabel the language.
     compact = "." + _normalize_release(name) + "."
-    if ".vo." in compact or ".en." in compact or ".eng." in compact:
+    if ".vo." in compact or ".eng." in compact:
         return "eng"
-    if ".vf." in compact or ".fr." in compact or ".fre." in compact:
+    if ".vf." in compact or ".fre." in compact:
         return "fra"
     return None
 
 
 def _file_matches_episode(normalized_name, season, episode):
+    # normalized_name is dot-separated (see _normalize_release), so compare the bare
+    # "{season}{episode:02d}" form (Soustitres.eu writes S01E01 as "101") against whole
+    # tokens. A substring/regex match would read the "720" in "720p" as S07E20.
     compact = normalized_name.lower()
     if f"s{season:02d}e{episode:02d}" in compact:
         return True
     if f"{season}x{episode:02d}" in compact or f"{season}x{episode}" in compact:
         return True
-    episode_code = f"{season}{episode:02d}"
-    return bool(re.search(rf"(?<!\d){re.escape(episode_code)}(?!\d)", compact))
+    return f"{season}{episode:02d}" in compact.split(".")
 
 
 def _file_has_episode_marker(normalized_name):
@@ -425,7 +434,7 @@ def _file_has_episode_marker(normalized_name):
     return bool(
         re.search(r"s\d{1,2}e\d{1,3}", compact)
         or re.search(r"(?<!\d)\d{1,2}x\d{1,3}", compact)
-        or re.search(r"(?<!\d)\d{3}(?!\d)", compact)
+        or any(token.isdigit() and len(token) == 3 for token in compact.split("."))
     )
 
 

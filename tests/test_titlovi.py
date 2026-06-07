@@ -258,6 +258,40 @@ class TitloviProviderTests(unittest.TestCase):
         self.assertEqual(result["episode"], 1)
         self.assertNotIn("member", result)
 
+    def test_extract_download_does_not_misread_latin_circle_as_cyrillic(self):
+        # A Latin release whose title contains "circle" must not be bucketed as Cyrillic;
+        # the script must be matched as a delimited token, not a substring.
+        body = _zip_body(
+            {
+                "The.Circle.S01E01.lat.srt": b"1\n00:00:01,000 --> 00:00:02,000\nLatin\n",
+                "The.Circle.S01E01.cyr.srt": b"1\n00:00:01,000 --> 00:00:02,000\nCyrillic\n",
+            }
+        )
+
+        cyr = self.mod.extract_download(
+            body, {"language": "srp", "script": "Cyrl", "season": 1, "episode": 1}
+        )
+        self.assertEqual(cyr["member"], "The.Circle.S01E01.cyr.srt")
+
+        lat = self.mod.extract_download(
+            body, {"language": "srp", "season": 1, "episode": 1}
+        )
+        self.assertEqual(lat["member"], "The.Circle.S01E01.lat.srt")
+
+    def test_extract_download_ignores_macosx_sidecar(self):
+        # An AppleDouble sidecar (binary, listed first) must not be pinned as a member.
+        body = _zip_body(
+            {
+                "__MACOSX/._Chernobyl.cyr.srt": b"\x00\x05\x16\x07",
+                "Chernobyl.lat.srt": b"1\n00:00:01,000 --> 00:00:02,000\nLatin\n",
+                "Chernobyl.cyr.srt": b"1\n00:00:01,000 --> 00:00:02,000\nCyrillic\n",
+            }
+        )
+
+        result = self.mod.extract_download(body, {"language": "srp", "script": "Cyrl"})
+
+        self.assertEqual(result["member"], "Chernobyl.cyr.srt")
+
     def test_extract_download_accepts_direct_subtitle_body(self):
         body = b"1\r\n00:00:01,000 --> 00:00:02,000\r\nDirect subtitle\r\n"
 

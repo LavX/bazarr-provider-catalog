@@ -848,6 +848,30 @@ class YavkaNetProviderTests(unittest.TestCase):
         self.assertNotIn("member", result)
         self.assertEqual(result["episode"], 2)
 
+    def test_extract_download_defers_when_requested_episode_absent(self):
+        # The requested episode is in no member; pinning another episode's member that
+        # happens to match the scored fields would hard-fail the host download, so defer.
+        # (E01 here matches release_group/resolution/source; the request is for E02.)
+        body = _zip_with(
+            {
+                "Example.S01E01.1080p.WEB.FLUX.srt": b"e1",
+                "Example.S01E03.720p.HDTV.NTb.srt": b"e3",
+            }
+        )
+
+        result = self.mod.extract_download(
+            body,
+            {
+                "filename": "Example.S01.zip",
+                "season": 1,
+                "episode": 2,
+                "video": {"release_group": "FLUX", "resolution": "1080p", "source": "Web"},
+            },
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 2)
+
     def test_extract_download_rejects_empty_body(self):
         with self.assertRaisesRegex(ValueError, "empty"):
             self.mod.extract_download(b"", {"filename": "Dune.2021.WEB.zip"})

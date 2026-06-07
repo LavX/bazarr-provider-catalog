@@ -315,8 +315,11 @@ def _select_zip_member(body, payload):
     pool = members
     if season is not None and episode is not None:
         episode_pool = [name for name in members if _member_has_episode(name, season, episode)]
-        if episode_pool:
-            pool = episode_pool
+        if not episode_pool:
+            # Episode requested but absent from every member: pinning a member from another
+            # episode would hard-fail the host download, so defer to host episode selection.
+            return None
+        pool = episode_pool
     if len(pool) < 2:
         return None  # a single episode match: host episode selection already lands here
     # Break the tie with the same fields the result was scored on. Pin only a unique winner.
@@ -342,9 +345,11 @@ def _member_has_episode(name, season, episode):
 
 
 def _member_match_score(name, video):
+    # release_group is the strongest release signal (mirrors search _score: rg 15 vs
+    # resolution/source 8 each), so weight it above resolution and source combined.
     score = 0
     if _release_group_matches(video.get("release_group"), name):
-        score += 3
+        score += 5
     if _token_in_text(video.get("resolution"), name):
         score += 2
     if _source_matches(video.get("source"), name):

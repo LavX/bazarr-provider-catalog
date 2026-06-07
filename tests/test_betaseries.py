@@ -300,6 +300,94 @@ class BetaSeriesProviderTests(unittest.TestCase):
         self.assertNotIn("member", result)
         self.assertNotIn("content_b64", result)
 
+    def test_download_zip_pins_requested_episode_member_in_season_pack(self):
+        # A season pack carries the same release group across episodes; the member must be
+        # narrowed to the requested episode, not the first release-group match (E01).
+        provider = self.mod.BetaSeriesProvider()
+        body = _zip_body(
+            {
+                "Blue.Lights.S01E01.ETHEL.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE1\n",
+                "Blue.Lights.S01E02.ETHEL.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE2\n",
+            }
+        )
+        provider._http_get_bytes = lambda url, timeout=10, config=None: body
+
+        result = provider.download(
+            {
+                "provider": "betaseries",
+                "schema": 1,
+                "subtitle_id": "101",
+                "download_url": "https://betaseries.test/download/blue-lights-s01.zip",
+                "filename": "Blue.Lights.S01.1080p.WEB.h264-ETHEL.zip",
+                "release_group": "ETHEL",
+                "season": 1,
+                "episode": 2,
+            },
+            {"alpha3": "eng"},
+            {"token": "secret-key"},
+        )
+
+        self.assertEqual(result["member"], "Blue.Lights.S01E02.ETHEL.srt")
+        self.assertNotIn("episode", result)
+
+    def test_download_zip_defers_when_requested_episode_absent(self):
+        # Episode markers present but not the requested one: pinning a wrong-episode member
+        # would hard-fail the host download, so defer to host episode selection.
+        provider = self.mod.BetaSeriesProvider()
+        body = _zip_body(
+            {
+                "Blue.Lights.S01E01.ETHEL.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE1\n",
+                "Blue.Lights.S01E03.ETHEL.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE3\n",
+            }
+        )
+        provider._http_get_bytes = lambda url, timeout=10, config=None: body
+
+        result = provider.download(
+            {
+                "provider": "betaseries",
+                "schema": 1,
+                "subtitle_id": "101",
+                "download_url": "https://betaseries.test/download/blue-lights-s01.zip",
+                "filename": "Blue.Lights.S01.WEB-ETHEL.zip",
+                "release_group": "ETHEL",
+                "season": 1,
+                "episode": 2,
+            },
+            {"alpha3": "eng"},
+            {"token": "secret-key"},
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 2)
+
+    def test_download_zip_matches_release_group_case_insensitively(self):
+        # guessit may yield a differently-cased release_group than the filename carries.
+        provider = self.mod.BetaSeriesProvider()
+        body = _zip_body(
+            {
+                "Blue.Lights.S01E01.OTHER.srt": b"1\n00:00:01,000 --> 00:00:02,000\nWrong\n",
+                "Blue.Lights.S01E01.ethel.srt": b"1\n00:00:01,000 --> 00:00:02,000\nRight\n",
+            }
+        )
+        provider._http_get_bytes = lambda url, timeout=10, config=None: body
+
+        result = provider.download(
+            {
+                "provider": "betaseries",
+                "schema": 1,
+                "subtitle_id": "101",
+                "download_url": "https://betaseries.test/download/blue-lights.zip",
+                "filename": "Blue.Lights.S01E01.WEB-ETHEL.zip",
+                "release_group": "ETHEL",
+                "season": 1,
+                "episode": 1,
+            },
+            {"alpha3": "eng"},
+            {"token": "secret-key"},
+        )
+
+        self.assertEqual(result["member"], "Blue.Lights.S01E01.ethel.srt")
+
     def test_download_rar_archive_returns_raw_archive_for_host(self):
         provider = self.mod.BetaSeriesProvider()
         # Minimal RAR4 signature; the host extracts, the worker only forwards bytes.

@@ -295,13 +295,19 @@ def _select_script_member(body, payload):
     if payload.get("language") != "srp" or _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body)):
         return None
     with zipfile.ZipFile(io.BytesIO(body)) as archive:
-        candidates = [name for name in archive.namelist() if _subtitle_extension(name)]
+        candidates = [
+            name
+            for name in archive.namelist()
+            if _subtitle_extension(name) and not name.rsplit("/", 1)[-1].startswith(".")
+        ]
     if len(candidates) < 2:
         return None
     cyrillic, latin = [], []
     for name in candidates:
-        lowered = name.lower()
-        if ".cyr" in lowered or ".cir" in lowered or "cyr)" in lowered:
+        # Match "cyr"/"cir" as a delimited token, not a substring, so a Latin release like
+        # "...circle..." is not misread as Cyrillic.
+        tokens = re.split(r"[^a-z0-9]+", name.lower())
+        if "cyr" in tokens or "cir" in tokens:
             cyrillic.append(name)
         else:
             latin.append(name)
