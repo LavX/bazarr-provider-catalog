@@ -158,28 +158,26 @@ class ZimukuParserTests(unittest.TestCase):
         self.assertNotIn("content_b64", result)
         self.assertNotIn("encoding", result)
 
-    def test_extract_download_returns_rar_archive_mode(self):
+    def test_extract_download_rejects_rar_archive_to_avoid_wrong_language(self):
+        # Zimuku archives bundle CHS/CHT/ENG; a rar cannot be listed worker-side (stdlib
+        # only) and the host selects members only by episode (no language awareness), so a
+        # rar would let the host return the wrong language. Fail loudly instead.
         body = _rar_body()
-
-        result = self.mod.extract_download(body, {"filename": "archive.rar", "episode": 3})
-
         self.assertTrue(self.mod._is_rar_archive(body))
-        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
-        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
-        self.assertEqual(result["episode"], 3)
-        self.assertNotIn("content_b64", result)
 
-    def test_extract_download_returns_7z_archive_mode(self):
+        with self.assertRaisesRegex(ValueError, "non-zip"):
+            self.mod.extract_download(
+                body, {"filename": "archive.rar", "episode": 3, "language": "zho-TW"}
+            )
+
+    def test_extract_download_rejects_7z_archive_to_avoid_wrong_language(self):
         body = _7z_body()
-
-        result = self.mod.extract_download(body, {"filename": "archive.7z", "episode": 5})
-
         self.assertTrue(self.mod._is_7z_archive(body))
-        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
-        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
-        self.assertEqual(result["episode"], 5)
-        self.assertNotIn("content_b64", result)
-        self.assertNotIn("encoding", result)
+
+        with self.assertRaisesRegex(ValueError, "non-zip"):
+            self.mod.extract_download(
+                body, {"filename": "archive.7z", "episode": 5, "language": "eng"}
+            )
 
     def test_extract_download_carries_no_episode_for_movies(self):
         body = _zip_body()

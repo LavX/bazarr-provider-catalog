@@ -303,22 +303,32 @@ def extract_download(body, payload=None):
     if _is_html_body(body):
         raise ValueError("zimuku returned an HTML/error page instead of a subtitle")
     if _is_archive_body(body):
-        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
-        # the host, which lists it and detects encoding. A Zimuku archive routinely
-        # bundles several languages (CHS + CHT + ENG) for the same release, which the
-        # host's episode-only pick cannot tell apart, so when we can list a zip we pin
-        # the language-matched member; otherwise (rar, 7z, single language, or no match)
-        # let the host pick the member by episode.
-        archive = {
-            "archive_b64": base64.b64encode(body).decode("ascii"),
-            "archive_sha256": hashlib.sha256(body).hexdigest(),
-        }
+        # Host-side extraction (Provider Hub v1.1+). A Zimuku archive routinely bundles
+        # several languages (CHS + CHT + ENG) for the same release. We can list a ZIP and
+        # pin the language-matched member; a single-language or already-resolved zip is
+        # safe to defer to the host's episode pick.
         member = _select_language_member(body, payload)
         if member is not None:
-            archive["member"] = member
-        else:
-            archive["episode"] = payload.get("episode")
-        return archive
+            return {
+                "archive_b64": base64.b64encode(body).decode("ascii"),
+                "archive_sha256": hashlib.sha256(body).hexdigest(),
+                "member": member,
+            }
+        # A RAR/7z cannot be listed worker-side (stdlib only; rarfile/py7zr/py7zz are
+        # banned), and the host selects archive members only by episode -- it has no
+        # language awareness -- so handing it a multilingual rar/7z would let it return the
+        # wrong language. Fail loudly so Bazarr falls back to another candidate instead of
+        # silently delivering CHS/CHT/ENG that the user did not request.
+        if not zipfile.is_zipfile(io.BytesIO(body)):
+            raise ValueError(
+                "zimuku cannot language-select a non-zip (rar/7z) archive host-side; "
+                "skipping to avoid a wrong-language download"
+            )
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "episode": payload.get("episode"),
+        }
     # Direct, non-archive subtitle body.
     return _content_payload(body, _format_from_filename(payload.get("filename")))
 
