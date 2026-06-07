@@ -264,6 +264,147 @@ class TitulkyProviderTests(unittest.TestCase):
         self.assertEqual(base64.b64decode(result["archive_b64"]), body)
         self.assertIsNone(result["episode"])
 
+    def test_build_download_payload_pins_member_by_release_info_overlap(self):
+        # Two releases for the same episode in one zip: the host's episode-only pick cannot
+        # tell them apart, so the worker pins the member overlapping the scored release_info.
+        body = _zip_body(
+            {
+                "Chernobyl.S01E01.720p.WEB-DL.x264-NTb.srt": b"web line\n",
+                "Chernobyl.S01E01.1080p.BluRay.x264-AMIABLE.srt": b"bluray line\n",
+            }
+        )
+
+        result = self.mod.build_download_payload(
+            body,
+            {
+                "filename": "titulky.201.sk.zip",
+                "release_info": "Chernobyl S01E01 720p WEB-DL x264 NTb",
+                "season": 1,
+                "episode": 1,
+            },
+        )
+
+        self.assertEqual(result["member"], "Chernobyl.S01E01.720p.WEB-DL.x264-NTb.srt")
+        self.assertNotIn("episode", result)
+        self.assertNotIn("content_b64", result)
+
+    def test_build_download_payload_prefers_non_forced_member(self):
+        # A forced sidecar must never outrank the main subtitle even when both share the
+        # episode and the release tokens.
+        body = _zip_body(
+            {
+                "Chernobyl.S01E01.WEB-DL.forced.srt": b"forced line\n",
+                "Chernobyl.S01E01.WEB-DL.srt": b"full line\n",
+            }
+        )
+
+        result = self.mod.build_download_payload(
+            body,
+            {
+                "filename": "titulky.201.sk.zip",
+                "release_info": "Chernobyl S01E01 WEB-DL",
+                "season": 1,
+                "episode": 1,
+            },
+        )
+
+        self.assertEqual(result["member"], "Chernobyl.S01E01.WEB-DL.srt")
+
+    def test_build_download_payload_defers_when_release_overlap_ties(self):
+        # Both members overlap the release_info equally: no unique winner, so defer to the
+        # host's episode selection instead of guessing.
+        body = _zip_body(
+            {
+                "Chernobyl.S01E01.WEB-DL.GROUPA.srt": b"a\n",
+                "Chernobyl.S01E01.WEB-DL.GROUPB.srt": b"b\n",
+            }
+        )
+
+        result = self.mod.build_download_payload(
+            body,
+            {
+                "filename": "titulky.201.sk.zip",
+                "release_info": "Chernobyl S01E01 WEB-DL",
+                "season": 1,
+                "episode": 1,
+            },
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 1)
+
+    def test_build_download_payload_defers_when_requested_episode_absent(self):
+        # Episode markers present but none matches the requested episode: pinning a member
+        # from another episode would hard-fail the host download, so defer.
+        body = _zip_body(
+            {
+                "Chernobyl.S01E02.720p.WEB-DL.srt": b"e02\n",
+                "Chernobyl.S01E03.720p.WEB-DL.srt": b"e03\n",
+            }
+        )
+
+        result = self.mod.build_download_payload(
+            body,
+            {
+                "filename": "titulky.201.sk.zip",
+                "release_info": "Chernobyl S01E01 720p WEB-DL",
+                "season": 1,
+                "episode": 1,
+            },
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 1)
+
+    def test_build_download_payload_ignores_sidecars_and_dirs_when_pinning(self):
+        # macOS sidecars, dotfiles, and directory entries must not count as members; the
+        # real subtitle stays the only candidate and the host episode pick lands there.
+        body = _zip_body(
+            {
+                "subs/": b"",
+                "__MACOSX/._Chernobyl.S01E01.720p.WEB-DL.srt": b"junk\n",
+                ".DS_Store": b"junk\n",
+                "subs/Chernobyl.S01E01.720p.WEB-DL.srt": b"real\n",
+            }
+        )
+
+        result = self.mod.build_download_payload(
+            body,
+            {
+                "filename": "titulky.201.sk.zip",
+                "release_info": "Chernobyl S01E01 720p WEB-DL",
+                "season": 1,
+                "episode": 1,
+            },
+        )
+
+        # Only one real subtitle member survives filtering, so the worker defers by episode.
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 1)
+
+    def test_build_download_payload_episode_token_does_not_match_resolution(self):
+        # S07E20 absent: a "720" episode code must not match "720p" and "264" must not match
+        # "x264", so the worker defers rather than mispicking on a resolution/codec token.
+        body = _zip_body(
+            {
+                "Show.S07E19.720p.x264-A.srt": b"a\n",
+                "Show.S07E21.720p.x264-B.srt": b"b\n",
+            }
+        )
+
+        result = self.mod.build_download_payload(
+            body,
+            {
+                "filename": "titulky.201.sk.zip",
+                "release_info": "Show S07E20 720p x264",
+                "season": 7,
+                "episode": 20,
+            },
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 20)
+
     def test_build_download_payload_accepts_direct_subtitle_body(self):
         body = b"1\r\n00:00:01,000 --> 00:00:02,000\r\nCzech line\r\n"
 

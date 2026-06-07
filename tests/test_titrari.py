@@ -300,6 +300,162 @@ class TitrariDownloadTests(unittest.TestCase):
         self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
         self.assertEqual(result["episode"], 1)
 
+    def test_download_pins_member_by_release_group(self):
+        # Two members for the same episode differ only by release group; the host's
+        # episode-only pick cannot tell them apart, so the worker pins the scored one.
+        body = _zip_with(
+            {
+                "Chernobyl.S01E02.720p.WEB.NTb.srt": b"wrong group",
+                "Chernobyl.S01E02.1080p.WEB.FLUX.srt": SRT_BODY,
+            }
+        )
+
+        result = self.mod.extract_download(
+            body,
+            {
+                "filename": "chernobyl.zip",
+                "season": 1,
+                "episode": 2,
+                "release_group": "FLUX",
+                "resolution": "1080p",
+                "source": "Web",
+            },
+        )
+
+        self.assertEqual(result["member"], "Chernobyl.S01E02.1080p.WEB.FLUX.srt")
+        self.assertNotIn("episode", result)
+        self.assertNotIn("content_b64", result)
+
+    def test_download_pins_member_for_requested_episode_in_pack(self):
+        # A season pack with several release groups per episode: resolve episode and
+        # release group together so the pinned member matches the scored candidate.
+        body = _zip_with(
+            {
+                "Chernobyl.S01E01.1080p.WEB.FLUX.srt": b"e1 flux",
+                "Chernobyl.S01E02.720p.WEB.NTb.srt": b"e2 ntb",
+                "Chernobyl.S01E02.1080p.WEB.FLUX.srt": SRT_BODY,
+            }
+        )
+
+        result = self.mod.extract_download(
+            body,
+            {
+                "filename": "chernobyl.zip",
+                "season": 1,
+                "episode": 2,
+                "release_group": "FLUX",
+                "resolution": "1080p",
+                "source": "Web",
+            },
+        )
+
+        self.assertEqual(result["member"], "Chernobyl.S01E02.1080p.WEB.FLUX.srt")
+        self.assertNotIn("episode", result)
+
+    def test_download_does_not_match_resolution_token_as_episode(self):
+        # "720p" must not read as S07E20: the request is for S07E20, present only in the
+        # FLUX member, so the resolution token in the NTb member's name is not an episode.
+        body = _zip_with(
+            {
+                "Show.S07E20.720p.WEB.NTb.srt": b"resolution decoy",
+                "Show.S07E20.1080p.WEB.FLUX.srt": SRT_BODY,
+            }
+        )
+
+        result = self.mod.extract_download(
+            body,
+            {
+                "filename": "show.zip",
+                "season": 7,
+                "episode": 20,
+                "release_group": "FLUX",
+                "resolution": "1080p",
+                "source": "Web",
+            },
+        )
+
+        self.assertEqual(result["member"], "Show.S07E20.1080p.WEB.FLUX.srt")
+        self.assertNotIn("episode", result)
+
+    def test_download_falls_back_to_episode_without_field_match(self):
+        # Members differ but none matches the scored fields: ambiguous, so defer to the
+        # host's episode selection rather than guessing.
+        body = _zip_with(
+            {
+                "Chernobyl.S01E02.720p.HDTV.NTb.srt": b"one",
+                "Chernobyl.S01E02.XviD.AC3.srt": b"two",
+            }
+        )
+
+        result = self.mod.extract_download(
+            body,
+            {
+                "filename": "chernobyl.zip",
+                "season": 1,
+                "episode": 2,
+                "release_group": "FLUX",
+                "resolution": "1080p",
+                "source": "BluRay",
+            },
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 2)
+
+    def test_download_defers_when_requested_episode_absent(self):
+        # The requested episode is in no member; pinning another episode's member that
+        # happens to match the scored fields would hard-fail the host download, so defer.
+        # (E01 here matches release_group/resolution/source; the request is for E02.)
+        body = _zip_with(
+            {
+                "Chernobyl.S01E01.1080p.WEB.FLUX.srt": b"e1",
+                "Chernobyl.S01E03.720p.HDTV.NTb.srt": b"e3",
+            }
+        )
+
+        result = self.mod.extract_download(
+            body,
+            {
+                "filename": "chernobyl.zip",
+                "season": 1,
+                "episode": 2,
+                "release_group": "FLUX",
+                "resolution": "1080p",
+                "source": "Web",
+            },
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 2)
+
+    def test_download_ignores_sidecar_and_directory_entries(self):
+        # __MACOSX sidecars and directory entries must never be pinned; the real member
+        # for the requested episode wins on its release group.
+        body = _zip_with(
+            {
+                "Chernobyl/": b"",
+                "__MACOSX/._Chernobyl.S01E02.1080p.WEB.FLUX.srt": b"sidecar",
+                "Chernobyl/.DS_Store": b"junk",
+                "Chernobyl/Chernobyl.S01E02.720p.WEB.NTb.srt": b"wrong group",
+                "Chernobyl/Chernobyl.S01E02.1080p.WEB.FLUX.srt": SRT_BODY,
+            }
+        )
+
+        result = self.mod.extract_download(
+            body,
+            {
+                "filename": "chernobyl.zip",
+                "season": 1,
+                "episode": 2,
+                "release_group": "FLUX",
+                "resolution": "1080p",
+                "source": "Web",
+            },
+        )
+
+        self.assertEqual(result["member"], "Chernobyl/Chernobyl.S01E02.1080p.WEB.FLUX.srt")
+        self.assertNotIn("episode", result)
+
     def test_download_rejects_empty_body(self):
         with self.assertRaises(ValueError):
             self.mod.extract_download(b"", {"filename": "chernobyl.zip"})

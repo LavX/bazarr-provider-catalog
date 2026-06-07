@@ -155,16 +155,74 @@ class MoviesubtitlesProviderTests(unittest.TestCase):
         self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
         self.assertEqual(result["member"], "Interstellar.Bluray.YIFY.en.sub")
 
-    def test_download_selects_first_multipart_member(self):
+    def test_download_concatenates_multipart_members_into_content(self):
+        part_one = b"1\n00:00:01,000 --> 00:00:02,000\nPart one\n"
+        part_two = b"1\n00:10:01,000 --> 00:10:02,000\nPart two\n"
         body = _zip_files(
             {
-                "Movie.CD1.srt": b"1\n00:00:01,000 --> 00:00:02,000\nPart one\n",
-                "Movie.CD2.srt": b"1\n00:10:01,000 --> 00:10:02,000\nPart two\n",
+                "Movie.CD1.srt": part_one,
+                "Movie.CD2.srt": part_two,
             }
         )
 
         result = self.mod.extract_download(body, {"filename": "movie.zip"})
 
+        # The whole multipart group must survive as one content payload, not collapse to
+        # a single pinned member (which would silently drop CD2).
+        self.assertNotIn("archive_b64", result)
+        self.assertNotIn("member", result)
+        joined = b"\n\n".join([part_one, part_two])
+        self.assertEqual(base64.b64decode(result["content_b64"]), joined)
+        self.assertEqual(result["content_sha256"], hashlib.sha256(joined).hexdigest())
+        self.assertEqual(result["format"], "srt")
+        self.assertNotIn("encoding", result)
+
+    def test_download_concatenates_multipart_members_in_part_order(self):
+        part_one = b"1\n00:00:01,000 --> 00:00:02,000\nPart one\n"
+        part_two = b"1\n00:10:01,000 --> 00:10:02,000\nPart two\n"
+        # Author the zip with CD2 first to prove ordering comes from the part index,
+        # not archive member order.
+        body = _zip_files(
+            {
+                "Movie.CD2.srt": part_two,
+                "Movie.CD1.srt": part_one,
+            }
+        )
+
+        result = self.mod.extract_download(body, {"filename": "movie.zip"})
+
+        joined = b"\n\n".join([part_one, part_two])
+        self.assertEqual(base64.b64decode(result["content_b64"]), joined)
+
+    def test_download_ignores_macosx_sidecar_in_multipart_concat(self):
+        part_one = b"1\n00:00:01,000 --> 00:00:02,000\nPart one\n"
+        part_two = b"1\n00:10:01,000 --> 00:10:02,000\nPart two\n"
+        body = _zip_files(
+            {
+                "Movie.CD1.srt": part_one,
+                "Movie.CD2.srt": part_two,
+                "__MACOSX/._Movie.CD1.srt": b"garbage resource fork",
+                ".DS_Store": b"\x00\x00",
+            }
+        )
+
+        result = self.mod.extract_download(body, {"filename": "movie.zip"})
+
+        joined = b"\n\n".join([part_one, part_two])
+        self.assertEqual(base64.b64decode(result["content_b64"]), joined)
+        self.assertNotIn("member", result)
+
+    def test_download_pins_single_member_when_not_multipart(self):
+        # A lone CD1 (no sibling CD2) is not a multipart group, so it stays on the host
+        # archive path with an exact member pin instead of being concatenated.
+        body = _zip_body(
+            "Movie.CD1.srt",
+            b"1\n00:00:01,000 --> 00:00:02,000\nLone part\n",
+        )
+
+        result = self.mod.extract_download(body, {"filename": "movie.zip"})
+
+        self.assertNotIn("content_b64", result)
         self.assertEqual(base64.b64decode(result["archive_b64"]), body)
         self.assertEqual(result["member"], "Movie.CD1.srt")
 

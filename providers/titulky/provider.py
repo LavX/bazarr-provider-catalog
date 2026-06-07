@@ -281,12 +281,23 @@ def build_download_payload(body, payload=None):
         raise ValueError("titulky download did not return a supported subtitle file")
     if _is_archive_body(body):
         # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
-        # the host, which lists it, picks the member by episode, and detects encoding.
-        return {
+        # the host, which lists it, detects encoding, and picks the member. A Titulky zip
+        # can bundle several releases for the same episode (different group / resolution /
+        # source) plus an occasional forced track; the host's episode-only pick cannot tell
+        # them apart. When we can list a zip we pin the member whose filename overlaps the
+        # scored release_info (the old select_subtitle_file intent), preferring non-forced.
+        # Otherwise (rar, single member, the requested episode absent, or no unique winner)
+        # let the host pick the member by episode.
+        archive = {
             "archive_b64": base64.b64encode(body).decode("ascii"),
             "archive_sha256": hashlib.sha256(body).hexdigest(),
-            "episode": payload.get("episode"),
         }
+        member = _select_release_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = payload.get("episode")
+        return archive
     subtitle_format = _direct_subtitle_format(body, payload)
     if not subtitle_format:
         raise ValueError("titulky download did not return a supported subtitle file")
@@ -296,6 +307,89 @@ def build_download_payload(body, payload=None):
 
 def _is_archive_body(body):
     return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
+
+
+def _select_release_member(body, payload):
+    # Pin the zip member matching the scored release_info, reproducing the old
+    # select_subtitle_file() intent: choose the filename whose tokens overlap the
+    # provider's release_info and avoid forced tracks. Listing only, no extraction or
+    # decoding: the host reads the named member and runs chardet. Returns None for rar
+    # (not stdlib-listable), a single member (nothing to disambiguate), the requested
+    # episode being absent, or no unique overlap winner, so the caller falls back to
+    # host-side episode selection.
+    payload = payload or {}
+    if _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body)):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        members = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/")
+            and _subtitle_extension(name)
+            and not name.rsplit("/", 1)[-1].startswith(".")
+        ]
+    if len(members) < 2:
+        return None  # a lone member: the host's episode pick already lands here
+    # Narrow to the requested episode first; the host can already do this, but a pack with
+    # several releases per episode leaves it guessing among the matches.
+    season = _safe_int(payload.get("season"))
+    episode = _safe_int(payload.get("episode"))
+    pool = members
+    if season is not None and episode is not None:
+        episode_pool = [name for name in members if _member_matches_episode(name, season, episode)]
+        if episode_pool:
+            pool = episode_pool
+        elif any(_member_has_episode_marker(name) for name in members):
+            # Episode markers present but none matches the requested one: pinning a member
+            # from another episode would hard-fail the host download, so defer.
+            return None
+    if len(pool) < 2:
+        return None  # a single candidate: host episode selection already lands here
+    # Score by release_info token overlap and avoid forced tracks, then pin only a unique
+    # winner with a positive score. Ties or no overlap mean defer to the host.
+    release_tokens = set(_tokens(payload.get("release_info")))
+    if not release_tokens:
+        return None  # nothing to disambiguate on; let the host pick by episode
+    best, best_score, tied = None, 0, False
+    for name in pool:
+        score = _member_release_score(name, release_tokens)
+        if score > best_score:
+            best, best_score, tied = name, score, False
+        elif score == best_score and best is not None:
+            tied = True
+    if best is None or best_score <= 0 or tied:
+        return None  # cannot confidently disambiguate; let the host pick by episode
+    return best
+
+
+def _member_release_score(name, release_tokens):
+    # Mirror the old select_subtitle_file scoring: overlap count between the release_info
+    # tokens and the member filename tokens, with a heavy penalty for forced tracks so a
+    # forced sidecar never outranks the main subtitle.
+    name_tokens = set(_tokens(name))
+    score = len(release_tokens.intersection(name_tokens))
+    if "forced" in name_tokens:
+        score -= 5
+    return score
+
+
+def _member_matches_episode(name, season, episode):
+    text = (name or "").lower()
+    if re.search(rf"s0*{season}e0*{episode}(?!\d)", text):
+        return True
+    if re.search(rf"(?<!\d){season}x0*{episode}(?!\d)", text):
+        return True
+    # Whole-token NNN form (e.g. S07E20 written as "720"): compare against delimited
+    # tokens so "720" never matches inside "720p" and "264" never matches "x264".
+    compact = f"{season}{episode:02d}"
+    return compact in _tokens(name)
+
+
+def _member_has_episode_marker(name):
+    text = (name or "").lower()
+    if re.search(r"s\d{1,2}e\d{1,3}", text) or re.search(r"(?<!\d)\d{1,2}x\d{1,3}", text):
+        return True
+    return any(token.isdigit() and len(token) == 3 for token in _tokens(name))
 
 
 def _result_from_row(video, row, fps, config):

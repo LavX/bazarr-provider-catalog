@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "968b7f7e73fba8e01917b03d3b1deb372847239f731fdbcfa01bf510ae6ee290",
+  "bundle_sha256": "08f9a9ed3a5d785921041efbcc3b5f3db2ce89308ad39d29f21f22a8f05159c4",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -22,7 +22,7 @@
   "entry_class": "SubtitlestarProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "85ca599c2124aa53dce9b713e4efc002ba71523779d52fd48ce3eaf01c173af2"
+    "provider.py": "641f9f520d947ee46665e733089e908a892a2bdcf60eac9fc6b3ce60f44e40a1"
   },
   "languages": [
     "fas"
@@ -44,5 +44,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.11"
+  "version": "0.1.12"
 }

@@ -630,11 +630,26 @@ def extract_download(body, filename="", video=None):
 
     stream = io.BytesIO(body)
     if zipfile.is_zipfile(stream):
-        # Host-side extraction (Provider Hub v1.1+): list the zip cheaply with stdlib
-        # zipfile to pick the member, then hand the raw archive bytes plus the chosen
-        # member name back to the host, which extracts it and detects the encoding.
         with zipfile.ZipFile(stream) as archive:
-            member = select_subtitle_file(archive.namelist(), video or {})
+            names = archive.namelist()
+            selected = select_subtitle_files(names, video or {})
+            if len(selected) > 1:
+                # A multipart subtitle (CD1/CD2 ...) cannot survive the single-member
+                # host contract: pinning one member would silently drop the other discs.
+                # Concatenate the parts worker-side (stdlib zip listing only) with the
+                # same b"\n\n".join the pre-host worker used, and return direct content.
+                subtitle_format = (
+                    _subtitle_extension(selected[0])
+                    or _format_from_filename(selected[0])
+                )
+                content = b"\n\n".join(archive.read(name) for name in selected)
+                if not content:
+                    return _content_payload(b"", subtitle_format, empty=True)
+                return _content_payload(content, subtitle_format)
+            member = selected[0]
+        # Single-member host-side extraction (Provider Hub v1.1+): the member is the
+        # confident episode/movie pick, so hand the raw archive bytes plus that member
+        # name to the host, which extracts it and detects the encoding.
         return {
             "archive_b64": base64.b64encode(body).decode("ascii"),
             "archive_sha256": hashlib.sha256(body).hexdigest(),

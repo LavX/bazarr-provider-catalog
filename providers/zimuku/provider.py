@@ -304,12 +304,21 @@ def extract_download(body, payload=None):
         raise ValueError("zimuku returned an HTML/error page instead of a subtitle")
     if _is_archive_body(body):
         # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
-        # the host, which lists it, picks the member by episode, and detects encoding.
-        return {
+        # the host, which lists it and detects encoding. A Zimuku archive routinely
+        # bundles several languages (CHS + CHT + ENG) for the same release, which the
+        # host's episode-only pick cannot tell apart, so when we can list a zip we pin
+        # the language-matched member; otherwise (rar, 7z, single language, or no match)
+        # let the host pick the member by episode.
+        archive = {
             "archive_b64": base64.b64encode(body).decode("ascii"),
             "archive_sha256": hashlib.sha256(body).hexdigest(),
-            "episode": payload.get("episode"),
         }
+        member = _select_language_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = payload.get("episode")
+        return archive
     # Direct, non-archive subtitle body.
     return _content_payload(body, _format_from_filename(payload.get("filename")))
 
@@ -982,6 +991,92 @@ def _is_archive_body(body):
         _is_rar_archive(body)
         or _is_7z_archive(body)
         or zipfile.is_zipfile(io.BytesIO(body or b""))
+    )
+
+
+def _select_language_member(body, payload):
+    # Pin the member matching the requested language. Listing only, no extraction or
+    # decoding: the host reads the named member and runs chardet. Returns None for rar
+    # or 7z (not stdlib-listable), a single-language archive, or no language match, so the
+    # caller falls back to host-side episode selection.
+    payload = payload or {}
+    language = _language_code(payload.get("language"))
+    if not language or not zipfile.is_zipfile(io.BytesIO(body or b"")):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        members = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/")
+            and _subtitle_extension(name)
+            and not os.path.basename(name).startswith(".")
+        ]
+    tagged = {name: _language_from_subtitle_filename(name) for name in members}
+    present = {lang for lang in tagged.values() if lang}
+    # Only step in when the archive actually mixes languages and we requested one of them;
+    # a single-language archive leaves nothing for us to disambiguate, so defer to the host.
+    if len(present) < 2 or language not in present:
+        return None
+    pool = [name for name in members if tagged[name] == language]
+    # A season pack carries several episodes per language; the host cannot combine episode
+    # and language, so resolve the episode here as well before pinning a single member.
+    season = _coerce_int(payload.get("season"))
+    episode = _coerce_int(payload.get("episode"))
+    if season is not None and episode is not None:
+        episode_pool = [
+            name
+            for name in pool
+            if _file_matches_episode(_normalize(os.path.basename(name)), season, episode)
+        ]
+        if episode_pool:
+            return episode_pool[0]
+        # Episode markers present but none matches the requested one: defer to the host.
+        if any(_file_has_episode_marker(_normalize(os.path.basename(name))) for name in pool):
+            return None
+    return pool[0] if len(pool) == 1 else None
+
+
+def _language_from_subtitle_filename(name):
+    # Tag a member by the SAME markers _languages_from_row uses to classify a Zimuku row,
+    # so member selection agrees with the row's declared language. Romanized markers are
+    # matched as delimited tokens (so "gb"/"chs"/"cht" can't hit a substring like "webgb"),
+    # and the script characters (简/繁) are unambiguous. "gb" is Zimuku's Simplified-Chinese
+    # (GB encoding) marker, not British English; Zimuku tags English as eng/english/英文.
+    # Bilingual *.CHS.ENG. members are tagged by their Chinese script (checked first) so an
+    # English request does not steal a Chinese-first release.
+    compact = " " + _normalize(os.path.basename(name or "")) + " "
+    if any(token in compact for token in (" cht ", " big5 ")) or any(
+        marker in (name or "") for marker in ("繁", "繁體", "繁体")
+    ):
+        return "zho-TW"
+    if any(token in compact for token in (" chs ", " gb ")) or any(
+        marker in (name or "") for marker in ("简", "簡", "简体", "簡體")
+    ):
+        return "zho-CN"
+    if any(token in compact for token in (" eng ", " english ")) or "英文" in (name or ""):
+        return "eng"
+    return None
+
+
+def _file_matches_episode(normalized_name, season, episode):
+    # _normalize collapses separators to spaces, so compare whole tokens. The bare
+    # "{season}{episode:02d}" form (S01E01 written as "101") is matched against split
+    # tokens; a substring match would read the "720" in "720p" as S07E20.
+    compact = normalized_name.lower()
+    if f"s{season:02d}e{episode:02d}" in compact:
+        return True
+    tokens = compact.split()
+    if f"{season}x{episode:02d}" in tokens or f"{season}x{episode}" in tokens:
+        return True
+    return f"{season}{episode:02d}" in tokens
+
+
+def _file_has_episode_marker(normalized_name):
+    compact = normalized_name.lower()
+    return bool(
+        re.search(r"\bs\d{1,2}e\d{1,3}\b", compact)
+        or re.search(r"\b\d{1,2}x\d{1,3}\b", compact)
+        or any(token.isdigit() and len(token) == 3 for token in compact.split())
     )
 
 

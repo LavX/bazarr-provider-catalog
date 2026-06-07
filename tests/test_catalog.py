@@ -304,6 +304,48 @@ class ArchiveDownloadValidationTests(unittest.TestCase):
                 "x", {"archive_b64": base64.b64encode(raw).decode("ascii"), "archive_sha256": "0" * 64}
             )
 
+    def test_archive_download_rejects_non_archive_payload(self):
+        from sdk import cli as sdk_cli
+
+        # A non-empty, non-zip, non-rar payload (e.g. an HTML error page or bare subtitle
+        # bytes accidentally wrapped in archive_b64) must be rejected, not silently passed.
+        for raw in (
+            b"<html><body>error</body></html>",
+            b"1\n00:00:01,000 --> 00:00:02,000\nDirect subtitle\n",
+        ):
+            with self.assertRaises(sdk_cli.CatalogError):
+                sdk_cli._validate_archive_download(
+                    "x", {"archive_b64": base64.b64encode(raw).decode("ascii")}
+                )
+
+    def test_archive_download_accepts_rar_without_listing(self):
+        from sdk import cli as sdk_cli
+
+        # RAR cannot be listed with the stdlib, so the offline validator accepts the bytes
+        # (the host extracts) as long as they carry the rar signature.
+        raw = b"Rar!\x1a\x07\x00" + b"\x00" * 32
+        sdk_cli._validate_archive_download(
+            "x",
+            {
+                "archive_b64": base64.b64encode(raw).decode("ascii"),
+                "archive_sha256": hashlib.sha256(raw).hexdigest(),
+            },
+        )  # must not raise
+
+    def test_archive_download_accepts_7z_without_listing(self):
+        from sdk import cli as sdk_cli
+
+        # 7z is also a host-supported archive format (many providers hand back .7z bodies);
+        # it is not stdlib-listable, so the validator accepts the signed bytes.
+        raw = b"7z\xbc\xaf\x27\x1c" + b"\x00" * 32
+        sdk_cli._validate_archive_download(
+            "x",
+            {
+                "archive_b64": base64.b64encode(raw).decode("ascii"),
+                "archive_sha256": hashlib.sha256(raw).hexdigest(),
+            },
+        )  # must not raise
+
 
 if __name__ == "__main__":
     unittest.main()

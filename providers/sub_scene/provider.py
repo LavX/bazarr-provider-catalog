@@ -999,20 +999,31 @@ def _download_subtitle(download_url, delay_ms=0, video=None, config=None, state=
     # or HTML/error page (the download endpoint can answer 200 with one) is not an archive
     # and yields no payload, so download() surfaces it as a failure.
     if zipfile.is_zipfile(io.BytesIO(body)):
+        # A multi-part subtitle (CD1/CD2 ...) has to be concatenated, which the single-member
+        # host contract cannot do: a member/episode pick would deliver only one disc. When we
+        # can list the zip and the selection is a multipart set, join those members here and
+        # return direct content so the user gets the whole subtitle. Otherwise pin the single
+        # member; if nothing matches there is no payload and download() surfaces a failure.
+        multipart = _multipart_zip_content(body, video)
+        if multipart is not None:
+            return multipart
         member = _select_zip_member(body, video)
         if not member:
             return None
         return _archive_payload(body, member=member)
+    # RAR/7z are not stdlib-listable (bundling rarfile/py7zz is banned), so a multipart rar
+    # also defers to the host here: hand the raw bytes back with episode and let the host
+    # pick the member by episode.
     if body.startswith(RAR_SIGNATURE) or body.startswith(SEVEN_ZIP_SIGNATURE):
         return _archive_payload(body, episode=(video or {}).get("episode"))
     return None
 
 
-def _select_zip_member(body, video):
-    """List the zip with stdlib and return the single member the provider selects."""
+def _zip_subtitle_members(body):
+    """List the zip with stdlib and return the subtitle members worth selecting."""
     with zipfile.ZipFile(io.BytesIO(body)) as zf:
         archive_names = zf.namelist()
-    subtitle_files = [
+    return [
         name
         for name in archive_names
         if (
@@ -1021,7 +1032,29 @@ def _select_zip_member(body, video):
             and not _is_paired_vobsub_sub(name, archive_names)
         )
     ]
-    return _select_episode_file(subtitle_files, video)
+
+
+def _select_zip_member(body, video):
+    """List the zip with stdlib and return the single member the provider selects."""
+    return _select_episode_file(_zip_subtitle_members(body), video)
+
+
+def _multipart_zip_content(body, video):
+    """Concatenate a CD1/CD2-style multipart subtitle from a zip into one content payload.
+
+    Listing only (no host-banned rar/7z libs). Returns None when the selection is not a
+    multipart set (a single member, no match, or a non-listable archive), so the caller
+    falls back to pinning the single member or deferring to the host.
+    """
+    subtitle_files = _zip_subtitle_members(body)
+    selected = _select_subtitle_files(subtitle_files, video)
+    if len(selected) <= 1:
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as zf:
+        content = b"\n\n".join(zf.read(name) for name in selected)
+    if not content:
+        return None
+    return _content_payload(content, _subtitle_extension(selected[0]) or "srt")
 
 
 def _archive_payload(body, member=None, episode=None):
@@ -1036,6 +1069,32 @@ def _archive_payload(body, member=None, episode=None):
     else:
         payload["episode"] = episode
     return payload
+
+
+def _content_payload(content, subtitle_format):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize. Used for multipart sets
+    # that the single-member host contract cannot reassemble.
+    return {
+        "content_b64": base64.b64encode(content).decode("ascii"),
+        "content_sha256": hashlib.sha256(content).hexdigest(),
+        "content_type": _content_type(subtitle_format),
+        "format": subtitle_format,
+        "empty": False,
+    }
+
+
+def _content_type(subtitle_format):
+    if subtitle_format in {"ass", "ssa"}:
+        return "text/x-ssa"
+    if subtitle_format == "vtt":
+        return "text/vtt"
+    if subtitle_format == "smi":
+        return "application/smil"
+    if subtitle_format == "sub":
+        return "text/plain"
+    return "application/x-subrip"
 
 
 def _coerce_text(value):

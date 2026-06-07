@@ -488,9 +488,10 @@ def _validate_archive_download(provider_id, content):
     """Validate an archive-mode download payload.
 
     Providers may hand the raw archive bytes back to the Bazarr+ host, which extracts
-    the member with its own rarfile/zipfile stack. The SDK validates the shape offline:
-    the bytes must be a real zip or rar (or a bare subtitle stream), and a named member,
-    if given, must exist. Full extraction is exercised host-side on a test server.
+    the member with its own rarfile/zipfile/7z stack. The SDK validates the shape offline:
+    the bytes must be a real zip, rar, or 7z archive (direct subtitle bytes belong in
+    content_b64), and a named member, if given, must exist. Full extraction is exercised
+    host-side on a test server.
     """
     raw = base64.b64decode(content["archive_b64"].encode("ascii"), validate=True)
     expected = content.get("archive_sha256")
@@ -498,12 +499,20 @@ def _validate_archive_download(provider_id, content):
         raise CatalogError(f"{provider_id} download archive_sha256 mismatch")
     stream = io.BytesIO(raw)
     is_rar = raw[:4] == b"Rar!"
+    is_7z = raw[:6] == b"7z\xbc\xaf\x27\x1c"
     names = None
     if zipfile.is_zipfile(stream):
         with zipfile.ZipFile(stream) as archive:
             names = archive.namelist()
-    elif not is_rar and not raw.strip():
-        raise CatalogError(f"{provider_id} download returned an empty archive payload")
+    elif not is_rar and not is_7z:
+        # archive_b64 must be a real zip, rar, or 7z (the formats the host extracts). A
+        # non-archive payload (empty bytes, an HTML/error page, or a bare subtitle stream)
+        # would pass here but fail host-side extraction; direct subtitle bytes belong in
+        # content_b64, not archive_b64. rar/7z are not listable with the stdlib, so they
+        # leave names=None and skip the member/subtitle checks below (the host lists them).
+        raise CatalogError(
+            f"{provider_id} download archive_b64 is not a valid zip, rar, or 7z archive"
+        )
     member = content.get("member")
     if member and names is not None and member not in names:
         raise CatalogError(f"{provider_id} download member is not in the archive: {member}")
