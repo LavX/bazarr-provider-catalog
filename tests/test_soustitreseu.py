@@ -381,6 +381,35 @@ class SoustitreseuProviderTests(unittest.TestCase):
         self.assertNotIn("member", content)
         self.assertEqual(content["episode"], 2)
 
+    def test_download_nxnn_episode_does_not_substring_match(self):
+        # A mixed-language pack whose members use the 1xNN form: a request for episode 2
+        # must NOT pin the "1x20" (episode 20) member via a "1x2" substring; defer instead.
+        provider = self.mod.SoustitreseuProvider()
+        body = _zip_body(
+            {
+                "Game.Of.Thrones.1x20.VF.srt": "fr e20",
+                "Game.Of.Thrones.1x20.VO.srt": "en e20",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        content = provider.download(
+            {
+                "url": "https://www.sous-titres.eu/series/download/x/Game.Of.Thrones.S01.ENFR.zip",
+                "filename": "Game.Of.Thrones.S01.ENFR.zip",
+                "media_type": "series",
+                "season": 1,
+                "episode": 2,
+                "language": "fra",
+                "release_info": "Game.Of.Thrones.S01.ENFR.zip",
+            },
+            {"alpha3": "fra", "alpha2": "fr"},
+            {},
+        )
+
+        self.assertNotIn("member", content)
+        self.assertEqual(content["episode"], 2)
+
     def test_download_does_not_read_resolution_as_episode(self):
         # S07E20 yields episode code "720", which must not match the "720p" resolution in a
         # wrong-episode member. The requested episode is absent, so defer to the host.
