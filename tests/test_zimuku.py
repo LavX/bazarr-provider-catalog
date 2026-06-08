@@ -147,45 +147,40 @@ class ZimukuParserTests(unittest.TestCase):
         self.assertEqual(rows[0]["release_info"], "Dune.2021")
         self.assertEqual(rows[0]["year"], 2021)
 
-    def test_extract_download_returns_zip_archive_mode(self):
+    def test_extract_download_returns_select_member_for_zip(self):
         body = _zip_body()
 
         result = self.mod.extract_download(body, {"filename": "archive.zip", "episode": 1})
 
         self.assertEqual(base64.b64decode(result["archive_b64"]), body)
         self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
-        self.assertEqual(result["episode"], 1)
+        self.assertTrue(result["select_member"])
+        self.assertNotIn("member", result)
+        self.assertNotIn("episode", result)
         self.assertNotIn("content_b64", result)
-        self.assertNotIn("encoding", result)
 
-    def test_extract_download_rejects_rar_archive_to_avoid_wrong_language(self):
-        # Zimuku archives bundle CHS/CHT/ENG; a rar cannot be listed worker-side (stdlib
-        # only) and the host selects members only by episode (no language awareness), so a
-        # rar would let the host return the wrong language. Fail loudly instead.
+    def test_extract_download_returns_select_member_for_rar(self):
+        # rar/7z can't be listed worker-side; the host lists them and calls
+        # select_archive_member, so the worker still language-pins (no blanket reject).
         body = _rar_body()
         self.assertTrue(self.mod._is_rar_archive(body))
 
-        with self.assertRaisesRegex(ValueError, "non-zip"):
-            self.mod.extract_download(
-                body, {"filename": "archive.rar", "episode": 3, "language": "zho-TW"}
-            )
+        result = self.mod.extract_download(
+            body, {"filename": "archive.rar", "episode": 3, "language": "zho-TW"}
+        )
 
-    def test_extract_download_rejects_7z_archive_to_avoid_wrong_language(self):
+        self.assertTrue(result["select_member"])
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+
+    def test_extract_download_returns_select_member_for_7z(self):
         body = _7z_body()
         self.assertTrue(self.mod._is_7z_archive(body))
 
-        with self.assertRaisesRegex(ValueError, "non-zip"):
-            self.mod.extract_download(
-                body, {"filename": "archive.7z", "episode": 5, "language": "eng"}
-            )
+        result = self.mod.extract_download(
+            body, {"filename": "archive.7z", "episode": 5, "language": "eng"}
+        )
 
-    def test_extract_download_carries_no_episode_for_movies(self):
-        body = _zip_body()
-
-        result = self.mod.extract_download(body, {"filename": "archive.zip"})
-
-        self.assertIn("archive_b64", result)
-        self.assertIsNone(result["episode"])
+        self.assertTrue(result["select_member"])
 
     def test_extract_download_direct_subtitle_body_is_content_mode(self):
         body = b"1\n00:00:01,000 --> 00:00:02,000\nhello\n"
@@ -234,76 +229,72 @@ class ZimukuParserTests(unittest.TestCase):
         # A zho-CN request must not pull in traditional rows.
         self.assertFalse(self.mod._requested("zho-TW", {"zho-CN"}))
 
-    def test_extract_download_pins_member_for_requested_language(self):
+    _MIXED = [
+        "__MACOSX/._Dune.2021.chs.srt",
+        "Dune.2021.1080p.WEB-DL.chs.srt",
+        "Dune.2021.1080p.WEB-DL.cht.srt",
+        "Dune.2021.1080p.WEB-DL.eng.srt",
+    ]
+    _PACK = [
+        "Show.S01E01.720p.chs.srt",
+        "Show.S01E02.720p.chs.srt",
+        "Show.S01E01.720p.cht.srt",
+        "Show.S01E02.720p.cht.srt",
+    ]
+
+    def test_pick_archive_member_pins_requested_language(self):
         # A 简繁英 archive mixes languages the host's episode-only pick cannot tell apart;
-        # pin the member matching the requested script instead of deferring to episode.
-        body = _mixed_language_zip_body()
+        # pin the member matching the requested script.
+        self.assertEqual(self.mod._pick_archive_member(self._MIXED, {"language": "zho-TW"}),
+                         ("Dune.2021.1080p.WEB-DL.cht.srt", "pin"))
+        self.assertEqual(self.mod._pick_archive_member(self._MIXED, {"language": "zho-CN"}),
+                         ("Dune.2021.1080p.WEB-DL.chs.srt", "pin"))
+        self.assertEqual(self.mod._pick_archive_member(self._MIXED, {"language": "eng"}),
+                         ("Dune.2021.1080p.WEB-DL.eng.srt", "pin"))
 
-        traditional = self.mod.extract_download(body, {"filename": "dune.zip", "language": "zho-TW"})
-        self.assertEqual(traditional["member"], "Dune.2021.1080p.WEB-DL.cht.srt")
-        self.assertNotIn("episode", traditional)
-
-        simplified = self.mod.extract_download(body, {"filename": "dune.zip", "language": "zho-CN"})
-        self.assertEqual(simplified["member"], "Dune.2021.1080p.WEB-DL.chs.srt")
-
-        english = self.mod.extract_download(body, {"filename": "dune.zip", "language": "eng"})
-        self.assertEqual(english["member"], "Dune.2021.1080p.WEB-DL.eng.srt")
-        # The archive bytes are always handed back unchanged alongside the pin.
-        self.assertEqual(base64.b64decode(english["archive_b64"]), body)
-
-    def test_select_language_member_never_picks_sidecar(self):
+    def test_pick_archive_member_never_picks_sidecar(self):
         # The __MACOSX/._*.srt sidecar tags as zho-CN by its name but must never win.
-        body = _mixed_language_zip_body()
-
-        member = self.mod._select_language_member(body, {"language": "zho-CN"})
-
-        self.assertEqual(member, "Dune.2021.1080p.WEB-DL.chs.srt")
+        member, decision = self.mod._pick_archive_member(self._MIXED, {"language": "zho-CN"})
+        self.assertEqual(decision, "pin")
         self.assertFalse(member.startswith("__MACOSX"))
 
-    def test_extract_download_defers_single_language_archive(self):
-        # Nothing to disambiguate: a single-language archive defers to host episode pick.
-        body = _single_language_zip_body()
+    def test_pick_archive_member_defers_single_language(self):
+        # Nothing to disambiguate: a single-language archive defers to the host episode pick.
+        members = ["Dune.2021.1080p.WEB-DL.chs.srt", "Dune.2021.1080p.WEB-DL.chs.alt.srt"]
+        self.assertEqual(self.mod._pick_archive_member(members, {"language": "zho-CN", "episode": 1}),
+                         (None, "defer"))
 
-        result = self.mod.extract_download(body, {"filename": "dune.zip", "language": "zho-CN", "episode": 1})
+    def test_pick_archive_member_rejects_when_requested_language_absent(self):
+        # Multilingual pack with no English member for an English request: reject (deferring
+        # to the host's episode pick would risk returning a Chinese member).
+        self.assertEqual(self.mod._pick_archive_member(self._PACK, {"language": "eng", "episode": 2}),
+                         (None, "reject"))
 
-        self.assertNotIn("member", result)
-        self.assertEqual(result["episode"], 1)
-
-    def test_extract_download_defers_when_requested_language_absent(self):
-        # The mixed archive carries no English member for an English request; defer.
-        body = _season_pack_zip_body()
-
-        result = self.mod.extract_download(body, {"filename": "show.zip", "language": "eng", "episode": 2})
-
-        self.assertNotIn("member", result)
-        self.assertEqual(result["episode"], 2)
-
-    def test_select_language_member_narrows_season_pack_by_episode(self):
-        # Within a language, a season pack still needs the requested episode pinned, and
-        # the "720" in "720p" must not be misread as an episode marker.
-        body = _season_pack_zip_body()
-
-        member = self.mod._select_language_member(
-            body, {"language": "zho-CN", "season": 1, "episode": 2}
+    def test_pick_archive_member_narrows_season_pack_by_episode(self):
+        # Within a language, a season pack still needs the requested episode pinned, and the
+        # "720" in "720p" must not be misread as an episode marker.
+        self.assertEqual(
+            self.mod._pick_archive_member(self._PACK, {"language": "zho-CN", "season": 1, "episode": 2}),
+            ("Show.S01E02.720p.chs.srt", "pin"),
         )
 
-        self.assertEqual(member, "Show.S01E02.720p.chs.srt")
-
-    def test_select_language_member_defers_when_episode_absent_from_pack(self):
-        # Episode markers exist in the pack but none matches the requested episode:
-        # pinning the wrong one would deliver a wrong-episode subtitle, so defer.
-        body = _season_pack_zip_body()
-
-        member = self.mod._select_language_member(
-            body, {"language": "zho-CN", "season": 1, "episode": 9}
+    def test_pick_archive_member_rejects_when_episode_absent_from_pack(self):
+        # Episode markers exist but none matches: pinning the wrong one (or deferring across
+        # languages) would be wrong, so reject.
+        self.assertEqual(
+            self.mod._pick_archive_member(self._PACK, {"language": "zho-CN", "season": 1, "episode": 9}),
+            (None, "reject"),
         )
 
-        self.assertIsNone(member)
-
-    def test_select_language_member_defers_for_rar_and_7z(self):
-        # rar/7z are not stdlib-listable, so we cannot inspect members; always defer.
-        self.assertIsNone(self.mod._select_language_member(_rar_body(), {"language": "zho-TW"}))
-        self.assertIsNone(self.mod._select_language_member(_7z_body(), {"language": "zho-TW"}))
+    def test_select_archive_member_op_pins_requested_language(self):
+        provider = self.mod.ZimukuProvider()
+        members = [
+            "Dune.2021.1080p.WEB-DL.chs.srt",
+            "Dune.2021.1080p.WEB-DL.cht.srt",
+            "Dune.2021.1080p.WEB-DL.eng.srt",
+        ]
+        result = provider.select_archive_member({"language": "zho-TW"}, {"alpha3": "zho-TW"}, members, {})
+        self.assertEqual(result, {"member": "Dune.2021.1080p.WEB-DL.cht.srt", "decision": "pin"})
 
 
 class ZimukuProviderTests(unittest.TestCase):
@@ -522,12 +513,13 @@ class ZimukuProviderTests(unittest.TestCase):
 
         self.assertEqual(calls[1][1], "https://srtku.com/subtitle/game-of-thrones-s01e01-chs-cht.html")
         self.assertEqual(calls[2][1], "https://srtku.com/subtitle/game-of-thrones-s01e01-chs-cht.html")
-        # Host-side archive mode: the raw zip bytes are handed back. The archive mixes
-        # CHT and CHS&ENG members, so a zho-TW request pins the traditional member
-        # instead of leaving the host to guess by episode alone.
+        # Host-side archive mode: the raw zip bytes are handed back with select_member set.
+        # The host lists the members and calls select_archive_member to language-pin; download()
+        # never names a member or guesses an episode itself.
         self.assertEqual(base64.b64decode(result["archive_b64"]), zip_body)
         self.assertEqual(result["archive_sha256"], hashlib.sha256(zip_body).hexdigest())
-        self.assertEqual(result["member"], "Game.of.Thrones.S01E01.HDTV.XviD-FEVER.cht.ass")
+        self.assertIs(result["select_member"], True)
+        self.assertNotIn("member", result)
         self.assertNotIn("episode", result)
         self.assertNotIn("content_b64", result)
 

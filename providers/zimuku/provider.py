@@ -303,31 +303,14 @@ def extract_download(body, payload=None):
     if _is_html_body(body):
         raise ValueError("zimuku returned an HTML/error page instead of a subtitle")
     if _is_archive_body(body):
-        # Host-side extraction (Provider Hub v1.1+). A Zimuku archive routinely bundles
-        # several languages (CHS + CHT + ENG) for the same release. We can list a ZIP and
-        # pin the language-matched member; a single-language or already-resolved zip is
-        # safe to defer to the host's episode pick.
-        member = _select_language_member(body, payload)
-        if member is not None:
-            return {
-                "archive_b64": base64.b64encode(body).decode("ascii"),
-                "archive_sha256": hashlib.sha256(body).hexdigest(),
-                "member": member,
-            }
-        # A RAR/7z cannot be listed worker-side (stdlib only; rarfile/py7zr/py7zz are
-        # banned), and the host selects archive members only by episode -- it has no
-        # language awareness -- so handing it a multilingual rar/7z would let it return the
-        # wrong language. Fail loudly so Bazarr falls back to another candidate instead of
-        # silently delivering CHS/CHT/ENG that the user did not request.
-        if not zipfile.is_zipfile(io.BytesIO(body)):
-            raise ValueError(
-                "zimuku cannot language-select a non-zip (rar/7z) archive host-side; "
-                "skipping to avoid a wrong-language download"
-            )
+        # Host-side extraction with worker member selection. A Zimuku archive routinely
+        # bundles several languages (CHS + CHT + ENG) for one release; the host lists the
+        # members (zip/rar/7z alike) and calls select_archive_member so we language-pin one
+        # with our own tagging. Works for rar/7z too, which the worker cannot list itself.
         return {
             "archive_b64": base64.b64encode(body).decode("ascii"),
             "archive_sha256": hashlib.sha256(body).hexdigest(),
-            "episode": payload.get("episode"),
+            "select_member": True,
         }
     # Direct, non-archive subtitle body.
     return _content_payload(body, _format_from_filename(payload.get("filename")))
@@ -452,6 +435,14 @@ class ZimukuProvider:
         payload = dict(provider_payload)
         payload.update({"filename": filename, "language": selected_language})
         return extract_download(file_response.content, payload)
+
+    def select_archive_member(self, provider_payload, language, members, config):
+        # Host lists the archive members (zip/rar/7z); we language-pin one with the same
+        # tagging _languages_from_row uses. Returns {member, decision: pin|defer|reject}.
+        payload = dict(provider_payload or {})
+        payload["language"] = provider_payload.get("language") or _language_code(language)
+        member, decision = _pick_archive_member(members, payload)
+        return {"member": member, "decision": decision}
 
     def _result(self, video, item):
         video = video or {}
@@ -1004,32 +995,31 @@ def _is_archive_body(body):
     )
 
 
-def _select_language_member(body, payload):
-    # Pin the member matching the requested language. Listing only, no extraction or
-    # decoding: the host reads the named member and runs chardet. Returns None for rar
-    # or 7z (not stdlib-listable), a single-language archive, or no language match, so the
-    # caller falls back to host-side episode selection.
+def _pick_archive_member(members, payload):
+    # Language-pin one member from host-listed archive names (tri-state pin/defer/reject).
+    # No archive lib needed: the host lists zip/rar/7z and hands us the names. Same tagging
+    # _languages_from_row uses, so selection agrees with the row's declared language.
     payload = payload or {}
     language = _language_code(payload.get("language"))
-    if not language or not zipfile.is_zipfile(io.BytesIO(body or b"")):
-        return None
-    with zipfile.ZipFile(io.BytesIO(body)) as archive:
-        members = [
-            name
-            for name in archive.namelist()
-            if not name.endswith("/")
-            and _subtitle_extension(name)
-            and not os.path.basename(name).startswith(".")
-        ]
-    tagged = {name: _language_from_subtitle_filename(name) for name in members}
+    subs = [
+        name
+        for name in (members or [])
+        if not name.endswith("/")
+        and _subtitle_extension(name)
+        and not os.path.basename(name).startswith(".")
+    ]
+    tagged = {name: _language_from_subtitle_filename(name) for name in subs}
     present = {lang for lang in tagged.values() if lang}
-    # Only step in when the archive actually mixes languages and we requested one of them;
-    # a single-language archive leaves nothing for us to disambiguate, so defer to the host.
-    if len(present) < 2 or language not in present:
-        return None
-    pool = [name for name in members if tagged[name] == language]
-    # A season pack carries several episodes per language; the host cannot combine episode
-    # and language, so resolve the episode here as well before pinning a single member.
+    # Single-language or untagged archive: nothing to disambiguate, so the host's episode
+    # pick is safe. A multilingual archive missing the requested language must NOT defer
+    # (the host would pick another language), so reject and let Bazarr fall back.
+    if not language or len(present) < 2:
+        return None, "defer"
+    if language not in present:
+        return None, "reject"
+    pool = [name for name in subs if tagged[name] == language]
+    # A season pack carries several episodes per language; resolve the episode here too
+    # before pinning, since the host cannot combine episode and language.
     season = _coerce_int(payload.get("season"))
     episode = _coerce_int(payload.get("episode"))
     if season is not None and episode is not None:
@@ -1039,11 +1029,12 @@ def _select_language_member(body, payload):
             if _file_matches_episode(_normalize(os.path.basename(name)), season, episode)
         ]
         if episode_pool:
-            return episode_pool[0]
-        # Episode markers present but none matches the requested one: defer to the host.
+            return episode_pool[0], "pin"
+        # Episode markers present but none matches: can't pin safely in a multilingual
+        # archive (episode-only defer would risk another language), so reject.
         if any(_file_has_episode_marker(_normalize(os.path.basename(name))) for name in pool):
-            return None
-    return pool[0] if len(pool) == 1 else None
+            return None, "reject"
+    return (pool[0], "pin") if len(pool) == 1 else (None, "reject")
 
 
 def _language_from_subtitle_filename(name):
