@@ -3160,7 +3160,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "9f8ed7e7cc074a85fb6d836f58f83092b0843efffed2a6890173cf2782811ad2",
+        "bundle_sha256": "a9fd767d3bfd29914d0ec77b72cbde31240f1852e7640c8fcbb84fe0ac19edcd",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -3182,7 +3182,7 @@
         "entry_class": "SoustitreseuProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "0c9eb496ce0d389ac6df261a6c4a3613a1fd99c58c23c8c2da3b135d34737da8"
+          "provider.py": "a8ebd2bd098e4d91c9c8d97789a8b0c7320f0e2ab434efac8fa2ac2a0be08490"
         },
         "languages": [
           "eng",
@@ -3205,7 +3205,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.9"
+        "version": "0.1.10"
       }
     },
     {
@@ -6942,7 +6942,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "83313f013bbcb4936998569a53583608fc547c5761afaa620d0801b205f3553d",
+        "bundle_sha256": "f6fcf3e40593f949573909d0338fb1b770f712a45740badd0ef15e8edf0ae322",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -6992,7 +6992,7 @@
         "entry_class": "ZimukuProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "8b70a983ddbcbfcca15691e5053ccefb15fda613ba737371c8802607a5391363",
+          "provider.py": "9fc7d121145adaf435a77a8c5f2e3982a3927761a320b0606ada68956d19115f",
           "yunsuo_templates.py": "abad0d629bb24b28c40f7dc5a0257660266e6be449fbd8cda81a044d26c4959d"
         },
         "languages": [
@@ -7021,7 +7021,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.8"
+        "version": "0.1.9"
       }
     }
   ],
