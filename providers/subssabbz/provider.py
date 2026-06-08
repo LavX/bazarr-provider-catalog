@@ -368,6 +368,7 @@ def _select_zip_member(body, payload):
     # not let release tags from another episode win the tie.
     season = _parse_int_value(payload.get("season"))
     episode = _parse_int_value(payload.get("episode"))
+    forced = bool(payload.get("forced"))
     pool = members
     if episode is not None:
         episode_pool = [name for name in members if _member_has_episode(name, season, episode)]
@@ -375,6 +376,16 @@ def _select_zip_member(body, payload):
             # Episode requested but absent from every member: pinning a member from another
             # episode would hard-fail the host download, so defer to host episode selection.
             return None
+        if not forced:
+            # Drop foreign-parts-only members before the single-match shortcut below so a
+            # non-forced request can never be pinned to a forced track. The release scorer
+            # already penalizes them, but the len==1 shortcut returns before scoring runs.
+            non_forced = [name for name in episode_pool if not _member_is_forced(name)]
+            if not non_forced:
+                # Only forced members carry this episode: defer to the host rather than
+                # silently delivering a foreign-parts-only track for a non-forced request.
+                return None
+            episode_pool = non_forced
         if len(episode_pool) == 1:
             # A unique season+episode member. Pin it rather than deferring: the host's
             # episode-only pick could otherwise cross seasons in a pack that repeats the
@@ -385,7 +396,6 @@ def _select_zip_member(body, payload):
         return None  # nothing left to disambiguate; let the host pick by episode
     # Break the tie with the same release_info tokens the pre-migration scorer used.
     release_info = _normalize_release(payload.get("release_info") or payload.get("filename"))
-    forced = bool(payload.get("forced"))
     best, best_score, tied = None, 0, False
     for name in pool:
         score = _member_release_score(name, release_info, forced=forced)

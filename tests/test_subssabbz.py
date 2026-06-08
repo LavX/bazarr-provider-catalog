@@ -742,6 +742,38 @@ class SubsSabBzProviderTests(unittest.TestCase):
 
         self.assertEqual(result.get("member"), "Show.S01E01.720p.WEB.x264-CAKES.forced.srt")
 
+    def test_download_defers_when_only_forced_member_matches_episode(self):
+        provider = self.mod.SubsSabBzProvider()
+        # The requested episode (S01E01) is present only as a forced (foreign-parts-only)
+        # member; the other member is a different episode. The single-episode-match shortcut
+        # must not pin the forced member for a NON-forced request: defer to the host instead.
+        archive = _zip_body(
+            {
+                "Show.S01E01.720p.WEB.x264-CAKES.forced.srt": "forced foreign parts",
+                "Show.S01E02.WEB.srt": "different episode",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: archive
+
+        result = provider.download(
+            {
+                "download_url": "http://subs.sab.bz/index.php?act=download&attach_id=88002",
+                # Not an exact member, so member selection falls to the episode/release logic.
+                "filename": "Show.S01E01.720p.WEB.x264-CAKES.different.srt",
+                "release_info": "Show.S01E01.720p.WEB.x264-CAKES.srt",
+                "season": 1,
+                "episode": 1,
+                "forced": False,
+            },
+            {"alpha3": "bul", "alpha2": "bg"},
+            {},
+        )
+
+        # No member pinned: defer to the host's episode selection rather than silently
+        # delivering the forced track for a non-forced request.
+        self.assertIsNone(result.get("member"))
+        self.assertEqual(result.get("episode"), 1)
+
     def test_member_has_episode_token_matching(self):
         # Delimited SxxExx with optional separators, NxNN, and the contiguous code form.
         self.assertTrue(self.mod._member_has_episode("Show.S01E02.srt", 1, 2))

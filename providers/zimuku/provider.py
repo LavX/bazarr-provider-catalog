@@ -1066,7 +1066,7 @@ def _file_matches_episode(normalized_name, season, episode):
     compact = normalized_name.lower()
     # SxxExx, tolerating the separator _normalize leaves between season and episode
     # (S01.E02 / S01 E02 normalize to "s01 e02"), as well as contiguous S01E02.
-    if re.search(rf"s0*{season}[\s._-]*e0*{episode}(?!\d)", compact):
+    if re.search(rf"(?<![a-z0-9])s0*{season}[\s._-]*e0*{episode}(?!\d)", compact):
         return True
     tokens = compact.split()
     if f"{season}x{episode:02d}" in tokens or f"{season}x{episode}" in tokens:

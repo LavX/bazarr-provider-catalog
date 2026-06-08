@@ -296,6 +296,14 @@ class ZimukuParserTests(unittest.TestCase):
         result = provider.select_archive_member({"language": "zho-TW"}, {"alpha3": "zho-TW"}, members, {})
         self.assertEqual(result, {"member": "Dune.2021.1080p.WEB-DL.cht.srt", "decision": "pin"})
 
+    def test_file_matches_episode_requires_left_boundary(self):
+        # _normalize collapses separators to spaces, so a legitimate SxxExx token is preceded
+        # by a space or start-of-string. A glued token (no left delimiter) must not match,
+        # mirroring the boundary guard the other archive selectors carry.
+        self.assertTrue(self.mod._file_matches_episode("show s01 e02 720p", 1, 2))
+        self.assertTrue(self.mod._file_matches_episode("s01e02", 1, 2))
+        self.assertFalse(self.mod._file_matches_episode("originals1e02", 1, 2))
+
 
 class ZimukuProviderTests(unittest.TestCase):
     def setUp(self):
