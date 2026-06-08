@@ -298,6 +298,61 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "7dfd40e611e8d33ef28ee4228e7998b5cde1204dbd2c6988afab3ac8f310aff6",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "token": {
+              "description": "Assrt API token.",
+              "title": "Token",
+              "type": "string"
+            }
+          },
+          "required": [
+            "token"
+          ],
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Searches the Assrt API for Chinese and English movie and episode subtitles. Requires an Assrt API token.",
+        "entry_class": "AssrtProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "480ad622a848bc27bb438e6ae87bc6cf0974123f7bcd02d834d11a7a00727f7f"
+        },
+        "languages": [
+          "eng",
+          "zho",
+          "zho-CN",
+          "zho-TW"
+        ],
+        "name": "Assrt",
+        "provider_id": "assrt",
+        "schema_version": 1,
+        "secret_fields": [
+          "token"
+        ],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/assrt",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.2"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "b1af93bd8ba6ff0f12883d00ca7c03b2e72ff9661dcb7d597db6e1a5fc62ea42",
         "config_schema": {
           "additionalProperties": false,
