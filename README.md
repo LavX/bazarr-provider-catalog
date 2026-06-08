@@ -29,6 +29,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`gestdown`](providers/gestdown/) | 0.1.0 | Uses the public Gestdown API for episode subtitles by TVDB show id, season, episode, and language. No login or API key. |
 | [`greeksubs`](providers/greeksubs/) | 0.1.0 | Scrapes [GreekSubs](https://greeksubs.net) for Greek movie and episode subtitles by IMDb id. No login or API key. |
 | [`greeksubtitles`](providers/greeksubtitles/) | 0.1.2 | Scrapes [GreekSubtitles](https://gr.greek-subtitles.com) for Greek and English movie and episode subtitles. ZIP and RAR downloads are supported. |
+| [`hdbits`](providers/hdbits/) | 0.1.1 | Uses authenticated [HDBits](https://hdbits.org) JSON APIs for movie and episode subtitles. Requires username and passkey. |
 | [`isubtitles`](providers/isubtitles/) | 0.1.1 | Scrapes [iSubtitles.org](https://isubtitles.org) for movie and episode subtitles in broad multilingual coverage. No login or API key. |
 | [`jimaku`](providers/jimaku/) | 0.1.0 | Uses the [Jimaku](https://jimaku.cc) API for Japanese movie and episode subtitles. Requires API key. |
 | [`kitsunekko`](providers/kitsunekko/) | 0.1.0 | Scrapes [Kitsunekko](https://kitsunekko.net) for anime subtitle directories and ZIP packs. No login or API key. |
@@ -108,6 +109,7 @@ Every provider here ships independently of Bazarr+ releases. [Contribute](#contr
 - `providers/gestdown/`: uses the public Gestdown API for episode subtitles by TVDB id, season, episode, and language.
 - `providers/greeksubs/`: scrapes GreekSubs movie and episode subtitle listings by IMDb id.
 - `providers/greeksubtitles/`: scrapes GreekSubtitles movie and episode search results.
+- `providers/hdbits/`: uses HDBits authenticated JSON APIs for movie and episode subtitles.
 - `providers/isubtitles/`: scrapes iSubtitles movie and episode subtitle pages.
 - `providers/jimaku/`: uses the Jimaku API for Japanese movie and episode subtitles.
 - `providers/kitsunekko/`: scrapes Kitsunekko anime subtitle directories and ZIP packs.
