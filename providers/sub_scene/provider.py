@@ -25,8 +25,8 @@ USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
-DEFAULT_FLARESOLVERR_TIMEOUT_MS = 10000
-MAX_FLARESOLVERR_TIMEOUT_MS = 10000
+DEFAULT_FLARESOLVERR_TIMEOUT_MS = 25000
+MAX_FLARESOLVERR_TIMEOUT_MS = 25000
 CLOUDFLARE_STATUS_CODES = {403, 429, 503}
 CLOUDFLARE_BODY_MARKERS = (
     "just a moment",
@@ -575,7 +575,12 @@ def _flaresolverr_timeout_ms(config):
 
 
 def _flaresolverr_http_timeout_seconds(timeout, timeout_ms):
-    return min(timeout, timeout_ms / 1000)
+    # Wait for FlareSolverr's full solve window (maxTimeout) plus overhead - NOT the much
+    # shorter plain-HTTP `timeout`. A Cloudflare solve routinely takes longer than a normal
+    # request (sub-scene.com's /search is ~13s warm, ~30s cold), so capping the read at
+    # `timeout` abandons FlareSolverr mid-solve. Mirrors turkcealtyaziorg/subs4series.
+    del timeout
+    return timeout_ms / 1000 + 5
 
 
 def _cookie_header(cookies):
