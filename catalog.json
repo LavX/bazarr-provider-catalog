@@ -2764,16 +2764,10 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "0cc380fa377fdab008f09eb89c01210274f30a21b1ef1aff9a4aaf69e7ba1c63",
+        "bundle_sha256": "1796ef151a5368ef89df7a1940241396e68b27fa76f6308f753ed8c84bc047d9",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
-            "api_key": {
-              "description": "Optional. Leave blank to use the built-in Bazarr+ OpenSubtitles.com consumer key (username + password is enough). Only set this to override with your own API consumer key.",
-              "secret": true,
-              "title": "API key (optional)",
-              "type": "string"
-            },
             "include_ai_translated": {
               "default": false,
               "description": "Include API results marked as AI translated.",
@@ -2816,11 +2810,11 @@
         "dependencies": {
           "requirements": []
         },
-        "description": "Uses the official OpenSubtitles.com API for movie and episode subtitles. Requires a username and password; a built-in API key is used by default (optionally override with your own).",
+        "description": "Uses the official OpenSubtitles.com API for movie and episode subtitles. Requires only a username and password; the API key is built in.",
         "entry_class": "OpenSubtitlesComProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "3804bbc9469cf82919170ef509cfa4808a7e61838e37d5cb0e8d0d372b980d54"
+          "provider.py": "39c94dd6b04cc807322d365761da37b44f2ba340558566b608b56743c61efe48"
         },
         "languages": [
           "abk",
@@ -2922,8 +2916,7 @@
         "schema_version": 1,
         "secret_fields": [
           "username",
-          "password",
-          "api_key"
+          "password"
         ],
         "source": {
           "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
@@ -2938,7 +2931,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.6"
+        "version": "0.1.7"
       }
     },
     {

@@ -21,9 +21,10 @@ DEFAULT_HOST = "api.opensubtitles.com"
 # subliminal_patch provider) so login is accepted.
 USER_AGENT = os.environ.get("SZ_USER_AGENT", "Sub-Zero/2")
 # Shared Bazarr-ecosystem OpenSubtitles.com API consumer key - the same built-in key
-# the native (shipped) provider uses (bazarr app/get_providers.py). It means users only
-# need a username + password and never have to register their own API consumer. A
-# user-supplied api_key still overrides this default.
+# the native (shipped) provider uses (bazarr app/get_providers.py). Users only supply a
+# username + password; the API key is intentionally NOT user-configurable (no api_key
+# config field), matching the native provider and avoiding consumer-key confusion (and
+# ignoring any leftover api_key value a user may have pasted before).
 DEFAULT_API_KEY = "s38zmzVlW7IlYruWi7mHwDYl2SfMQoC1"
 HTTP_TIMEOUT_SECONDS = 30
 # Transport-level retry for transient network failures (connection reset, DNS,
@@ -548,7 +549,7 @@ class OpenSubtitlesComProvider:
     def _auth_headers(self, config, include_token=False):
         headers = {
             "Accept": "application/json",
-            "Api-Key": str(config.get("api_key") or DEFAULT_API_KEY),
+            "Api-Key": DEFAULT_API_KEY,
             "Content-Type": "application/json",
             "User-Agent": USER_AGENT,
         }
