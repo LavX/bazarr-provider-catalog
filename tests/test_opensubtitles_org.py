@@ -333,6 +333,40 @@ class AntibotSessionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(session.calls), 2)
 
+    def test_http_get_resolves_cloudflare_then_anubis_in_one_pass(self):
+        # opensubtitles.org layers Cloudflare in front of Anubis: clear CF, then solve the
+        # Anubis gate that appears, all within a single attempt (no retry/backoff needed).
+        session = FakeSession(
+            [
+                FakeResponse(
+                    "https://www.opensubtitles.org/en/search",
+                    status_code=403,
+                    headers={"cf-ray": "abc"},
+                    text="cloudflare",
+                ),
+                FakeResponse(
+                    "https://www.opensubtitles.org/.within.website/?redir=/en/search",
+                    status_code=401,
+                    text='<script id="anubis_challenge">{}</script>',
+                ),
+                FakeResponse("https://www.opensubtitles.org/en/search", status_code=200, text="<html>ok</html>"),
+            ]
+        )
+        provider = self._provider_with_session(session)
+        provider._fallback_to_flaresolverr = lambda url, config: None  # pretend FlareSolverr cleared CF
+
+        solved = []
+
+        def fake_solve(active_session, challenge_url, original_url, timeout):
+            solved.append(challenge_url)
+            return {"techaro.lol-anubis-auth": "ok"}
+
+        self.mod.solve_anubis_challenge = fake_solve
+        response = provider._http_get("https://www.opensubtitles.org/en/search", {})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(session.calls), 3)  # CF fetch + Anubis re-fetch + clear fetch, one attempt
+        self.assertEqual(len(solved), 1)
+
     def test_http_get_raises_after_exhausting_401_retries(self):
         session = FakeSession(
             [FakeResponse("https://www.opensubtitles.org/en/search", status_code=401, text="blocked")] * 3

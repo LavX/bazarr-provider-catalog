@@ -45,6 +45,11 @@ RETRY_BACKOFF_CAP_SECONDS = 8.0
 # request and rate-limits bursts; the embedded proof-of-work solves reliably, so a brief
 # re-solve recovers the block instead of losing the whole search on the first 401.
 CHALLENGE_RETRY_ATTEMPTS = 3
+# opensubtitles.org stacks Cloudflare in FRONT of Anubis, so a single fetch can surface a
+# CF gate, then an Anubis gate once CF clears. Resolve whichever gate is present and
+# re-fetch this many rounds within one attempt so a CF->Anubis (or Anubis->CF) chain
+# clears in a single pass instead of leaning on the per-attempt retry.
+CHALLENGE_GATE_ROUNDS = 3
 _RETRYABLE_TRANSPORT_ERRORS = (
     urllib.error.URLError,
     socket.timeout,
@@ -1287,19 +1292,26 @@ class OpenSubtitlesOrgProvider:
         last_status = None
         for attempt in range(1, CHALLENGE_RETRY_ATTEMPTS + 1):
             response = self._session_get(session, url, timeout)
-            challenge_url = getattr(response, "url", "") or url
-            if is_anubis_challenge(challenge_url, getattr(response, "status_code", 0)) or _extract_anubis_challenge(
-                _response_text(response)
-            ):
-                solved = solve_anubis_challenge(session, challenge_url, url, timeout=timeout)
-                if not solved:
-                    raise ServiceUnavailable("OpenSubtitles.org Anubis challenge could not be solved")
-                response = session.get(url, timeout=timeout, allow_redirects=True)
-            if _is_cloudflare_challenge(response):
-                self._fallback_to_flaresolverr(url, config)
-                response = session.get(url, timeout=timeout, allow_redirects=True)
+            # Resolve layered anti-bot gates (Cloudflare in front of Anubis): solve whichever
+            # gate the current response shows and re-fetch, a few rounds, so a CF->Anubis
+            # chain clears in this pass rather than waiting for the next retry attempt.
+            for _ in range(CHALLENGE_GATE_ROUNDS):
+                challenge_url = getattr(response, "url", "") or url
+                if is_anubis_challenge(challenge_url, getattr(response, "status_code", 0)) or _extract_anubis_challenge(
+                    _response_text(response)
+                ):
+                    solved = solve_anubis_challenge(session, challenge_url, url, timeout=timeout)
+                    if not solved:
+                        raise ServiceUnavailable("OpenSubtitles.org Anubis challenge could not be solved")
+                    response = session.get(url, timeout=timeout, allow_redirects=True)
+                    continue
                 if _is_cloudflare_challenge(response):
-                    raise ServiceUnavailable("OpenSubtitles.org Cloudflare challenge remained after FlareSolverr fallback")
+                    self._fallback_to_flaresolverr(url, config)
+                    response = session.get(url, timeout=timeout, allow_redirects=True)
+                    if _is_cloudflare_challenge(response):
+                        raise ServiceUnavailable("OpenSubtitles.org Cloudflare challenge remained after FlareSolverr fallback")
+                    continue
+                break
             status = getattr(response, "status_code", 200)
             if status == 429:
                 raise RateLimited("OpenSubtitles.org rate limited the request")
