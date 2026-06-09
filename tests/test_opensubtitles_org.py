@@ -309,6 +309,39 @@ class AntibotSessionTests(unittest.TestCase):
         self.assertEqual(created[0]["interpreter"], "native")
         self.assertFalse(created[0]["enable_cookie_persistence"])
 
+    def _provider_with_session(self, session):
+        class FakeCloudscraper:
+            @staticmethod
+            def create_scraper(**kwargs):
+                return session
+
+        self.mod.cloudscraper = FakeCloudscraper
+        self.mod._backoff_delay = lambda attempt: 0  # keep the retry backoff instant in tests
+        return self.mod.OpenSubtitlesOrgProvider()
+
+    def test_http_get_retries_transient_401_then_succeeds(self):
+        # A bare 401 (no Anubis redirect) is a transient anti-bot rate-limit block; the
+        # provider should re-solve a fresh challenge rather than fail the whole search.
+        session = FakeSession(
+            [
+                FakeResponse("https://www.opensubtitles.org/en/search", status_code=401, text="blocked"),
+                FakeResponse("https://www.opensubtitles.org/en/search", status_code=200, text="<html>ok</html>"),
+            ]
+        )
+        provider = self._provider_with_session(session)
+        response = provider._http_get("https://www.opensubtitles.org/en/search", {})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(session.calls), 2)
+
+    def test_http_get_raises_after_exhausting_401_retries(self):
+        session = FakeSession(
+            [FakeResponse("https://www.opensubtitles.org/en/search", status_code=401, text="blocked")] * 3
+        )
+        provider = self._provider_with_session(session)
+        with self.assertRaises(self.mod.ServiceUnavailable):
+            provider._http_get("https://www.opensubtitles.org/en/search", {})
+        self.assertEqual(len(session.calls), self.mod.CHALLENGE_RETRY_ATTEMPTS)
+
     def test_get_session_retries_without_cookie_persistence_for_legacy_cloudscraper(self):
         session = FakeSession([])
         created = []

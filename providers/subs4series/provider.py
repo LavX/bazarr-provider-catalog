@@ -359,19 +359,39 @@ class Subs4SeriesProvider:
         if not detail_url:
             raise ValueError("subs4series detail_url missing from provider payload")
         _sleep(config)
-        page_body = self._http_get(detail_url, referer=provider_payload.get("page_link"), config=config)
-        target = parse_download_target(page_body)
-        data = {"my_recaptcha_challenge_field": "manual_challenge"}
-        if target["captcha_required"]:
-            captcha_response = self._captcha_response(target["site_key"], detail_url, config)
-            if not captcha_response:
-                raise ValueError("subs4series captcha response required")
-            data["g-recaptcha-response"] = captcha_response
-            data["recaptcha_response"] = captcha_response
+        detail_body = self._http_get(detail_url, referer=provider_payload.get("page_link"), config=config)
+        detail_text = _decode(detail_body)
+        # The detail page only links to the getSub page; the reCAPTCHA gate (and the real
+        # POST form) live on that getSub page, not here.
+        first_link = _direct_download_target(detail_text) or _form_download_target(detail_text)
+        if not first_link:
+            raise ValueError("subs4series download link not found on detail page")
+        getsub_url = _absolute_url(first_link)
         self._apply_anti_block(detail_url, config)
         _sleep(config)
+        gate_body = self._http_get(getsub_url, referer=detail_url, config=config)
+        # Some subtitles download straight from the getSub page with no captcha gate.
+        if _is_archive_body(gate_body):
+            return extract_download(gate_body, provider_payload)
+        gate_text = _decode(gate_body)
+        site_key = _captcha_site_key(gate_text)
+        captcha_required = bool(site_key or "g-recaptcha" in gate_text or "grecaptcha" in gate_text)
+        form_action = _form_download_target(gate_text) or _direct_download_target(gate_text)
+        post_url = _absolute_url(form_action) if form_action else getsub_url
+        data = {"my_recaptcha_challenge_field": "manual_challenge"}
+        if captcha_required:
+            captcha_response = self._captcha_response(site_key, getsub_url, config)
+            if not captcha_response:
+                raise ValueError(
+                    "subs4series requires a captcha solver: the download page is gated by reCAPTCHA. "
+                    "Set captcha_solver_url (+ optional captcha_solver_token) or captcha_response in the "
+                    "provider config."
+                )
+            data["g-recaptcha-response"] = captcha_response
+            data["recaptcha_response"] = captcha_response
+        _sleep(config)
         try:
-            download_body = self._http_post(target["url"], data, referer=detail_url)
+            download_body = self._http_post(post_url, data, referer=getsub_url)
         except urllib.error.HTTPError as error:
             if error.code == 403:
                 raise RuntimeError("subs4series captcha expired waiting to be solved") from error

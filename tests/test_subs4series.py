@@ -27,6 +27,15 @@ EPISODE_HTML = (FIXTURE_DIR / "subs4series_episode_game_of_thrones_s01e01.html")
 DIRECT_DOWNLOAD_HTML = (FIXTURE_DIR / "subs4series_download_page_direct.html").read_bytes()
 CAPTCHA_DOWNLOAD_HTML = (FIXTURE_DIR / "subs4series_download_page_captcha.html").read_bytes()
 
+# Two-step getSub flow: the detail page only links to the getSub page; the reCAPTCHA gate
+# and the real POST form live on that getSub page (not on the detail page).
+DETAIL_PAGE_HTML = b'<html><body><a class="style55ws" href="/getSub-first.html">Download</a></body></html>'
+DIRECT_GETSUB_HTML = (
+    b'<html><body><form method="post" action="/getSub-final.html"><input type="submit"></form></body></html>'
+)
+DETAIL_URL = "https://www.subs4series.com/greek-subtitles/s277e869f4/game-of-thrones"
+GETSUB_FIRST_URL = "https://www.subs4series.com/getSub-first.html"
+
 
 def _zip_body():
     stream = io.BytesIO()
@@ -365,7 +374,9 @@ class Subs4SeriesProviderTests(unittest.TestCase):
             [],
         )
 
-    def test_download_posts_direct_target_after_anti_block_requests(self):
+    def test_download_fetches_getsub_page_then_posts_form_action(self):
+        # The detail page only links to the getSub page; the provider must fetch that page
+        # (after the anti-block GETs) and POST the form action found there, not the detail link.
         provider = self.mod.Subs4SeriesProvider()
         seen_gets = []
         posts = []
@@ -373,8 +384,10 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         def get_stub(url, timeout=15, referer=None, config=None):
             del timeout, config
             seen_gets.append((url, referer))
-            if url == "https://www.subs4series.com/english-subtitles/sb6a7a0c63b/game-of-thrones":
-                return DIRECT_DOWNLOAD_HTML
+            if url == DETAIL_URL:
+                return DETAIL_PAGE_HTML
+            if url == GETSUB_FIRST_URL:
+                return DIRECT_GETSUB_HTML
             if "anti-block" in url:
                 return b"ok"
             raise AssertionError(f"unexpected GET: {url}")
@@ -388,20 +401,23 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         provider._http_post = post_stub
         result = provider.download(
             {
-                "detail_url": "https://www.subs4series.com/english-subtitles/sb6a7a0c63b/game-of-thrones",
+                "detail_url": DETAIL_URL,
                 "page_link": "https://www.subs4series.com/tv-series/game-of-thrones/s8985ffc551/season-1/episode-1",
-                "filename": "Game.of.Thrones.S01E01.HDTV.XviD-FEVER.en.zip",
+                "filename": "Game.of.Thrones.S01E01.HDTV.XviD-FEVER.el.zip",
                 "season": 1,
                 "episode": 1,
             },
-            {"alpha3": "eng", "alpha2": "en"},
+            {"alpha3": "ell", "alpha2": "el"},
             {"request_delay_ms": 0},
         )
 
-        self.assertEqual(posts[0][0], "https://www.subs4series.com/getSub-direct-token.html")
-        self.assertEqual(posts[0][1]["my_recaptcha_challenge_field"], "manual_challenge")
-        self.assertEqual(posts[0][2], "https://www.subs4series.com/english-subtitles/sb6a7a0c63b/game-of-thrones")
+        # the getSub page was fetched, and the anti-block GETs ran before it
+        self.assertIn(GETSUB_FIRST_URL, [g[0] for g in seen_gets])
         self.assertTrue(any("anti-block-layover.php" in item[0] for item in seen_gets))
+        # POST went to the form action on the getSub page, refered from the getSub page
+        self.assertEqual(posts[0][0], "https://www.subs4series.com/getSub-final.html")
+        self.assertEqual(posts[0][1]["my_recaptcha_challenge_field"], "manual_challenge")
+        self.assertEqual(posts[0][2], GETSUB_FIRST_URL)
         # Archive mode: the worker forwards the raw zip and carries episode for the host.
         body = _zip_body()
         self.assertEqual(base64.b64decode(result["archive_b64"]), body)
@@ -411,12 +427,15 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         self.assertNotIn("encoding", result)
 
     def test_download_posts_captcha_response_when_required(self):
+        # reCAPTCHA lives on the getSub page: solve it there and POST that page's form action.
         provider = self.mod.Subs4SeriesProvider()
         posts = []
 
         def get_stub(url, timeout=15, referer=None, config=None):
             del timeout, referer, config
-            if url == "https://www.subs4series.com/greek-subtitles/s277e869f4/game-of-thrones":
+            if url == DETAIL_URL:
+                return DETAIL_PAGE_HTML
+            if url == GETSUB_FIRST_URL:
                 return CAPTCHA_DOWNLOAD_HTML
             if "anti-block" in url:
                 return b"ok"
@@ -431,7 +450,7 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         provider._http_post = post_stub
         result = provider.download(
             {
-                "detail_url": "https://www.subs4series.com/greek-subtitles/s277e869f4/game-of-thrones",
+                "detail_url": DETAIL_URL,
                 "page_link": "https://www.subs4series.com/tv-series/game-of-thrones/s8985ffc551/season-1/episode-1",
                 "filename": "Game.of.Thrones.S01E01.HDTV.XviD-FEVER.el.zip",
                 "season": 1,
@@ -449,12 +468,23 @@ class Subs4SeriesProviderTests(unittest.TestCase):
 
     def test_download_requires_captcha_solution_when_page_has_recaptcha(self):
         provider = self.mod.Subs4SeriesProvider()
-        provider._http_get = lambda url, timeout=15, referer=None, config=None: CAPTCHA_DOWNLOAD_HTML
+
+        def get_stub(url, timeout=15, referer=None, config=None):
+            del timeout, referer, config
+            if url == DETAIL_URL:
+                return DETAIL_PAGE_HTML
+            if url == GETSUB_FIRST_URL:
+                return CAPTCHA_DOWNLOAD_HTML
+            if "anti-block" in url:
+                return b"ok"
+            raise AssertionError(f"unexpected GET: {url}")
+
+        provider._http_get = get_stub
 
         with self.assertRaisesRegex(ValueError, "captcha"):
             provider.download(
                 {
-                    "detail_url": "https://www.subs4series.com/greek-subtitles/s277e869f4/game-of-thrones",
+                    "detail_url": DETAIL_URL,
                     "page_link": "https://www.subs4series.com/tv-series/game-of-thrones/s8985ffc551/season-1/episode-1",
                     "filename": "Game.of.Thrones.S01E01.HDTV.XviD-FEVER.el.zip",
                 },

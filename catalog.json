@@ -1987,7 +1987,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "2237864bc9c6acad02df53c9ce2a6801c5d4c8f17fe25a22d20b68076f651d84",
+        "bundle_sha256": "b02e98f7101abc030dfd2b1ad75f38d8d0bb4122b7d0ff72b0b526b314a2fa8a",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -2316,7 +2316,7 @@
         "entry_class": "OpenSubtitlesOrgProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "b95316cd114c6cc41769811c96c0b607016ef3f7a14b982a0caa386391cb621c"
+          "provider.py": "d6f609a15fed5395c814aa81cc90750f3cb4deb39974953f79d11a1e9a61c361"
         },
         "languages": [
           "aar",
@@ -2758,7 +2758,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.7"
+        "version": "0.1.8"
       }
     },
     {
@@ -4001,7 +4001,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "408fb866b3f2f1d2bc808c0c22f35282065644a0a8a0974bee6582e0a8dd8cb9",
+        "bundle_sha256": "0d67ada10fdf553269d15539246c039cf51f0a33b0f73abf24b262d78779f5a5",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -4334,7 +4334,7 @@
         "entry_class": "Subs4SeriesProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "004a881933589e2d7cbea60b6c430189d776f994f581dee2eb74d5d6d742b791"
+          "provider.py": "a29f744b266646a305223215d4af1b28676985784a401633b9224afee0e74aab"
         },
         "languages": [
           "ell",
@@ -4359,7 +4359,7 @@
         "supported_media": [
           "episode"
         ],
-        "version": "0.1.6"
+        "version": "0.1.7"
       }
     },
     {
