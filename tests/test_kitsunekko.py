@@ -33,7 +33,7 @@ class KitsunekkoParserTests(unittest.TestCase):
     def test_parse_index_directories_extracts_titles_and_urls(self):
         rows = self.mod.parse_index_directories(INDEX_HTML)
         self.assertEqual(rows[0]["title"], "Akira")
-        self.assertEqual(rows[0]["url"], "https://kitsunekko.net/dirlst.php?dir=subtitles%2FAkira%2F")
+        self.assertEqual(rows[0]["url"], "https://kitsunekko.net/dirlist.php?dir=subtitles%2FAkira%2F")
         self.assertEqual(rows[1]["title"], "Cowboy Bebop")
 
     def test_parse_file_listing_extracts_supported_files(self):
@@ -56,8 +56,8 @@ class KitsunekkoProviderSearchTests(unittest.TestCase):
     def test_search_returns_episode_archive_candidate(self):
         provider = self.mod.KitsunekkoProvider()
         responses = {
-            "https://kitsunekko.net/dirlst.php?dir=subtitles%2F": INDEX_HTML,
-            "https://kitsunekko.net/dirlst.php?dir=subtitles%2FCowboy+Bebop%2F": COWBOY_HTML,
+            "https://kitsunekko.net/dirlist.php?dir=subtitles%2F": INDEX_HTML,
+            "https://kitsunekko.net/dirlist.php?dir=subtitles%2FCowboy+Bebop%2F": COWBOY_HTML,
         }
         called = []
 
@@ -87,8 +87,8 @@ class KitsunekkoProviderSearchTests(unittest.TestCase):
     def test_search_returns_movie_candidate(self):
         provider = self.mod.KitsunekkoProvider()
         responses = {
-            "https://kitsunekko.net/dirlst.php?dir=subtitles%2F": INDEX_HTML,
-            "https://kitsunekko.net/dirlst.php?dir=subtitles%2FAkira%2F": AKIRA_HTML,
+            "https://kitsunekko.net/dirlist.php?dir=subtitles%2F": INDEX_HTML,
+            "https://kitsunekko.net/dirlist.php?dir=subtitles%2FAkira%2F": AKIRA_HTML,
         }
 
         def stub(url, timeout=15, referer=None):
