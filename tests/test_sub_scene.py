@@ -1007,8 +1007,11 @@ class TestCloudflareHttp(unittest.TestCase):
         self.assertEqual(request.full_url, "http://flaresolverr:8191/v1")
         payload = json.loads(request.data.decode("utf-8"))
         self.assertEqual(payload["cmd"], "request.get")
-        self.assertEqual(payload["maxTimeout"], 10000)
-        self.assertEqual(urlopen.call_args.kwargs["timeout"], 10)
+        # 45000 requested is capped to MAX_FLARESOLVERR_TIMEOUT_MS (25000, below the
+        # Provider Hub worker deadline). The HTTP read waits the full window + 5s overhead
+        # so FlareSolverr is never abandoned mid-solve (sub-scene's challenge is ~13-30s).
+        self.assertEqual(payload["maxTimeout"], 25000)
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], 30)
         self.assertEqual(state["flaresolverr_cookies"]["cf_clearance"], "token")
         self.assertEqual(state["flaresolverr_user_agent"], "Mozilla/5.0 solved")
 

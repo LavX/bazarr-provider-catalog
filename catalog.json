@@ -1987,7 +1987,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "2237864bc9c6acad02df53c9ce2a6801c5d4c8f17fe25a22d20b68076f651d84",
+        "bundle_sha256": "1a09ddae15889241c0747701b329c3c777a0a7ed50238a607126f497e08b7d5b",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -2316,7 +2316,7 @@
         "entry_class": "OpenSubtitlesOrgProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "b95316cd114c6cc41769811c96c0b607016ef3f7a14b982a0caa386391cb621c"
+          "provider.py": "ef41e2f6caf036b421410d6e5ee0c9829b1f67f76029cbfd9d45c73bc6bc05b1"
         },
         "languages": [
           "aar",
@@ -2758,22 +2758,16 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.7"
+        "version": "0.1.8"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "0cc380fa377fdab008f09eb89c01210274f30a21b1ef1aff9a4aaf69e7ba1c63",
+        "bundle_sha256": "1796ef151a5368ef89df7a1940241396e68b27fa76f6308f753ed8c84bc047d9",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
-            "api_key": {
-              "description": "Optional. Leave blank to use the built-in Bazarr+ OpenSubtitles.com consumer key (username + password is enough). Only set this to override with your own API consumer key.",
-              "secret": true,
-              "title": "API key (optional)",
-              "type": "string"
-            },
             "include_ai_translated": {
               "default": false,
               "description": "Include API results marked as AI translated.",
@@ -2816,11 +2810,11 @@
         "dependencies": {
           "requirements": []
         },
-        "description": "Uses the official OpenSubtitles.com API for movie and episode subtitles. Requires a username and password; a built-in API key is used by default (optionally override with your own).",
+        "description": "Uses the official OpenSubtitles.com API for movie and episode subtitles. Requires only a username and password; the API key is built in.",
         "entry_class": "OpenSubtitlesComProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "3804bbc9469cf82919170ef509cfa4808a7e61838e37d5cb0e8d0d372b980d54"
+          "provider.py": "39c94dd6b04cc807322d365761da37b44f2ba340558566b608b56743c61efe48"
         },
         "languages": [
           "abk",
@@ -2922,8 +2916,7 @@
         "schema_version": 1,
         "secret_fields": [
           "username",
-          "password",
-          "api_key"
+          "password"
         ],
         "source": {
           "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
@@ -2938,7 +2931,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.6"
+        "version": "0.1.7"
       }
     },
     {
@@ -3209,14 +3202,14 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "07cd46e7d4b45bdb2e6822ece9e428e01414af4f9eed5915fbafdc328f877330",
+        "bundle_sha256": "7aa8e8da75fc2f3ba79731e5e335c07d492b68e753e83e876545b65dcff89189",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
             "flaresolverr_timeout_ms": {
-              "default": 10000,
+              "default": 25000,
               "description": "Maximum time FlareSolverr may spend solving a Cloudflare challenge. Capped below the Provider Hub worker deadline.",
-              "maximum": 10000,
+              "maximum": 25000,
               "minimum": 5000,
               "title": "FlareSolverr timeout (ms)",
               "type": "integer"
@@ -3514,7 +3507,7 @@
         "entry_class": "SubSceneProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "74df12471bce1b2b67aedbc69b40b89ecb0ab8427c8a55c285b9e10c5d39e956"
+          "provider.py": "9f6c9352c93cf5e986d571fcbf6e4eaf114260daf631821a3ceb08774c62ba20"
         },
         "languages": [
           "ara",
@@ -3571,7 +3564,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.16"
+        "version": "0.1.17"
       }
     },
     {
@@ -4008,7 +4001,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "408fb866b3f2f1d2bc808c0c22f35282065644a0a8a0974bee6582e0a8dd8cb9",
+        "bundle_sha256": "0d67ada10fdf553269d15539246c039cf51f0a33b0f73abf24b262d78779f5a5",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -4341,7 +4334,7 @@
         "entry_class": "Subs4SeriesProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "004a881933589e2d7cbea60b6c430189d776f994f581dee2eb74d5d6d742b791"
+          "provider.py": "a29f744b266646a305223215d4af1b28676985784a401633b9224afee0e74aab"
         },
         "languages": [
           "ell",
@@ -4366,7 +4359,7 @@
         "supported_media": [
           "episode"
         ],
-        "version": "0.1.6"
+        "version": "0.1.7"
       }
     },
     {
