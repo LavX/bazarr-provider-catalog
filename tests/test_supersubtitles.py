@@ -524,6 +524,54 @@ class SuperSubtitlesProviderTests(unittest.TestCase):
         self.assertNotIn("member", result)
         self.assertEqual(result["episode"], 20)
 
+    def test_download_pins_bare_episode_token_member(self):
+        # SuperSubtitles packs often name members with a bare episode token and no season,
+        # e.g. "Show.E05.720p-CAKES.srt". The requested episode must still match so the
+        # release tie-breaker can pin the scored release instead of deferring to the host.
+        archive = _zip_body(
+            {
+                "Show.E05.720p.WEB-CAKES.srt": b"cakes",
+                "Show.E05.1080p.WEB-FLUX.srt": b"flux",
+                "Show.E06.720p.WEB-CAKES.srt": b"e6",
+            }
+        )
+
+        result = self.mod.extract_download(
+            archive,
+            {
+                "filename": "Show.complete.zip",
+                "season": 1,
+                "episode": 5,
+                "release_info": "Show (WEB.720p-CAKES)",
+            },
+        )
+
+        self.assertEqual(result["member"], "Show.E05.720p.WEB-CAKES.srt")
+
+    def test_download_bare_episode_match_skipped_when_season_tokens_present(self):
+        # When members carry season+episode tokens, the bare-eNN fallback must NOT run: a
+        # season-2 request must never pin a same-numbered episode from another season.
+        archive = _zip_body(
+            {
+                "Show.S01E05.720p.WEB-CAKES.srt": b"s1",
+                "Show.S03E05.720p.WEB-CAKES.srt": b"s3",
+            }
+        )
+
+        result = self.mod.extract_download(
+            archive,
+            {
+                "filename": "Show.complete.zip",
+                "season": 2,
+                "episode": 5,
+                "release_info": "Show (WEB.720p-CAKES)",
+            },
+        )
+
+        # No S02E05 member; bare matching is disabled because season tokens exist -> defer.
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 5)
+
     def test_download_does_not_pin_forced_member_for_non_forced_request(self):
         # A non-forced request must never pin a member carrying a delimited "forced" token.
         # The forced member matches the requested release group/resolution/source, so without

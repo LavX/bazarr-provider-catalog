@@ -345,6 +345,12 @@ def _select_zip_member(body, payload):
     pool = members
     if season is not None and episode is not None:
         episode_pool = [name for name in members if _member_has_episode(name, season, episode)]
+        if not episode_pool and not any(_member_has_season_episode_token(name) for name in members):
+            # No SxxExx/NxNN token anywhere: SuperSubtitles packs commonly name members with a
+            # bare episode token (e.g. "Show.E05.720p-CAKES.srt"). Since no member carries a
+            # season+episode token, a bare eNN match is unambiguous (single-season pack) and
+            # lets the release tie-breaker run instead of deferring to a blind host pick.
+            episode_pool = [name for name in members if _member_has_bare_episode(name, episode)]
         if not episode_pool:
             # Episode requested but absent from every member: pinning a member from another
             # episode would hard-fail the host download, so defer to host episode selection.
@@ -379,6 +385,25 @@ def _member_has_episode(name, season, episode):
     return bool(
         re.search(rf"\bs0*{season}[\s._-]*e0*{episode}(?!\d)", text)
         or re.search(rf"(?<!\d){season}x0*{episode}(?!\d)", text)
+    )
+
+
+def _member_has_bare_episode(name, episode):
+    # Bare episode token (E05), used by packs that omit the season, e.g.
+    # "Show.E05.720p-CAKES.srt". Only consulted (see _select_zip_member) when no member
+    # carries a season+episode token, so it cannot cross seasons. The (?!\d) guard keeps
+    # E5 from matching E50, and the \b anchor keeps it from matching the "e" inside SxxEyy.
+    text = _normalize(os.path.basename(name))
+    return bool(re.search(rf"\be0*{episode}(?!\d)", text))
+
+
+def _member_has_season_episode_token(name):
+    # True when a member carries an explicit season+episode token (SxxEyy / NxNN): the pack
+    # names episodes with their season, so a season-blind bare-eNN match would be unsafe.
+    text = _normalize(os.path.basename(name))
+    return bool(
+        re.search(r"\bs0*\d+[\s._-]*e0*\d+(?!\d)", text)
+        or re.search(r"(?<!\d)\d+x0*\d+(?!\d)", text)
     )
 
 
