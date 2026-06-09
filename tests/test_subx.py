@@ -2,11 +2,9 @@ import base64
 import hashlib
 import importlib.util
 import io
-import os
 import unittest
 import zipfile
 from pathlib import Path
-from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "subx"
@@ -25,6 +23,14 @@ def _zip_body(filename, body):
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr(filename, body)
+    return stream.getvalue()
+
+
+def _zip_multi(members):
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, body in members.items():
+            archive.writestr(name, body)
     return stream.getvalue()
 
 
@@ -329,14 +335,31 @@ class SubXProviderDownloadTests(unittest.TestCase):
         self.assertEqual(base64.b64decode(result["content_b64"]), body)
         self.assertEqual(result["content_sha256"], hashlib.sha256(body).hexdigest())
         self.assertEqual(result["format"], "srt")
+        self.assertNotIn("archive_b64", result)
 
-    def test_download_extracts_zip_archive_episode_file(self):
+    def test_download_does_not_guess_encoding_for_direct_body(self):
         provider = self.mod.SubXProvider()
-        body = b"1\n00:00:01,000 --> 00:00:02,000\nHola\n"
-        provider._http_get_bytes = lambda path, api_key, timeout=30: _zip_body(
-            "Breaking.Bad.S03E13.es.srt",
-            body,
+        body = b"1\n00:00:01,000 --> 00:00:02,000\nHol\xe1\n"
+        provider._http_get_bytes = lambda path, api_key, timeout=30: body
+
+        result = provider.download(
+            {
+                "provider": "subx",
+                "schema": 1,
+                "subtitle_id": "sub-1",
+                "download_url": "https://subx-api.duckdns.org/api/subtitles/sub-1/download",
+                "filename": "subx.sub-1.es.srt",
+            },
+            {"alpha3": "spa", "alpha2": "es"},
+            {"api_key": "key-one"},
         )
+
+        self.assertNotIn("encoding", result)
+
+    def test_download_returns_zip_archive_unextracted(self):
+        provider = self.mod.SubXProvider()
+        archive = _zip_body("Breaking.Bad.S03E13.es.srt", b"1\nHola\n")
+        provider._http_get_bytes = lambda path, api_key, timeout=30: archive
 
         result = provider.download(
             {
@@ -351,46 +374,229 @@ class SubXProviderDownloadTests(unittest.TestCase):
             {"api_key": "key-one"},
         )
 
-        self.assertEqual(base64.b64decode(result["content_b64"]), body)
-        self.assertEqual(result["format"], "srt")
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["episode"], 13)
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
 
-    def test_download_extracts_rar_archive_via_bundled_py7zz(self):
+    def test_download_returns_rar_archive_unextracted(self):
         provider = self.mod.SubXProvider()
-        provider._http_get_bytes = lambda path, api_key, timeout=30: b"Rar!\x1a\x07\x00rar body"
-        with mock.patch.object(
-            self.mod,
-            "_extract_rar_files",
-            return_value=[("Breaking.Bad.S03E13.es.srt", b"1\nsubtitle\n")],
-        ) as extractor:
-            result = provider.download(
+        archive = b"Rar!\x1a\x07\x00rar body bytes"
+        provider._http_get_bytes = lambda path, api_key, timeout=30: archive
+
+        result = provider.download(
+            {
+                "provider": "subx",
+                "schema": 1,
+                "subtitle_id": "exact",
+                "download_url": "https://subx-api.duckdns.org/api/subtitles/exact/download",
+                "filename": "subx.exact.es.rar",
+                "episode": 13,
+            },
+            {"alpha3": "spa", "alpha2": "es"},
+            {"api_key": "key-one"},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["episode"], 13)
+        self.assertNotIn("content_b64", result)
+
+    def test_download_archive_carries_none_episode_for_movies(self):
+        provider = self.mod.SubXProvider()
+        archive = _zip_body("Inception.es.srt", b"1\nHola\n")
+        provider._http_get_bytes = lambda path, api_key, timeout=30: archive
+
+        result = provider.download(
+            {
+                "provider": "subx",
+                "schema": 1,
+                "subtitle_id": "movie-1",
+                "download_url": "https://subx-api.duckdns.org/api/subtitles/movie-1/download",
+                "filename": "subx.movie-1.es.zip",
+                "episode": None,
+            },
+            {"alpha3": "spa", "alpha2": "es"},
+            {"api_key": "key-one"},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertIsNone(result["episode"])
+
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.SubXProvider()
+        provider._http_get_bytes = lambda path, api_key, timeout=30: b""
+
+        with self.assertRaises(ValueError):
+            provider.download(
                 {
                     "provider": "subx",
                     "schema": 1,
-                    "subtitle_id": "exact",
-                    "download_url": "https://subx-api.duckdns.org/api/subtitles/exact/download",
-                    "filename": "subx.exact.es.rar",
-                    "episode": 13,
+                    "subtitle_id": "sub-1",
+                    "download_url": "https://subx-api.duckdns.org/api/subtitles/sub-1/download",
+                    "filename": "subx.sub-1.es.srt",
                 },
                 {"alpha3": "spa", "alpha2": "es"},
                 {"api_key": "key-one"},
             )
 
-        extractor.assert_called_once()
-        self.assertEqual(base64.b64decode(result["content_b64"]), b"1\nsubtitle\n")
-        self.assertEqual(result["format"], "srt")
 
-    def test_rar_extraction_prefers_bundled_py7zz(self):
-        class FakePy7zz:
-            @staticmethod
-            def extract_archive(_archive_path, output_dir):
-                with open(os.path.join(output_dir, "episode.srt"), "wb") as handle:
-                    handle.write(b"subtitle")
+class SubXSeasonPackMemberTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
 
-        with mock.patch.object(self.mod, "py7zz", FakePy7zz):
-            self.assertEqual(
-                self.mod._extract_rar_files(b"rar bytes"),
-                [("episode.srt", b"subtitle")],
-            )
+    def _download_pack(self, archive, season, episode):
+        provider = self.mod.SubXProvider()
+        provider._http_get_bytes = lambda path, api_key, timeout=30: archive
+        return provider.download(
+            {
+                "provider": "subx",
+                "schema": 1,
+                "subtitle_id": "pack",
+                "download_url": "https://subx-api.duckdns.org/api/subtitles/pack/download",
+                "filename": "subx.pack.es.zip",
+                "season": season,
+                "episode": episode,
+                "season_pack": True,
+            },
+            {"alpha3": "spa", "alpha2": "es"},
+            {"api_key": "key-one"},
+        )
+
+    def test_pins_unique_member_for_requested_season_and_episode(self):
+        archive = _zip_multi(
+            {
+                "Breaking.Bad.S03E12.es.srt": b"1\nDoce\n",
+                "Breaking.Bad.S03E13.es.srt": b"1\nTrece\n",
+                "Breaking.Bad.S03E14.es.srt": b"1\nCatorce\n",
+            }
+        )
+        result = self._download_pack(archive, season=3, episode=13)
+        self.assertEqual(result["member"], "Breaking.Bad.S03E13.es.srt")
+        self.assertNotIn("episode", result)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+
+    def test_pins_member_with_separated_season_episode_token(self):
+        archive = _zip_multi(
+            {
+                "Show.S02.E04.castellano.srt": b"1\nCuatro\n",
+                "Show.S02.E05.castellano.srt": b"1\nCinco\n",
+            }
+        )
+        result = self._download_pack(archive, season=2, episode=5)
+        self.assertEqual(result["member"], "Show.S02.E05.castellano.srt")
+        self.assertNotIn("episode", result)
+
+    def test_pins_member_with_nxnn_token(self):
+        archive = _zip_multi(
+            {
+                "Serie 1x02 latino.srt": b"1\nDos\n",
+                "Serie 1x03 latino.srt": b"1\nTres\n",
+            }
+        )
+        result = self._download_pack(archive, season=1, episode=2)
+        self.assertEqual(result["member"], "Serie 1x02 latino.srt")
+
+    def test_defers_when_requested_episode_absent_from_pack(self):
+        archive = _zip_multi(
+            {
+                "Breaking.Bad.S03E12.es.srt": b"1\nDoce\n",
+                "Breaking.Bad.S03E14.es.srt": b"1\nCatorce\n",
+            }
+        )
+        result = self._download_pack(archive, season=3, episode=13)
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 13)
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+
+    def test_does_not_pin_wrong_season_with_same_episode_number(self):
+        archive = _zip_multi(
+            {
+                "Show.S01E05.es.srt": b"1\nUno\n",
+                "Show.S02E05.es.srt": b"1\nDos\n",
+            }
+        )
+        result = self._download_pack(archive, season=2, episode=5)
+        self.assertEqual(result["member"], "Show.S02E05.es.srt")
+
+    def test_excludes_macosx_sidecar_members(self):
+        archive = _zip_multi(
+            {
+                "__MACOSX/._Show.S01E02.es.srt": b"junk",
+                "Show.S01E02.es.srt": b"1\nDos\n",
+            }
+        )
+        result = self._download_pack(archive, season=1, episode=2)
+        self.assertEqual(result["member"], "Show.S01E02.es.srt")
+
+    def test_three_digit_episode_code_does_not_match_resolution(self):
+        # S07E20 -> bare token "720" must not match the "720p" resolution tag.
+        archive = _zip_multi(
+            {
+                "Show.720p.WEB.S07E20.es.srt": b"1\nVeinte\n",
+                "Show.720p.WEB.S07E21.es.srt": b"1\nVeintiuno\n",
+            }
+        )
+        result = self._download_pack(archive, season=7, episode=20)
+        self.assertEqual(result["member"], "Show.720p.WEB.S07E20.es.srt")
+
+    def test_defers_when_season_missing_from_payload(self):
+        archive = _zip_multi(
+            {
+                "Show.S01E02.es.srt": b"1\nDos\n",
+                "Show.S01E03.es.srt": b"1\nTres\n",
+            }
+        )
+        provider = self.mod.SubXProvider()
+        provider._http_get_bytes = lambda path, api_key, timeout=30: archive
+        result = provider.download(
+            {
+                "provider": "subx",
+                "schema": 1,
+                "subtitle_id": "pack",
+                "download_url": "https://subx-api.duckdns.org/api/subtitles/pack/download",
+                "filename": "subx.pack.es.zip",
+                "episode": 2,
+            },
+            {"alpha3": "spa", "alpha2": "es"},
+            {"api_key": "key-one"},
+        )
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 2)
+
+    def test_rar_pack_defers_to_host_episode_selection(self):
+        archive = b"Rar!\x1a\x07\x00rar season pack bytes"
+        result = self._download_pack(archive, season=3, episode=13)
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 13)
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+
+
+class SubXMemberHasEpisodeTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_matches_whole_token_season_episode_form(self):
+        # "101" stands for S01E01 only when delimited.
+        self.assertTrue(self.mod._member_has_episode("Show 101 latino.srt", 1, 1))
+        self.assertFalse(self.mod._member_has_episode("Show 1010 latino.srt", 1, 1))
+
+    def test_bare_token_does_not_match_resolution(self):
+        # S07E20 -> "720" must not match the "720p" resolution tag.
+        self.assertFalse(self.mod._member_has_episode("Show.720p.es.srt", 7, 20))
+
+    def test_bare_token_does_not_match_codec(self):
+        # S02E64 -> "264" must not match the "x264" codec tag.
+        self.assertFalse(self.mod._member_has_episode("Show.x264.es.srt", 2, 64))
+
+    def test_sxxeyy_requires_matching_season(self):
+        self.assertTrue(self.mod._member_has_episode("Show.S02E05.es.srt", 2, 5))
+        self.assertFalse(self.mod._member_has_episode("Show.S01E05.es.srt", 2, 5))
+
+    def test_episode_digits_not_a_substring(self):
+        # E20 must not be satisfied by E200 or 1080p style numbers.
+        self.assertFalse(self.mod._member_has_episode("Show.S01E200.es.srt", 1, 20))
 
 
 if __name__ == "__main__":

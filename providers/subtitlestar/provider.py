@@ -632,15 +632,30 @@ def extract_download(body, filename="", video=None):
     if zipfile.is_zipfile(stream):
         with zipfile.ZipFile(stream) as archive:
             names = archive.namelist()
-            selected_files = select_subtitle_files(names, video or {})
-            subtitle_format = _subtitle_extension(selected_files[0]) or _format_from_filename(selected_files[0])
-            content = b"\n\n".join(archive.read(name) for name in selected_files)
-            if not content:
-                return _content_payload(b"", subtitle_format, empty=True)
-            return _content_payload(
-                content,
-                subtitle_format,
-            )
+            selected = select_subtitle_files(names, video or {})
+            if len(selected) > 1:
+                # A multipart subtitle (CD1/CD2 ...) cannot survive the single-member
+                # host contract: pinning one member would silently drop the other discs.
+                # Concatenate the parts worker-side (stdlib zip listing only) with the
+                # same b"\n\n".join the pre-host worker used, and return direct content.
+                subtitle_format = (
+                    _subtitle_extension(selected[0])
+                    or _format_from_filename(selected[0])
+                )
+                content = b"\n\n".join(archive.read(name) for name in selected)
+                if not content:
+                    return _content_payload(b"", subtitle_format, empty=True)
+                return _content_payload(content, subtitle_format)
+            member = selected[0]
+        # Single-member host-side extraction (Provider Hub v1.1+): the member is the
+        # confident episode/movie pick, so hand the raw archive bytes plus that member
+        # name to the host, which extracts it and detects the encoding.
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "member": member,
+            "empty": False,
+        }
 
     filename_path = urllib.parse.urlparse(filename or "").path.lower()
     subtitle_format = _subtitle_extension(filename)
@@ -663,20 +678,16 @@ def _content_payload(content, subtitle_format, empty=False):
             "content_sha256": "",
             "content_type": _content_type(subtitle_format),
             "format": subtitle_format,
-            "encoding": "utf-8",
             "empty": True,
         }
-    encoding = "utf-8"
-    try:
-        content.decode("utf-8")
-    except UnicodeDecodeError:
-        encoding = "windows-1256"
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 
@@ -806,7 +817,7 @@ class SubtitlestarProvider:
                         "provider": PROVIDER_ID,
                         "id": f"subtitlestar-{hashlib.md5(download_url.encode()).hexdigest()[:12]}",
                         "language": language,
-                        "release_info": f"{candidate['title']} [{details['quality'] or 'Unknown'}]",
+                        "release_info": f"{candidate['title']} {details['quality']}".strip() if details['quality'] else candidate['title'],
                         "filename": f"subtitlestar.{_download_basename(download_url)}",
                         "matches": matches,
                         "score": score,

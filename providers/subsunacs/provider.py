@@ -6,21 +6,12 @@ import html
 import io
 import os
 import re
-import shutil
-import stat
-import subprocess
-import tempfile
 import time
 import unicodedata
 import urllib.parse
 import urllib.request
 import zipfile
 from http.cookiejar import CookieJar
-
-try:
-    import py7zz
-except ImportError:  # pragma: no cover, dependency is declared in manifest
-    py7zz = None
 
 PROVIDER_ID = "subsunacs"
 BASE_URL = "https://subsunacs.net"
@@ -30,9 +21,6 @@ HTTP_TIMEOUT_SECONDS = 10
 SUPPORTED_LANGUAGES = {"bul": "bg", "eng": "en"}
 ALPHA2_TO_ALPHA3 = {"bg": "bul", "en": "eng"}
 SUBTITLE_EXTENSIONS = (".srt", ".sub", ".txt")
-ARCHIVE_FILE_COUNT_LIMIT = 256
-ARCHIVE_SUBTITLE_FILE_COUNT_LIMIT = 64
-ARCHIVE_MEMORY_LIMIT = 100 * 1024 * 1024
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
@@ -121,21 +109,6 @@ def parse_detail_entries(body):
     return entries
 
 
-def extract_archive_files(body):
-    if not body:
-        return []
-    stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            candidates = _zip_subtitle_infos(archive)
-            if candidates is None:
-                return []
-            return _archive_rows_from_pairs((info.filename, archive.read(info)) for info in candidates)
-    if _is_external_archive(body):
-        return _archive_rows_from_pairs(_extract_external_archive_files(body))
-    return []
-
-
 def derive_matches(video, item):
     video = video or {}
     matches = []
@@ -216,7 +189,7 @@ class SubsUnacsProvider:
                     continue
                 _sleep(config)
                 try:
-                    entries = _entries_from_download_body(self._http_get(row["download_url"], referer=SEARCH_URL), row["download_url"])
+                    entries = _entries_from_download_body(self._http_get(row["download_url"], referer=SEARCH_URL), row["download_url"], row)
                 except Exception:
                     continue
                 for entry in entries:
@@ -260,6 +233,8 @@ class SubsUnacsProvider:
             "path": item.get("path"),
             "title": item.get("title"),
             "year": item.get("year"),
+            "season": item.get("season"),
+            "episode": item.get("episode"),
             "language": language["alpha3"],
             "release_info": item["filename"],
         }
@@ -296,18 +271,29 @@ class SubsUnacsProvider:
         del language, config
         payload = dict(provider_payload or {})
         if payload.get("entry_url"):
-            data = _normalize_line_endings(self._http_get(payload["entry_url"], referer=payload.get("download_url") or SEARCH_URL))
-            return _content_payload(data, _subtitle_extension(payload.get("filename")) or "srt")
+            body = self._http_get(payload["entry_url"], referer=payload.get("download_url") or SEARCH_URL)
+            return self._resolve_download(body, payload, referer=payload.get("download_url") or SEARCH_URL)
         url = payload.get("download_url")
         if not url:
             raise ValueError("subsunacs download requires download_url or entry_url")
-        entries = _entries_from_download_body(self._http_get(url, referer=SEARCH_URL), url)
-        selected = select_subtitle_file(entries, payload)
-        if selected.get("entry_url"):
-            data = _normalize_line_endings(self._http_get(selected["entry_url"], referer=url))
-        else:
-            data = _normalize_line_endings(selected["content"])
-        return _content_payload(data, _subtitle_extension(selected["filename"]) or "srt")
+        body = self._http_get(url, referer=SEARCH_URL)
+        return self._resolve_download(body, payload, referer=url)
+
+    def _resolve_download(self, body, payload, referer):
+        # Reject broken responses up front: the download endpoint can answer with an empty
+        # stream or an HTML/error page that would otherwise look like a successful download.
+        if not body or not body.strip():
+            raise ValueError(f"subsunacs empty download for {payload.get('download_url')}")
+        if _is_html_body(body):
+            # An HTML detail page lists getentry.php members; resolve the wanted member and
+            # fetch its direct subtitle bytes.
+            entries = parse_detail_entries(body)
+            if entries:
+                selected = select_subtitle_file(entries, payload)
+                data = self._http_get(selected["entry_url"], referer=referer)
+                return _download_payload(data, {**payload, "filename": selected["filename"]})
+            raise ValueError(f"subsunacs returned an HTML/error page for {payload.get('download_url')}")
+        return _download_payload(body, payload)
 
 
 def select_subtitle_file(files, payload):
@@ -339,167 +325,44 @@ def select_subtitle_file(files, payload):
     return max(enumerate(files), key=score)[1]
 
 
-def _entries_from_download_body(body, download_url):
+def _entries_from_download_body(body, download_url, row=None):
     entries = parse_detail_entries(body)
     if entries:
         return entries
-    files = extract_archive_files(body)
-    for item in files:
-        item["download_url"] = download_url
-    return files
+    if _is_archive_body(body):
+        # Host-side archive (zip/rar/7z): do not list members in the worker. Produce a
+        # single candidate whose download() hands the raw bytes back to the host.
+        return [{"filename": _archive_release_name(row, download_url), "archive": True}]
+    return []
 
 
-def _extract_external_archive_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_external_archive_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_external_archive_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_external_archive_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"SubsUnacs archive extraction failed: {details}") from errors[-1]
-    raise RuntimeError("SubsUnacs archive extraction requires bundled py7zz")
-
-
-def _extract_external_archive_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("SubsUnacs bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subsunacs.archive")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_external_archive_files_with_unar(body):
-    unar = shutil.which("unar")
-    if not unar:
-        raise RuntimeError("SubsUnacs archive fallback requires unar")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subsunacs.archive")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run([unar, "-quiet", "-o", output_dir, archive_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"unar failed to extract SubsUnacs archive: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_external_archive_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("SubsUnacs archive fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subsunacs.archive")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run([sevenzip, "x", "-y", f"-o{output_dir}", archive_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract SubsUnacs archive: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if not _is_subtitle_file(rel):
-                continue
-            if not _is_safe_extracted_file(path, output_dir):
-                continue
-            if os.path.getsize(path) > ARCHIVE_MEMORY_LIMIT:
-                continue
-            try:
-                os.chmod(path, os.stat(path).st_mode | 0o600)
-            except OSError:
-                pass
-            with open(path, "rb") as handle:
-                files.append((rel, handle.read()))
-    if len(files) > ARCHIVE_SUBTITLE_FILE_COUNT_LIMIT:
-        return []
-    return files
-
-
-def _archive_rows_from_pairs(pairs):
-    rows = []
-    for filename, content in pairs:
-        if _is_subtitle_file(filename):
-            path = _normalize_archive_path(filename)
-            rows.append({"filename": os.path.basename(path), "path": path, "content": content})
-    return rows
-
-
-def _normalize_archive_path(filename):
-    return (filename or "").replace("\\", "/").strip("/")
+def _archive_release_name(row, download_url):
+    title = (row or {}).get("title")
+    if title:
+        season = (row or {}).get("season")
+        episode = (row or {}).get("episode")
+        if season is not None and episode is not None:
+            return f"{title} S{int(season):02d}E{int(episode):02d}"
+        return str(title)
+    return os.path.basename(urllib.parse.urlparse(download_url or "").path.rstrip("/")) or "subsunacs.archive"
 
 
 def _entry_identity(entry):
     return entry.get("path") or entry.get("entry_url") or entry.get("filename")
 
 
-def _zip_subtitle_infos(archive):
-    infos = archive.infolist()
-    if len(infos) > ARCHIVE_FILE_COUNT_LIMIT:
-        return None
-    candidates = []
-    total_size = 0
-    for info in infos:
-        if info.is_dir() or not _is_subtitle_file(info.filename):
-            continue
-        if info.file_size > ARCHIVE_MEMORY_LIMIT:
-            return None
-        total_size += info.file_size
-        if total_size > ARCHIVE_MEMORY_LIMIT:
-            return None
-        candidates.append(info)
-    if len(candidates) > ARCHIVE_SUBTITLE_FILE_COUNT_LIMIT:
-        return None
-    return sorted(candidates, key=lambda item: item.filename)
+def _is_rar_archive(body):
+    return bool(body) and (body.startswith(b"Rar!\x1a\x07\x00") or body.startswith(b"Rar!\x1a\x07\x01\x00"))
 
 
-def _is_safe_extracted_file(path, output_dir):
-    try:
-        file_stat = os.lstat(path)
-    except OSError:
-        return False
-    if not stat.S_ISREG(file_stat.st_mode):
-        return False
-    output_real = os.path.realpath(output_dir)
-    path_real = os.path.realpath(path)
-    try:
-        return os.path.commonpath([output_real, path_real]) == output_real
-    except ValueError:
-        return False
+def _is_7z_archive(body):
+    return bool(body) and body.startswith(b"7z\xbc\xaf\x27\x1c")
 
 
-def _is_external_archive(body):
-    return bool(body) and (
-        body.startswith(b"Rar!\x1a\x07\x00")
-        or body.startswith(b"Rar!\x1a\x07\x01\x00")
-        or body.startswith(b"7z\xbc\xaf\x27\x1c")
-    )
+def _is_archive_body(body):
+    # zip, rar, and 7z are all extracted host-side (Provider Hub v1.1+). download() hands
+    # the raw bytes back as archive_b64 for the host to list, select, and decode.
+    return _is_rar_archive(body) or _is_7z_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
 
 
 def _is_ignored_txt_file(filename):
@@ -716,21 +579,111 @@ def _normalize_line_endings(content):
     return (content or b"").replace(b"\r\n", b"\n").replace(b"\r", b"\n")
 
 
+def _download_payload(body, payload):
+    payload = payload or {}
+    # Reject broken responses up front: the endpoint can answer with an empty stream or an
+    # HTML/error page that would otherwise look like a successful download.
+    if not body or not body.strip():
+        raise ValueError(f"subsunacs empty download for {payload.get('download_url')}")
+    if _is_html_body(body):
+        raise ValueError(f"subsunacs returned an HTML/error page for {payload.get('download_url')}")
+    if _is_archive_body(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw zip/rar/7z bytes back to
+        # the host, which lists it, decodes the chosen member, and detects encoding.
+        archive = {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+        }
+        # A season-pack zip can hold several episodes; the host's episode-only pick can
+        # land on the wrong member when the same number repeats across seasons. When we can
+        # list the zip and a single member matches BOTH the requested season and episode,
+        # pin it; otherwise (rar/7z, movies, no/ambiguous match) defer to host episode
+        # selection, which fails loudly on a true no-match.
+        member = _select_zip_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = payload.get("episode")
+        return archive
+    # Direct, non-archive subtitle body.
+    return _content_payload(_normalize_line_endings(body), _subtitle_extension(payload.get("filename")) or "srt")
+
+
+def _select_zip_member(body, payload):
+    # Pin the zip member matching the requested season+episode. Listing only, no extraction
+    # or decoding: the host reads the named member (an exact namelist match that hard-fails
+    # on mismatch) and runs chardet. Returns None for rar/7z (not stdlib-listable), a single
+    # member (nothing to disambiguate), movies (no episode to narrow on), or when the match
+    # is not a unique winner, so the caller falls back to host-side episode selection.
+    payload = payload or {}
+    if _is_rar_archive(body) or _is_7z_archive(body) or not zipfile.is_zipfile(io.BytesIO(body or b"")):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        members = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/")
+            and _is_subtitle_file(name)
+            and not os.path.basename(name).startswith(".")
+        ]
+    if len(members) < 2:
+        return None  # a lone member: the host's episode pick already lands here
+    season = _safe_int(payload.get("season"))
+    episode = _safe_int(payload.get("episode"))
+    if season is None or episode is None:
+        return None  # movie or unknown episode: nothing to narrow on, defer to the host
+    matches = [name for name in members if _member_has_episode(name, season, episode)]
+    if len(matches) == 1:
+        return matches[0]
+    # Zero matches (pinning a wrong member would hard-fail the host download) or several
+    # tied matches (cannot confidently disambiguate): defer to host episode selection.
+    return None
+
+
+def _member_has_episode(name, season, episode):
+    # Match the requested SxxEyy as a delimited token, tolerating a separator between the
+    # season and episode parts (S01E02, S01.E02, S01 E02, S01-E02), the NxNN form (1x02),
+    # and the whole-token "{season}{episode:02d}" form (e.g. 101). The (?!\d) guard stops a
+    # 3-digit code from matching a longer number; for the bare-digit form the digits must be
+    # a standalone token (delimited on both sides) so "720" never matches "720p"/"x264".
+    text = (name or "").lower()
+    return bool(
+        re.search(rf"(?<![a-z0-9])s0*{season}[\s._-]*e0*{episode}(?!\d)", text)
+        or re.search(rf"(?<!\d){season}x0*{episode}(?!\d)", text)
+        or re.search(rf"(?<![a-z0-9]){season}{episode:02d}(?![a-z0-9])", text)
+    )
+
+
+def _safe_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_html_body(body):
+    if not body:
+        return False
+    head = body[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or head.startswith(b"<!--")
+        or b"<body" in head
+        or b"<head" in head
+    )
+
+
 def _content_payload(content, subtitle_format):
-    encoding = "utf-8"
-    for candidate in ("utf-8", "cp1251", "windows-1251", "latin-1"):
-        try:
-            content.decode(candidate)
-            encoding = candidate
-            break
-        except UnicodeDecodeError:
-            continue
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 

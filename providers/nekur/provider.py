@@ -6,20 +6,12 @@ import html
 import io
 import os
 import re
-import shutil
-import subprocess
-import tempfile
 import time
 import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-
-try:
-    import py7zz
-except ImportError:  # pragma: no cover, dependency is declared in manifest
-    py7zz = None
 
 PROVIDER_ID = "nekur"
 BASE_URL = "https://subtitri.nekur.net"
@@ -204,6 +196,8 @@ class NekurProvider:
                 "filename": filename,
                 "title": item.get("title"),
                 "year": item.get("year"),
+                "season": item.get("season"),
+                "episode": item.get("episode"),
                 "imdb_id": item.get("imdb_id"),
                 "fps": item.get("fps"),
                 "notes": item.get("notes"),
@@ -219,29 +213,36 @@ class NekurProvider:
         body, headers = self._http_get(url)
         # The synthetic ".zip" filename only describes archive responses. When the
         # endpoint serves a direct subtitle, prefer the real Content-Disposition
-        # name so its true extension survives into extract_download().
+        # name so its true extension survives into the direct-content path.
         filename = _filename_from_headers(headers) or payload.get("filename", "")
         return extract_download(body, filename, payload)
 
 
 def extract_download(body, filename="", payload=None):
     payload = payload or {}
+    # Reject broken responses up front: the endpoint can answer with an empty
+    # stream or an HTML/error page that would otherwise look like a download.
     if not body:
-        return _content_payload(b"", _format_from_filename(filename), empty=True)
-    if _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        selected = select_subtitle_files([name for name, _data in files], payload)
-        file_map = dict(files)
-        content = b"\n\n".join(file_map[name] for name in selected)
-        return _content_payload(content, _subtitle_extension(selected[0]) or "srt")
-    stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_files(archive.namelist(), payload)
-            content = b"\n\n".join(archive.read(name) for name in selected)
-            return _content_payload(content, _subtitle_extension(selected[0]) or "srt")
+        raise ValueError("nekur download returned an empty response")
     if _looks_like_html(body):
         raise ValueError("nekur download did not return a supported subtitle file")
+    if _is_archive_body(body):
+        # A multi-part subtitle (CD1/CD2 ...) has to be concatenated, which the
+        # single-member host contract cannot do: an episode/member pick would return
+        # only one disc. When we can list a zip and it holds a multipart set, join those
+        # members here and return direct content so the user gets the whole subtitle.
+        multipart = _multipart_content(body, payload)
+        if multipart is not None:
+            return multipart
+        # Otherwise host-side extraction (Provider Hub v1.1+): hand the raw archive bytes
+        # back to the host, which lists it, picks the member by episode, and detects
+        # encoding via Subtitle.normalize(). RAR is not stdlib-listable (and bundling
+        # rarfile/py7zz is banned), so a multipart rar also falls back to the host here.
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "episode": payload.get("episode"),
+        }
     # Direct (non-archive) subtitle: trust the real filename extension, then fall
     # back to sniffing the body so a valid .srt/.sub is not rejected just because
     # the synthetic ".zip" filename carried no usable extension.
@@ -251,35 +252,36 @@ def extract_download(body, filename="", payload=None):
     return _content_payload(body, subtitle_format)
 
 
-def select_subtitle_file(names, payload):
-    return select_subtitle_files(names, payload)[0]
+def _is_archive_body(body):
+    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
 
 
-def select_subtitle_files(names, payload):
-    candidates = [
-        name
-        for name in names
-        if _subtitle_extension(name) and not _is_sidecar(name)
-    ]
-    if not candidates:
-        raise ValueError("nekur archive contains no supported subtitle files")
-
-    best_single = max(
-        enumerate(candidates),
-        key=lambda index_name: _subtitle_file_score(index_name, payload),
-    )[1]
-    best_single_score = _subtitle_file_score((0, best_single), payload)
-
-    multipart = _multipart_subset(candidates, payload)
-    if multipart:
-        multipart_score = _group_score(multipart, payload)
-        # Only prefer the multipart set when it scores at least as well as the
-        # best single file. Otherwise a low-scoring CD1/CD2 pair would shadow a
-        # better matching single subtitle.
-        if multipart_score >= best_single_score:
-            return multipart
-
-    return [best_single]
+def _multipart_content(body, payload):
+    # Concatenate a CD1/CD2-style multipart subtitle from a zip into one content payload.
+    # Listing only (no host-banned rar/7z libs). Returns None when the archive is not a
+    # listable zip, holds no multipart set, or a single file scores better than the
+    # multipart group, so the caller falls back to the host archive path.
+    if _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body)):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        names = [
+            name
+            for name in archive.namelist()
+            if _subtitle_extension(name) and not _is_sidecar(name)
+        ]
+        multipart = _multipart_subset(names, payload)
+        if not multipart:
+            return None
+        # Only prefer the multipart set when it scores at least as well as the best single
+        # file; otherwise a stray CD1/CD2 pair would shadow a better-matching single sub,
+        # and the host's episode pick over the whole archive is the safer choice.
+        best_single_score = max(
+            (_subtitle_file_score(name, payload) for name in names), default=0
+        )
+        if _group_score(multipart, payload) < best_single_score:
+            return None
+        content = b"\n\n".join(archive.read(name) for name in multipart)
+    return _content_payload(content, _subtitle_extension(multipart[0]) or "srt")
 
 
 def _is_sidecar(name):
@@ -290,12 +292,10 @@ def _is_sidecar(name):
 
 
 def _group_score(names, payload):
-    return max(_subtitle_file_score((0, name), payload) for name in names)
+    return max(_subtitle_file_score(name, payload) for name in names)
 
 
-def _subtitle_file_score(index_name, payload):
-    index, name = index_name
-    del index
+def _subtitle_file_score(name, payload):
     title_tokens = _tokens((payload or {}).get("title"))
     year = str((payload or {}).get("year") or "")
     note_tokens = _tokens((payload or {}).get("notes"))
@@ -318,8 +318,7 @@ def _subtitle_file_score(index_name, payload):
 def _multipart_subset(names, payload):
     groups = {}
     for name in names:
-        part_index = _part_index(name)
-        if part_index <= 0:
+        if _part_index(name) <= 0:
             continue
         groups.setdefault((_multipart_key(name), _subtitle_extension(name)), []).append(name)
     valid_groups = []
@@ -332,7 +331,7 @@ def _multipart_subset(names, payload):
     best_group = max(
         valid_groups,
         key=lambda group: (
-            sum(_subtitle_file_score((index, name), payload) for index, name in enumerate(group)),
+            _group_score(group, payload),
             len(group),
             -min(_part_index(name) for name in group),
         ),
@@ -350,101 +349,6 @@ def _multipart_key(name):
     stem = os.path.splitext(os.path.basename(name))[0]
     normalized = _normalize(stem)
     return re.sub(r"\b(?:cd|part|disc|disk)\s*0*\d+\b", "", normalized).strip()
-
-
-def _extract_rar_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"Nekur RAR extraction failed: {details}") from errors[-1]
-    raise RuntimeError("Nekur RAR extraction requires bundled py7zz")
-
-
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("Nekur bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "nekur.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_unar(body):
-    unar = shutil.which("unar")
-    if not unar:
-        raise RuntimeError("Nekur RAR fallback requires unar")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "nekur.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [unar, "-quiet", "-o", output_dir, archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"unar failed to extract Nekur RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("Nekur RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "nekur.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [sevenzip, "x", "-y", f"-o{output_dir}", archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract Nekur RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if not _subtitle_extension(rel):
-                continue
-            with open(path, "rb") as handle:
-                files.append((rel, handle.read()))
-    if not files:
-        raise ValueError("nekur archive contains no supported subtitle files")
-    return files
 
 
 def _requests_latvian(languages):
@@ -516,10 +420,6 @@ def _subtitle_extension(name):
     return None
 
 
-def _format_from_filename(filename):
-    return _subtitle_extension(filename or "") or "srt"
-
-
 def _headers_to_dict(headers):
     return {str(key).lower(): str(value) for key, value in dict(headers or {}).items()}
 
@@ -550,30 +450,15 @@ def _format_from_content(body):
     return None
 
 
-def _content_payload(content, subtitle_format, empty=False):
-    if empty:
-        return {
-            "content_b64": "",
-            "content_sha256": "",
-            "content_type": _content_type(subtitle_format),
-            "format": subtitle_format,
-            "encoding": "utf-8",
-            "empty": True,
-        }
-    encoding = "utf-8"
-    for candidate in ("utf-8", "cp1257", "latin-1"):
-        try:
-            content.decode(candidate)
-            encoding = candidate
-            break
-        except UnicodeDecodeError:
-            continue
+def _content_payload(content, subtitle_format):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a
+    # worker guess (especially a legacy codepage that never fails to decode) only
+    # reintroduces mojibake. Leave encoding unset and let the host normalize.
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 

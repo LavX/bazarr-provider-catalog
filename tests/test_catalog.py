@@ -179,12 +179,25 @@ class SdkCliTests(unittest.TestCase):
         }
         sdk_cli.validate_dependency_lock("manifest.json", multi)  # must not raise
 
-    def test_validate_allows_single_wheel_dependency_exception(self):
+    def test_validate_rejects_bundled_archive_library(self):
         from sdk import cli as sdk_cli
 
-        # py7zz publishes no aarch64 wheel, so a single pinned hash is acceptable.
-        py7zz = {"requirements": [{"name": "py7zz", "version": "1.1.4", "hashes": ["sha256:" + "c" * 64]}]}
-        sdk_cli.validate_dependency_lock("manifest.json", py7zz)  # must not raise
+        # Archive extraction is host-side now, so a worker must never bundle py7zz,
+        # py7zr, or rarfile. The host extracts zip/rar/7z from an archive_b64 payload.
+        for name in ("py7zz", "py7zr", "rarfile"):
+            lock = {"requirements": [{"name": name, "version": "1.0.0", "hashes": ["sha256:" + "c" * 64]}]}
+            with self.assertRaisesRegex(sdk_cli.CatalogError, name):
+                sdk_cli.validate_dependency_lock("manifest.json", lock)
+
+    def test_validate_rejects_bundled_archive_library_regardless_of_casing(self):
+        from sdk import cli as sdk_cli
+
+        # The ban compares PEP 503 normalized names, so a different casing (Py7zz, RarFile)
+        # must not slip a banned archive library past the gate.
+        for name in ("Py7zz", "PY7ZR", "RarFile", "PY7zz", "RARFILE"):
+            lock = {"requirements": [{"name": name, "version": "1.0.0", "hashes": ["sha256:" + "c" * 64]}]}
+            with self.assertRaises(sdk_cli.CatalogError):
+                sdk_cli.validate_dependency_lock("manifest.json", lock)
 
     def test_readme_python_badge_matches_runtime_matrix(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -248,6 +261,146 @@ class SdkCliTests(unittest.TestCase):
             provider_id = sdk_cli.smoke_test(ROOT, "regional", videos=[{}], languages=languages, skip_download=True)
 
         self.assertEqual(provider_id, "regional")
+
+
+class ArchiveDownloadValidationTests(unittest.TestCase):
+    def _zip(self, names):
+        import io
+        import zipfile
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            for name in names:
+                archive.writestr(name, b"1\n00:00:01,000 --> 00:00:02,000\nHi\n")
+        return buffer.getvalue()
+
+    def test_archive_download_accepts_zip_with_named_member(self):
+        from sdk import cli as sdk_cli
+
+        raw = self._zip(["Show.S01E01.srt", "readme.txt"])
+        sdk_cli._validate_archive_download(
+            "x",
+            {
+                "archive_b64": base64.b64encode(raw).decode("ascii"),
+                "archive_sha256": hashlib.sha256(raw).hexdigest(),
+                "member": "Show.S01E01.srt",
+            },
+        )  # must not raise
+
+    def test_validate_archive_download_returns_zip_member_names(self):
+        from sdk import cli as sdk_cli
+
+        raw = self._zip(["a.srt", "b.srt", "readme.txt"])
+        names = sdk_cli._validate_archive_download(
+            "x", {"archive_b64": base64.b64encode(raw).decode("ascii")}
+        )
+        self.assertEqual(sorted(names), ["a.srt", "b.srt", "readme.txt"])
+
+    def test_smoke_select_archive_member_accepts_valid_pin(self):
+        from sdk import cli as sdk_cli
+
+        class Prov:
+            def select_archive_member(self, provider_payload, language, members, config):
+                return {"member": members[0], "decision": "pin"}
+
+        sdk_cli._smoke_select_archive_member(
+            "x", Prov(), {"provider_payload": {}}, ["a.srt", "b.srt"], {}
+        )  # must not raise
+
+    def test_smoke_select_archive_member_requires_method(self):
+        from sdk import cli as sdk_cli
+
+        with self.assertRaises(sdk_cli.CatalogError):
+            sdk_cli._smoke_select_archive_member("x", object(), {"provider_payload": {}}, ["a.srt"], {})
+
+    def test_smoke_select_archive_member_rejects_bad_decision(self):
+        from sdk import cli as sdk_cli
+
+        class Prov:
+            def select_archive_member(self, provider_payload, language, members, config):
+                return {"decision": "weird"}
+
+        with self.assertRaises(sdk_cli.CatalogError):
+            sdk_cli._smoke_select_archive_member("x", Prov(), {"provider_payload": {}}, ["a.srt"], {})
+
+    def test_smoke_select_archive_member_rejects_pin_not_in_members(self):
+        from sdk import cli as sdk_cli
+
+        class Prov:
+            def select_archive_member(self, provider_payload, language, members, config):
+                return {"member": "ghost.srt", "decision": "pin"}
+
+        with self.assertRaises(sdk_cli.CatalogError):
+            sdk_cli._smoke_select_archive_member("x", Prov(), {"provider_payload": {}}, ["a.srt"], {})
+
+    def test_archive_download_rejects_missing_member(self):
+        from sdk import cli as sdk_cli
+
+        raw = self._zip(["Show.S01E01.srt"])
+        with self.assertRaises(sdk_cli.CatalogError):
+            sdk_cli._validate_archive_download(
+                "x", {"archive_b64": base64.b64encode(raw).decode("ascii"), "member": "missing.srt"}
+            )
+
+    def test_archive_download_rejects_archive_without_subtitle(self):
+        from sdk import cli as sdk_cli
+
+        raw = self._zip(["readme.txt", "cover.jpg"])
+        with self.assertRaises(sdk_cli.CatalogError):
+            sdk_cli._validate_archive_download(
+                "x", {"archive_b64": base64.b64encode(raw).decode("ascii")}
+            )
+
+    def test_archive_download_rejects_sha256_mismatch(self):
+        from sdk import cli as sdk_cli
+
+        raw = self._zip(["a.srt"])
+        with self.assertRaises(sdk_cli.CatalogError):
+            sdk_cli._validate_archive_download(
+                "x", {"archive_b64": base64.b64encode(raw).decode("ascii"), "archive_sha256": "0" * 64}
+            )
+
+    def test_archive_download_rejects_non_archive_payload(self):
+        from sdk import cli as sdk_cli
+
+        # A non-empty, non-zip, non-rar payload (e.g. an HTML error page or bare subtitle
+        # bytes accidentally wrapped in archive_b64) must be rejected, not silently passed.
+        for raw in (
+            b"<html><body>error</body></html>",
+            b"1\n00:00:01,000 --> 00:00:02,000\nDirect subtitle\n",
+        ):
+            with self.assertRaises(sdk_cli.CatalogError):
+                sdk_cli._validate_archive_download(
+                    "x", {"archive_b64": base64.b64encode(raw).decode("ascii")}
+                )
+
+    def test_archive_download_accepts_rar_without_listing(self):
+        from sdk import cli as sdk_cli
+
+        # RAR cannot be listed with the stdlib, so the offline validator accepts the bytes
+        # (the host extracts) as long as they carry the rar signature.
+        raw = b"Rar!\x1a\x07\x00" + b"\x00" * 32
+        sdk_cli._validate_archive_download(
+            "x",
+            {
+                "archive_b64": base64.b64encode(raw).decode("ascii"),
+                "archive_sha256": hashlib.sha256(raw).hexdigest(),
+            },
+        )  # must not raise
+
+    def test_archive_download_accepts_7z_without_listing(self):
+        from sdk import cli as sdk_cli
+
+        # 7z is also a host-supported archive format (many providers hand back .7z bodies);
+        # it is not stdlib-listable, so the validator accepts the signed bytes.
+        raw = b"7z\xbc\xaf\x27\x1c" + b"\x00" * 32
+        sdk_cli._validate_archive_download(
+            "x",
+            {
+                "archive_b64": base64.b64encode(raw).decode("ascii"),
+                "archive_sha256": hashlib.sha256(raw).hexdigest(),
+            },
+        )  # must not raise
 
 
 if __name__ == "__main__":

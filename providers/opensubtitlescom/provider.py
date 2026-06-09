@@ -4,7 +4,9 @@ import base64
 import hashlib
 import io
 import json
+import os
 import re
+import socket
 import time
 import urllib.error
 import urllib.parse
@@ -13,8 +15,24 @@ import zipfile
 
 PROVIDER_ID = "opensubtitlescom"
 DEFAULT_HOST = "api.opensubtitles.com"
-USER_AGENT = "BazarrProviderHub/1.0"
+# OpenSubtitles.com gates API access on a registered User-Agent and returns
+# 403 "You cannot consume this service" for unregistered ones. Match the
+# proven Bazarr-ecosystem consumer UA (honoring SZ_USER_AGENT like the native
+# subliminal_patch provider) so login is accepted.
+USER_AGENT = os.environ.get("SZ_USER_AGENT", "Sub-Zero/2")
+# Shared Bazarr-ecosystem OpenSubtitles.com API consumer key - the same built-in key
+# the native (shipped) provider uses (bazarr app/get_providers.py). It means users only
+# need a username + password and never have to register their own API consumer. A
+# user-supplied api_key still overrides this default.
+DEFAULT_API_KEY = "s38zmzVlW7IlYruWi7mHwDYl2SfMQoC1"
 HTTP_TIMEOUT_SECONDS = 30
+# Transport-level retry for transient network failures (connection reset, DNS,
+# timeouts, 5xx, 429). Non-transient failures (4xx other than 429, auth, parse)
+# propagate on the first occurrence. Upstream subliminal uses a similar 3-try
+# RetryingSession/ProviderRetryMixin.
+HTTP_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8
 TOKEN_TTL_SECONDS = 12 * 60 * 60
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
 # Format we always ask the OpenSubtitles.com download endpoint to convert to.
@@ -463,6 +481,8 @@ class OpenSubtitlesComProvider:
                 "filename": file_info.get("file_name") or f"opensubtitlescom.{file_id}.srt",
                 "language": language,
                 "release_info": release,
+                "season": _int_or_none(video.get("season")),
+                "episode": _int_or_none(video.get("episode")),
             },
         }
 
@@ -488,9 +508,7 @@ class OpenSubtitlesComProvider:
         if not link:
             raise RuntimeError("OpenSubtitles.com download response did not include link")
         body = self._http_get_bytes(link, {"User-Agent": USER_AGENT}, timeout=HTTP_TIMEOUT_SECONDS)
-        body, fmt = extract_download(body, link, requested_format=DOWNLOAD_SUB_FORMAT)
-        body = _normalize_line_endings(body)
-        return _content_payload(body, fmt)
+        return _download_payload(body, payload, link)
 
     def _ensure_login(self, config):
         if self.token and (time.time() - self.token_started) < TOKEN_TTL_SECONDS:
@@ -530,7 +548,7 @@ class OpenSubtitlesComProvider:
     def _auth_headers(self, config, include_token=False):
         headers = {
             "Accept": "application/json",
-            "Api-Key": str(config.get("api_key") or ""),
+            "Api-Key": str(config.get("api_key") or DEFAULT_API_KEY),
             "Content-Type": "application/json",
             "User-Agent": USER_AGENT,
         }
@@ -539,7 +557,9 @@ class OpenSubtitlesComProvider:
         return headers
 
     def _require_config(self, config):
-        for key in ("username", "password", "api_key"):
+        # api_key is optional: blank falls back to the bundled DEFAULT_API_KEY, matching
+        # the shipped provider, so a username + password alone is enough.
+        for key in ("username", "password"):
             if not str((config or {}).get(key) or "").strip():
                 raise ValueError(f"OpenSubtitles.com {key} is required")
 
@@ -557,27 +577,51 @@ class OpenSubtitlesComProvider:
 
     def _http_request(self, method, url, headers, data=None, timeout=HTTP_TIMEOUT_SECONDS):
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                return response.read()
-        except urllib.error.HTTPError as exc:
-            body = exc.read()
-            message = _error_message(body) or exc.reason or f"status {exc.code}"
-            if exc.code in (400, 401):
-                if exc.code == 401:
-                    raise AuthenticationRequired(message) from exc
-                raise ValueError(message) from exc
-            if exc.code == 406:
-                raise DownloadLimitExceeded(message) from exc
-            if exc.code == 410:
-                raise RuntimeError("OpenSubtitles.com download link expired") from exc
-            if exc.code == 429:
-                raise RateLimited(message) from exc
-            if exc.code >= 500:
-                raise RuntimeError(f"OpenSubtitles.com server error {exc.code}") from exc
-            raise RuntimeError(f"OpenSubtitles.com request failed with status {exc.code}: {message}") from exc
-        except urllib.error.URLError as exc:
-            raise RuntimeError(f"OpenSubtitles.com request failed: {exc.reason}") from exc
+        # Bounded retry only for transient transport failures. Everything else
+        # (4xx other than 429, auth, parse) is mapped and raised on first sight.
+        for attempt in range(1, HTTP_MAX_ATTEMPTS + 1):
+            last_attempt = attempt >= HTTP_MAX_ATTEMPTS
+            try:
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    return response.read()
+            except urllib.error.HTTPError as exc:
+                body = exc.read()
+                # 429 and 5xx are transient: back off and retry while attempts remain.
+                if exc.code == 429 and not last_attempt:
+                    _sleep_for_retry(attempt, _retry_after_seconds(exc))
+                    continue
+                if exc.code >= 500 and not last_attempt:
+                    _sleep_for_retry(attempt, None)
+                    continue
+                raise self._map_http_error(exc, body) from exc
+            except (socket.timeout, TimeoutError) as exc:
+                if last_attempt:
+                    raise RuntimeError(f"OpenSubtitles.com request failed: {exc}") from exc
+                _sleep_for_retry(attempt, None)
+                continue
+            except urllib.error.URLError as exc:
+                if last_attempt:
+                    raise RuntimeError(f"OpenSubtitles.com request failed: {exc.reason}") from exc
+                _sleep_for_retry(attempt, None)
+                continue
+        # Unreachable: the loop either returns, retries, or raises on every path.
+        raise RuntimeError("OpenSubtitles.com request failed after retries")
+
+    def _map_http_error(self, exc, body):
+        message = _error_message(body) or exc.reason or f"status {exc.code}"
+        if exc.code in (400, 401):
+            if exc.code == 401:
+                return AuthenticationRequired(message)
+            return ValueError(message)
+        if exc.code == 406:
+            return DownloadLimitExceeded(message)
+        if exc.code == 410:
+            return RuntimeError("OpenSubtitles.com download link expired")
+        if exc.code == 429:
+            return RateLimited(message)
+        if exc.code >= 500:
+            return RuntimeError(f"OpenSubtitles.com server error {exc.code}")
+        return RuntimeError(f"OpenSubtitles.com request failed with status {exc.code}: {message}")
 
 
 def derive_matches(video, attrs, feature):
@@ -669,6 +713,31 @@ def _error_message(body):
     return data.get("message") or data.get("error") or data.get("detail")
 
 
+def _retry_after_seconds(exc):
+    # Honor a Retry-After header on 429 responses when it is a plain delay in
+    # seconds. Ignore HTTP-date forms and anything unparseable.
+    headers = getattr(exc, "headers", None)
+    value = headers.get("Retry-After") if headers else None
+    if value is None:
+        return None
+    try:
+        seconds = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    if seconds < 0:
+        return None
+    return min(seconds, RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _sleep_for_retry(attempt, retry_after):
+    # Module-level time.sleep so tests can monkeypatch it.
+    if retry_after is not None:
+        delay = retry_after
+    else:
+        delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    time.sleep(min(delay, RETRY_BACKOFF_CAP_SECONDS))
+
+
 def _bool_config(config, key, default):
     value = (config or {}).get(key, default)
     if isinstance(value, str):
@@ -720,23 +789,54 @@ def _wanted_feature_types(kind):
     return set()
 
 
-def extract_download(body, filename, requested_format=None):
+def _download_payload(body, payload, link):
+    payload = payload or {}
     if not body:
         raise ValueError("opensubtitlescom downloaded empty subtitle")
-    stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            names = [name for name in archive.namelist() if _subtitle_extension(name)]
-            if not names:
-                raise ValueError("opensubtitlescom archive contains no supported subtitle files")
-            names.sort(key=lambda name: (not name.lower().endswith(".srt"), len(name), name.lower()))
-            name = names[0]
-            return archive.read(name), _subtitle_extension(name) or "srt"
-    # The API converts plain (non-archive) downloads to the requested format, so
-    # report that instead of any stale extension from the original filename.
-    if requested_format:
-        return body, str(requested_format).lower()
-    return body, _format_from_filename(filename)
+    if _is_html_body(body):
+        raise ValueError("opensubtitlescom returned an HTML/error page instead of a subtitle")
+    if zipfile.is_zipfile(io.BytesIO(body)):
+        # Host-side extraction (Provider Hub v1.1+): we list the zip cheaply with stdlib
+        # to pick the member, then hand the raw archive bytes back. The host extracts the
+        # member and detects the encoding via Subtitle.normalize().
+        member = _select_zip_member(body)
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "member": member,
+        }
+    if _is_rar_archive(body) or _is_7z_archive(body):
+        # rar/7z cannot be listed cheaply with stdlib, so let the host pick by episode.
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "episode": _int_or_none(payload.get("episode")),
+        }
+    # Direct, non-archive subtitle body. The API converts plain downloads to the
+    # requested format, so report that instead of any stale extension from the link.
+    return _content_payload(_normalize_line_endings(body), DOWNLOAD_SUB_FORMAT or _format_from_filename(link))
+
+
+def _select_zip_member(body):
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        names = [name for name in archive.namelist() if _subtitle_extension(name)]
+    if not names:
+        raise ValueError("opensubtitlescom archive contains no supported subtitle files")
+    names.sort(key=lambda name: (not name.lower().endswith(".srt"), len(name), name.lower()))
+    return names[0]
+
+
+def _is_rar_archive(body):
+    return bool(body) and body[:4] == b"Rar!"
+
+
+def _is_7z_archive(body):
+    return bool(body) and body[:6] == b"7z\xbc\xaf\x27\x1c"
+
+
+def _is_html_body(body):
+    head = (body or b"")[:1024].lstrip().lower()
+    return head.startswith((b"<!doctype html", b"<html", b"<?xml")) or b"<body" in head or b"<head" in head
 
 
 def _subtitle_extension(name):
@@ -758,17 +858,14 @@ def _normalize_line_endings(body):
 def _content_payload(body, fmt):
     if not body:
         raise ValueError("opensubtitlescom downloaded empty subtitle")
-    try:
-        body.decode("utf-8")
-        encoding = "utf-8"
-    except UnicodeDecodeError:
-        encoding = "latin-1"
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     return {
         "content_b64": base64.b64encode(body).decode("ascii"),
         "content_sha256": hashlib.sha256(body).hexdigest(),
         "content_type": _content_type(fmt),
         "format": fmt,
-        "encoding": encoding,
         "empty": False,
     }
 

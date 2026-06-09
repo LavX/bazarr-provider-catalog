@@ -37,6 +37,10 @@ def _zip_body(files):
     return stream.getvalue()
 
 
+def _rar_body(payload=b"chernobyl-pack"):
+    return b"Rar!\x1a\x07\x00" + payload
+
+
 class TitloviProviderTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
@@ -137,7 +141,7 @@ class TitloviProviderTests(unittest.TestCase):
         self.assertIn("season", results[0]["matches"])
         self.assertIn("episode", results[0]["matches"])
 
-    def test_download_extracts_matching_episode_from_pack_zip(self):
+    def test_download_returns_raw_zip_archive_with_episode(self):
         provider = self.mod.TitloviProvider()
         archive = _zip_body(
             {
@@ -162,33 +166,172 @@ class TitloviProviderTests(unittest.TestCase):
             {"username": "user", "password": "pass"},
         )
 
-        decoded = base64.b64decode(result["content_b64"])
-        self.assertEqual(decoded, b"1\n00:00:01,000 --> 00:00:02,000\nEpisode one\n")
-        self.assertEqual(result["format"], "srt")
-        self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
+        # Host-side extraction: the worker hands back the raw archive untouched.
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["episode"], 1)
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
+
+    def test_extract_download_returns_raw_rar_archive(self):
+        body = _rar_body()
+
+        result = self.mod.extract_download(body, {"episode": 3, "language": "srp"})
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["episode"], 3)
+        self.assertNotIn("encoding", result)
+
+    def test_extract_download_episode_is_none_for_movies(self):
+        body = _zip_body({"Dune.2021.srt": b"1\n00:00:01,000 --> 00:00:02,000\nMovie\n"})
+
+        result = self.mod.extract_download(body, {"language": "eng", "filename": "dune.zip"})
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertIsNone(result["episode"])
+
+    def test_extract_download_pins_cyrillic_member_when_both_scripts_present(self):
+        body = _zip_body(
+            {
+                "Chernobyl.S01E01.lat.srt": b"1\n00:00:01,000 --> 00:00:02,000\nLatin\n",
+                "Chernobyl.S01E01.cyr.srt": b"1\n00:00:01,000 --> 00:00:02,000\nCyrillic\n",
+            }
+        )
+
+        result = self.mod.extract_download(
+            body, {"language": "srp", "script": "Cyrl", "season": 1, "episode": 1}
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["member"], "Chernobyl.S01E01.cyr.srt")
+        self.assertNotIn("episode", result)
+
+    def test_extract_download_pins_latin_member_for_latin_script(self):
+        body = _zip_body(
+            {
+                "Chernobyl.S01E01.cyr.srt": b"1\n00:00:01,000 --> 00:00:02,000\nCyrillic\n",
+                "Chernobyl.S01E01.lat.srt": b"1\n00:00:01,000 --> 00:00:02,000\nLatin\n",
+            }
+        )
+
+        # Latin Serbian carries no `script` key; its absence selects the Latin member.
+        result = self.mod.extract_download(
+            body, {"language": "srp", "season": 1, "episode": 1}
+        )
+
+        self.assertEqual(result["member"], "Chernobyl.S01E01.lat.srt")
+        self.assertNotIn("episode", result)
+
+    def test_extract_download_pins_script_member_for_correct_episode_in_pack(self):
+        body = _zip_body(
+            {
+                "Chernobyl.S01E01.lat.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE1 latin\n",
+                "Chernobyl.S01E01.cyr.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE1 cyr\n",
+                "Chernobyl.S01E02.lat.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE2 latin\n",
+                "Chernobyl.S01E02.cyr.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE2 cyr\n",
+            }
+        )
+
+        # Both scripts and several episodes: the host can do neither axis, so the provider
+        # resolves episode and script together and pins exactly one member.
+        result = self.mod.extract_download(
+            body, {"language": "srp", "script": "Cyrl", "season": 1, "episode": 2}
+        )
+
+        self.assertEqual(result["member"], "Chernobyl.S01E02.cyr.srt")
+        self.assertNotIn("episode", result)
+
+    def test_extract_download_single_script_pack_defers_to_episode(self):
+        body = _zip_body(
+            {
+                "Chernobyl.S01E01.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE1\n",
+                "Chernobyl.S01E02.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE2\n",
+            }
+        )
+
+        # Only one script present: nothing for us to disambiguate, host picks by episode.
+        result = self.mod.extract_download(
+            body, {"language": "srp", "season": 1, "episode": 1}
+        )
+
+        self.assertEqual(result["episode"], 1)
+        self.assertNotIn("member", result)
+
+    def test_extract_download_does_not_misread_latin_circle_as_cyrillic(self):
+        # A Latin release whose title contains "circle" must not be bucketed as Cyrillic;
+        # the script must be matched as a delimited token, not a substring.
+        body = _zip_body(
+            {
+                "The.Circle.S01E01.lat.srt": b"1\n00:00:01,000 --> 00:00:02,000\nLatin\n",
+                "The.Circle.S01E01.cyr.srt": b"1\n00:00:01,000 --> 00:00:02,000\nCyrillic\n",
+            }
+        )
+
+        cyr = self.mod.extract_download(
+            body, {"language": "srp", "script": "Cyrl", "season": 1, "episode": 1}
+        )
+        self.assertEqual(cyr["member"], "The.Circle.S01E01.cyr.srt")
+
+        lat = self.mod.extract_download(
+            body, {"language": "srp", "season": 1, "episode": 1}
+        )
+        self.assertEqual(lat["member"], "The.Circle.S01E01.lat.srt")
+
+    def test_extract_download_pins_script_member_for_separated_episode_token(self):
+        # A season pack can name members with a separator between season and episode
+        # (S01.E02). The script picker must still resolve the requested episode, or it
+        # would defer and lose the Serbian-script disambiguation.
+        body = _zip_body(
+            {
+                "Chernobyl.S01.E01.lat.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE1 lat\n",
+                "Chernobyl.S01.E01.cyr.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE1 cyr\n",
+                "Chernobyl.S01.E02.lat.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE2 lat\n",
+                "Chernobyl.S01.E02.cyr.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE2 cyr\n",
+            }
+        )
+
+        result = self.mod.extract_download(
+            body, {"language": "srp", "script": "Cyrl", "season": 1, "episode": 2}
+        )
+
+        self.assertEqual(result["member"], "Chernobyl.S01.E02.cyr.srt")
+        self.assertNotIn("episode", result)
+
+    def test_extract_download_ignores_macosx_sidecar(self):
+        # An AppleDouble sidecar (binary, listed first) must not be pinned as a member.
+        body = _zip_body(
+            {
+                "__MACOSX/._Chernobyl.cyr.srt": b"\x00\x05\x16\x07",
+                "Chernobyl.lat.srt": b"1\n00:00:01,000 --> 00:00:02,000\nLatin\n",
+                "Chernobyl.cyr.srt": b"1\n00:00:01,000 --> 00:00:02,000\nCyrillic\n",
+            }
+        )
+
+        result = self.mod.extract_download(body, {"language": "srp", "script": "Cyrl"})
+
+        self.assertEqual(result["member"], "Chernobyl.cyr.srt")
 
     def test_extract_download_accepts_direct_subtitle_body(self):
         body = b"1\r\n00:00:01,000 --> 00:00:02,000\r\nDirect subtitle\r\n"
 
-        result = self.mod.extract_download(body, {"filename": "titlovi.1001.eng.zip"})
+        result = self.mod.extract_download(body, {"filename": "titlovi.1001.eng.srt"})
 
         decoded = base64.b64decode(result["content_b64"])
         self.assertEqual(decoded, b"1\n00:00:01,000 --> 00:00:02,000\nDirect subtitle\n")
         self.assertEqual(result["format"], "srt")
+        self.assertNotIn("encoding", result)
 
-    def test_extract_download_selects_serbian_script_from_bundled_archive(self):
-        body = _zip_body(
-            {
-                "Movie.lat.srt": b"1\n00:00:01,000 --> 00:00:02,000\nLatin\n",
-                "Movie.cyr.srt": b"1\n00:00:01,000 --> 00:00:02,000\nCyrillic\n",
-            }
-        )
+    def test_extract_download_rejects_empty_body(self):
+        for body in (b"", b"   "):
+            with self.assertRaisesRegex(ValueError, "supported subtitle file"):
+                self.mod.extract_download(body, {})
 
-        latin = self.mod.extract_download(body, {"language": "srp", "filename": "movie.zip"})
-        cyrillic = self.mod.extract_download(body, {"language": "srp", "script": "Cyrl", "filename": "movie.zip"})
+    def test_extract_download_rejects_html_error_body(self):
+        body = b"<!DOCTYPE html><html><body>Not found</body></html>"
 
-        self.assertIn(b"Latin", base64.b64decode(latin["content_b64"]))
-        self.assertIn(b"Cyrillic", base64.b64decode(cyrillic["content_b64"]))
+        with self.assertRaisesRegex(ValueError, "supported subtitle file"):
+            self.mod.extract_download(body, {})
 
     def test_manifest_advertises_serbian_cyrillic_variant(self):
         manifest = json.loads((PROVIDER_DIR / "provider.json").read_text())
@@ -291,6 +434,7 @@ class TitloviProviderTests(unittest.TestCase):
     def test_http_get_converts_urllib_http_error_to_response(self):
         provider = self.mod.TitloviProvider()
         original_urlopen = self.mod.urllib.request.urlopen
+        original_sleep = self.mod.time.sleep
 
         def raise_http_error(request, timeout=10):
             del request, timeout
@@ -303,13 +447,162 @@ class TitloviProviderTests(unittest.TestCase):
             )
 
         self.mod.urllib.request.urlopen = raise_http_error
+        self.mod.time.sleep = lambda *_args, **_kwargs: None
         try:
             response = provider._http_get("https://kodi.titlovi.com/api/subtitles/search")
         finally:
             self.mod.urllib.request.urlopen = original_urlopen
+            self.mod.time.sleep = original_sleep
 
         self.assertEqual(response.status_code, 429)
         self.assertEqual(response.body, b"limited")
+
+
+class _FakeResponse:
+    def __init__(self, status, body, headers=None):
+        self._status = status
+        self._body = body
+        self.headers = _FakeHeaders(headers or {})
+
+    def getcode(self):
+        return self._status
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _FakeHeaders:
+    def __init__(self, mapping):
+        self._mapping = dict(mapping)
+
+    def items(self):
+        return self._mapping.items()
+
+
+class TitloviTransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.sleeps = []
+        self.mod.time.sleep = lambda seconds=0, *a, **k: self.sleeps.append(seconds)
+
+    def test_http_get_retries_transient_urlerror_then_succeeds(self):
+        provider = self.mod.TitloviProvider()
+        calls = []
+
+        def fake_urlopen(request, timeout=10):
+            del request, timeout
+            calls.append(1)
+            if len(calls) < 3:
+                raise self.mod.urllib.error.URLError("connection reset")
+            return _FakeResponse(200, b'{"ok": true}', {})
+
+        self.mod.urllib.request.urlopen = fake_urlopen
+        response = provider._http_get("https://kodi.titlovi.com/api/subtitles/search")
+
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.body, b'{"ok": true}')
+        # Two backoff sleeps before the third, successful attempt.
+        self.assertEqual(len(self.sleeps), 2)
+
+    def test_http_get_retries_503_then_succeeds(self):
+        provider = self.mod.TitloviProvider()
+        calls = []
+
+        def fake_urlopen(request, timeout=10):
+            del timeout
+            calls.append(1)
+            if len(calls) == 1:
+                raise self.mod.urllib.error.HTTPError(
+                    request.full_url, 503, "Service Unavailable", {}, io.BytesIO(b"down")
+                )
+            return _FakeResponse(200, b'{"SubtitleResults": []}', {})
+
+        self.mod.urllib.request.urlopen = fake_urlopen
+        response = provider._http_get("https://kodi.titlovi.com/api/subtitles/search")
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_http_post_retries_transient_then_succeeds(self):
+        provider = self.mod.TitloviProvider()
+        calls = []
+
+        def fake_urlopen(request, timeout=10):
+            del request, timeout
+            calls.append(1)
+            if len(calls) < 2:
+                raise self.mod.socket.timeout("timed out")
+            return _FakeResponse(200, _fixture("titlovi_login.json"), {})
+
+        self.mod.urllib.request.urlopen = fake_urlopen
+        response = provider._http_post(self.mod.TOKEN_URL, params={"username": "u"})
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_http_get_does_not_retry_404(self):
+        provider = self.mod.TitloviProvider()
+        calls = []
+
+        def fake_urlopen(request, timeout=10):
+            del timeout
+            calls.append(1)
+            raise self.mod.urllib.error.HTTPError(
+                request.full_url, 404, "Not Found", {}, io.BytesIO(b"missing")
+            )
+
+        self.mod.urllib.request.urlopen = fake_urlopen
+        response = provider._http_get("https://kodi.titlovi.com/api/subtitles/search")
+
+        # 4xx other than 429 is converted on the first attempt and never retried.
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.body, b"missing")
+        self.assertEqual(self.sleeps, [])
+
+    def test_http_get_propagates_urlerror_after_exhausting_attempts(self):
+        provider = self.mod.TitloviProvider()
+        calls = []
+
+        def fake_urlopen(request, timeout=10):
+            del request, timeout
+            calls.append(1)
+            raise self.mod.urllib.error.URLError("dns failure")
+
+        self.mod.urllib.request.urlopen = fake_urlopen
+        with self.assertRaises(self.mod.urllib.error.URLError):
+            provider._http_get("https://kodi.titlovi.com/api/subtitles/search")
+
+        self.assertEqual(len(calls), self.mod.HTTP_MAX_ATTEMPTS)
+        self.assertEqual(len(self.sleeps), self.mod.HTTP_MAX_ATTEMPTS - 1)
+
+    def test_http_get_honors_retry_after_on_429(self):
+        provider = self.mod.TitloviProvider()
+        calls = []
+
+        def fake_urlopen(request, timeout=10):
+            del timeout
+            calls.append(1)
+            if len(calls) == 1:
+                raise self.mod.urllib.error.HTTPError(
+                    request.full_url, 429, "Too Many Requests", {"Retry-After": "2"}, io.BytesIO(b"slow")
+                )
+            return _FakeResponse(200, b"{}", {})
+
+        self.mod.urllib.request.urlopen = fake_urlopen
+        response = provider._http_get("https://kodi.titlovi.com/api/subtitles/search")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.sleeps, [2.0])
 
 
 if __name__ == "__main__":

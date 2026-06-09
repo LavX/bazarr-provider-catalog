@@ -124,18 +124,20 @@ def parse_releases(data, media_type, imdb_id, title, season=None, episode=None):
 
 def extract_download(body, payload=None):
     payload = payload or {}
-    if not body:
-        return _content_payload(b"", "srt", empty=True)
-    stream = io.BytesIO(body)
-    if not zipfile.is_zipfile(stream):
-        subtitle_format = _subtitle_extension(payload.get("filename", ""))
-        if not subtitle_format or not _looks_like_subtitle_text(body, subtitle_format):
-            raise ValueError("wizdom download did not return a zip subtitle payload")
-        return _content_payload(_normalize_line_endings(body), subtitle_format)
-    with zipfile.ZipFile(stream) as archive:
-        name, content = _select_archive_subtitle(archive)
-    subtitle_format = _subtitle_extension(name) or "srt"
-    return _content_payload(_normalize_line_endings(content), subtitle_format)
+    if not body or _is_html_body(body):
+        raise ValueError("wizdom download did not return a subtitle payload")
+    if zipfile.is_zipfile(io.BytesIO(body)):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
+        # the host, which lists it, picks the member by episode, and detects encoding.
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "episode": payload.get("episode"),
+        }
+    subtitle_format = _subtitle_extension(payload.get("filename", ""))
+    if not subtitle_format or not _looks_like_subtitle_text(body, subtitle_format):
+        raise ValueError("wizdom download did not return a zip subtitle payload")
+    return _content_payload(_normalize_line_endings(body), subtitle_format)
 
 
 class WizdomProvider:
@@ -592,6 +594,8 @@ def _result(video, row, language):
             "filename": filename,
             "imdb_id": row["imdb_id"],
             "media_type": row["media_type"],
+            "season": row["season"],
+            "episode": row["episode"],
         },
     }
 
@@ -701,15 +705,17 @@ def _normalize_imdb_id(value):
     return value
 
 
-def _select_archive_subtitle(archive):
-    names = [name for name in archive.namelist() if _subtitle_extension(name)]
-    if not names:
-        raise ValueError("wizdom archive contains no supported subtitle files")
-    for name in names:
-        content = archive.read(name)
-        if _looks_like_subtitle_text(content, _subtitle_extension(name)):
-            return name, content
-    raise ValueError("wizdom archive contains no valid subtitle text")
+def _is_html_body(body):
+    if not body:
+        return False
+    head = body[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or b"<body" in head
+        or b"<head" in head
+    )
 
 
 def _looks_like_subtitle_text(content, subtitle_format):
@@ -733,40 +739,17 @@ def _subtitle_extension(name):
     return None
 
 
-def _content_payload(content, subtitle_format, empty=False):
-    if empty:
-        return {
-            "content_b64": "",
-            "content_sha256": "",
-            "content_type": _content_type(subtitle_format),
-            "format": subtitle_format,
-            "encoding": "utf-8",
-            "empty": True,
-        }
-    encoding = _detect_encoding(content)
+def _content_payload(content, subtitle_format):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
-
-
-def _detect_encoding(content):
-    try:
-        (content or b"").decode("utf-8")
-        return "utf-8"
-    except UnicodeDecodeError:
-        pass
-    try:
-        decoded = (content or b"").decode("cp1255")
-        if re.search(r"[\u0590-\u05ff]", decoded):
-            return "windows-1255"
-    except UnicodeDecodeError:
-        pass
-    return "latin-1"
 
 
 def _content_type(subtitle_format):

@@ -233,6 +233,51 @@ class SubHDProviderDownloadTests(unittest.TestCase):
         self.assertFalse(result["empty"])
         self.assertEqual(base64.b64decode(result["content_b64"]), SRT_BODY)
         self.assertEqual(result["content_sha256"], hashlib.sha256(SRT_BODY).hexdigest())
+        self.assertNotIn("encoding", result)
+
+    def test_download_returns_archive_bytes_for_zip_final_file(self):
+        archive_bytes = io.BytesIO()
+        with zipfile.ZipFile(archive_bytes, "w") as archive:
+            archive.writestr("Chernobyl.S01E01.long.name.srt", b"1\n00:00 --> 00:01\nhi\n")
+            archive.writestr("Chernobyl.S01E01.srt", SRT_BODY)
+            archive.writestr("readme.txt", b"ignore")
+        zip_body = archive_bytes.getvalue()
+
+        provider = self.mod.SubHDProvider()
+
+        def get_stub(url, timeout=15, referer=None):
+            del timeout, referer
+            if url == "https://subhd.tv/a/uhC1c2":
+                return DETAIL_EPISODE
+            if url == "https://subhd.tv/down/uhC1c2":
+                return b"<html>download page</html>"
+            if url == "https://dl.subhd.tv/2026/03/1772600046334.srt":
+                return zip_body
+            raise AssertionError(f"unexpected GET: {url}")
+
+        provider._http_get = get_stub
+        provider._http_post_json = lambda url, payload, timeout=15, referer=None: API_DOWN
+
+        result = provider.download(
+            {
+                "provider": "subhd",
+                "schema": 1,
+                "subtitle_id": "uhC1c2",
+                "detail_url": "https://subhd.tv/a/uhC1c2",
+                "download_url": "https://subhd.tv/down/uhC1c2",
+                "season": 1,
+                "episode": 1,
+            },
+            {"alpha3": "zho", "alpha2": "zh"},
+            {},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), zip_body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(zip_body).hexdigest())
+        # Member selection (shortest .srt) is preserved; extraction is left to the host.
+        self.assertEqual(result["member"], "Chernobyl.S01E01.srt")
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
 
     def test_download_solves_captcha_and_retries_api(self):
         provider = self.mod.SubHDProvider()
@@ -313,13 +358,54 @@ class SubHDProviderDownloadTests(unittest.TestCase):
                 {},
             )
 
-    def test_zip_extraction_rejects_empty_subtitle_member(self):
+    def test_archive_member_selection_prefers_shortest_srt(self):
         archive_body = io.BytesIO()
         with zipfile.ZipFile(archive_body, "w") as archive:
-            archive.writestr("empty.srt", b"")
+            archive.writestr("Chernobyl.S01E01.ass", b"styles")
+            archive.writestr("Chernobyl.S01E01.long.srt", b"data")
+            archive.writestr("Chernobyl.S01E01.srt", b"data")
 
-        with self.assertRaisesRegex(ValueError, "empty subtitle"):
-            self.mod._extract_best_subtitle(archive_body.getvalue(), "zip")
+        self.assertEqual(
+            self.mod._select_archive_member(archive_body.getvalue()),
+            "Chernobyl.S01E01.srt",
+        )
+
+    def test_archive_member_selection_rejects_archive_without_subtitles(self):
+        archive_body = io.BytesIO()
+        with zipfile.ZipFile(archive_body, "w") as archive:
+            archive.writestr("readme.txt", b"no subtitles here")
+
+        with self.assertRaisesRegex(ValueError, "no subtitle files"):
+            self.mod._select_archive_member(archive_body.getvalue())
+
+    def test_download_rejects_html_error_body(self):
+        provider = self.mod.SubHDProvider()
+
+        def get_stub(url, timeout=15, referer=None):
+            del timeout, referer
+            if url == "https://subhd.tv/a/uhC1c2":
+                return DETAIL_EPISODE
+            if url == "https://subhd.tv/down/uhC1c2":
+                return b"<html>download page</html>"
+            if url == "https://dl.subhd.tv/2026/03/1772600046334.srt":
+                return b"<!DOCTYPE html><html><body>error</body></html>"
+            raise AssertionError(f"unexpected GET: {url}")
+
+        provider._http_get = get_stub
+        provider._http_post_json = lambda url, payload, timeout=15, referer=None: API_DOWN
+
+        with self.assertRaisesRegex(ValueError, "HTML"):
+            provider.download(
+                {
+                    "provider": "subhd",
+                    "schema": 1,
+                    "subtitle_id": "uhC1c2",
+                    "detail_url": "https://subhd.tv/a/uhC1c2",
+                    "download_url": "https://subhd.tv/down/uhC1c2",
+                },
+                {"alpha3": "zho", "alpha2": "zh"},
+                {},
+            )
 
 
 if __name__ == "__main__":

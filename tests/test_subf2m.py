@@ -301,7 +301,7 @@ class SubF2MProviderTests(unittest.TestCase):
         self.assertEqual(results[0]["provider_payload"]["language_path"], "brazillian-portuguese")
         self.assertEqual(results[0]["provider_payload"]["country_alpha2"], "BR")
 
-    def test_download_follows_detail_gate_and_extracts_zip_subtitle(self):
+    def test_download_follows_detail_gate_and_returns_archive(self):
         provider = self.mod.SubF2MProvider()
         archive_body = _zip_body(
             {
@@ -333,13 +333,13 @@ class SubF2MProviderTests(unittest.TestCase):
             {"request_delay_ms": 0},
         )
 
-        decoded = base64.b64decode(result["content_b64"])
         self.assertEqual(calls[1][1], "https://subf2m.co/subtitles/dune-2021/english/3331049")
-        self.assertIn(b"Movie line", decoded)
-        self.assertEqual(result["format"], "srt")
-        self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
+        self.assertNotIn("content_b64", result)
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive_body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive_body).hexdigest())
+        self.assertEqual(result["member"], "Dune.Part.One.2021.en.srt")
 
-    def test_download_selects_matching_episode_file_from_season_zip(self):
+    def test_download_returns_archive_with_episode_member(self):
         archive_body = _zip_body(
             {
                 "Chernobyl.S01E02.en.srt": b"1\n00:00:01,000 --> 00:00:02,000\nEpisode two\n",
@@ -347,14 +347,46 @@ class SubF2MProviderTests(unittest.TestCase):
             }
         )
 
-        result = self.mod.extract_download(
+        result = self.mod.build_download_payload(
             archive_body,
             {"filename": "chernobyl.zip", "season": 1, "episode": 1},
         )
 
-        decoded = base64.b64decode(result["content_b64"])
-        self.assertIn(b"Episode one", decoded)
-        self.assertNotIn(b"Episode two", decoded)
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive_body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive_body).hexdigest())
+        self.assertEqual(result["member"], "Chernobyl.S01E01.en.srt")
+
+    def test_download_returns_rar_archive_for_host_picking(self):
+        rar_body = b"Rar!\x1a\x07\x00" + b"\x00" * 64
+
+        result = self.mod.build_download_payload(
+            rar_body,
+            {"filename": "chernobyl.rar", "season": 1, "episode": 1},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), rar_body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(rar_body).hexdigest())
+        self.assertEqual(result["episode"], 1)
+        self.assertNotIn("member", result)
+
+    def test_download_keeps_direct_subtitle_body_as_content(self):
+        body = b"1\n00:00:01,000 --> 00:00:02,000\nPlain srt\n"
+
+        result = self.mod.build_download_payload(body, {"filename": "dune.srt"})
+
+        self.assertEqual(base64.b64decode(result["content_b64"]), body)
+        self.assertEqual(result["format"], "srt")
+        self.assertNotIn("archive_b64", result)
+        self.assertNotIn("encoding", result)
+
+    def test_download_rejects_empty_and_html_bodies(self):
+        with self.assertRaises(ValueError):
+            self.mod.build_download_payload(b"", {"page_url": "https://subf2m.co/x"})
+        with self.assertRaises(ValueError):
+            self.mod.build_download_payload(
+                b"<!DOCTYPE html><html><body>error</body></html>",
+                {"page_url": "https://subf2m.co/x"},
+            )
 
 
 if __name__ == "__main__":

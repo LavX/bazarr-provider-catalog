@@ -6,6 +6,7 @@ import io
 import json
 import os
 import re
+import socket
 import time
 import urllib.error
 import urllib.parse
@@ -22,6 +23,76 @@ USER_AGENT = (
 )
 HTTP_TIMEOUT_SECONDS = 30
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
+
+# Transport-level retry for transient network failures only. Upstream subliminal
+# uses a RetryingSession/ProviderRetryMixin with a few tries plus backoff so a
+# single connection blip does not abort a search or download. We mirror that at
+# the raw urllib call: at most RETRY_ATTEMPTS total tries (RETRY_ATTEMPTS - 1
+# retries), exponential backoff capped at RETRY_BACKOFF_MAX_SECONDS. Only
+# connection errors, timeouts, and HTTP 5xx/429 are retried. Every other error
+# (4xx, auth failures, parse errors) propagates unchanged on the first attempt.
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_MAX_SECONDS = 8.0
+RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+
+
+def _retry_after_seconds(exc):
+    # Honor a Retry-After header on a 429 if the server sent one. Only the simple
+    # delta-seconds form is supported; anything else falls back to the backoff.
+    headers = getattr(exc, "headers", None)
+    if headers is None:
+        return None
+    value = headers.get("Retry-After")
+    if value is None:
+        return None
+    try:
+        seconds = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    if seconds < 0:
+        return None
+    return min(seconds, RETRY_BACKOFF_MAX_SECONDS)
+
+
+def _is_retriable_http_error(exc):
+    return isinstance(exc, urllib.error.HTTPError) and exc.code in RETRY_STATUS_CODES
+
+
+def _is_retriable_transport_error(exc):
+    # A urllib.error.HTTPError is a subclass of URLError, so check it first and
+    # only retry the transient status codes; other 4xx HTTPErrors must propagate.
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in RETRY_STATUS_CODES
+    if isinstance(exc, urllib.error.URLError):
+        return True
+    return isinstance(exc, (socket.timeout, TimeoutError))
+
+
+def _retry_delay(attempt, exc):
+    if _is_retriable_http_error(exc) and exc.code == 429:
+        retry_after = _retry_after_seconds(exc)
+        if retry_after is not None:
+            return retry_after
+    delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    return min(delay, RETRY_BACKOFF_MAX_SECONDS)
+
+
+def _with_transport_retry(do_request):
+    # Run do_request (a single raw urllib request that returns the response body)
+    # under a bounded retry loop. Transient transport failures are retried with
+    # exponential backoff up to RETRY_ATTEMPTS total tries; the final failure and
+    # any non-transient error are re-raised unchanged so existing error handling
+    # (HTTPError 429/4xx mapping, parse errors) still runs in the caller.
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            return do_request()
+        except Exception as exc:  # noqa: BLE001 - re-raised below unless transient
+            if attempt >= RETRY_ATTEMPTS or not _is_retriable_transport_error(exc):
+                raise
+            delay = _retry_delay(attempt, exc)
+            if delay > 0:
+                time.sleep(delay)
 
 
 _SUBSOURCE_TO_LANGUAGE = {
@@ -121,6 +192,25 @@ _WS_RE = re.compile(r"\s+")
 _SEASON_EPISODE_RE = re.compile(r"\bS(?P<season>\d{1,2})E(?P<episode>\d{1,4})\b", re.I)
 _ALT_EPISODE_RE = re.compile(r"\b(?P<season>\d{1,2})x(?P<episode>\d{1,4})\b", re.I)
 _SEASON_RE = re.compile(r"\bS(?P<season>\d{1,2})(?!E\d)\b", re.I)
+# Member-level episode matcher. Tolerates a separator between the season and
+# episode parts (S01E02, S01.E02, S01 E02, S01-E02) and the NxNN form, plus the
+# contiguous whole-token "{season}{episode:02d}" form (e.g. "101" for S01E01).
+# The (?!\d) / delimited guards stop "720" matching "720p" or "264" matching
+# "x264", and stop "e02" matching "e020".
+
+
+def _member_has_episode(name, season, episode):
+    if season is None or episode is None:
+        return False
+    text = _coerce_text(name).lower()
+    return bool(
+        re.search(rf"\bs0*{season}[\s._-]*e0*{episode}(?!\d)", text)
+        or re.search(rf"(?<!\d){season}x0*{episode}(?!\d)", text)
+        # Whole-token "{season}{episode:02d}" form (e.g. "101"). Require a
+        # non-alphanumeric boundary on both sides so "720" never matches inside
+        # "720p" and "264" never matches inside "x264".
+        or re.search(rf"(?<![a-z0-9]){season}{episode:02d}(?![a-z0-9])", text)
+    )
 
 
 def _coerce_int(value):
@@ -344,14 +434,6 @@ def _release_info(item):
     return ", ".join(_release_names(item))
 
 
-def _format_from_name(name):
-    path = urllib.parse.urlparse(_coerce_text(name)).path.lower()
-    for ext in SUBTITLE_EXTENSIONS:
-        if path.endswith(ext):
-            return ext[1:]
-    return "srt"
-
-
 def _requested_variants_for_alpha3(requested_languages, alpha3):
     return [
         _language_payload(language)
@@ -463,73 +545,82 @@ def _candidate_from_item(video, requested_languages, item, matched_imdb=False):
     }
 
 
-def _content_type(format_name):
-    mapping = {
-        "srt": "application/x-subrip",
-        "ass": "text/x-ssa",
-        "ssa": "text/x-ssa",
-        "vtt": "text/vtt",
-        "sub": "text/plain",
-    }
-    return mapping.get(format_name, "text/plain")
+def _is_subtitle_member(name):
+    # Real subtitle members only: skip directory entries, archive sidecars
+    # (__MACOSX/._x.srt, .DS_Store) and any AppleDouble/dotfile whose basename
+    # starts with ".". The host does an exact "member in namelist" check and
+    # hard-fails on a mismatch, so pinning one of these would silently deliver a
+    # garbage resource fork instead of the subtitle.
+    if name.endswith("/"):
+        return False
+    if not name.lower().endswith(SUBTITLE_EXTENSIONS):
+        return False
+    return not os.path.basename(name).startswith(".")
 
 
-def _normalize_subtitle_bytes(content):
-    return (content or b"").replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-
-
-def _filename_episode_matches(name, payload):
-    text = _coerce_text(name)
-    target_season = _coerce_int((payload or {}).get("season"))
-    target_episode = _coerce_int((payload or {}).get("episode"))
-    match = _SEASON_EPISODE_RE.search(text) or _ALT_EPISODE_RE.search(text)
-    if not match:
-        return 0
-    season = int(match.group("season"))
-    episode = int(match.group("episode"))
-    return 2 if season == target_season and episode == target_episode else 0
-
-
-def _extract_subtitle_from_zip(data, payload):
+def _select_zip_member(data, payload):
+    # List the archive with stdlib zipfile and pick the member ourselves; the host
+    # then reads the named member and decodes it. We only pin a member on a
+    # confident, unique match (the requested episode in a pack, or a lone
+    # subtitle); otherwise we return None so the caller defers to host-side
+    # episode selection, which fails loudly on a true no-match instead of
+    # silently delivering the wrong member.
+    payload = payload or {}
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
-        names = [
-            name for name in archive.namelist()
-            if not name.endswith("/") and name.lower().endswith(SUBTITLE_EXTENSIONS)
-        ]
-        if not names:
-            return None, None
-        if (payload or {}).get("is_pack") and (payload or {}).get("kind") == "episode":
-            names.sort(key=lambda name: (_filename_episode_matches(name, payload), name), reverse=True)
-            if _filename_episode_matches(names[0], payload) > 0:
-                return _normalize_subtitle_bytes(archive.read(names[0])), _format_from_name(names[0])
-            return None, None
-        names.sort()
-        return _normalize_subtitle_bytes(archive.read(names[0])), _format_from_name(names[0])
+        names = [name for name in archive.namelist() if _is_subtitle_member(name)]
+    if not names:
+        return None
+    if payload.get("is_pack") and payload.get("kind") == "episode":
+        season = _coerce_int(payload.get("season"))
+        episode = _coerce_int(payload.get("episode"))
+        episode_names = [name for name in names if _member_has_episode(name, season, episode)]
+        # Pin only when exactly one member carries the requested season+episode.
+        # Zero matches or several ambiguous matches defer to the host.
+        if len(episode_names) == 1:
+            return episode_names[0]
+        return None
+    # Non-pack (movie or single episode): pin only a lone subtitle. A multi-member
+    # archive has nothing here to disambiguate it confidently, so defer.
+    if len(names) == 1:
+        return names[0]
+    return None
 
 
-def _empty_download(format_name="srt"):
-    return {
-        "content_b64": "",
-        "content_sha256": hashlib.sha256(b"").hexdigest(),
-        "content_type": _content_type(format_name),
-        "format": format_name,
-        "encoding": "utf-8",
-        "empty": True,
+def _is_archive_body(body):
+    if not body:
+        return False
+    if zipfile.is_zipfile(io.BytesIO(body)):
+        return True
+    return body.startswith(b"Rar!") or body.startswith(b"7z\xbc\xaf\x27\x1c")
+
+
+def _is_html_body(body):
+    head = (body or b"")[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or b"<body" in head
+        or b"<head" in head
+    )
+
+
+def _archive_payload(body, payload):
+    # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to the
+    # host. When we can list the zip cheaply we pin the member; otherwise the host picks
+    # by episode via guessit. The host detects the encoding via Subtitle.normalize().
+    result = {
+        "archive_b64": base64.b64encode(body).decode("ascii"),
+        "archive_sha256": hashlib.sha256(body).hexdigest(),
     }
-
-
-def _download_result(content, format_name):
-    content = _normalize_subtitle_bytes(content)
-    if not content:
-        return _empty_download(format_name)
-    return {
-        "content_b64": base64.b64encode(content).decode("ascii"),
-        "content_sha256": hashlib.sha256(content).hexdigest(),
-        "content_type": _content_type(format_name),
-        "format": format_name,
-        "encoding": "utf-8",
-        "empty": False,
-    }
+    member = None
+    if zipfile.is_zipfile(io.BytesIO(body)):
+        member = _select_zip_member(body, payload)
+    if member:
+        result["member"] = member
+    else:
+        result["episode"] = _coerce_int((payload or {}).get("episode"))
+    return result
 
 
 class SubSourceProvider:
@@ -551,9 +642,13 @@ class SubSourceProvider:
             self._url_for_path(path, params),
             headers=auth_headers(api_key),
         )
-        try:
+
+        def do_request():
             with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
-                body = response.read()
+                return response.read()
+
+        try:
+            body = _with_transport_retry(do_request)
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
             if exc.code == 400:
@@ -573,9 +668,13 @@ class SubSourceProvider:
             self._url_for_path(path),
             headers=auth_headers(api_key),
         )
-        try:
+
+        def do_request():
             with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
                 return response.read()
+
+        try:
+            return _with_transport_retry(do_request)
         except urllib.error.HTTPError as exc:
             if exc.code == 401:
                 raise ValueError("SubSource api_key is invalid or missing") from exc
@@ -636,9 +735,10 @@ class SubSourceProvider:
         if subtitle_id is None:
             raise ValueError("SubSource download requires subtitle_id")
         body = self._http_get_bytes(f"subtitles/{subtitle_id}/download", config or {})
-        if not zipfile.is_zipfile(io.BytesIO(body)):
-            return _empty_download("srt")
-        content, format_name = _extract_subtitle_from_zip(body, payload)
-        if content is None:
-            return _empty_download("srt")
-        return _download_result(content, format_name or "srt")
+        if not body or not body.strip():
+            raise ValueError(f"SubSource empty download for subtitle {subtitle_id}")
+        if _is_html_body(body):
+            raise ValueError(f"SubSource returned an HTML/error page for subtitle {subtitle_id}")
+        if not _is_archive_body(body):
+            raise ValueError(f"SubSource download for subtitle {subtitle_id} is not an archive")
+        return _archive_payload(body, payload)

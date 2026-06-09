@@ -213,14 +213,35 @@ class BetaSeriesProviderTests(unittest.TestCase):
 
         self.assertEqual(results, [])
 
-    def test_download_extracts_release_group_match_from_zip(self):
+    def test_search_payload_carries_episode_and_season(self):
         provider = self.mod.BetaSeriesProvider()
-        provider._http_get_bytes = lambda url, timeout=10, config=None: _zip_body(
+        provider._http_get_json = lambda url, timeout=10, config=None: EPISODE_DISPLAY
+
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "Blue Lights",
+                "season": 1,
+                "episode": 1,
+                "tvdb_id": 10101,
+            },
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"token": "secret-key"},
+        )
+
+        payload = results[0]["provider_payload"]
+        self.assertEqual(payload["season"], 1)
+        self.assertEqual(payload["episode"], 1)
+
+    def test_download_zip_archive_returns_raw_archive_for_host(self):
+        provider = self.mod.BetaSeriesProvider()
+        body = _zip_body(
             {
                 "Blue.Lights.S01E01.OTHER.srt": b"1\n00:00:01,000 --> 00:00:02,000\nWrong\n",
                 "Blue.Lights.S01E01.ETHEL.srt": b"1\n00:00:01,000 --> 00:00:02,000\nRight\n",
             }
         )
+        provider._http_get_bytes = lambda url, timeout=10, config=None: body
 
         result = provider.download(
             {
@@ -230,16 +251,312 @@ class BetaSeriesProviderTests(unittest.TestCase):
                 "download_url": "https://betaseries.test/download/blue-lights-ethel.zip",
                 "filename": "Blue.Lights.S01E01.1080p.WEB.h264-ETHEL.zip",
                 "release_group": "ETHEL",
+                "season": 1,
+                "episode": 1,
+            },
+            {"alpha3": "eng"},
+            {"token": "secret-key"},
+        )
+
+        # Archive mode: the worker hands the raw bytes back untouched, but pins the
+        # member matching the scored release_group so the host extracts that release
+        # rather than guessing by episode (both members share S01E01).
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["member"], "Blue.Lights.S01E01.ETHEL.srt")
+        # No worker-side extraction or encoding guessing; episode is unused once pinned.
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("episode", result)
+        self.assertNotIn("encoding", result)
+
+    def test_download_zip_archive_without_release_group_falls_back_to_episode(self):
+        provider = self.mod.BetaSeriesProvider()
+        body = _zip_body(
+            {
+                "Blue.Lights.S01E01.OTHER.srt": b"1\n00:00:01,000 --> 00:00:02,000\nOne\n",
+                "Blue.Lights.S01E01.ELSE.srt": b"1\n00:00:01,000 --> 00:00:02,000\nTwo\n",
+            }
+        )
+        provider._http_get_bytes = lambda url, timeout=10, config=None: body
+
+        result = provider.download(
+            {
+                "provider": "betaseries",
+                "schema": 1,
+                "subtitle_id": "101",
+                "download_url": "https://betaseries.test/download/blue-lights.zip",
+                "filename": "Blue.Lights.S01E01.zip",
+                "season": 1,
+                "episode": 1,
+            },
+            {"alpha3": "eng"},
+            {"token": "secret-key"},
+        )
+
+        # No release_group to disambiguate: hand the whole archive over and let the
+        # host pick the member by episode.
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["episode"], 1)
+        self.assertNotIn("member", result)
+        self.assertNotIn("content_b64", result)
+
+    def test_download_zip_pins_requested_episode_member_in_season_pack(self):
+        # A season pack carries the same release group across episodes; the member must be
+        # narrowed to the requested episode, not the first release-group match (E01).
+        provider = self.mod.BetaSeriesProvider()
+        body = _zip_body(
+            {
+                "Blue.Lights.S01E01.ETHEL.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE1\n",
+                "Blue.Lights.S01E02.ETHEL.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE2\n",
+            }
+        )
+        provider._http_get_bytes = lambda url, timeout=10, config=None: body
+
+        result = provider.download(
+            {
+                "provider": "betaseries",
+                "schema": 1,
+                "subtitle_id": "101",
+                "download_url": "https://betaseries.test/download/blue-lights-s01.zip",
+                "filename": "Blue.Lights.S01.1080p.WEB.h264-ETHEL.zip",
+                "release_group": "ETHEL",
+                "season": 1,
+                "episode": 2,
+            },
+            {"alpha3": "eng"},
+            {"token": "secret-key"},
+        )
+
+        self.assertEqual(result["member"], "Blue.Lights.S01E02.ETHEL.srt")
+        self.assertNotIn("episode", result)
+
+    def test_download_zip_defers_when_requested_episode_absent(self):
+        # Episode markers present but not the requested one: pinning a wrong-episode member
+        # would hard-fail the host download, so defer to host episode selection.
+        provider = self.mod.BetaSeriesProvider()
+        body = _zip_body(
+            {
+                "Blue.Lights.S01E01.ETHEL.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE1\n",
+                "Blue.Lights.S01E03.ETHEL.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE3\n",
+            }
+        )
+        provider._http_get_bytes = lambda url, timeout=10, config=None: body
+
+        result = provider.download(
+            {
+                "provider": "betaseries",
+                "schema": 1,
+                "subtitle_id": "101",
+                "download_url": "https://betaseries.test/download/blue-lights-s01.zip",
+                "filename": "Blue.Lights.S01.WEB-ETHEL.zip",
+                "release_group": "ETHEL",
+                "season": 1,
+                "episode": 2,
+            },
+            {"alpha3": "eng"},
+            {"token": "secret-key"},
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 2)
+
+    def test_download_zip_matches_release_group_case_insensitively(self):
+        # guessit may yield a differently-cased release_group than the filename carries.
+        provider = self.mod.BetaSeriesProvider()
+        body = _zip_body(
+            {
+                "Blue.Lights.S01E01.OTHER.srt": b"1\n00:00:01,000 --> 00:00:02,000\nWrong\n",
+                "Blue.Lights.S01E01.ethel.srt": b"1\n00:00:01,000 --> 00:00:02,000\nRight\n",
+            }
+        )
+        provider._http_get_bytes = lambda url, timeout=10, config=None: body
+
+        result = provider.download(
+            {
+                "provider": "betaseries",
+                "schema": 1,
+                "subtitle_id": "101",
+                "download_url": "https://betaseries.test/download/blue-lights.zip",
+                "filename": "Blue.Lights.S01E01.WEB-ETHEL.zip",
+                "release_group": "ETHEL",
+                "season": 1,
+                "episode": 1,
+            },
+            {"alpha3": "eng"},
+            {"token": "secret-key"},
+        )
+
+        self.assertEqual(result["member"], "Blue.Lights.S01E01.ethel.srt")
+
+    def test_download_zip_narrows_separated_episode_tokens(self):
+        # Pack members can use a separator between the season and episode tokens
+        # (S01.E02). The narrowing must recognize it, or it would keep the whole
+        # namelist and pin the first release-group match (the S01.E01 member).
+        provider = self.mod.BetaSeriesProvider()
+        body = _zip_body(
+            {
+                "Blue.Lights.S01.E01-ETHEL.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE1\n",
+                "Blue.Lights.S01.E02-ETHEL.srt": b"1\n00:00:01,000 --> 00:00:02,000\nE2\n",
+            }
+        )
+        provider._http_get_bytes = lambda url, timeout=10, config=None: body
+
+        result = provider.download(
+            {
+                "provider": "betaseries",
+                "schema": 1,
+                "subtitle_id": "101",
+                "download_url": "https://betaseries.test/download/blue-lights-s01.zip",
+                "filename": "Blue.Lights.S01.WEB-ETHEL.zip",
+                "release_group": "ETHEL",
+                "season": 1,
+                "episode": 2,
+            },
+            {"alpha3": "eng"},
+            {"token": "secret-key"},
+        )
+
+        self.assertEqual(result["member"], "Blue.Lights.S01.E02-ETHEL.srt")
+        self.assertNotIn("episode", result)
+
+    def test_download_rar_archive_returns_raw_archive_for_host(self):
+        provider = self.mod.BetaSeriesProvider()
+        # Minimal RAR4 signature; the host extracts, the worker only forwards bytes.
+        body = b"Rar!\x1a\x07\x00" + b"\x00" * 32
+        provider._http_get_bytes = lambda url, timeout=10, config=None: body
+
+        result = provider.download(
+            {
+                "provider": "betaseries",
+                "schema": 1,
+                "subtitle_id": "101",
+                "download_url": "https://betaseries.test/download/blue-lights.rar",
+                "filename": "Blue.Lights.S01E07.rar",
+                "season": 1,
+                "episode": 7,
+            },
+            {"alpha3": "fra"},
+            {"token": "secret-key"},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["episode"], 7)
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
+
+    def test_download_archive_episode_is_none_for_movie(self):
+        provider = self.mod.BetaSeriesProvider()
+        body = _zip_body({"Some.Movie.2020.720p.srt": b"subtitle"})
+        provider._http_get_bytes = lambda url, timeout=10, config=None: body
+
+        result = provider.download(
+            {
+                "provider": "betaseries",
+                "schema": 1,
+                "subtitle_id": "202",
+                "download_url": "https://betaseries.test/download/movie.zip",
+                "filename": "Some.Movie.2020.720p.zip",
+                "season": None,
+                "episode": None,
+            },
+            {"alpha3": "eng"},
+            {"token": "secret-key"},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertIsNone(result["episode"])
+
+    def test_download_direct_subtitle_normalizes_line_endings(self):
+        provider = self.mod.BetaSeriesProvider()
+        provider._http_get_bytes = (
+            lambda url, timeout=10, config=None: b"1\r\n00:00:01,000 --> 00:00:02,000\r\nText\r\n"
+        )
+
+        result = provider.download(
+            {
+                "provider": "betaseries",
+                "schema": 1,
+                "subtitle_id": "303",
+                "download_url": "https://betaseries.test/download/blue-lights.srt",
+                "filename": "Blue.Lights.S01E01.srt",
             },
             {"alpha3": "eng"},
             {"token": "secret-key"},
         )
 
         decoded = base64.b64decode(result["content_b64"])
-        self.assertIn(b"Right", decoded)
-        self.assertNotIn(b"Wrong", decoded)
+        self.assertEqual(decoded, b"1\n00:00:01,000 --> 00:00:02,000\nText\n")
         self.assertEqual(result["format"], "srt")
         self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
+        # Direct content path must not ship a worker-guessed encoding; the host normalizes.
+        self.assertNotIn("encoding", result)
+        self.assertNotIn("archive_b64", result)
+
+    def test_download_rejects_html_error_page(self):
+        provider = self.mod.BetaSeriesProvider()
+        provider._http_get_bytes = lambda url, timeout=10, config=None: (
+            b"<!DOCTYPE html>\n<html><head><title>404</title></head>"
+            b"<body>Subtitle not found</body></html>"
+        )
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {
+                    "provider": "betaseries",
+                    "schema": 1,
+                    "subtitle_id": "404",
+                    "download_url": "https://betaseries.test/download/missing.srt",
+                    "filename": "missing.srt",
+                },
+                {"alpha3": "eng"},
+                {"token": "secret-key"},
+            )
+
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.BetaSeriesProvider()
+        provider._http_get_bytes = lambda url, timeout=10, config=None: b"   \r\n  "
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {
+                    "provider": "betaseries",
+                    "schema": 1,
+                    "subtitle_id": "405",
+                    "download_url": "https://betaseries.test/download/empty.srt",
+                    "filename": "empty.srt",
+                },
+                {"alpha3": "eng"},
+                {"token": "secret-key"},
+            )
+
+    def test_download_404_returns_empty_content_payload(self):
+        provider = self.mod.BetaSeriesProvider()
+
+        def raise_404(url, timeout=10, config=None):
+            del timeout, config
+            error = urllib.error.HTTPError(
+                url=url, code=404, msg="Not Found", hdrs=None, fp=io.BytesIO(b""),
+            )
+            self.addCleanup(error.close)
+            raise error
+
+        provider._http_get_bytes = raise_404
+
+        result = provider.download(
+            {
+                "provider": "betaseries",
+                "schema": 1,
+                "subtitle_id": "406",
+                "download_url": "https://betaseries.test/download/gone.srt",
+                "filename": "gone.srt",
+            },
+            {"alpha3": "eng"},
+            {"token": "secret-key"},
+        )
+
+        self.assertTrue(result["empty"])
+        self.assertEqual(base64.b64decode(result["content_b64"]), b"")
 
 
 if __name__ == "__main__":

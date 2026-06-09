@@ -49,6 +49,8 @@ _ANUBIS_CHALLENGE_RE = re.compile(
     re.I | re.S,
 )
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt", ".smi")
+RAR_SIGNATURE = b"Rar!\x1a\x07"
+SEVEN_ZIP_SIGNATURE = b"7z\xbc\xaf\x27\x1c"
 
 LANGUAGE_MAP = {
     "Arabic": "ara",
@@ -971,46 +973,128 @@ def _subtitle_extension(name):
 
 
 def _download_subtitle(download_url, delay_ms=0, video=None, config=None, state=None):
-    """Download and extract subtitle ZIP file."""
+    """Download the subtitle archive and hand it to the host for extraction.
+
+    Provider Hub v1.1+ extracts the archive member and detects the encoding host-side.
+    The worker still lists the zip with stdlib zipfile to pick the member, but no longer
+    extracts or decodes it. Empty/HTML error bodies are rejected; rar/7z bodies (which
+    cannot be listed with stdlib) are forwarded with episode so the host picks the member.
+    """
     if delay_ms > 0:
         time.sleep(delay_ms / 1000.0)
-    
+
     full_url = f"{BASE_URL}{download_url}" if download_url.startswith("/") else download_url
-    
+
     try:
-        zip_data = _http_get(full_url, config=config, state=state)
-        with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
-            archive_names = zf.namelist()
-            subtitle_files = [
-                name
-                for name in archive_names
-                if (
-                    _subtitle_extension(name)
-                    and not _is_archive_sidecar(name)
-                    and not _is_paired_vobsub_sub(name, archive_names)
-                )
-            ]
-            if not subtitle_files:
-                return None
-            
-            # Select episode-specific file if video metadata available
-            selected_files = _select_subtitle_files(subtitle_files, video)
-            if not selected_files:
-                return None
-            content = b"\n\n".join(zf.read(name) for name in selected_files)
-            if not content:
-                return None
-            subtitle_file = selected_files[0]
-            
-            return {
-                "content": content,
-                "filename": subtitle_file,
-                "format": _subtitle_extension(subtitle_file) or "srt",
-            }
+        body = _http_get(full_url, config=config, state=state)
     except CloudflareBlockedError:
         raise
     except Exception:
         return None
+
+    if not body:
+        return None
+
+    # Hand a real zip/rar/7z archive to the host; reject everything else. An empty stream
+    # or HTML/error page (the download endpoint can answer 200 with one) is not an archive
+    # and yields no payload, so download() surfaces it as a failure.
+    if zipfile.is_zipfile(io.BytesIO(body)):
+        # A multi-part subtitle (CD1/CD2 ...) has to be concatenated, which the single-member
+        # host contract cannot do: a member/episode pick would deliver only one disc. When we
+        # can list the zip and the selection is a multipart set, join those members here and
+        # return direct content so the user gets the whole subtitle. Otherwise pin the single
+        # member; if nothing matches there is no payload and download() surfaces a failure.
+        multipart = _multipart_zip_content(body, video)
+        if multipart is not None:
+            return multipart
+        member = _select_zip_member(body, video)
+        if not member:
+            return None
+        return _archive_payload(body, member=member)
+    # RAR/7z are not stdlib-listable (bundling rarfile/py7zz is banned), so a multipart rar
+    # also defers to the host here: hand the raw bytes back with episode and let the host
+    # pick the member by episode.
+    if body.startswith(RAR_SIGNATURE) or body.startswith(SEVEN_ZIP_SIGNATURE):
+        return _archive_payload(body, episode=(video or {}).get("episode"))
+    return None
+
+
+def _zip_subtitle_members(body):
+    """List the zip with stdlib and return the subtitle members worth selecting."""
+    with zipfile.ZipFile(io.BytesIO(body)) as zf:
+        archive_names = zf.namelist()
+    return [
+        name
+        for name in archive_names
+        if (
+            _subtitle_extension(name)
+            and not _is_archive_sidecar(name)
+            and not _is_paired_vobsub_sub(name, archive_names)
+        )
+    ]
+
+
+def _select_zip_member(body, video):
+    """List the zip with stdlib and return the single member the provider selects."""
+    return _select_episode_file(_zip_subtitle_members(body), video)
+
+
+def _multipart_zip_content(body, video):
+    """Concatenate a CD1/CD2-style multipart subtitle from a zip into one content payload.
+
+    Listing only (no host-banned rar/7z libs). Returns None when the selection is not a
+    multipart set (a single member, no match, or a non-listable archive), so the caller
+    falls back to pinning the single member or deferring to the host.
+    """
+    subtitle_files = _zip_subtitle_members(body)
+    selected = _select_subtitle_files(subtitle_files, video)
+    if len(selected) <= 1:
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as zf:
+        content = b"\n\n".join(zf.read(name) for name in selected)
+    if not content:
+        return None
+    return _content_payload(content, _subtitle_extension(selected[0]) or "srt")
+
+
+def _archive_payload(body, member=None, episode=None):
+    """Hand the raw archive bytes to the host. No worker-side extraction or encoding."""
+    payload = {
+        "archive_b64": base64.b64encode(body).decode("ascii"),
+        "archive_sha256": hashlib.sha256(body).hexdigest(),
+        "empty": False,
+    }
+    if member is not None:
+        payload["member"] = member
+    else:
+        payload["episode"] = episode
+    return payload
+
+
+def _content_payload(content, subtitle_format):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize. Used for multipart sets
+    # that the single-member host contract cannot reassemble.
+    return {
+        "content_b64": base64.b64encode(content).decode("ascii"),
+        "content_sha256": hashlib.sha256(content).hexdigest(),
+        "content_type": _content_type(subtitle_format),
+        "format": subtitle_format,
+        "empty": False,
+    }
+
+
+def _content_type(subtitle_format):
+    if subtitle_format in {"ass", "ssa"}:
+        return "text/x-ssa"
+    if subtitle_format == "vtt":
+        return "text/vtt"
+    if subtitle_format == "smi":
+        return "application/smil"
+    if subtitle_format == "sub":
+        return "text/plain"
+    return "application/x-subrip"
 
 
 def _coerce_text(value):
@@ -1306,16 +1390,6 @@ def _alpha2_from_alpha3(alpha3):
     return ALPHA3_TO_ALPHA2.get(str(alpha3 or "").lower(), str(alpha3 or "").lower())
 
 
-def _content_type(subtitle_format):
-    return {
-        "srt": "application/x-subrip",
-        "ass": "text/x-ssa",
-        "ssa": "text/x-ssa",
-        "vtt": "text/vtt",
-        "sub": "text/plain",
-    }.get(subtitle_format, "text/plain")
-
-
 def _alpha2_for(language):
     """Extract alpha2 code from language dict or string."""
     if isinstance(language, dict):
@@ -1435,7 +1509,8 @@ class SubSceneProvider:
         if not detail or not detail.get("download_url"):
             raise ValueError("sub_scene could not find download URL on detail page")
         
-        # Pass video metadata to select episode-specific file from ZIP
+        # Hand the raw archive to the host (Provider Hub v1.1+), passing video metadata so
+        # the worker can still list the zip and pick the episode member.
         video = subtitle.get("video")
         downloaded = _download_subtitle(
             detail["download_url"],
@@ -1445,23 +1520,6 @@ class SubSceneProvider:
             self._http_state,
         )
         if not downloaded:
-            raise ValueError("sub_scene failed to download or extract subtitle file")
-        
-        content = downloaded["content"]
-        content_b64 = base64.b64encode(content).decode("ascii")
-        content_sha256 = hashlib.sha256(content).hexdigest()
-        
-        encoding = "utf-8"
-        try:
-            content.decode("utf-8")
-        except UnicodeDecodeError:
-            encoding = "latin-1"
-        
-        return {
-            "content_b64": content_b64,
-            "content_sha256": content_sha256,
-            "content_type": _content_type(downloaded["format"]),
-            "format": downloaded["format"],
-            "encoding": encoding,
-            "empty": False,
-        }
+            raise ValueError("sub_scene failed to download subtitle archive")
+
+        return downloaded

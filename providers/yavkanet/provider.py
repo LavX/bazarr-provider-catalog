@@ -5,11 +5,8 @@ import hashlib
 import html
 import io
 import json
-import os
 import re
-import shutil
-import subprocess
-import tempfile
+import socket
 import time
 import urllib.error
 import urllib.parse
@@ -21,15 +18,19 @@ try:
 except ImportError:  # pragma: no cover, dependency is declared in manifest
     cloudscraper = None
 
-try:
-    import py7zz
-except ImportError:  # pragma: no cover, dependency is declared in manifest
-    py7zz = None
-
 PROVIDER_ID = "yavkanet"
 BASE_URL = "https://yavka.net"
 HOME_URL = f"{BASE_URL}/"
 HTTP_TIMEOUT_SECONDS = 15
+# Transport-level retry: a single transient network blip (connection reset, DNS
+# hiccup, read timeout, a 5xx/429 from the edge) should not abort the whole
+# search/download. Mirrors upstream subliminal's RetryingSession/ProviderRetryMixin
+# (~3 tries with exponential backoff). Only raw transport failures are retried;
+# Cloudflare/Anubis handling and 4xx errors are left untouched.
+HTTP_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8.0
+RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
 DEFAULT_FLARESOLVERR_TIMEOUT_MS = 10000
 MAX_FLARESOLVERR_TIMEOUT_MS = 30000
 FLARESOLVERR_HTTP_TIMEOUT_BUFFER_SECONDS = 5
@@ -257,63 +258,105 @@ def http_post(url, data=None, timeout=30, config=None, state=None, referer=None)
 def extract_download(body, payload=None):
     payload = payload or {}
     filename = payload.get("filename") or ""
+    # Reject broken responses up front: a 200 with an empty stream or an HTML/error
+    # page would otherwise look like a successful download.
     if not body:
-        return _content_payload(b"", _format_from_filename(filename), empty=True)
-    if _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        selected = select_subtitle_file([name for name, _data in files], payload)
-        return _content_payload(dict(files)[selected], _subtitle_extension(selected) or "srt")
-    stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist(), payload)
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
+        raise ValueError("yavkanet download returned an empty body")
     if _looks_like_html(body):
         raise ValueError("yavkanet download returned HTML instead of a subtitle archive")
+    if _is_archive_body(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
+        # the host. A pack can hold several members for the same episode (different
+        # release group / resolution / source); the host's episode-only pick cannot tell
+        # them apart, so when we can list a zip we pin the member matching the fields the
+        # result was scored on. Otherwise (rar, single member, or no clear winner) let the
+        # host pick the member by episode.
+        archive = {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+        }
+        member = _select_zip_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = payload.get("episode")
+        return archive
+    # Direct, non-archive subtitle body.
     return _content_payload(body, _format_from_filename(filename))
 
 
-def select_subtitle_file(names, payload=None):
+def _is_archive_body(body):
+    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
+
+
+def _select_zip_member(body, payload):
+    # Pin the zip member matching the scored release group / resolution / source. Listing
+    # only, no extraction or decoding: the host reads the named member and runs chardet.
+    # Returns None for rar (not stdlib-listable), a single member (nothing to
+    # disambiguate), or when no field breaks the tie, so the caller falls back to
+    # host-side episode selection.
     payload = payload or {}
-    candidates = [name for name in names if _is_supported_subtitle_name(name)]
-    if not candidates:
-        raise ValueError("yavkanet archive contains no supported subtitle files")
+    if _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body)):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        members = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/")
+            and _subtitle_extension(name)
+            and not name.rsplit("/", 1)[-1].startswith(".")
+        ]
+    if len(members) < 2:
+        return None  # a lone member: the host's episode pick already lands here
+    # Narrow to the requested episode first; the host can already do this, but a pack with
+    # several release groups per episode leaves it guessing among the matches.
+    season = _safe_int(payload.get("season"))
+    episode = _safe_int(payload.get("episode"))
+    pool = members
+    if season is not None and episode is not None:
+        episode_pool = [name for name in members if _member_has_episode(name, season, episode)]
+        if not episode_pool:
+            # Episode requested but absent from every member: pinning a member from another
+            # episode would hard-fail the host download, so defer to host episode selection.
+            return None
+        pool = episode_pool
+    if len(pool) < 2:
+        return None  # a single episode match: host episode selection already lands here
+    # Break the tie with the same fields the result was scored on. Pin only a unique winner.
     video = payload.get("video") or {}
-    episode_required = video.get("kind") == "episode" and video.get("episode")
-    has_episode_markers = any(_has_episode_marker(name) or _is_numeric_episode_name(name) for name in candidates)
+    best, best_score, tied = None, 0, False
+    for name in pool:
+        score = _member_match_score(name, video)
+        if score > best_score:
+            best, best_score, tied = name, score, False
+        elif score == best_score and best is not None:
+            tied = True
+    if best is None or best_score == 0 or tied:
+        return None  # cannot confidently disambiguate; let the host pick by episode
+    return best
 
-    def score(name):
-        text = name
-        value = 0
-        if episode_required:
-            if _season_episode_matches(video.get("season"), video.get("episode"), text):
-                value += 120
-            elif _has_season_episode_marker(text):
-                return 0
-            elif _episode_matches(video.get("episode"), text):
-                value += 100
-            elif _numeric_episode_matches(video.get("episode"), text):
-                value += 100
-            elif _has_episode_marker(name):
-                return 0
-            elif _is_numeric_episode_name(name):
-                return 0
-        if (not episode_required and video.get("kind") == "episode" and _episode_matches(video.get("episode"), text)):
-            value += 100
-        if _token_in_text(video.get("resolution"), text):
-            value += 20
-        if _source_matches(video.get("source"), text):
-            value += 20
-        if _release_group_matches(video.get("release_group"), text):
-            value += 20
-        if _title_in_text(video.get("title") or video.get("series"), text):
-            value += 10
-        return value
 
-    selected = max(candidates, key=score)
-    if episode_required and has_episode_markers and score(selected) <= 0:
-        raise ValueError("yavkanet archive does not contain the requested episode")
-    return selected
+def _member_has_episode(name, season, episode):
+    # Tolerate separated SxxExx tokens (S01.E02, S01 E02, S01-E02) as well as contiguous
+    # S01E02, while keeping the (?!\d) guard so "e02" never matches "e020".
+    text = name.lower()
+    return bool(
+        re.search(rf"s0*{season}[\s._-]*e0*{episode}(?!\d)", text)
+        or re.search(rf"(?<!\d){season}x0*{episode}(?!\d)", text)
+    )
+
+
+def _member_match_score(name, video):
+    # release_group is the strongest release signal (mirrors search _score: rg 15 vs
+    # resolution/source 8 each), so weight it above resolution and source combined.
+    score = 0
+    if _release_group_matches(video.get("release_group"), name):
+        score += 5
+    if _token_in_text(video.get("resolution"), name):
+        score += 2
+    if _source_matches(video.get("source"), name):
+        score += 2
+    return score
 
 
 class YavkaNetProvider:
@@ -428,6 +471,8 @@ def _result_from_row(video, row, form, language):
             "release": row["release"],
             "page_url": row["page_url"],
             "language": language["alpha3"],
+            "season": _safe_int((video or {}).get("season")),
+            "episode": _safe_int((video or {}).get("episode")),
             "video": _video_payload(video),
         },
     }
@@ -444,7 +489,7 @@ def _http_request(method, url, data=None, timeout=HTTP_TIMEOUT_SECONDS, config=N
     if method == "POST":
         request_kwargs["data"] = data or {}
     try:
-        response = scraper.post(url, **request_kwargs) if method == "POST" else scraper.get(url, **request_kwargs)
+        response = _request_with_retry(scraper, method, url, request_kwargs)
     except Exception as exc:
         if _flaresolverr_url(config) and _is_cloudflare_exception(exc):
             return _flaresolverr_request(method, url, data=data, timeout=timeout, config=config, state=state)
@@ -457,7 +502,7 @@ def _http_request(method, url, data=None, timeout=HTTP_TIMEOUT_SECONDS, config=N
         solved = solve_anubis_challenge(scraper, response.url, url, timeout=timeout)
         if not solved:
             raise CloudflareBlockedError("yavkanet Anubis challenge could not be solved")
-        response = scraper.post(url, **request_kwargs) if method == "POST" else scraper.get(url, **request_kwargs)
+        response = _request_with_retry(scraper, method, url, request_kwargs)
         body = getattr(response, "content", None)
         if body is None:
             body = str(getattr(response, "text", "")).encode("utf-8")
@@ -478,6 +523,108 @@ def _http_request(method, url, data=None, timeout=HTTP_TIMEOUT_SECONDS, config=N
     if status >= 400:
         raise urllib.error.HTTPError(url, status, f"HTTP {status}", headers, None)
     return body
+
+
+def _request_with_retry(scraper, method, url, request_kwargs):
+    """Perform the raw cloudscraper call with a bounded transport retry.
+
+    Only TRANSIENT transport failures are retried: connection/DNS/reset errors,
+    read timeouts, and responses carrying a transient HTTP status (5xx / 429).
+    A Cloudflare/Anubis exception, an HTTP 4xx other than 429, and any other
+    exception propagate unchanged so the caller's existing FlareSolverr fallback
+    and status handling run exactly as before. When retries are exhausted the
+    final exception is re-raised, or the final (still-transient) response is
+    returned so the caller maps it the same way it does today.
+    """
+    last_response = None
+    for attempt in range(1, HTTP_MAX_ATTEMPTS + 1):
+        try:
+            response = scraper.post(url, **request_kwargs) if method == "POST" else scraper.get(url, **request_kwargs)
+        except Exception as exc:
+            # A Cloudflare/challenge exception is not a transport blip: hand it
+            # straight back so the FlareSolverr fallback can take over.
+            if _is_cloudflare_exception(exc) or not _is_transient_transport_error(exc):
+                raise
+            if attempt >= HTTP_MAX_ATTEMPTS:
+                raise
+            _sleep_backoff(attempt)
+            continue
+        retry_after = _transient_response_retry_after(response)
+        if retry_after is None or attempt >= HTTP_MAX_ATTEMPTS:
+            return response
+        last_response = response
+        _sleep_backoff(attempt, retry_after)
+    return last_response
+
+
+def _is_transient_transport_error(exc):
+    # Raw transport blips that a quick retry can recover from. Parse/value errors,
+    # auth failures, and HTTP 4xx HTTPErrors are deliberately excluded.
+    if isinstance(exc, urllib.error.HTTPError):
+        return False
+    if isinstance(exc, (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError, OSError)):
+        return True
+    # cloudscraper rides on requests/urllib3; match their transient transport
+    # families by name so we do not hard-depend on those modules being importable.
+    transient_names = {
+        "ConnectionError",
+        "ConnectTimeout",
+        "ReadTimeout",
+        "Timeout",
+        "ConnectTimeoutError",
+        "ReadTimeoutError",
+        "NewConnectionError",
+        "NameResolutionError",
+        "ProtocolError",
+        "MaxRetryError",
+        "ChunkedEncodingError",
+    }
+    for klass in type(exc).__mro__:
+        if klass.__name__ in transient_names:
+            return True
+    return False
+
+
+def _transient_response_retry_after(response):
+    """Return a non-negative delay if the response is a retryable 5xx/429.
+
+    Returns None when the response is not transient (so it is returned as-is).
+    A 429/5xx that is actually a Cloudflare challenge is left for the existing
+    challenge handling, not retried here.
+    """
+    try:
+        status = int(getattr(response, "status_code", 0))
+    except (TypeError, ValueError):
+        return None
+    if status not in RETRY_STATUS_CODES:
+        return None
+    headers = getattr(response, "headers", {}) or {}
+    body = getattr(response, "content", None)
+    if body is None:
+        body = str(getattr(response, "text", "")).encode("utf-8")
+    if is_cloudflare_challenge(status, headers, body):
+        return None
+    return _retry_after_seconds(headers)
+
+
+def _retry_after_seconds(headers):
+    normalized = {str(key).lower(): str(value) for key, value in (headers or {}).items()}
+    raw = normalized.get("retry-after")
+    if not raw:
+        return 0.0
+    try:
+        return max(0.0, float(raw.strip()))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _sleep_backoff(attempt, retry_after=0.0):
+    delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    delay = min(delay, RETRY_BACKOFF_CAP_SECONDS)
+    delay = max(delay, retry_after)
+    delay = min(delay, RETRY_BACKOFF_CAP_SECONDS)
+    # Module-level time.sleep so tests can monkeypatch provider.time.sleep.
+    time.sleep(delay)
 
 
 def _get_cloudscraper(state):
@@ -923,43 +1070,8 @@ def _episode_matches(episode, text):
     return False
 
 
-def _season_episode_matches(season, episode, text):
-    try:
-        season_int = int(season)
-        episode_int = int(episode)
-    except (TypeError, ValueError):
-        return False
-    for match in _SXXEXX_RE.finditer(text or ""):
-        if int(match.group("season")) == season_int and int(match.group("episode")) == episode_int:
-            return True
-    return False
-
-
 def _has_season_episode_marker(text):
     return bool(_SXXEXX_RE.search(text or ""))
-
-
-def _numeric_episode_matches(episode, text):
-    try:
-        episode_int = int(episode)
-    except (TypeError, ValueError):
-        return False
-    return _numeric_episode_number(text) == episode_int
-
-
-def _is_numeric_episode_name(text):
-    return _numeric_episode_number(text) is not None
-
-
-def _numeric_episode_number(text):
-    stem = os.path.splitext(os.path.basename(text or ""))[0]
-    if re.fullmatch(r"\d{1,3}", stem or ""):
-        return int(stem)
-    return None
-
-
-def _has_episode_marker(text):
-    return bool(_SXXEXX_RE.search(text or "") or _EPISODE_RE.search(text or ""))
 
 
 def _release_group_matches(release_group, text):
@@ -995,7 +1107,10 @@ def _same_int(left, right):
         return False
 
 
-def _content_payload(content, fmt, empty=False):
+def _content_payload(content, fmt):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     content = content or b""
     fmt = fmt or "srt"
     return {
@@ -1003,22 +1118,8 @@ def _content_payload(content, fmt, empty=False):
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(fmt),
         "format": fmt,
-        "encoding": _detect_encoding(content),
-        "empty": bool(empty),
+        "empty": False,
     }
-
-
-def _detect_encoding(content):
-    # Yavka serves Cyrillic Bulgarian releases that are often Windows-1251
-    # rather than UTF-8, so report the encoding that actually decodes the bytes
-    # instead of always claiming UTF-8.
-    for candidate in ("utf-8", "cp1251", "windows-1251", "latin-1"):
-        try:
-            (content or b"").decode(candidate)
-            return candidate
-        except UnicodeDecodeError:
-            continue
-    return "utf-8"
 
 
 def _content_type(fmt):
@@ -1043,11 +1144,6 @@ def _subtitle_extension(name):
     return None
 
 
-def _is_supported_subtitle_name(name):
-    base = os.path.basename(name or "")
-    return bool(base and not base.startswith(".") and _subtitle_extension(base))
-
-
 def _looks_like_html(body):
     sample = (body or b"").lstrip()[:1024].lower()
     return sample.startswith(b"<!doctype html") or sample.startswith(b"<html") or b"<body" in sample
@@ -1055,91 +1151,6 @@ def _looks_like_html(body):
 
 def _is_rar_archive(body):
     return bool(body) and (body.startswith(b"Rar!\x1a\x07\x00") or body.startswith(b"Rar!\x1a\x07\x01\x00"))
-
-
-def _extract_rar_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"YavkaNet RAR extraction failed: {details}") from errors[-1]
-    raise RuntimeError("YavkaNet RAR extraction requires bundled py7zz")
-
-
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("YavkaNet bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "yavkanet.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_unar(body):
-    unar = shutil.which("unar")
-    if not unar:
-        raise RuntimeError("YavkaNet RAR fallback requires unar")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "yavkanet.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run([unar, "-quiet", "-o", output_dir, archive_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"unar failed to extract YavkaNet RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("YavkaNet RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "yavkanet.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run([sevenzip, "x", "-y", f"-o{output_dir}", archive_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract YavkaNet RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if not _is_supported_subtitle_name(rel):
-                continue
-            with open(path, "rb") as handle:
-                files.append((rel, handle.read()))
-    if not files:
-        raise ValueError("yavkanet archive contains no supported subtitle files")
-    return files
 
 
 def _sleep(config):

@@ -4,7 +4,9 @@ import base64 as _base64
 import hashlib as _hashlib
 import html
 import json
+import os
 import re
+import socket
 import time
 import unicodedata
 import urllib.error
@@ -22,6 +24,10 @@ HASH_DOWNLOAD_URL = "https://napiprojekt.pl/unit_napisy/dl.php"
 CATALOG_SEARCH_URL = "https://www.napiprojekt.pl/ajax/search_catalog.php"
 CATALOG_BASE_URL = "https://www.napiprojekt.pl"
 HTTP_TIMEOUT_SECONDS = 15
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8.0
+RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 DEFAULT_FLARESOLVERR_TIMEOUT_MS = 25000
 MAX_FLARESOLVERR_TIMEOUT_MS = 25000
 USER_AGENT = (
@@ -86,6 +92,36 @@ def _create_cloudscraper():
         fallback_options = dict(options)
         fallback_options.pop("enable_cookie_persistence", None)
         return cloudscraper.create_scraper(**fallback_options)
+
+
+_NAPIPROJEKT_HASH_READ_SIZE = 10 * 1024 * 1024  # NapiProjekt hashes the first 10 MiB
+
+
+def _existing_video_path(video):
+    """The reachable media file, if any. Present in Bazarr's native library flow;
+    absent in the file-less compat API (where the client supplies a hash instead)."""
+    for key in ("name", "original_path", "original_name"):
+        value = str((video or {}).get(key) or "").strip()
+        if value and os.path.isfile(value):
+            return value
+    return None
+
+
+def _compute_napiprojekt_hash(path):
+    """NapiProjekt's own hash: MD5 of the first 10 MiB of the file. The worker has
+    filesystem access, so when the real file is reachable we compute it here rather
+    than depending on the host to have pre-populated video.hashes['napiprojekt']
+    (mirrors napisy24's self-computed OpenSubtitles hash)."""
+    if not path:
+        return None
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read(_NAPIPROJEKT_HASH_READ_SIZE)
+    except OSError:
+        return None
+    if not data:
+        return None
+    return _hashlib.md5(data).hexdigest()
 
 
 def get_subhash(video_hash):
@@ -240,6 +276,12 @@ class NapiProjektProvider:
     def _hash_search(self, video, config):
         video_hash = ((video or {}).get("hashes") or {}).get("napiprojekt")
         if not video_hash:
+            # Native (library) flow: the host doesn't pre-compute NapiProjekt's
+            # 32-char hash, but the worker can read the media file, so compute it
+            # here from the file itself (like napisy24's self-computed hash). The
+            # compat API flow has no file, so this stays None there.
+            video_hash = _compute_napiprojekt_hash(_existing_video_path(video))
+        if not video_hash:
             return None
         body = self._http_get(hash_download_url(video_hash, "pl"), config=config)
         if _is_not_found(body):
@@ -381,26 +423,96 @@ class _SubtitleRowsParser(HTMLParser):
             self._row = None
 
 
+def _is_transient_transport_error(error):
+    """True for raw transport failures worth retrying (connection reset, DNS, timeout).
+
+    urllib.error.HTTPError carries an HTTP status, so it is not a transport
+    failure and must never be retried here; 5xx/429 handling lives in the
+    response-status path instead.
+    """
+    if isinstance(error, urllib.error.HTTPError):
+        return False
+    transient = (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError)
+    requests_exceptions = _requests_transient_exceptions()
+    return isinstance(error, transient) or isinstance(error, requests_exceptions)
+
+
+def _requests_transient_exceptions():
+    try:
+        from requests import exceptions as requests_exceptions
+    except ImportError:  # pragma: no cover, requests ships with ai-cloudscraper
+        return ()
+    return (requests_exceptions.ConnectionError, requests_exceptions.Timeout)
+
+
+def _retry_after_seconds(response):
+    headers = getattr(response, "headers", None) or {}
+    raw = headers.get("Retry-After") or headers.get("retry-after")
+    if not raw:
+        return None
+    try:
+        return max(0.0, float(str(raw).strip()))
+    except (TypeError, ValueError):
+        return None
+
+
+def _retry_delay(attempt, retry_after=None):
+    delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    if retry_after is not None:
+        delay = max(delay, retry_after)
+    return min(delay, RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _scraper_request(scraper, method, url, headers, data, timeout):
+    """Perform a single scraper request, retrying only on transient transport errors.
+
+    The retry wraps the urllib/requests call and nothing else: it does not look
+    at Cloudflare/Anubis challenge bodies (which are handled by the caller) and a
+    challenge response, a success, or any 4xx other than 429 returns on the first
+    attempt. A transient 5xx/429 that is not a challenge is retried; if it is the
+    final attempt the response is returned unchanged so existing status handling
+    (raise_for_status, 429->error mapping) applies.
+    """
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            if method == "POST":
+                response = scraper.post(url, data=data or {}, headers=headers, timeout=timeout)
+            else:
+                response = scraper.get(url, headers=headers, timeout=timeout)
+        except Exception as error:  # noqa: BLE001 - re-raised unless transient
+            if attempt >= RETRY_ATTEMPTS or not _is_transient_transport_error(error):
+                raise
+            time.sleep(_retry_delay(attempt))
+            continue
+        status = getattr(response, "status_code", 0)
+        body = getattr(response, "content", b"")
+        if (
+            status in RETRY_STATUS_CODES
+            and attempt < RETRY_ATTEMPTS
+            and not is_cloudflare_challenge(status, getattr(response, "headers", {}), body)
+            and not _anubis_challenge_url(getattr(response, "url", ""), body, status)
+        ):
+            retry_after = _retry_after_seconds(response) if status == 429 else None
+            time.sleep(_retry_delay(attempt, retry_after))
+            continue
+        return response
+    return response
+
+
 def _cloudflare_request(method, url, data=None, config=None, state=None, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
     config = config or {}
     scraper = _get_cloudscraper(state)
     headers = {"User-Agent": USER_AGENT, "Accept-Language": "pl,en-US;q=0.9,en;q=0.8"}
     if referer:
         headers["Referer"] = referer
-    if method == "POST":
-        response = scraper.post(url, data=data or {}, headers=headers, timeout=timeout)
-    else:
-        response = scraper.get(url, headers=headers, timeout=timeout)
+    response = _scraper_request(scraper, method, url, headers, data, timeout)
     body = response.content
     challenge_url = _anubis_challenge_url(getattr(response, "url", ""), body, getattr(response, "status_code", 0))
     if challenge_url:
         solved = solve_anubis_challenge(scraper, challenge_url, url, timeout=timeout)
         if not solved:
             raise CloudflareBlockedError("napiprojekt Anubis challenge could not be solved")
-        if method == "POST":
-            response = scraper.post(url, data=data or {}, headers=headers, timeout=timeout)
-        else:
-            response = scraper.get(url, headers=headers, timeout=timeout)
+        response = _scraper_request(scraper, method, url, headers, data, timeout)
         body = response.content
     if is_cloudflare_challenge(response.status_code, response.headers, body):
         if _flaresolverr_url(config):

@@ -2,7 +2,10 @@ import base64
 import hashlib
 import importlib.util
 import io
+import json
+import socket
 import unittest
+import urllib.error
 import zipfile
 from pathlib import Path
 
@@ -415,7 +418,7 @@ class SubSourceDownloadTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
 
-    def test_download_fetches_archive_and_extracts_subtitle(self):
+    def test_download_returns_archive_and_pins_selected_member(self):
         provider = self.mod.SubSourceProvider()
         body = b"1\n00:00:01,000 --> 00:00:02,000\nHello\n"
         archive = _zip_bytes({"Movie.2020.srt": body})
@@ -438,18 +441,20 @@ class SubSourceDownloadTests(unittest.TestCase):
         )
 
         self.assertEqual(called[0][0], "subtitles/501/download")
-        self.assertEqual(base64.b64decode(result["content_b64"]), body)
-        self.assertEqual(result["content_sha256"], hashlib.sha256(body).hexdigest())
-        self.assertEqual(result["format"], "srt")
-        self.assertFalse(result["empty"])
+        # Host-side extraction: hand back the raw archive bytes plus the selected member.
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["member"], "Movie.2020.srt")
+        # No inline extraction, no encoding pinning.
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
 
-    def test_download_selects_requested_episode_from_pack(self):
+    def test_download_pins_requested_episode_member_from_pack(self):
         provider = self.mod.SubSourceProvider()
-        wanted = b"1\n00:00:01,000 --> 00:00:02,000\nEpisode three\n"
         archive = _zip_bytes(
             {
                 "Show.S01E02.srt": b"episode two",
-                "Show.S01E03.srt": wanted,
+                "Show.S01E03.srt": b"episode three",
             }
         )
 
@@ -468,21 +473,398 @@ class SubSourceDownloadTests(unittest.TestCase):
             {"api_key": "test-key"},
         )
 
-        self.assertEqual(base64.b64decode(result["content_b64"]), wanted)
-        self.assertFalse(result["empty"])
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["member"], "Show.S01E03.srt")
 
-    def test_download_returns_empty_for_non_zip_response(self):
+    def test_download_pack_without_matching_member_lets_host_pick_by_episode(self):
         provider = self.mod.SubSourceProvider()
+        archive = _zip_bytes(
+            {
+                "Show.S01E01.srt": b"episode one",
+                "Show.S01E02.srt": b"episode two",
+            }
+        )
 
-        provider._http_get_bytes = lambda path, config: b"not a zip"
+        provider._http_get_bytes = lambda path, config: archive
         result = provider.download(
-            {"provider": "subsource", "schema": 1, "subtitle_id": 501},
+            {
+                "provider": "subsource",
+                "schema": 1,
+                "subtitle_id": 802,
+                "is_pack": True,
+                "kind": "episode",
+                "season": 1,
+                "episode": 5,
+            },
             {"alpha3": "eng"},
             {"api_key": "test-key"},
         )
 
-        self.assertTrue(result["empty"])
-        self.assertEqual(result["content_b64"], "")
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        # No confident member match, so the host picks by episode via guessit.
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 5)
+
+    def test_download_pins_episode_member_with_separated_token(self):
+        # A pack whose member spells the episode with a separator (S01.E03) must
+        # still be pinned; the old contiguous-only matcher would have missed it
+        # and deferred unnecessarily.
+        provider = self.mod.SubSourceProvider()
+        archive = _zip_bytes(
+            {
+                "Show.S01.E02.1080p.WEB.srt": b"episode two",
+                "Show.S01.E03.1080p.WEB.srt": b"episode three",
+            }
+        )
+
+        provider._http_get_bytes = lambda path, config: archive
+        result = provider.download(
+            {
+                "provider": "subsource",
+                "schema": 1,
+                "subtitle_id": 810,
+                "is_pack": True,
+                "kind": "episode",
+                "season": 1,
+                "episode": 3,
+            },
+            {"alpha3": "eng"},
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(result["member"], "Show.S01.E03.1080p.WEB.srt")
+
+    def test_download_pack_ignores_apple_double_and_macosx_sidecars(self):
+        # The requested episode's real member must be pinned even when AppleDouble
+        # / __MACOSX sidecars share the episode token; pinning a "._" resource
+        # fork would hand the host a garbage member that fails the exact match.
+        provider = self.mod.SubSourceProvider()
+        archive = _zip_bytes(
+            {
+                "__MACOSX/._Show.S02E05.srt": b"garbage resource fork",
+                "._Show.S02E05.srt": b"garbage apple double",
+                "Show.S02E05.1080p.WEB.srt": b"real episode five",
+            }
+        )
+
+        provider._http_get_bytes = lambda path, config: archive
+        result = provider.download(
+            {
+                "provider": "subsource",
+                "schema": 1,
+                "subtitle_id": 820,
+                "is_pack": True,
+                "kind": "episode",
+                "season": 2,
+                "episode": 5,
+            },
+            {"alpha3": "eng"},
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(result["member"], "Show.S02E05.1080p.WEB.srt")
+
+    def test_download_cross_season_pack_narrows_by_season(self):
+        # A pack repeating episode 5 across seasons must pin the requested season,
+        # not the other season's S01E05; episode alone would be ambiguous.
+        provider = self.mod.SubSourceProvider()
+        archive = _zip_bytes(
+            {
+                "Show.S01E05.srt": b"season one episode five",
+                "Show.S02E05.srt": b"season two episode five",
+            }
+        )
+
+        provider._http_get_bytes = lambda path, config: archive
+        result = provider.download(
+            {
+                "provider": "subsource",
+                "schema": 1,
+                "subtitle_id": 830,
+                "is_pack": True,
+                "kind": "episode",
+                "season": 2,
+                "episode": 5,
+            },
+            {"alpha3": "eng"},
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(result["member"], "Show.S02E05.srt")
+
+    def test_download_does_not_mispick_resolution_token_as_episode(self):
+        # "720p" must not be read as S07E20: with no real episode member the pack
+        # defers to host episode selection rather than pinning the wrong file.
+        provider = self.mod.SubSourceProvider()
+        archive = _zip_bytes(
+            {
+                "Show.S01E01.720p.WEB.x264.srt": b"episode one",
+                "Show.S01E02.720p.WEB.x264.srt": b"episode two",
+            }
+        )
+
+        provider._http_get_bytes = lambda path, config: archive
+        result = provider.download(
+            {
+                "provider": "subsource",
+                "schema": 1,
+                "subtitle_id": 840,
+                "is_pack": True,
+                "kind": "episode",
+                "season": 7,
+                "episode": 20,
+            },
+            {"alpha3": "eng"},
+            {"api_key": "test-key"},
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 20)
+
+    def test_download_movie_multi_member_defers_to_host(self):
+        # A movie archive with several release members has nothing to
+        # disambiguate worker-side, so we defer instead of blindly pinning the
+        # alphabetically first member.
+        provider = self.mod.SubSourceProvider()
+        archive = _zip_bytes(
+            {
+                "Movie.2020.1080p.BluRay.srt": b"bluray",
+                "Movie.2020.1080p.WEB.srt": b"web",
+            }
+        )
+
+        provider._http_get_bytes = lambda path, config: archive
+        result = provider.download(
+            {
+                "provider": "subsource",
+                "schema": 1,
+                "subtitle_id": 850,
+                "kind": "movie",
+            },
+            {"alpha3": "eng"},
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertNotIn("member", result)
+        # Movies carry no episode, so the host falls back to guessit on the archive.
+        self.assertIsNone(result["episode"])
+
+    def test_download_movie_skips_apple_double_to_pin_lone_member(self):
+        # A single real subtitle alongside an AppleDouble sidecar must still pin
+        # the real member, not the "._" file that sorts first.
+        provider = self.mod.SubSourceProvider()
+        archive = _zip_bytes(
+            {
+                "._Movie.2020.srt": b"garbage apple double",
+                "Movie.2020.1080p.BluRay.srt": b"real subtitle",
+            }
+        )
+
+        provider._http_get_bytes = lambda path, config: archive
+        result = provider.download(
+            {
+                "provider": "subsource",
+                "schema": 1,
+                "subtitle_id": 860,
+                "kind": "movie",
+            },
+            {"alpha3": "eng"},
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(result["member"], "Movie.2020.1080p.BluRay.srt")
+
+    def test_download_returns_rar_archive_for_host_picking(self):
+        provider = self.mod.SubSourceProvider()
+        body = b"Rar!\x1a\x07\x00rar-archive-bytes"
+
+        provider._http_get_bytes = lambda path, config: body
+        result = provider.download(
+            {
+                "provider": "subsource",
+                "schema": 1,
+                "subtitle_id": 901,
+                "kind": "episode",
+                "season": 2,
+                "episode": 4,
+            },
+            {"alpha3": "eng"},
+            {"api_key": "test-key"},
+        )
+
+        # stdlib cannot list a rar, so the worker hands the bytes to the host with episode.
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 4)
+
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.SubSourceProvider()
+        provider._http_get_bytes = lambda path, config: b"   "
+
+        with self.assertRaisesRegex(ValueError, "empty"):
+            provider.download(
+                {"provider": "subsource", "schema": 1, "subtitle_id": 501},
+                {"alpha3": "eng"},
+                {"api_key": "test-key"},
+            )
+
+    def test_download_rejects_html_error_page(self):
+        provider = self.mod.SubSourceProvider()
+        provider._http_get_bytes = lambda path, config: b"<!DOCTYPE html><html><body>error</body></html>"
+
+        with self.assertRaisesRegex(ValueError, "HTML"):
+            provider.download(
+                {"provider": "subsource", "schema": 1, "subtitle_id": 501},
+                {"alpha3": "eng"},
+                {"api_key": "test-key"},
+            )
+
+
+class _FakeResponse:
+    def __init__(self, body):
+        self._body = body
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+def _http_error(code, body=b"", headers=None):
+    return urllib.error.HTTPError(
+        url="https://api.subsource.net/api/v1/test",
+        code=code,
+        msg="error",
+        hdrs=headers or {},
+        fp=io.BytesIO(body),
+    )
+
+
+class SubSourceTransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.sleeps = []
+        self._http_errors = []
+        # Make the backoff sleep mockable and a no-op so the test does not wait.
+        self.mod.time.sleep = lambda seconds: self.sleeps.append(seconds)
+
+    def tearDown(self):
+        # The fixture builds real HTTPError objects backed by a temp file; close
+        # them so the discarded intermediate retries do not emit ResourceWarning.
+        for error in self._http_errors:
+            error.close()
+
+    def _install_urlopen(self, outcomes):
+        # Each entry is either an exception to raise or a response body to return.
+        for outcome in outcomes:
+            if isinstance(outcome, urllib.error.HTTPError):
+                self._http_errors.append(outcome)
+        calls = []
+
+        def fake_urlopen(request, timeout=None):
+            del timeout
+            calls.append(request)
+            outcome = outcomes[len(calls) - 1]
+            if isinstance(outcome, Exception):
+                raise outcome
+            return _FakeResponse(outcome)
+
+        self.mod.urllib.request.urlopen = fake_urlopen
+        return calls
+
+    def test_json_get_retries_urlerror_then_succeeds(self):
+        provider = self.mod.SubSourceProvider()
+        success = json.dumps({"success": True, "data": []}).encode("utf-8")
+        calls = self._install_urlopen(
+            [urllib.error.URLError("connection reset"), success]
+        )
+
+        result = provider._http_get_json("subtitles", {"movieId": 1}, {"api_key": "k"})
+
+        self.assertEqual(result, {"success": True, "data": []})
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_bytes_get_retries_503_twice_then_succeeds(self):
+        provider = self.mod.SubSourceProvider()
+        calls = self._install_urlopen(
+            [_http_error(503), _http_error(503), b"archive-bytes"]
+        )
+
+        result = provider._http_get_bytes("subtitles/1/download", {"api_key": "k"})
+
+        self.assertEqual(result, b"archive-bytes")
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(self.sleeps), 2)
+
+    def test_timeout_is_retried(self):
+        provider = self.mod.SubSourceProvider()
+        success = json.dumps({"data": []}).encode("utf-8")
+        calls = self._install_urlopen([socket.timeout("timed out"), success])
+
+        result = provider._http_get_json("movies/search", {"q": "x"}, {"api_key": "k"})
+
+        self.assertEqual(result, {"data": []})
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_retry_gives_up_after_three_attempts(self):
+        provider = self.mod.SubSourceProvider()
+        calls = self._install_urlopen(
+            [_http_error(500), _http_error(500), _http_error(500)]
+        )
+
+        # After exhausting retries the final HTTPError is re-raised and mapped by
+        # the existing handler to a RuntimeError, exactly as before.
+        with self.assertRaisesRegex(RuntimeError, "SubSource API error 500"):
+            provider._http_get_json("subtitles", {"movieId": 1}, {"api_key": "k"})
+
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(self.sleeps), 2)
+
+    def test_404_is_not_retried_and_propagates(self):
+        provider = self.mod.SubSourceProvider()
+        calls = self._install_urlopen([_http_error(404, b"not found")])
+
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            provider._http_get_bytes("subtitles/1/download", {"api_key": "k"})
+
+        self.assertEqual(ctx.exception.code, 404)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.sleeps, [])
+        ctx.exception.close()
+
+    def test_400_is_not_retried_and_maps_to_runtimeerror(self):
+        provider = self.mod.SubSourceProvider()
+        calls = self._install_urlopen([_http_error(400, b"bad")])
+
+        with self.assertRaisesRegex(RuntimeError, "request parameters are invalid") as ctx:
+            provider._http_get_json("subtitles", {"movieId": 1}, {"api_key": "k"})
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.sleeps, [])
+        cause = ctx.exception.__cause__
+        if cause is not None:
+            cause.close()
+
+    def test_429_honors_retry_after_header(self):
+        provider = self.mod.SubSourceProvider()
+        success = json.dumps({"data": []}).encode("utf-8")
+        calls = self._install_urlopen(
+            [_http_error(429, headers={"Retry-After": "2"}), success]
+        )
+
+        result = provider._http_get_json("subtitles", {"movieId": 1}, {"api_key": "k"})
+
+        self.assertEqual(result, {"data": []})
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(self.sleeps, [2.0])
 
 
 if __name__ == "__main__":

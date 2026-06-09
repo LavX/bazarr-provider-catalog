@@ -2,10 +2,12 @@ import argparse
 import base64
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import re
 import sys
+import zipfile
 from pathlib import Path, PurePosixPath
 
 SCHEMA_VERSION = 1
@@ -52,9 +54,10 @@ KNOWN_MULTIWHEEL_PACKAGES = frozenset({
     "cryptography", "frozenlist", "multidict", "propcache", "psutil",
     "pycryptodome", "pycryptodomex", "yarl",
 })
-# Packages that legitimately publish only a single-platform wheel (no aarch64 wheel
-# exists on PyPI). Tracked as a known dependency limitation, not a manifest error.
-SINGLE_WHEEL_PACKAGES = frozenset({"py7zz"})
+# Archive libraries must not be bundled: the Bazarr+ host extracts zip/rar/7z members
+# itself (see docs/provider-bulk-creation-guide.md "Archive extraction"), so a worker
+# never carries py7zz (which has no aarch64 wheel) or another archive backend.
+BUNDLED_ARCHIVE_PACKAGES = frozenset({"py7zz", "py7zr", "rarfile"})
 
 
 class CatalogError(Exception):
@@ -132,7 +135,14 @@ def validate_dependency_lock(manifest_path, dependencies):
         for digest in hashes:
             if not isinstance(digest, str) or not digest.startswith("sha256:") or not _HEX_SHA256_RE.match(digest[7:]):
                 raise CatalogError(f"{manifest_path} dependency {name} has invalid hash")
-        if name in KNOWN_MULTIWHEEL_PACKAGES and name not in SINGLE_WHEEL_PACKAGES and len(hashes) < 2:
+        if re.sub(r"[-_.]+", "-", name).lower() in BUNDLED_ARCHIVE_PACKAGES:
+            # Compare PEP 503 normalized names so a different casing/separator (Py7zz,
+            # RarFile, py_7zz) cannot smuggle a banned archive library past the gate.
+            raise CatalogError(
+                f"{manifest_path} must not bundle archive library {name}; the Bazarr+ host "
+                f"extracts zip/rar/7z members (return an archive_b64 download payload)"
+            )
+        if name in KNOWN_MULTIWHEEL_PACKAGES and len(hashes) < 2:
             raise CatalogError(
                 f"{manifest_path} dependency {name} ships ABI-specific wheels but pins only "
                 f"{len(hashes)} hash; include the cp312/cp313/cp314 manylinux x86_64+aarch64 "
@@ -459,15 +469,86 @@ def smoke_test(
         content = provider.download(last_candidate["provider_payload"], {"alpha3": "eng"}, config)
     except Exception as exc:
         raise CatalogError(f"{provider_id} download failed: {exc}") from exc
-    if not isinstance(content, dict) or content.get("empty") is not False:
-        raise CatalogError(f"{provider_id} download must return a content payload")
-    data = base64.b64decode(content["content_b64"].encode("ascii"), validate=True)
-    if hashlib.sha256(data).hexdigest() != content.get("content_sha256"):
-        raise CatalogError(f"{provider_id} download hash mismatch")
-    if is_official_smoke and data.decode("utf-8") != EXPECTED_SMOKE_SUBTITLE:
-        raise CatalogError(f"{provider_id} download content does not match fixed SRT")
+    if not isinstance(content, dict):
+        raise CatalogError(f"{provider_id} download must return a content or archive payload")
+    if "archive_b64" in content:
+        # Archive payloads do not carry `empty`; the host extracts the member.
+        names = _validate_archive_download(provider_id, content)
+        if content.get("select_member"):
+            _smoke_select_archive_member(provider_id, provider, last_candidate, names, config)
+    elif content.get("empty") is False:
+        data = base64.b64decode(content["content_b64"].encode("ascii"), validate=True)
+        if hashlib.sha256(data).hexdigest() != content.get("content_sha256"):
+            raise CatalogError(f"{provider_id} download hash mismatch")
+        if is_official_smoke and data.decode("utf-8") != EXPECTED_SMOKE_SUBTITLE:
+            raise CatalogError(f"{provider_id} download content does not match fixed SRT")
+    else:
+        raise CatalogError(f"{provider_id} download must return a content or archive payload")
     _assert_secret_not_leaked(config, secret_fields, content, f"{provider_id} download")
     return provider_id
+
+
+def _validate_archive_download(provider_id, content):
+    """Validate an archive-mode download payload.
+
+    Providers may hand the raw archive bytes back to the Bazarr+ host, which extracts
+    the member with its own rarfile/zipfile/7z stack. The SDK validates the shape offline:
+    the bytes must be a real zip, rar, or 7z archive (direct subtitle bytes belong in
+    content_b64), and a named member, if given, must exist. Full extraction is exercised
+    host-side on a test server.
+    """
+    raw = base64.b64decode(content["archive_b64"].encode("ascii"), validate=True)
+    expected = content.get("archive_sha256")
+    if expected and hashlib.sha256(raw).hexdigest() != str(expected).lower():
+        raise CatalogError(f"{provider_id} download archive_sha256 mismatch")
+    stream = io.BytesIO(raw)
+    is_rar = raw[:4] == b"Rar!"
+    is_7z = raw[:6] == b"7z\xbc\xaf\x27\x1c"
+    names = None
+    if zipfile.is_zipfile(stream):
+        with zipfile.ZipFile(stream) as archive:
+            names = archive.namelist()
+    elif not is_rar and not is_7z:
+        # archive_b64 must be a real zip, rar, or 7z (the formats the host extracts). A
+        # non-archive payload (empty bytes, an HTML/error page, or a bare subtitle stream)
+        # would pass here but fail host-side extraction; direct subtitle bytes belong in
+        # content_b64, not archive_b64. rar/7z are not listable with the stdlib, so they
+        # leave names=None and skip the member/subtitle checks below (the host lists them).
+        raise CatalogError(
+            f"{provider_id} download archive_b64 is not a valid zip, rar, or 7z archive"
+        )
+    member = content.get("member")
+    if member and names is not None and member not in names:
+        raise CatalogError(f"{provider_id} download member is not in the archive: {member}")
+    if names is not None and not any(
+        name.lower().endswith((".srt", ".sub", ".ssa", ".ass", ".vtt")) for name in names
+    ):
+        raise CatalogError(f"{provider_id} download archive has no subtitle member")
+    return names
+
+
+def _smoke_select_archive_member(provider_id, provider, candidate, names, config):
+    """Exercise the select_archive_member op that a select_member download asks the host
+    to call after listing the archive members."""
+    selector = getattr(provider, "select_archive_member", None)
+    if selector is None:
+        raise CatalogError(
+            f"{provider_id} download set select_member but exposes no select_archive_member method"
+        )
+    members = list(names) if names is not None else []
+    try:
+        decision = selector(candidate["provider_payload"], {"alpha3": "eng"}, members, config)
+    except Exception as exc:
+        raise CatalogError(f"{provider_id} select_archive_member failed: {exc}") from exc
+    if not isinstance(decision, dict) or decision.get("decision") not in ("pin", "defer", "reject"):
+        raise CatalogError(
+            f"{provider_id} select_archive_member must return {{'member', 'decision': pin|defer|reject}}"
+        )
+    chosen = decision.get("member")
+    if decision["decision"] == "pin" and (chosen is None or (names is not None and chosen not in names)):
+        raise CatalogError(
+            f"{provider_id} select_archive_member pinned a member not in the archive: {chosen!r}"
+        )
 
 
 def command_validate(args):

@@ -285,8 +285,9 @@ class YifyProviderTests(unittest.TestCase):
 
         self.assertEqual(results, [])
 
-    def test_download_follows_detail_page_and_extracts_zip(self):
-        archive = _zip_with({"Dune.2021.1080p.HMAX.WEBRip.DDP5.1.Atmos.x264-CM-English.srt": SRT_BODY})
+    def test_download_follows_detail_page_and_returns_archive_for_host(self):
+        member = "Dune.2021.1080p.HMAX.WEBRip.DDP5.1.Atmos.x264-CM-English.srt"
+        archive = _zip_with({member: SRT_BODY})
         provider = self.mod.YifySubtitlesProvider()
 
         def stub(url, timeout=15, referer=None):
@@ -308,10 +309,13 @@ class YifyProviderTests(unittest.TestCase):
             {},
         )
 
-        data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
-        self.assertEqual(data, SRT_BODY)
-        self.assertEqual(result["content_sha256"], hashlib.sha256(SRT_BODY).hexdigest())
-        self.assertEqual(result["format"], "srt")
+        # The worker hands the raw archive bytes back; the host extracts the member.
+        data = base64.b64decode(result["archive_b64"].encode("ascii"), validate=True)
+        self.assertEqual(data, archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["member"], member)
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
 
     def test_download_applies_configured_delay_between_detail_and_zip_requests(self):
         archive = _zip_with({"Dune.2021.srt": SRT_BODY})
@@ -372,7 +376,9 @@ class YifyProviderTests(unittest.TestCase):
 
         self.assertEqual(selected, "Dune.2021.1080p.WEBRip-CM.srt")
 
-    def test_extract_download_reports_latin1_when_subtitle_is_not_utf8(self):
+    def test_extract_download_returns_archive_mode_with_selected_member(self):
+        # A non-utf8 member must not trigger any worker-side encoding guess; the host
+        # detects encoding via Subtitle.normalize().
         body = "Acentuado ü".encode("latin-1")
         archive = _zip_with({"Dune.2021.srt": body})
 
@@ -381,8 +387,42 @@ class YifyProviderTests(unittest.TestCase):
             {"filename": "yifysubtitles.364913.en.zip"},
         )
 
+        self.assertEqual(
+            base64.b64decode(payload["archive_b64"].encode("ascii"), validate=True),
+            archive,
+        )
+        self.assertEqual(payload["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(payload["member"], "Dune.2021.srt")
+        self.assertNotIn("encoding", payload)
+        self.assertNotIn("content_b64", payload)
+
+    def test_extract_download_returns_direct_body_for_non_archive(self):
+        payload = self.mod.extract_download(
+            SRT_BODY,
+            {"filename": "yifysubtitles.364913.en.srt"},
+        )
+
+        self.assertEqual(
+            base64.b64decode(payload["content_b64"].encode("ascii"), validate=True),
+            SRT_BODY,
+        )
         self.assertEqual(payload["format"], "srt")
-        self.assertEqual(payload["encoding"], "latin-1")
+        self.assertNotIn("encoding", payload)
+        self.assertNotIn("archive_b64", payload)
+
+    def test_extract_download_marks_empty_body(self):
+        payload = self.mod.extract_download(b"", {"filename": "yifysubtitles.364913.en.zip"})
+
+        self.assertTrue(payload["empty"])
+        self.assertNotIn("archive_b64", payload)
+        self.assertNotIn("encoding", payload)
+
+    def test_extract_download_rejects_html_error_body(self):
+        with self.assertRaises(ValueError):
+            self.mod.extract_download(
+                b"<!DOCTYPE html><html><body>error</body></html>",
+                {"filename": "yifysubtitles.364913.en.zip"},
+            )
 
 
 def rows_page_url():

@@ -36,6 +36,17 @@ def _zip_body():
     return stream.getvalue()
 
 
+def _multi_release_zip():
+    # Two releases for the same episode (FEVER vs KILLERS) plus a hidden sidecar that must
+    # be ignored. release_info token overlap disambiguates the two real members.
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as archive:
+        archive.writestr("__MACOSX/._Game.of.Thrones.S01E01.HDTV.XviD-FEVER.srt", "junk")
+        archive.writestr("Game.of.Thrones.S01E01.HDTV.XviD-FEVER.srt", "1\r\nfever\r\n")
+        archive.writestr("Game.of.Thrones.S01E01.720p.WEB-DL.KILLERS.srt", "1\r\nkillers\r\n")
+    return stream.getvalue()
+
+
 class FakeScraperResponse:
     def __init__(self, status_code, headers, content, url="https://www.subs4series.com/search_report.php"):
         self.status_code = status_code
@@ -104,16 +115,195 @@ class Subs4SeriesParserTests(unittest.TestCase):
         )
         self.assertEqual(rows[1]["language"], "eng")
 
-    def test_extract_download_reads_zip_subtitle_and_skips_hidden_files(self):
+    def test_extract_download_zip_returns_raw_archive_for_host(self):
+        body = _zip_body()
+
         payload = self.mod.extract_download(
-            _zip_body(),
-            {"filename": "Game.of.Thrones.S01E01.HDTV.XviD-FEVER.el.zip"},
+            body,
+            {"filename": "Game.of.Thrones.S01E01.HDTV.XviD-FEVER.el.zip", "episode": 1},
         )
 
-        self.assertEqual(payload["format"], "srt")
-        self.assertEqual(payload["encoding"], "utf-8")
-        self.assertFalse(payload["empty"])
-        self.assertIn("1\nsubtitle\n", self.mod._decode_payload_text(payload))
+        # Archive mode: the worker hands the raw archive bytes back untouched.
+        self.assertEqual(base64.b64decode(payload["archive_b64"]), body)
+        self.assertEqual(payload["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(payload["episode"], 1)
+        # No extraction, member selection, or encoding guessing happens worker-side.
+        self.assertNotIn("content_b64", payload)
+        self.assertNotIn("member", payload)
+        self.assertNotIn("encoding", payload)
+
+    def test_extract_download_rar_returns_raw_archive_for_host(self):
+        # Minimal RAR4 signature; the host extracts, the worker only forwards bytes.
+        body = b"Rar!\x1a\x07\x00" + b"\x00" * 32
+
+        payload = self.mod.extract_download(body, {"filename": "subs4series.rar", "episode": 5})
+
+        self.assertEqual(base64.b64decode(payload["archive_b64"]), body)
+        self.assertEqual(payload["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(payload["episode"], 5)
+        self.assertNotIn("content_b64", payload)
+        self.assertNotIn("encoding", payload)
+
+    def test_extract_download_archive_episode_is_none_when_missing(self):
+        body = _zip_body()
+
+        payload = self.mod.extract_download(body, {"filename": "subs4series.zip"})
+
+        self.assertEqual(base64.b64decode(payload["archive_b64"]), body)
+        self.assertIsNone(payload["episode"])
+
+    def test_extract_download_rejects_empty_body(self):
+        with self.assertRaises(ValueError):
+            self.mod.extract_download(b"   \r\n  ", {"filename": "subs4series.zip"})
+
+    def test_extract_download_rejects_html_error_page(self):
+        with self.assertRaises(ValueError):
+            self.mod.extract_download(
+                b"<!DOCTYPE html>\n<html><head><title>404</title></head>"
+                b"<body>Subtitle not found</body></html>",
+                {"filename": "subs4series.zip"},
+            )
+
+    def test_extract_download_pins_member_matching_release_info(self):
+        # Multi-release zip for the same episode: the host's episode-only pick cannot tell
+        # the FEVER and KILLERS releases apart, so the worker pins the release_info match.
+        body = _multi_release_zip()
+
+        payload = self.mod.extract_download(
+            body,
+            {
+                "release_info": "Game Of Thrones S01E01 hdtv xvid-fever",
+                "season": 1,
+                "episode": 1,
+            },
+        )
+
+        self.assertEqual(payload["member"], "Game.of.Thrones.S01E01.HDTV.XviD-FEVER.srt")
+        self.assertNotIn("episode", payload)
+        self.assertNotIn("content_b64", payload)
+        self.assertEqual(base64.b64decode(payload["archive_b64"]), body)
+        self.assertEqual(payload["archive_sha256"], hashlib.sha256(body).hexdigest())
+
+    def test_extract_download_defers_when_release_info_does_not_disambiguate(self):
+        # Two releases for the episode but the release_info overlaps neither group: a tie on
+        # the shared episode tokens must defer to the host instead of pinning a guess.
+        body = _multi_release_zip()
+
+        payload = self.mod.extract_download(
+            body,
+            {
+                "release_info": "Game Of Thrones S01E01",
+                "season": 1,
+                "episode": 1,
+            },
+        )
+
+        self.assertNotIn("member", payload)
+        self.assertEqual(payload["episode"], 1)
+
+    def test_extract_download_excludes_sidecars_and_pins_real_member(self):
+        # __MACOSX/dotfile sidecars and directory entries must never be pinned; with one
+        # real member left there is nothing to disambiguate, so defer to the host.
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("subs/", "")
+            archive.writestr("__MACOSX/._Game.of.Thrones.S01E01.srt", "junk")
+            archive.writestr(".DS_Store", "junk")
+            archive.writestr("subs/Game.of.Thrones.S01E01.HDTV.XviD-FEVER.srt", "1\nsub\n")
+        body = stream.getvalue()
+
+        payload = self.mod.extract_download(
+            body,
+            {"release_info": "Game Of Thrones S01E01 hdtv xvid-fever", "season": 1, "episode": 1},
+        )
+
+        self.assertNotIn("member", payload)
+        self.assertEqual(payload["episode"], 1)
+
+    def test_extract_download_defers_on_wrong_episode_season_pack(self):
+        # Season pack: the requested S01E02 is absent. Episode markers are present for other
+        # episodes, so pinning any of them would hard-fail the host; defer instead.
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("Show.S01E01.HDTV.srt", "1\nsub\n")
+            archive.writestr("Show.S01E03.HDTV.srt", "1\nsub\n")
+        body = stream.getvalue()
+
+        payload = self.mod.extract_download(
+            body,
+            {"release_info": "Show S01E02 hdtv", "season": 1, "episode": 2},
+        )
+
+        self.assertNotIn("member", payload)
+        self.assertEqual(payload["episode"], 2)
+
+    def test_extract_download_narrows_season_pack_by_season_and_episode(self):
+        # A pack that repeats episode 5 across seasons: pinning on episode alone is ambiguous,
+        # so narrow by BOTH season and episode and pick the S02E05 member.
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("Show.S01E05.HDTV.XviD-FEVER.srt", "1\nsub\n")
+            archive.writestr("Show.S02E05.HDTV.XviD-FEVER.srt", "1\nsub\n")
+        body = stream.getvalue()
+
+        payload = self.mod.extract_download(
+            body,
+            {"release_info": "Show S02E05 hdtv xvid-fever", "season": 2, "episode": 5},
+        )
+
+        self.assertEqual(payload["member"], "Show.S02E05.HDTV.XviD-FEVER.srt")
+        self.assertNotIn("episode", payload)
+
+    def test_extract_download_does_not_match_resolution_digits_as_episode(self):
+        # "720" (S07E20 compact form) must not match inside "720p"; with the requested
+        # episode genuinely absent the markers force a defer.
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("Show.S07E19.720p.WEB.srt", "1\nsub\n")
+            archive.writestr("Show.S07E21.720p.WEB.srt", "1\nsub\n")
+        body = stream.getvalue()
+
+        payload = self.mod.extract_download(
+            body,
+            {"release_info": "Show S07E20 720p web", "season": 7, "episode": 20},
+        )
+
+        self.assertNotIn("member", payload)
+        self.assertEqual(payload["episode"], 20)
+
+    def test_extract_download_does_not_pin_member_on_title_digit_boundary(self):
+        # "The.Originals1E02" must NOT be read as S01E02: the "s" belongs to the title word
+        # "Originals", not a season marker. Without a left alpha/digit boundary the SxxExx
+        # regex pins this placeholder member (a lone episode match is pinned outright), so the
+        # host hard-fails the "member in namelist" check or silently delivers the wrong
+        # subtitle. The real S01.E03 member proves no requested-episode match exists, forcing
+        # a defer to host episode selection.
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("The.Originals1E02.placeholder.srt", "1\nsub\n")
+            archive.writestr("The.Originals.S01.E03.eng.srt", "1\nsub\n")
+        body = stream.getvalue()
+
+        payload = self.mod.extract_download(
+            body,
+            {"release_info": "The Originals S01E02", "season": 1, "episode": 2},
+        )
+
+        self.assertNotEqual(payload.get("member"), "The.Originals1E02.placeholder.srt")
+        self.assertNotIn("member", payload)
+        self.assertEqual(payload["episode"], 2)
+
+    def test_extract_download_rar_defers_to_host_episode_path(self):
+        # RAR is not stdlib-listable: always fall back to the host episode path.
+        body = b"Rar!\x1a\x07\x00" + b"\x00" * 32
+
+        payload = self.mod.extract_download(
+            body,
+            {"release_info": "Show S01E01 hdtv", "season": 1, "episode": 1},
+        )
+
+        self.assertNotIn("member", payload)
+        self.assertEqual(payload["episode"], 1)
 
 
 class Subs4SeriesProviderTests(unittest.TestCase):
@@ -163,6 +353,9 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         self.assertIn("release_group", first["matches"])
         self.assertEqual(first["score"], 100)
         self.assertEqual(first["provider_payload"]["page_link"], expected_episode_url)
+        # The host needs episode (and season) to pick the archive member.
+        self.assertEqual(first["provider_payload"]["season"], 1)
+        self.assertEqual(first["provider_payload"]["episode"], 1)
 
     def test_search_rejects_movies(self):
         provider = self.mod.Subs4SeriesProvider()
@@ -198,6 +391,8 @@ class Subs4SeriesProviderTests(unittest.TestCase):
                 "detail_url": "https://www.subs4series.com/english-subtitles/sb6a7a0c63b/game-of-thrones",
                 "page_link": "https://www.subs4series.com/tv-series/game-of-thrones/s8985ffc551/season-1/episode-1",
                 "filename": "Game.of.Thrones.S01E01.HDTV.XviD-FEVER.en.zip",
+                "season": 1,
+                "episode": 1,
             },
             {"alpha3": "eng", "alpha2": "en"},
             {"request_delay_ms": 0},
@@ -207,9 +402,13 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         self.assertEqual(posts[0][1]["my_recaptcha_challenge_field"], "manual_challenge")
         self.assertEqual(posts[0][2], "https://www.subs4series.com/english-subtitles/sb6a7a0c63b/game-of-thrones")
         self.assertTrue(any("anti-block-layover.php" in item[0] for item in seen_gets))
-        body = base64.b64decode(result["content_b64"])
-        self.assertEqual(hashlib.sha256(body).hexdigest(), result["content_sha256"])
-        self.assertIn("1\nsubtitle\n", self.mod._decode_payload_text(result))
+        # Archive mode: the worker forwards the raw zip and carries episode for the host.
+        body = _zip_body()
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["episode"], 1)
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
 
     def test_download_posts_captcha_response_when_required(self):
         provider = self.mod.Subs4SeriesProvider()
@@ -235,6 +434,8 @@ class Subs4SeriesProviderTests(unittest.TestCase):
                 "detail_url": "https://www.subs4series.com/greek-subtitles/s277e869f4/game-of-thrones",
                 "page_link": "https://www.subs4series.com/tv-series/game-of-thrones/s8985ffc551/season-1/episode-1",
                 "filename": "Game.of.Thrones.S01E01.HDTV.XviD-FEVER.el.zip",
+                "season": 1,
+                "episode": 1,
             },
             {"alpha3": "ell", "alpha2": "el"},
             {"captcha_response": "solved-token", "request_delay_ms": 0},
@@ -243,7 +444,8 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         self.assertEqual(posts[0][0], "https://www.subs4series.com/getSub-captcha-token.html")
         self.assertEqual(posts[0][1]["g-recaptcha-response"], "solved-token")
         self.assertEqual(posts[0][1]["recaptcha_response"], "solved-token")
-        self.assertIn("1\nsubtitle\n", self.mod._decode_payload_text(result))
+        self.assertEqual(base64.b64decode(result["archive_b64"]), _zip_body())
+        self.assertEqual(result["episode"], 1)
 
     def test_download_requires_captcha_solution_when_page_has_recaptcha(self):
         provider = self.mod.Subs4SeriesProvider()

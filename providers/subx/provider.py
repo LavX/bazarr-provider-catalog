@@ -6,20 +6,12 @@ import io
 import json
 import os
 import re
-import shutil
-import subprocess
-import tempfile
 import time
 import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-
-try:
-    import py7zz
-except ImportError:
-    py7zz = None
 
 PROVIDER_ID = "subx"
 BASE_URL = "https://subx-api.duckdns.org"
@@ -33,7 +25,8 @@ SUPPORTED_ALPHA2 = "es"
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
 ARCHIVE_EXTENSIONS = (".zip", ".rar")
 SPAIN_KEYWORDS = ("espana", "iberico", "castellano", "gallego", "castilla", "europea", "europeo")
-NON_ALNUM_RE = re.compile(r"[\W_]+")
+_SXXEYY_RE = re.compile(r"\bs0*(?P<season>\d{1,2})[\s._-]*e0*(?P<episode>\d{1,3})(?!\d)", re.I)
+_NXNN_RE = re.compile(r"(?<!\d)(?P<season>\d{1,2})x0*(?P<episode>\d{1,3})(?!\d)", re.I)
 
 
 class RateLimited(RuntimeError):
@@ -302,8 +295,7 @@ class SubXProvider:
             raise ValueError("subx download requires download_url or subtitle_id")
         body = self._request_bytes(download_url, dict(config or {}))
         filename = payload.get("filename") or urllib.parse.urlparse(download_url).path.rsplit("/", 1)[-1]
-        content, fmt = extract_download(body, filename, payload)
-        return _content_payload(content, fmt)
+        return build_download_payload(body, filename, payload)
 
     def _request_json(self, path, params, config):
         api_key = _require_api_key(config)
@@ -465,141 +457,88 @@ def _int_or_none(value):
         return None
 
 
-def extract_download(body, filename="", payload=None):
+def build_download_payload(body, filename="", payload=None):
     payload = payload or {}
     if not body:
         raise ValueError("subx downloaded empty subtitle")
-    if _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        selected = select_subtitle_file([name for name, _data in files], payload)
-        return dict(files)[selected], _subtitle_extension(selected) or "srt"
-    stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist(), payload)
-            return archive.read(selected), _subtitle_extension(selected) or "srt"
-    return body, _format_from_filename(filename)
+    if _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body)):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes
+        # back to the host. SubX serves season packs (multiple episodes in one
+        # zip), so when we can cheaply list a zip and find the unique member for
+        # the requested season+episode, pin it; the host then reads that exact
+        # member instead of guessing by episode. RAR is not stdlib-listable, and
+        # an ambiguous/missing match defers to host-side episode selection.
+        archive = {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+        }
+        member = _select_zip_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = _int_or_none(payload.get("episode"))
+        return archive
+    return _content_payload(body, _format_from_filename(filename))
 
 
-def select_subtitle_file(names, payload):
-    candidates = [name for name in names if _subtitle_extension(name)]
-    if not candidates:
-        raise ValueError("subx archive contains no supported subtitle files")
-    episode = _int_or_none((payload or {}).get("episode"))
-    if episode is None:
-        return sorted(candidates, key=_archive_preference_key)[0]
-    return max(candidates, key=lambda name: (_episode_file_score(name, episode), -_archive_preference_key(name)[0], -len(name)))
+def _select_zip_member(body, payload):
+    # List the zip (no extraction or decoding) and pin the member for the
+    # requested season+episode. The host does an exact namelist match that
+    # hard-fails on mismatch, so only return a name on a confident unique match;
+    # otherwise return None so the caller defers to host episode selection.
+    payload = payload or {}
+    if not zipfile.is_zipfile(io.BytesIO(body)):
+        return None
+    season = _int_or_none(payload.get("season"))
+    episode = _int_or_none(payload.get("episode"))
+    # Require both season and episode: SubX season packs reuse episode numbers
+    # across seasons, so episode alone is not a confident pin. Movies and
+    # season-unaware payloads defer to host-side selection.
+    if season is None or episode is None:
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        names = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/")
+            and _subtitle_extension(name)
+            and not os.path.basename(name).startswith(".")
+        ]
+    if not names:
+        return None
+    matches = [name for name in names if _member_has_episode(name, season, episode)]
+    if len(matches) == 1:
+        return matches[0]
+    return None
 
 
-def _archive_preference_key(name):
-    extension = _subtitle_extension(name) or ""
-    return (0 if extension == "srt" else 1, len(name), name.lower())
-
-
-def _episode_file_score(name, episode):
-    normalized = NON_ALNUM_RE.sub(" ", os.path.basename(name).lower())
-    if re.search(rf"\bs\d+e0*{episode}\b", normalized):
-        return 100
-    if re.search(rf"\be0*{episode}\b", normalized):
-        return 90
-    if re.search(rf"(^|[^0-9])0*{episode}([^0-9]|$)", normalized):
-        return 80
-    return 0
-
-
-def _extract_rar_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"SubX RAR extraction failed: {details}") from errors[-1]
-    raise RuntimeError("SubX RAR extraction requires bundled py7zz")
-
-
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("SubX bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subx.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_unar(body):
-    unar = shutil.which("unar")
-    if not unar:
-        raise RuntimeError("SubX RAR fallback requires unar")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subx.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [unar, "-quiet", "-o", output_dir, archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"unar failed to extract SubX RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("SubX RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subx.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [sevenzip, "x", "-y", f"-o{output_dir}", archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract SubX RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if not _subtitle_extension(rel):
+def _member_has_episode(name, season, episode):
+    # Match the episode as a delimited token in the member's basename, tolerating
+    # a separator between the season and episode parts. When the season is known,
+    # require it too (season packs reuse episode numbers across seasons); only
+    # fall back to bare episode markers when the season is unknown.
+    text = _normalize_member(os.path.basename(name))
+    for regex in (_SXXEYY_RE, _NXNN_RE):
+        for match in regex.finditer(text):
+            if _int_or_none(match.group("episode")) != episode:
                 continue
-            with open(path, "rb") as handle:
-                files.append((rel, handle.read()))
-    if not files:
-        raise ValueError("subx archive contains no supported subtitle files")
-    return files
+            if season is not None and _int_or_none(match.group("season")) != season:
+                continue
+            return True
+    # Whole-token "{season}{episode:02d}" form, e.g. "101" for S01E01. Require a
+    # non-alphanumeric boundary (not just non-digit) so "720" (S07E20) cannot
+    # match "720p" and "264" cannot match "x264".
+    if season is not None and re.search(rf"(?<![a-z0-9]){season}{episode:02d}(?![a-z0-9])", text):
+        return True
+    if season is None and re.search(rf"\be0*{episode}(?!\d)", text):
+        return True
+    return False
+
+
+def _normalize_member(name):
+    text = unicodedata.normalize("NFKD", str(name or ""))
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    return text.lower()
 
 
 def _is_rar_archive(body):
@@ -622,17 +561,11 @@ def _format_from_filename(filename):
 def _content_payload(body, fmt):
     if not body:
         raise ValueError("subx downloaded empty subtitle")
-    try:
-        body.decode("utf-8")
-        encoding = "utf-8"
-    except UnicodeDecodeError:
-        encoding = "latin-1"
     return {
         "content_b64": base64.b64encode(body).decode("ascii"),
         "content_sha256": hashlib.sha256(body).hexdigest(),
         "content_type": _content_type(fmt),
         "format": fmt,
-        "encoding": encoding,
         "empty": False,
     }
 

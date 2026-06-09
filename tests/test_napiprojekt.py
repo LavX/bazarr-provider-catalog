@@ -1,7 +1,9 @@
 import base64
 import hashlib
 import importlib.util
+import io
 import json
+import socket
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -554,6 +556,155 @@ class FlareSolverrSearchFallbackTests(unittest.TestCase):
 
         self.assertEqual([item["provider_payload"]["source"] for item in results], ["hash"])
         self.assertEqual(results[0]["provider_payload"]["hash"], "444563eef63f83d47cabb888f7a45113")
+
+
+class TransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.url = "https://www.napiprojekt.pl/napisy1,7,0-dla-4684-Shrek-(2001)"
+
+    def _no_sleep(self):
+        return patch.object(self.mod.time, "sleep", lambda *_a, **_k: None)
+
+    def test_retries_after_transient_url_error_then_succeeds(self):
+        ok = _FakeResponse(200, b"<html>ok</html>", url=self.url)
+        scraper = _ScriptedScraper(
+            [self.mod.urllib.error.URLError("connection refused"), ok]
+        )
+        with self._no_sleep():
+            response = self.mod._scraper_request(
+                scraper, "GET", self.url, {}, None, self.mod.HTTP_TIMEOUT_SECONDS
+            )
+
+        self.assertIs(response, ok)
+        self.assertEqual(len(scraper.calls), 2)
+
+    def test_retries_after_transient_5xx_then_succeeds(self):
+        ok = _FakeResponse(200, b"<html>ok</html>", url=self.url)
+        scraper = _ScriptedScraper(
+            [
+                _FakeResponse(503, b"upstream busy", url=self.url),
+                _FakeResponse(503, b"upstream busy", url=self.url),
+                ok,
+            ]
+        )
+        with self._no_sleep():
+            response = self.mod._scraper_request(
+                scraper, "GET", self.url, {}, None, self.mod.HTTP_TIMEOUT_SECONDS
+            )
+
+        self.assertIs(response, ok)
+        self.assertEqual(len(scraper.calls), 3)
+
+    def test_http_get_recovers_from_single_transient_blip(self):
+        provider = self.mod.NapiProjektProvider()
+        ok = _FakeResponse(200, LIST_HTML, url=self.url)
+        scraper = _ScriptedScraper([socket.timeout("timed out"), ok])
+        original = self.mod.cloudscraper.create_scraper
+        self.mod.cloudscraper.create_scraper = lambda **kwargs: scraper
+        try:
+            with self._no_sleep():
+                body = provider._http_get(self.url)
+        finally:
+            self.mod.cloudscraper.create_scraper = original
+
+        self.assertEqual(body, LIST_HTML)
+        self.assertEqual(len(scraper.calls), 2)
+
+    def test_does_not_retry_4xx_other_than_429(self):
+        not_found = _FakeResponse(404, b"missing", url=self.url)
+        scraper = _ScriptedScraper([not_found])
+        with self._no_sleep():
+            response = self.mod._scraper_request(
+                scraper, "GET", self.url, {}, None, self.mod.HTTP_TIMEOUT_SECONDS
+            )
+
+        self.assertIs(response, not_found)
+        self.assertEqual(len(scraper.calls), 1)
+
+    def test_does_not_retry_non_transient_exception(self):
+        scraper = _ScriptedScraper([ValueError("bad data")])
+        with self._no_sleep():
+            with self.assertRaises(ValueError):
+                self.mod._scraper_request(
+                    scraper, "GET", self.url, {}, None, self.mod.HTTP_TIMEOUT_SECONDS
+                )
+
+        self.assertEqual(len(scraper.calls), 1)
+
+    def test_exhausts_retries_and_reraises_transient_error(self):
+        scraper = _ScriptedScraper(
+            [
+                self.mod.urllib.error.URLError("reset"),
+                self.mod.urllib.error.URLError("reset"),
+                self.mod.urllib.error.URLError("reset"),
+            ]
+        )
+        with self._no_sleep():
+            with self.assertRaises(self.mod.urllib.error.URLError):
+                self.mod._scraper_request(
+                    scraper, "GET", self.url, {}, None, self.mod.HTTP_TIMEOUT_SECONDS
+                )
+
+        self.assertEqual(len(scraper.calls), self.mod.RETRY_ATTEMPTS)
+
+    def test_http_error_4xx_is_not_treated_as_transient(self):
+        error = self.mod.urllib.error.HTTPError(self.url, 400, "bad request", {}, io.BytesIO(b""))
+        try:
+            self.assertFalse(self.mod._is_transient_transport_error(error))
+        finally:
+            error.close()
+
+    def test_503_cloudflare_challenge_is_not_retried_at_transport(self):
+        challenge = _FakeResponse(
+            503,
+            b"<title>Just a moment...</title>",
+            headers={"cf-mitigated": "challenge"},
+            url=self.url,
+        )
+        scraper = _ScriptedScraper([challenge])
+        with self._no_sleep():
+            response = self.mod._scraper_request(
+                scraper, "GET", self.url, {}, None, self.mod.HTTP_TIMEOUT_SECONDS
+            )
+
+        self.assertIs(response, challenge)
+        self.assertEqual(len(scraper.calls), 1)
+
+    def test_429_honors_retry_after_header(self):
+        ok = _FakeResponse(200, b"<html>ok</html>", url=self.url)
+        scraper = _ScriptedScraper(
+            [_FakeResponse(429, b"slow down", headers={"Retry-After": "2"}, url=self.url), ok]
+        )
+        slept = []
+        with patch.object(self.mod.time, "sleep", lambda seconds: slept.append(seconds)):
+            response = self.mod._scraper_request(
+                scraper, "GET", self.url, {}, None, self.mod.HTTP_TIMEOUT_SECONDS
+            )
+
+        self.assertIs(response, ok)
+        self.assertEqual(slept, [2.0])
+
+
+class _ScriptedScraper:
+    """Scraper stub whose get/post consume a script of exceptions or responses."""
+
+    def __init__(self, script):
+        self.script = list(script)
+        self.calls = []
+
+    def _next(self, method, url):
+        self.calls.append((method, url))
+        item = self.script.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+    def get(self, url, *args, **kwargs):
+        return self._next("GET", url)
+
+    def post(self, url, *args, **kwargs):
+        return self._next("POST", url)
 
 
 class _FakeResponse:

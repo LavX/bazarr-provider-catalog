@@ -5,11 +5,8 @@ import hashlib
 import html
 import io
 import json
-import os
 import re
-import shutil
-import subprocess
-import tempfile
+import socket
 import time
 import unicodedata
 import urllib.error
@@ -17,16 +14,18 @@ import urllib.parse
 import urllib.request
 import zipfile
 
-try:
-    import py7zz
-except ImportError:
-    py7zz = None
-
 PROVIDER_ID = "titlovi"
 API_BASE_URL = "https://kodi.titlovi.com/api/subtitles"
 TOKEN_URL = f"{API_BASE_URL}/gettoken"
 SEARCH_URL = f"{API_BASE_URL}/search"
 HTTP_TIMEOUT_SECONDS = 15
+# Transport-level retry for transient network blips (mirrors upstream subliminal's
+# RetryingSession/ProviderRetryMixin: a few attempts with exponential backoff). Only
+# raw transport errors and 5xx/429 are retried; every other failure propagates as-is.
+HTTP_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_MAX_SECONDS = 8.0
+RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt")
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -159,21 +158,13 @@ class TitloviProvider:
             separator = "&" if urllib.parse.urlparse(url).query else "?"
             url = f"{url}{separator}{query}"
         request = urllib.request.Request(url, headers=_headers(headers))
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                return HttpResponse(response.getcode(), response.read(), dict(response.headers.items()))
-        except urllib.error.HTTPError as error:
-            return _http_error_response(error)
+        return _urlopen_with_retry(request, timeout)
 
     def _http_post(self, url, params=None, headers=None, timeout=HTTP_TIMEOUT_SECONDS):
         query = urllib.parse.urlencode(params or {})
         separator = "&" if urllib.parse.urlparse(url).query else "?"
         request = urllib.request.Request(f"{url}{separator}{query}", data=b"", headers=_headers(headers), method="POST")
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                return HttpResponse(response.getcode(), response.read(), dict(response.headers.items()))
-        except urllib.error.HTTPError as error:
-            return _http_error_response(error)
+        return _urlopen_with_retry(request, timeout)
 
 
 def _results_from_api(video, api_results):
@@ -262,70 +253,87 @@ def _filter_requested_results(results, requested):
 
 def extract_download(body, payload=None):
     payload = payload or {}
-    if not body:
-        return _content_payload(b"", "srt", empty=True)
-    if _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        selected = select_subtitle_file([name for name, _data in files], payload)
-        return _content_payload(dict(files)[selected], _subtitle_extension(selected) or "srt")
-    stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist(), payload)
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
-    if _looks_like_html(body):
+    # Reject broken responses up front: the download endpoint can answer with an empty
+    # stream or an HTML/error page that would otherwise look like a successful download.
+    if not body or not body.strip():
         raise ValueError("titlovi download did not return a supported subtitle file")
+    if _is_html_body(body):
+        raise ValueError("titlovi download did not return a supported subtitle file")
+    if _is_archive_body(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
+        # the host. A Serbian archive can carry both Latin and Cyrillic members for the
+        # same episode, which the host's episode-based pick cannot tell apart, so when we
+        # can list a zip we pin the script-matched member; otherwise (rar, no script, or a
+        # single script present) let the host pick the member by episode.
+        archive = {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+        }
+        member = _select_script_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = payload.get("episode")
+        return archive
+    # Direct, non-archive subtitle body.
     subtitle_format = _direct_subtitle_format(body, payload)
     if not subtitle_format:
         raise ValueError("titlovi download did not return a supported subtitle file")
     return _content_payload(body, subtitle_format)
 
 
-def select_subtitle_file(names, payload):
-    candidates = [name for name in names if _subtitle_extension(name)]
-    if not candidates:
-        raise ValueError("titlovi archive contains no supported subtitle files")
-    if (payload or {}).get("is_pack"):
-        selected = _select_pack_member(candidates, payload)
-        if selected:
-            return selected
-    language = (payload or {}).get("language")
-    if _language_alpha3(language) == "srp" and len(candidates) > 1:
-        selected = _select_serbian_script_member(candidates, payload)
-        if selected:
-            return selected
-    return candidates[0]
+def _is_archive_body(body):
+    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
 
 
-def _select_pack_member(candidates, payload):
-    season = _safe_int((payload or {}).get("season"))
-    episode = _safe_int((payload or {}).get("episode"))
-    if season is None or episode is None:
+def _select_script_member(body, payload):
+    # Pin the Serbian script the user requested (Cyrl vs Latin). The host cannot tell the
+    # two alphabets apart, so we only step in for Serbian zips that actually mix scripts;
+    # rar (not stdlib-listable), single-script, or non-Serbian archives return None and the
+    # caller falls back to host-side episode selection.
+    payload = payload or {}
+    if payload.get("language") != "srp" or _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body)):
         return None
-    format_one = f"{season:02d}x{episode:02d}"
-    format_two = f"s{season:02d}e{episode:02d}"
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        candidates = [
+            name
+            for name in archive.namelist()
+            if _subtitle_extension(name) and not name.rsplit("/", 1)[-1].startswith(".")
+        ]
+    if len(candidates) < 2:
+        return None
+    cyrillic, latin = [], []
     for name in candidates:
-        lowered = name.lower()
-        if format_one in lowered or format_two in lowered:
-            return name
-    return None
-
-
-def _select_serbian_script_member(candidates, payload):
-    wants_cyrillic = (payload or {}).get("script") == "Cyrl"
-    cyrillic = []
-    latin = []
-    for name in candidates:
-        lowered = name.lower()
-        if ".cyr" in lowered or ".cir" in lowered or "cyr)" in lowered:
+        # Match "cyr"/"cir" as a delimited token, not a substring, so a Latin release like
+        # "...circle..." is not misread as Cyrillic.
+        tokens = re.split(r"[^a-z0-9]+", name.lower())
+        if "cyr" in tokens or "cir" in tokens:
             cyrillic.append(name)
         else:
             latin.append(name)
-    if wants_cyrillic and cyrillic:
-        return cyrillic[0]
-    if not wants_cyrillic and latin:
-        return latin[0]
-    return None
+    if not (cyrillic and latin):
+        return None  # single script: the host's episode pick is enough
+    # Latin Serbian has no `script` key, so anything other than "Cyrl" means Latin.
+    pool = cyrillic if payload.get("script") == "Cyrl" else latin
+    # A season pack carries several episodes per script; the host cannot combine episode
+    # and script, so resolve the episode here as well before pinning a single member.
+    season = _safe_int(payload.get("season"))
+    episode = _safe_int(payload.get("episode"))
+    if season is not None and episode is not None:
+        episode_pool = [name for name in pool if _member_has_episode(name, season, episode)]
+        # Episode missing from the requested script: defer to host episode selection.
+        return episode_pool[0] if episode_pool else None
+    return pool[0]
+
+
+def _member_has_episode(name, season, episode):
+    # Tolerate separated SxxExx tokens (S01.E02, S01 E02, S01-E02) as well as contiguous
+    # S01E02, while keeping the (?!\d) guard so "e02" never matches "e020".
+    text = name.lower()
+    return bool(
+        re.search(rf"s0*{season}[\s._-]*e0*{episode}(?!\d)", text)
+        or re.search(rf"(?<!\d){season}x0*{episode}(?!\d)", text)
+    )
 
 
 def derive_matches(video, title, alt_title, release, season=None, episode=None, year=None):
@@ -447,6 +455,53 @@ def _http_error_response(error):
     return HttpResponse(error.code, body, _http_error_headers(error))
 
 
+def _urlopen_with_retry(request, timeout):
+    # Perform the raw urllib call with a bounded retry on transient transport failures.
+    # The retry wraps the existing behaviour: a successful response and a non-retriable
+    # HTTPError (4xx other than 429) return exactly what the helper returned before, and
+    # 5xx/429 are still converted to an HttpResponse so callers keep their 429 -> error
+    # mapping and _raise_for_status handling. Only genuine network blips are retried.
+    last_error = None
+    for attempt in range(1, HTTP_MAX_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return HttpResponse(response.getcode(), response.read(), dict(response.headers.items()))
+        except urllib.error.HTTPError as error:
+            response = _http_error_response(error)
+            if response.status_code in RETRY_STATUS_CODES and attempt < HTTP_MAX_ATTEMPTS:
+                _sleep_backoff(attempt, response)
+                continue
+            return response
+        except (socket.timeout, TimeoutError, urllib.error.URLError) as error:
+            last_error = error
+            if attempt >= HTTP_MAX_ATTEMPTS:
+                raise
+            _sleep_backoff(attempt, None)
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("titlovi retry loop exited without a result")
+
+
+def _sleep_backoff(attempt, response):
+    delay = min(RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1)), RETRY_BACKOFF_MAX_SECONDS)
+    retry_after = _retry_after_seconds(response)
+    if retry_after is not None:
+        delay = min(retry_after, RETRY_BACKOFF_MAX_SECONDS)
+    time.sleep(delay)
+
+
+def _retry_after_seconds(response):
+    if response is None or response.status_code != 429:
+        return None
+    value = (response.headers or {}).get("Retry-After")
+    if value is None:
+        return None
+    seconds = _float(value)
+    if seconds is None or seconds < 0:
+        return None
+    return seconds
+
+
 def _json_body(body, message):
     try:
         return json.loads(_decode(body))
@@ -484,91 +539,6 @@ def _query_title(video):
     return _coerce_text(video.get("title"))
 
 
-def _extract_rar_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"Titlovi RAR extraction failed: {details}") from errors[-1]
-    raise RuntimeError("Titlovi RAR extraction requires bundled py7zz")
-
-
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("Titlovi bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "titlovi.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_unar(body):
-    unar = shutil.which("unar")
-    if not unar:
-        raise RuntimeError("Titlovi RAR fallback requires unar")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "titlovi.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run([unar, "-quiet", "-o", output_dir, archive_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"unar failed to extract Titlovi RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("Titlovi RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "titlovi.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run([sevenzip, "x", "-y", f"-o{output_dir}", archive_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract Titlovi RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if not _subtitle_extension(rel):
-                continue
-            with open(path, "rb") as handle:
-                files.append((rel, handle.read()))
-    if not files:
-        raise ValueError("titlovi archive contains no supported subtitle files")
-    return files
-
-
 def _is_rar_archive(body):
     return bool(body) and (
         body.startswith(b"Rar!\x1a\x07\x00")
@@ -598,28 +568,16 @@ def _direct_subtitle_format(body, payload):
     return None
 
 
-def _content_payload(content, subtitle_format, empty=False):
-    if empty:
-        return {
-            "content_b64": "",
-            "content_sha256": "",
-            "content_type": _content_type(subtitle_format),
-            "format": subtitle_format,
-            "encoding": "utf-8",
-            "empty": True,
-        }
+def _content_payload(content, subtitle_format):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     content = _fix_line_endings(content)
-    encoding = "utf-8"
-    try:
-        content.decode("utf-8")
-    except UnicodeDecodeError:
-        encoding = "latin-1"
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 
@@ -636,9 +594,18 @@ def _fix_line_endings(content):
     return (content or b"").replace(b"\r\n", b"\n").replace(b"\r", b"\n")
 
 
-def _looks_like_html(body):
-    sample = (body or b"")[:512].lstrip().lower()
-    return sample.startswith(b"<!doctype html") or sample.startswith(b"<html") or b"<body" in sample
+def _is_html_body(body):
+    if not body:
+        return False
+    head = body[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or head.startswith(b"<!--")
+        or b"<body" in head
+        or b"<head" in head
+    )
 
 
 def _tokens(value):

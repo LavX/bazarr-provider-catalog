@@ -4,21 +4,12 @@ import base64 as _base64
 import hashlib as _hashlib
 import io
 import json
-import os
 import re
-import shutil
-import subprocess
-import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-
-try:
-    import py7zz
-except ImportError:
-    py7zz = None
 
 
 PROVIDER_ID = "jimaku"
@@ -376,9 +367,7 @@ class JimakuProvider:
         if not url:
             raise ValueError("jimaku download requires url")
         body = self._http_get(url, config=config)
-        if payload.get("is_archive"):
-            return extract_download(body, payload)
-        return _content_payload(body, _format_from_filename(payload.get("filename")))
+        return _download_payload(body, payload)
 
     def _search_entries(self, params, config):
         attempts = [dict(params)]
@@ -504,65 +493,139 @@ def _format_from_filename(filename):
 
 
 def _content_payload(content, subtitle_format, empty=False):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess only reintroduces mojibake. Leave encoding unset and let the host normalize.
     content = content or b""
     return {
         "content_b64": _base64.b64encode(content).decode("ascii"),
         "content_sha256": _hashlib.sha256(content).hexdigest(),
         "content_type": "application/x-subrip" if subtitle_format == "srt" else "text/plain",
         "format": subtitle_format,
-        "encoding": "utf-8",
         "empty": bool(empty),
     }
 
 
-def extract_download(body, payload):
+def _download_payload(body, payload):
     payload = payload or {}
-    filename = payload.get("filename") or ""
-    lowered = filename.lower()
-    if lowered.endswith(".rar") or _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        selected = select_subtitle_file([name for name, _data in files], payload.get("video") or {})
-        return _content_payload(dict(files)[selected], _subtitle_extension(selected) or "srt")
-    stream = io.BytesIO(body or b"")
-    if lowered.endswith(".zip") or zipfile.is_zipfile(stream):
-        stream.seek(0)
-        with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist(), payload.get("video") or {})
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
-    return _content_payload(body or b"", _format_from_filename(filename))
+    # Reject broken responses up front: the API can answer with an empty stream or an
+    # HTML/error page that would otherwise look like a successful download.
+    if not body or not body.strip():
+        raise ValueError(f"jimaku empty download for {payload.get('filename') or payload.get('url')}")
+    if _is_html_body(body):
+        raise ValueError(f"jimaku returned an HTML/error page for {payload.get('filename') or payload.get('url')}")
+    if _is_archive_body(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
+        # the host, which lists it, detects encoding, and either reads the named member or
+        # picks one by episode.
+        archive = {
+            "archive_b64": _base64.b64encode(body).decode("ascii"),
+            "archive_sha256": _hashlib.sha256(body).hexdigest(),
+        }
+        member = _select_zip_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = payload.get("episode")
+        return archive
+    # Direct, non-archive subtitle body.
+    return _content_payload(body, _format_from_filename(payload.get("filename")))
 
 
-def select_subtitle_file(names, video):
-    candidates = [name for name in names if _subtitle_extension(name)]
-    if not candidates:
-        raise ValueError("jimaku archive contains no supported subtitle files")
+def _safe_int(value):
     try:
-        season = int((video or {}).get("season"))
+        return int(value)
     except (TypeError, ValueError):
-        season = None
-    try:
-        episode = int((video or {}).get("episode"))
-    except (TypeError, ValueError):
-        episode = None
+        return None
+
+
+# Left boundary (?<![a-z0-9]) stops "s01e05" matching inside a glued token like "abcs01e05".
+_SXXEYY_RE = re.compile(r"(?<![a-z0-9])s0*(?P<season>\d{1,2})[\s._-]*e0*(?P<episode>\d{1,3})(?!\d)", re.I)
+_NXNN_RE = re.compile(r"(?<![a-z0-9])(?P<season>\d{1,2})x0*(?P<episode>\d{1,3})(?!\d)", re.I)
+
+
+def _member_has_episode(name, season, episode):
+    # Match the requested episode as a delimited token. Tolerate a separator between the
+    # season and episode parts (S01E05, S01.E05, S01 E05, S01-E05), the NxNN form (1x05),
+    # and a bare Exx when the season is implicit (jimaku packs are usually single-season).
+    # The (?!\d) guards stop "e05" matching "e050" and "720"/"264" from matching "720p"/"x264".
+    text = _normalize(name)
+    if season is not None:
+        carries_season = False
+        for match in _SXXEYY_RE.finditer(text):
+            carries_season = True
+            if _safe_int(match.group("season")) == season and _safe_int(match.group("episode")) == episode:
+                return True
+        for match in _NXNN_RE.finditer(text):
+            carries_season = True
+            if _safe_int(match.group("season")) == season and _safe_int(match.group("episode")) == episode:
+                return True
+        # A member that carries an explicit season token (SxxEyy / NxNN) whose season
+        # disagrees with the request must NOT fall through to the bare-E branch. Because
+        # _normalize turns "Show.S01.E05" into "show s01 e05", a season=2 request would
+        # otherwise let the bare-E branch pin the S01E05 member, and the host's exact
+        # "member in namelist" check delivers that wrong-season file silently (no loud
+        # failure). Only seasonless members may use the bare-E fallback below; season-
+        # bearing members defer to host episode selection.
+        if carries_season:
+            return False
+    return bool(re.search(rf"(?<![a-z\d])e0*{episode}(?!\d)", text))
+
+
+def _member_carries_episode_markers(names, season):
+    # True when at least one member encodes an SxxExx, NxNN, or bare-Exx token. Used to
+    # decide whether a missing requested episode means "defer to host" (markers present but
+    # not ours) versus "let the host pick" (no episode structure at all, e.g. a movie pack).
+    for name in names:
+        text = _normalize(name)
+        if _SXXEYY_RE.search(text):
+            return True
+        if season is not None and re.search(rf"(?<!\d){season}x\d{{1,3}}(?!\d)", text):
+            return True
+        if re.search(r"(?<![a-z\d])e\d{1,3}(?!\d)", text):
+            return True
+    return False
+
+
+def _select_zip_member(body, payload):
+    # Pin the lone zip member that matches the requested season+episode. Listing only, no
+    # extraction or decoding: the host reads the named member (an exact namelist match that
+    # hard-fails on mismatch) and runs chardet. Returns None for rar (not stdlib-listable),
+    # a single subtitle member (nothing to disambiguate), or when no confident unique match
+    # exists, so the caller falls back to host-side episode selection.
+    payload = payload or {}
+    if _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body or b"")):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        members = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/")
+            and _subtitle_extension(name)
+            and not name.rsplit("/", 1)[-1].startswith(".")
+        ]
+    if len(members) < 2:
+        return None  # a lone member: the host's episode pick already lands here
+    video = payload.get("video") or {}
+    season = _safe_int(video.get("season"))
+    episode = _safe_int(payload.get("episode"))
     if episode is None:
-        return candidates[0]
+        episode = _safe_int(video.get("episode"))
+    if episode is None:
+        return None  # no episode to disambiguate (movie pack); defer to the host
+    matches = [name for name in members if _member_has_episode(name, season, episode)]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches and _member_carries_episode_markers(members, season):
+        # The pack carries episode markers but not the requested one: pinning a wrong
+        # member would hard-fail the host download, so defer to episode selection.
+        return None
+    # Zero matches without markers, or several members claiming the same episode: cannot
+    # confidently disambiguate, so let the host pick by episode.
+    return None
 
-    def score(name):
-        normalized = _normalize(os.path.basename(name))
-        if season is not None and re.search(rf"\bs0*{season}e0*{episode}\b", normalized):
-            return 100
-        if re.search(rf"\be0*{episode}\b", normalized):
-            return 90
-        if re.search(rf"(^|[^0-9])0*{episode}([^0-9]|$)", normalized):
-            return 80
-        return 0
 
-    best = max(candidates, key=score)
-    if score(best) == 0:
-        raise ValueError(
-            f"jimaku archive does not contain a subtitle for episode {episode}"
-        )
-    return best
+def _is_archive_body(body):
+    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
 
 
 def _is_rar_archive(body):
@@ -572,96 +635,15 @@ def _is_rar_archive(body):
     )
 
 
-def _extract_rar_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"Jimaku RAR extraction failed: {details}") from errors[-1]
-    raise RuntimeError("Jimaku RAR extraction requires bundled py7zz")
-
-
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("Jimaku bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "jimaku.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_unar(body):
-    unar = shutil.which("unar")
-    if not unar:
-        raise RuntimeError("Jimaku RAR fallback requires unar")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "jimaku.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [unar, "-quiet", "-o", output_dir, archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"unar failed to extract Jimaku RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("Jimaku RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "jimaku.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [sevenzip, "x", "-y", f"-o{output_dir}", archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract Jimaku RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if not _subtitle_extension(rel):
-                continue
-            with open(path, "rb") as handle:
-                files.append((rel, handle.read()))
-    if not files:
-        raise ValueError("jimaku archive contains no supported subtitle files")
-    return files
+def _is_html_body(body):
+    if not body:
+        return False
+    head = body[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or head.startswith(b"<!--")
+        or b"<body" in head
+        or b"<head" in head
+    )

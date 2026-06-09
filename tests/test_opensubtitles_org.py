@@ -31,9 +31,10 @@ EPISODE_VIDEO = {
     "imdb_id": "tt1480055",
     "fps": "23.976",
     "size": 234567890,
-    "hashes": {"opensubtitles": "9f8e7d6c5b4a3210"},
     "original_name": "Game.of.Thrones.S01E01.1080p.WEB-DL",
 }
+
+HASH_EPISODE_VIDEO = dict(EPISODE_VIDEO, hashes={"opensubtitles": "9f8e7d6c5b4a3210"})
 
 LANGUAGES = [{"alpha3": "eng", "alpha2": "en"}]
 SRT_BODY = b"1\n00:00:01,000 --> 00:00:02,000\nWinter is coming.\n"
@@ -179,6 +180,20 @@ WRONG_FPS_SUBTITLES_HTML = """
       <a href="/en/profile/uploader">syncmaster</a>
       <a href="/en/subtitleserve/sub/1952619110">9x</a>
       <span class="p">25.000</span>
+    </td>
+  </tr>
+</table>
+"""
+
+HASH_SUBTITLES_HTML = """
+<table>
+  <tr>
+    <td id="main1952619120">
+      <strong><a href="/en/subtitles/1952619120/game-of-thrones-winter-is-coming-en">"Game of Thrones" Winter Is Coming (2011)</a></strong><br />
+      Game.of.Thrones.S01E01.1080p.WEB-DL<br />
+      <a href="/en/profile/uploader">syncmaster</a>
+      <a href="/en/subtitleserve/sub/1952619120">99x</a>
+      <span class="p">23.976</span>
     </td>
   </tr>
 </table>
@@ -490,6 +505,8 @@ class NativeSearchTests(unittest.TestCase):
         self.assertEqual(first["provider"], "opensubtitles")
         self.assertEqual(first["provider_payload"]["mode"], "native")
         self.assertEqual(first["provider_payload"]["subtitle_id"], "1952619105")
+        self.assertEqual(first["provider_payload"]["season"], 1)
+        self.assertEqual(first["provider_payload"]["episode"], 1)
         self.assertEqual(first["provider_payload"]["download_url"], "https://www.opensubtitles.org/en/subtitles/1952619105/game-of-thrones-winter-is-coming-en")
         self.assertEqual(first["language"]["alpha3"], "eng")
         self.assertIn("episode", first["matches"])
@@ -738,7 +755,7 @@ class NativeSearchTests(unittest.TestCase):
                 {},
             )
 
-    def test_download_fetches_direct_zip_and_returns_subtitle_payload(self):
+    def test_download_returns_archive_bytes_and_selected_member(self):
         provider = self.mod.OpenSubtitlesOrgProvider()
         calls = []
         archive = _zip_bytes()
@@ -765,11 +782,426 @@ class NativeSearchTests(unittest.TestCase):
             {},
         )
 
-        data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
+        # The host extracts the archive: the worker returns the raw archive bytes and
+        # the member it selected, with no content/encoding fields.
         self.assertEqual(calls, ["https://dl.opensubtitles.org/en/download/sub/1952619105"])
-        self.assertEqual(data, SRT_BODY)
-        self.assertEqual(result["content_sha256"], hashlib.sha256(SRT_BODY).hexdigest())
+        data = base64.b64decode(result["archive_b64"].encode("ascii"), validate=True)
+        self.assertEqual(data, archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["member"], "Game.of.Thrones.S01E01.srt")
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
+
+    def test_download_selects_episode_member_when_filename_absent(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        archive = _zip_bytes(filename="Game.of.Thrones.S01E01.1080p.srt")
+
+        provider._http_get = lambda url, config: FakeResponse(
+            url, content=archive, headers={"content-type": "application/zip"}
+        )
+
+        result = provider.download(
+            {
+                "provider": "opensubtitles",
+                "mode": "native",
+                "subtitle_id": "1952619105",
+            },
+            {"alpha3": "eng", "alpha2": "en"},
+            {},
+        )
+
+        # No preferred filename: the first subtitle member is selected.
+        self.assertEqual(result["member"], "Game.of.Thrones.S01E01.1080p.srt")
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+
+    def test_download_returns_rar_archive_for_host_to_pick_by_episode(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        rar_body = b"Rar!\x1a\x07\x00rest-of-archive-bytes"
+
+        provider._http_get = lambda url, config: FakeResponse(url, content=rar_body)
+
+        result = provider.download(
+            {
+                "provider": "opensubtitles",
+                "mode": "native",
+                "subtitle_id": "1952619105",
+                "filename": "Game.of.Thrones.S01E01.srt",
+                "season": 1,
+                "episode": 1,
+            },
+            {"alpha3": "eng", "alpha2": "en"},
+            {},
+        )
+
+        data = base64.b64decode(result["archive_b64"].encode("ascii"), validate=True)
+        self.assertEqual(data, rar_body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(rar_body).hexdigest())
+        self.assertEqual(result["episode"], 1)
+        self.assertNotIn("member", result)
+
+    def test_download_follows_html_page_to_zip_and_returns_archive(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        archive = _zip_bytes()
+        calls = []
+
+        def fake_get(url, config):
+            calls.append(url)
+            if "download/sub" in url:
+                return FakeResponse(
+                    url,
+                    text='<html><a href="/en/subtitleserve/sub/1952619105">Download</a></html>',
+                    content=b'<html><a href="/en/subtitleserve/sub/1952619105">Download</a></html>',
+                )
+            return FakeResponse(url, content=archive)
+
+        provider._http_get = fake_get
+
+        result = provider.download(
+            {
+                "provider": "opensubtitles",
+                "mode": "native",
+                "subtitle_id": "1952619105",
+                "filename": "Game.of.Thrones.S01E01.srt",
+            },
+            {"alpha3": "eng", "alpha2": "en"},
+            {},
+        )
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result["member"], "Game.of.Thrones.S01E01.srt")
+        self.assertEqual(
+            base64.b64decode(result["archive_b64"].encode("ascii"), validate=True), archive
+        )
+
+    def test_download_returns_direct_non_archive_subtitle_as_content(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        provider._http_get = lambda url, config: FakeResponse(url, content=SRT_BODY)
+
+        result = provider.download(
+            {
+                "provider": "opensubtitles",
+                "mode": "native",
+                "subtitle_id": "1952619105",
+                "filename": "Game.of.Thrones.S01E01.srt",
+            },
+            {"alpha3": "eng", "alpha2": "en"},
+            {},
+        )
+
+        self.assertEqual(
+            base64.b64decode(result["content_b64"].encode("ascii"), validate=True), SRT_BODY
+        )
         self.assertEqual(result["content_type"], "application/x-subrip")
+        self.assertNotIn("archive_b64", result)
+        self.assertNotIn("encoding", result)
+
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        provider._http_get = lambda url, config: FakeResponse(url, content=b"")
+
+        with self.assertRaisesRegex(self.mod.ServiceUnavailable, "empty"):
+            provider.download(
+                {"provider": "opensubtitles", "mode": "native", "subtitle_id": "1952619105"},
+                {"alpha3": "eng", "alpha2": "en"},
+                {},
+            )
+
+    def test_download_rejects_html_error_page_without_link(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        body = b"<html><body>Subtitle has been removed.</body></html>"
+        provider._http_get = lambda url, config: FakeResponse(url, text=body.decode(), content=body)
+
+        with self.assertRaisesRegex(self.mod.ServiceUnavailable, "no subtitle link"):
+            provider.download(
+                {"provider": "opensubtitles", "mode": "native", "subtitle_id": "1952619105"},
+                {"alpha3": "eng", "alpha2": "en"},
+                {},
+            )
+
+
+class MovieHashMatchTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_search_queries_moviehash_listing_and_awards_hash_match(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        calls = []
+
+        def fake_get(url, config):
+            calls.append(url)
+            if "moviehash-9f8e7d6c5b4a3210" in url and "sublanguageid-eng" in url:
+                return FakeResponse(url, text=HASH_SUBTITLES_HTML)
+            if "moviehash-9f8e7d6c5b4a3210" in url and "sublanguageid-all" in url:
+                return FakeResponse(url, text=HASH_SUBTITLES_HTML)
+            if "search/sublanguageid-all/imdbid-1480055" in url:
+                return FakeResponse(url, text=SEARCH_HTML)
+            if "search/sublanguageid-eng/imdbid-1480055" in url:
+                return FakeResponse(url, text=SUBTITLES_HTML)
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = fake_get
+
+        results = provider.search(HASH_EPISODE_VIDEO, LANGUAGES, {"skip_wrong_fps": True})
+
+        # The moviehash listing is queried (with the byte size segment) so
+        # hash-matched results come back.
+        self.assertTrue(
+            any("moviehash-9f8e7d6c5b4a3210" in url for url in calls),
+            calls,
+        )
+        self.assertTrue(
+            any("moviebytesize-234567890" in url for url in calls),
+            calls,
+        )
+
+        hashed = next(item for item in results if item["provider_payload"]["subtitle_id"] == "1952619120")
+        self.assertIn("hash", hashed["matches"])
+        self.assertTrue(hashed["hash_verifiable"])
+        self.assertEqual(hashed["provider_payload"]["moviehash"], "9f8e7d6c5b4a3210")
+        # The hash match lifts the score to the maximum, while score_without_hash
+        # reflects only the non-hash matches (series/season/episode/imdb_id).
+        self.assertEqual(hashed["score"], 100)
+        self.assertEqual(
+            hashed["score_without_hash"],
+            self.mod._score_from_matches(hashed["matches"], include_hash=False),
+        )
+        self.assertLess(hashed["score_without_hash"], hashed["score"])
+
+    def test_regular_listing_rows_are_not_awarded_a_hash_match(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+
+        def fake_get(url, config):
+            if "moviehash-9f8e7d6c5b4a3210" in url:
+                # The moviehash listing finds nothing for this video.
+                return FakeResponse(url, text="<table id=\"search_results\"></table>")
+            if "search/sublanguageid-all/imdbid-1480055" in url:
+                return FakeResponse(url, text=SEARCH_HTML)
+            if "search/sublanguageid-eng/imdbid-1480055" in url:
+                return FakeResponse(url, text=SUBTITLES_HTML)
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = fake_get
+
+        # The video carries a hash, but the imdb/title listing rows must not be
+        # tagged with that hash: only genuine moviehash-listing rows may.
+        results = provider.search(HASH_EPISODE_VIDEO, LANGUAGES, {"skip_wrong_fps": True})
+
+        imdb_row = next(item for item in results if item["provider_payload"]["subtitle_id"] == "1952619105")
+        self.assertNotIn("hash", imdb_row["matches"])
+        self.assertFalse(imdb_row["hash_verifiable"])
+        self.assertIsNone(imdb_row["provider_payload"]["moviehash"])
+
+    def test_search_without_hash_does_not_query_moviehash_listing(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        calls = []
+
+        def fake_get(url, config):
+            calls.append(url)
+            if "search/sublanguageid-all/imdbid-1480055" in url:
+                return FakeResponse(url, text=SEARCH_HTML)
+            if "search/sublanguageid-eng/imdbid-1480055" in url:
+                return FakeResponse(url, text=SUBTITLES_HTML)
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = fake_get
+
+        provider.search(EPISODE_VIDEO, LANGUAGES, {"skip_wrong_fps": True})
+
+        self.assertFalse(any("moviehash" in url for url in calls), calls)
+
+
+class TransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.slept = []
+        self._orig_sleep = self.mod.time.sleep
+        self.mod.time.sleep = lambda seconds: self.slept.append(seconds)
+
+    def tearDown(self):
+        self.mod.time.sleep = self._orig_sleep
+
+    def _install_session(self, steps):
+        # Each step is either a callable raising an exception or a FakeResponse.
+        calls = []
+
+        class RetrySession:
+            def __init__(self):
+                self.headers = {}
+                self.cookies = FakeCookieJar()
+                self._steps = list(steps)
+
+            def get(self, url, **kwargs):
+                calls.append(url)
+                step = self._steps.pop(0)
+                if isinstance(step, Exception):
+                    raise step
+                return step
+
+        session = RetrySession()
+
+        class FakeCloudscraper:
+            @staticmethod
+            def create_scraper(**kwargs):
+                return session
+
+        self.mod.cloudscraper = FakeCloudscraper
+        return calls
+
+    def test_http_get_retries_after_transient_urlerror_then_succeeds(self):
+        import urllib.error
+
+        success = FakeResponse(
+            "https://www.opensubtitles.org/en/search",
+            text="<html><title>Search</title></html>",
+        )
+        calls = self._install_session(
+            [urllib.error.URLError("connection reset"), success]
+        )
+        provider = self.mod.OpenSubtitlesOrgProvider()
+
+        response = provider._http_get("https://www.opensubtitles.org/en/search", {})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(self.slept), 1)
+
+    def test_http_get_retries_after_transient_503_then_succeeds(self):
+        success = FakeResponse(
+            "https://www.opensubtitles.org/en/search",
+            text="<html><title>Search</title></html>",
+        )
+        calls = self._install_session(
+            [
+                FakeResponse(
+                    "https://www.opensubtitles.org/en/search",
+                    status_code=503,
+                    text="upstream is briefly unavailable",
+                ),
+                success,
+            ]
+        )
+        provider = self.mod.OpenSubtitlesOrgProvider()
+
+        response = provider._http_get("https://www.opensubtitles.org/en/search", {})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(self.slept), 1)
+
+    def test_http_get_honors_retry_after_header_on_transient_429(self):
+        success = FakeResponse(
+            "https://www.opensubtitles.org/en/search",
+            text="<html><title>Search</title></html>",
+        )
+        calls = self._install_session(
+            [
+                FakeResponse(
+                    "https://www.opensubtitles.org/en/search",
+                    status_code=429,
+                    text="slow down",
+                    headers={"Retry-After": "2"},
+                ),
+                success,
+            ]
+        )
+        provider = self.mod.OpenSubtitlesOrgProvider()
+
+        response = provider._http_get("https://www.opensubtitles.org/en/search", {})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(self.slept, [2.0])
+
+    def test_http_get_does_not_retry_4xx_and_propagates_first_failure(self):
+        calls = self._install_session(
+            [
+                FakeResponse(
+                    "https://www.opensubtitles.org/en/search",
+                    status_code=404,
+                    text="not found",
+                )
+            ]
+        )
+        provider = self.mod.OpenSubtitlesOrgProvider()
+
+        with self.assertRaisesRegex(self.mod.ServiceUnavailable, "HTTP 404"):
+            provider._http_get("https://www.opensubtitles.org/en/search", {})
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.slept, [])
+
+    def test_http_get_gives_up_after_max_attempts_on_persistent_transient_error(self):
+        import urllib.error
+
+        calls = self._install_session(
+            [
+                urllib.error.URLError("connection reset"),
+                urllib.error.URLError("connection reset"),
+                urllib.error.URLError("connection reset"),
+            ]
+        )
+        provider = self.mod.OpenSubtitlesOrgProvider()
+
+        with self.assertRaisesRegex(self.mod.ServiceUnavailable, "request failed"):
+            provider._http_get("https://www.opensubtitles.org/en/search", {})
+
+        self.assertEqual(len(calls), self.mod.RETRY_MAX_ATTEMPTS)
+        self.assertEqual(len(self.slept), self.mod.RETRY_MAX_ATTEMPTS - 1)
+
+    def test_http_get_does_not_retry_non_transport_exception(self):
+        calls = self._install_session([ValueError("bad parse")])
+        provider = self.mod.OpenSubtitlesOrgProvider()
+
+        with self.assertRaisesRegex(self.mod.ServiceUnavailable, "request failed"):
+            provider._http_get("https://www.opensubtitles.org/en/search", {})
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.slept, [])
+
+
+class PowDeadlineTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_solve_pow_raises_service_unavailable_when_deadline_passed(self):
+        # An already-expired deadline must abort instead of looping forever on a
+        # high-difficulty challenge.
+        with self.assertRaises(self.mod.ServiceUnavailable):
+            self.mod._solve_pow("random", 64, deadline=self.mod.time.monotonic() - 1)
+
+    def test_solve_anubis_pow_challenge_aborts_when_budget_exhausted(self):
+        challenge_json = (
+            '<script id="anubis_challenge">'
+            '{"challenge":{"id":"abc","randomData":"seed","difficulty":64,"method":"fast"}}'
+            "</script>"
+        )
+        session = FakeSession([FakeResponse("https://www.opensubtitles.org/.within.website/", text=challenge_json)])
+
+        # A tiny timeout makes the proof-of-work budget expire almost
+        # immediately, so an unsolvable difficulty cannot hang the worker.
+        with self.assertRaises(self.mod.ServiceUnavailable):
+            self.mod.solve_anubis_challenge(
+                session,
+                "https://www.opensubtitles.org/.within.website/?redir=/",
+                "https://www.opensubtitles.org/",
+                timeout=0.001,
+            )
+
+    def test_solve_anubis_preact_challenge_aborts_when_budget_exhausted(self):
+        challenge_json = (
+            '<script id="anubis_challenge">'
+            '{"challenge":{"id":"abc","randomData":"seed","difficulty":64,"method":"preact"}}'
+            "</script>"
+        )
+        session = FakeSession([FakeResponse("https://www.opensubtitles.org/.within.website/", text=challenge_json)])
+
+        with self.assertRaises(self.mod.ServiceUnavailable):
+            self.mod.solve_anubis_challenge(
+                session,
+                "https://www.opensubtitles.org/.within.website/?redir=/",
+                "https://www.opensubtitles.org/",
+                timeout=0.001,
+            )
 
 
 if __name__ == "__main__":

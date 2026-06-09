@@ -6,25 +6,26 @@ import html
 import io
 import os
 import re
-import shutil
-import subprocess
-import tempfile
+import socket
 import time
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
 from http.cookiejar import CookieJar
 
-try:
-    import py7zz
-except ImportError:  # pragma: no cover, dependency is declared in manifest
-    py7zz = None
-
 PROVIDER_ID = "soustitreseu"
 BASE_URL = "https://www.sous-titres.eu"
 SEARCH_URL = f"{BASE_URL}/search.html"
 HTTP_TIMEOUT_SECONDS = 15
+# Transport-level retry for transient network failures (connection reset, DNS
+# blip, read timeout, 5xx, 429). Mirrors upstream subliminal's RetryingSession:
+# a single transient blip should not abort a search/download.
+HTTP_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8.0
+RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 SUPPORTED_LANGUAGES = {"eng": "en", "fra": "fr"}
 ALPHA2_TO_ALPHA3 = {value: key for key, value in SUPPORTED_LANGUAGES.items()}
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
@@ -56,8 +57,6 @@ _NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
 _YEAR_RE = re.compile(r"\((?P<year>\d{4})\)\s*$")
 _EPISODE_LABEL_RE = re.compile(r"(?P<season>\d{1,2})\s*(?:x|×)\s*(?P<episode>\d{1,3})", re.I)
 _SEASON_LABEL_RE = re.compile(r"\bS(?P<season>\d{1,2})\b", re.I)
-_SXXEXX_RE = re.compile(r"s(?P<season>\d{1,2})e(?P<episode>\d{1,3})", re.I)
-_X_EP_RE = re.compile(r"(?P<season>\d{1,2})x(?P<episode>\d{1,3})", re.I)
 
 
 def parse_search_results(body):
@@ -170,8 +169,26 @@ class SoustitreseuProvider:
         if referer:
             headers["Referer"] = referer
         request = urllib.request.Request(url, headers=headers)
-        with self._opener.open(request, timeout=timeout) as response:
-            return response.read()
+        return self._open_with_retry(request, timeout)
+
+    def _open_with_retry(self, request, timeout):
+        # Retry only raw transport failures around the urllib call. Non-transient
+        # errors (4xx other than 429, parse errors, anything non-network) propagate
+        # unchanged on first occurrence. All callers issue idempotent GETs.
+        for attempt in range(1, HTTP_MAX_ATTEMPTS + 1):
+            try:
+                with self._opener.open(request, timeout=timeout) as response:
+                    return response.read()
+            except urllib.error.HTTPError as error:
+                if error.code not in RETRY_STATUS_CODES or attempt >= HTTP_MAX_ATTEMPTS:
+                    raise
+                _retry_sleep(attempt, error.headers.get("Retry-After") if error.code == 429 else None)
+            except (urllib.error.URLError, socket.timeout, TimeoutError):
+                # urllib.error.HTTPError is a URLError subclass handled above; a bare
+                # URLError here is a connection-level failure (refused/DNS/reset).
+                if attempt >= HTTP_MAX_ATTEMPTS:
+                    raise
+                _retry_sleep(attempt, None)
 
     def search(self, video, languages, config):
         video = dict(video or {})
@@ -304,173 +321,150 @@ class SoustitreseuProvider:
         }
 
     def download(self, provider_payload, language, config):
-        del config
+        del language, config
         payload = dict(provider_payload or {})
         url = payload.get("url")
         if not url:
             raise ValueError("soustitreseu download requires url")
         body = self._http_get(url, timeout=30)
-        alpha3 = _alpha3_for_language(language)
-        return extract_download(body, payload.get("filename", ""), payload, alpha3)
+        return _download_payload(body, payload)
+
+    def select_archive_member(self, provider_payload, language, members, config):
+        # Host lists the archive members (zip/rar); we language-pin one with the same
+        # tagging _languages_from_archive uses. Returns {member, decision: pin|defer|reject}.
+        del config
+        payload = dict(provider_payload or {})
+        payload["language"] = provider_payload.get("language") or _alpha3_for_language(language)
+        member, decision = _pick_archive_member(members, payload)
+        return {"member": member, "decision": decision}
 
 
-def extract_download(body, filename="", payload=None, language=None):
+def _download_payload(body, payload):
     payload = payload or {}
-    if not body:
-        return _content_payload(b"", _format_from_filename(filename), empty=True)
-    if _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        selected = select_subtitle_file([name for name, _data in files], payload, language)
-        return _content_payload(dict(files)[selected], _subtitle_extension(selected) or "srt")
-    stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist(), payload, language)
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
-    return _content_payload(body, _format_from_filename(filename))
+    # Reject broken responses up front: the download endpoint can answer with an empty
+    # stream or an HTML/error page that would otherwise look like a successful download.
+    if not body or not body.strip():
+        raise ValueError(f"soustitreseu empty download for {payload.get('url')}")
+    if _is_html_body(body):
+        raise ValueError(f"soustitreseu returned an HTML/error page for {payload.get('url')}")
+    if _is_archive_body(body):
+        # Host-side extraction with worker member selection. A Soustitres.eu archive can
+        # bundle several languages (French + English) for one release; the host lists the
+        # members (zip/rar alike) and calls select_archive_member so we language-pin one
+        # with our own tagging. Works for rar too, which the worker cannot list itself.
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "select_member": True,
+        }
+    # Direct, non-archive subtitle body.
+    return _content_payload(body, _format_from_filename(payload.get("filename")))
 
 
-def select_subtitle_file(names, payload, language=None):
-    candidates = [name for name in names if _subtitle_extension(name)]
-    if not candidates:
-        raise ValueError("soustitreseu archive contains no supported subtitle files")
-    try:
-        season = int((payload or {}).get("season"))
-        episode = int((payload or {}).get("episode"))
-    except (TypeError, ValueError):
-        season = episode = None
-    release_info = _normalize_release((payload or {}).get("release_info"))
+def _is_archive_body(body):
+    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
+
+
+def _pick_archive_member(members, payload):
+    # Language-pin one member from host-listed archive names (tri-state pin/defer/reject).
+    # No archive lib needed: the host lists zip/rar and hands us the names. Same tagging
+    # _languages_from_archive uses, so selection agrees with the row's declared language.
+    payload = payload or {}
+    language = payload.get("language")
+    subs = [
+        name
+        for name in (members or [])
+        if not name.endswith("/")
+        and _subtitle_extension(name)
+        and not os.path.basename(name).startswith(".")
+    ]
+    tagged = {name: _language_from_subtitle_filename(name) for name in subs}
+    present = {lang for lang in tagged.values() if lang}
+    # Single-language or untagged archive: nothing to disambiguate, so the host's episode
+    # pick is safe. A multilingual archive missing the requested language must NOT defer
+    # (the host would pick another language), so reject and let Bazarr fall back.
+    if not language or len(present) < 2:
+        return None, "defer"
+    if language not in present:
+        return None, "reject"
+    pool = [name for name in subs if tagged[name] == language]
+    # A season pack carries several episodes per language; resolve the episode here too
+    # before pinning, since the host cannot combine episode and language.
+    season = _safe_int(payload.get("season"))
+    episode = _safe_int(payload.get("episode"))
     if season is not None and episode is not None:
-        episode_candidates = [
+        episode_pool = [
             name
-            for name in candidates
+            for name in pool
             if _file_matches_episode(_normalize_release(os.path.basename(name)), season, episode)
         ]
-        if episode_candidates:
-            candidates = episode_candidates
-        elif any(_file_has_episode_marker(_normalize_release(os.path.basename(name))) for name in candidates):
-            raise ValueError("soustitreseu archive contains no subtitle for requested episode")
-
-    def score(index_name):
-        index, name = index_name
-        normalized = _normalize_release(os.path.basename(name))
-        value = max(0, 10 - index)
-        episode_matched = (
-            season is not None
-            and episode is not None
-            and _file_matches_episode(normalized, season, episode)
-        )
-        if episode_matched:
-            value += 1000
-        file_language = _language_from_subtitle_filename(name)
-        if language and file_language == language:
-            value += 100
-        elif language and file_language and file_language != language:
-            value -= 100
-        if release_info:
-            for token in _release_tokens(release_info):
-                if len(token) > 2 and token in normalized:
-                    value += 3
-        if name.lower().endswith(".srt"):
-            value += 6
-        return value
-
-    return max(enumerate(candidates), key=score)[1]
+        if episode_pool:
+            return episode_pool[0], "pin"
+        # Episode markers present but none matches: can't pin safely in a multilingual
+        # archive (episode-only defer would risk another language), so reject.
+        if any(
+            _file_has_episode_marker(_normalize_release(os.path.basename(name)))
+            for name in pool
+        ):
+            return None, "reject"
+    return (pool[0], "pin") if len(pool) == 1 else (None, "reject")
 
 
-def _extract_rar_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"Soustitres.eu RAR extraction failed: {details}") from errors[-1]
-    raise RuntimeError("Soustitres.eu RAR extraction requires bundled py7zz")
+def _language_from_subtitle_filename(name):
+    # Soustitres.eu tags English as VO and French as VF. Match those and the explicit
+    # three-letter ISO codes only: the bare two-letter ".en."/".fr." tokens collide with
+    # ordinary French words (e.g. "Asterix.en.Bretagne") and would mislabel the language.
+    compact = "." + _normalize_release(name) + "."
+    if ".vo." in compact or ".eng." in compact:
+        return "eng"
+    if ".vf." in compact or ".fre." in compact:
+        return "fra"
+    return None
 
 
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("Soustitres.eu bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "soustitreseu.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
+def _file_matches_episode(normalized_name, season, episode):
+    # normalized_name is dot-separated (see _normalize_release), so compare the bare
+    # "{season}{episode:02d}" form (Soustitres.eu writes S01E01 as "101") against whole
+    # tokens. A substring/regex match would read the "720" in "720p" as S07E20.
+    compact = normalized_name.lower()
+    # SxxExx, tolerating the separator _normalize_release leaves between season and
+    # episode (S01.E02 / S01 E02 normalize to "s01.e02"), as well as contiguous S01E02.
+    if re.search(rf"(?<![a-z0-9])s0*{season}[\s._-]*e0*{episode}(?!\d)", compact):
+        return True
+    # NxNN with boundaries so episode 2 ("1x2") never matches "1x20" (episode 20).
+    if re.search(rf"(?<![a-z0-9]){season}x0*{episode}(?!\d)", compact):
+        return True
+    return f"{season}{episode:02d}" in compact.split(".")
 
 
-def _extract_rar_files_with_unar(body):
-    unar = shutil.which("unar")
-    if not unar:
-        raise RuntimeError("Soustitres.eu RAR fallback requires unar")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "soustitreseu.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [unar, "-quiet", "-o", output_dir, archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"unar failed to extract Soustitres.eu RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
+def _file_has_episode_marker(normalized_name):
+    compact = normalized_name.lower()
+    return bool(
+        re.search(r"s\d{1,2}[\s._-]*e\d{1,3}", compact)
+        or re.search(r"(?<!\d)\d{1,2}x\d{1,3}", compact)
+        or any(token.isdigit() and len(token) == 3 for token in compact.split("."))
+    )
 
 
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("Soustitres.eu RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "soustitreseu.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [sevenzip, "x", "-y", f"-o{output_dir}", archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract Soustitres.eu RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
+def _safe_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if not _subtitle_extension(rel):
-                continue
-            with open(path, "rb") as handle:
-                files.append((rel, handle.read()))
-    if not files:
-        raise ValueError("soustitreseu archive contains no supported subtitle files")
-    return files
+def _is_html_body(body):
+    if not body:
+        return False
+    head = body[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or head.startswith(b"<!--")
+        or b"<body" in head
+        or b"<head" in head
+    )
 
 
 def _rank_search_rows(rows, title, media_type, year=None):
@@ -569,34 +563,6 @@ def _languages_from_archive(filename, block):
     return [language for language in LANGUAGE_ORDER if language in languages]
 
 
-def _language_from_subtitle_filename(name):
-    compact = "." + _normalize_release(name) + "."
-    if ".vo." in compact or ".en." in compact or ".eng." in compact:
-        return "eng"
-    if ".vf." in compact or ".fr." in compact or ".fre." in compact:
-        return "fra"
-    return None
-
-
-def _file_matches_episode(normalized_name, season, episode):
-    compact = normalized_name.lower()
-    if f"s{season:02d}e{episode:02d}" in compact:
-        return True
-    if f"{season}x{episode:02d}" in compact or f"{season}x{episode}" in compact:
-        return True
-    episode_code = f"{season}{episode:02d}"
-    return bool(re.search(rf"(?<!\d){re.escape(episode_code)}(?!\d)", compact))
-
-
-def _file_has_episode_marker(normalized_name):
-    compact = normalized_name.lower()
-    return bool(_SXXEXX_RE.search(compact) or _X_EP_RE.search(compact) or re.search(r"(?<!\d)\d{3}(?!\d)", compact))
-
-
-def _release_tokens(value):
-    return [token for token in _normalize_release(value).split(".") if token]
-
-
 def _requested_languages(languages):
     requested = set()
     for language in languages or []:
@@ -647,30 +613,15 @@ def _format_from_filename(filename):
     return _subtitle_extension(filename or "") or "srt"
 
 
-def _content_payload(content, subtitle_format, empty=False):
-    if empty:
-        return {
-            "content_b64": "",
-            "content_sha256": "",
-            "content_type": _content_type(subtitle_format),
-            "format": subtitle_format,
-            "encoding": "utf-8",
-            "empty": True,
-        }
-    encoding = "utf-8"
-    for candidate in ("utf-8", "cp1252", "latin-1"):
-        try:
-            content.decode(candidate)
-            encoding = candidate
-            break
-        except UnicodeDecodeError:
-            continue
+def _content_payload(content, subtitle_format):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 
@@ -689,6 +640,25 @@ def _sleep(config):
     delay_ms = (config or {}).get("request_delay_ms", 0) or 0
     if delay_ms > 0:
         time.sleep(min(int(delay_ms), 5000) / 1000.0)
+
+
+def _retry_sleep(attempt, retry_after):
+    # Module-level time.sleep so tests can monkeypatch provider.time.sleep.
+    delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    parsed = _parse_retry_after(retry_after)
+    if parsed is not None:
+        delay = max(delay, parsed)
+    time.sleep(min(delay, RETRY_BACKOFF_CAP_SECONDS))
+
+
+def _parse_retry_after(value):
+    if not value:
+        return None
+    try:
+        seconds = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds >= 0 else None
 
 
 def _title_matches(wanted, candidate):

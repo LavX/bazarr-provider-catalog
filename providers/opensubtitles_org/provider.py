@@ -7,6 +7,7 @@ import io
 import json
 import os
 import re
+import socket
 import time
 import urllib.error
 import urllib.parse
@@ -30,6 +31,20 @@ USER_AGENT = (
 DEFAULT_TIMEOUT_SECONDS = 30
 DEFAULT_FLARESOLVERR_TIMEOUT_MS = 60000
 SUBTITLE_FORMAT = "srt"
+
+# Transport-level retry for raw network blips only. Matches upstream subliminal's
+# RetryingSession/ProviderRetryMixin (about three tries with exponential backoff).
+# This wraps only the urllib/cloudscraper GET; it never retries challenge
+# responses, 4xx other than 429, or any non-network error.
+RETRY_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8.0
+_RETRYABLE_TRANSPORT_ERRORS = (
+    urllib.error.URLError,
+    socket.timeout,
+    TimeoutError,
+    ConnectionError,
+)
 
 _WS_RE = re.compile(r"\s+")
 _NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
@@ -220,6 +235,7 @@ class SearchContext:
     episode: int | None
     tag: str | None
     use_tag_search: bool = False
+    hash: str | None = None
 
 
 def _as_bool(value, default=False):
@@ -430,20 +446,19 @@ def _score_from_matches(matches, include_hash=True):
     return min(score, 100)
 
 
-def _content_payload(content, format_=SUBTITLE_FORMAT, encoding=None):
+def _content_payload(content, format_=SUBTITLE_FORMAT):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     if isinstance(content, str):
-        content = content.encode(encoding or "utf-8")
-    digest = hashlib.sha256(content).hexdigest()
-    payload = {
+        content = content.encode("utf-8")
+    return {
         "content_b64": base64.b64encode(content).decode("ascii"),
-        "content_sha256": digest,
+        "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(format_),
         "empty": False,
         "format": format_,
     }
-    if encoding:
-        payload["encoding"] = encoding
-    return payload
 
 
 def _content_type(format_):
@@ -482,6 +497,9 @@ def build_search_context(video, config):
     else:
         imdb_id = None
 
+    hashes = video.get("hashes") or {}
+    movie_hash = _clean_text(hashes.get(PROVIDER_ID)) or None
+
     return SearchContext(
         kind=kind,
         query=query,
@@ -491,6 +509,7 @@ def build_search_context(video, config):
         episode=episode,
         tag=_clean_text(video.get("original_name")) or None,
         use_tag_search=_as_bool((config or {}).get("use_tag_search")),
+        hash=movie_hash,
     )
 
 
@@ -612,6 +631,9 @@ def _candidate(
             "download_url": page_link,
             "filename": filename,
             "release_info": release_name,
+            "moviehash": subtitle_hash or None,
+            "season": season,
+            "episode": episode,
         },
         "display": {
             "download_count": int(download_count or 0),
@@ -654,10 +676,12 @@ def _extract_anubis_challenge(html_text):
     }
 
 
-def _solve_pow(random_data, difficulty):
+def _solve_pow(random_data, difficulty, deadline=None):
     prefix = "0" * difficulty
     nonce = 0
     while True:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise ServiceUnavailable("OpenSubtitles.org Anubis proof-of-work timed out")
         digest = hashlib.sha256(f"{random_data}{nonce}".encode("utf-8")).hexdigest()
         if digest.startswith(prefix):
             return nonce, digest
@@ -676,6 +700,7 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=DEFAULT
     base = f"{parsed.scheme}://{parsed.netloc}"
     challenge_page_url = challenge_url if challenge_url.startswith("http") else base + challenge_url
     started = time.monotonic()
+    deadline = started + max(float(timeout or DEFAULT_TIMEOUT_SECONDS), 0.1)
 
     response = session.get(challenge_page_url, timeout=(10, timeout), allow_redirects=True)
     challenge = _extract_anubis_challenge(response.text)
@@ -693,7 +718,11 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=DEFAULT
             session.cookies.update(solved.cookies)
     elif method == "preact":
         result, delay = _solve_preact(challenge["randomData"], challenge["difficulty"])
-        time.sleep(delay)
+        remaining = deadline - time.monotonic()
+        if delay > remaining:
+            raise ServiceUnavailable("OpenSubtitles.org Anubis preact challenge timed out")
+        if delay > 0:
+            time.sleep(delay)
         params = {
             "id": challenge["id"],
             "result": result,
@@ -708,7 +737,7 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=DEFAULT
         if solved.cookies:
             session.cookies.update(solved.cookies)
     else:
-        nonce, digest = _solve_pow(challenge["randomData"], challenge["difficulty"])
+        nonce, digest = _solve_pow(challenge["randomData"], challenge["difficulty"], deadline=deadline)
         params = {
             "id": challenge["id"],
             "response": digest,
@@ -923,24 +952,42 @@ def _parse_subtitle_rows(html_text, movie_url):
     return subtitles
 
 
-def _extract_subtitle_from_zip(content, preferred_filename=None):
+def _select_zip_member(content, preferred_filename=None):
+    # List the archive with stdlib zipfile and pick a member, but leave the actual
+    # extraction and encoding detection to the host (Provider Hub v1.1+).
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
         names = [name for name in archive.namelist() if not name.endswith("/")]
-        subtitle_names = [
-            name
-            for name in names
-            if os.path.splitext(name.lower())[1] in {".srt", ".ass", ".ssa", ".vtt", ".sub"}
-        ]
-        if not subtitle_names:
-            raise ServiceUnavailable("OpenSubtitles.org archive contained no subtitle file")
-        selected = subtitle_names[0]
-        if preferred_filename:
-            preferred = os.path.basename(preferred_filename).lower()
-            for name in subtitle_names:
-                if os.path.basename(name).lower() == preferred:
-                    selected = name
-                    break
-        return archive.read(selected), selected
+    subtitle_names = [
+        name
+        for name in names
+        if os.path.splitext(name.lower())[1] in {".srt", ".ass", ".ssa", ".vtt", ".sub"}
+    ]
+    if not subtitle_names:
+        raise ServiceUnavailable("OpenSubtitles.org archive contained no subtitle file")
+    selected = subtitle_names[0]
+    if preferred_filename:
+        preferred = os.path.basename(preferred_filename).lower()
+        for name in subtitle_names:
+            if os.path.basename(name).lower() == preferred:
+                selected = name
+                break
+    return selected
+
+
+def _archive_payload(content, member):
+    return {
+        "archive_b64": base64.b64encode(content).decode("ascii"),
+        "archive_sha256": hashlib.sha256(content).hexdigest(),
+        "member": member,
+    }
+
+
+def _is_rar(content):
+    return content[:4] == b"Rar!"
+
+
+def _is_7z(content):
+    return content[:6] == b"7z\xbc\xaf\x27\x1c"
 
 
 def _episode_mismatch(item, context):
@@ -955,6 +1002,54 @@ def _episode_mismatch(item, context):
     )
 
 
+# Transient exceptions raised by the requests/cloudscraper transport. They are
+# matched by name so this provider does not need to import requests, and so a
+# non-transient requests error (HTTPError, TooManyRedirects, etc.) is never
+# retried.
+_RETRYABLE_REQUESTS_ERROR_NAMES = frozenset(
+    {
+        "ConnectionError",
+        "ConnectTimeout",
+        "ReadTimeout",
+        "Timeout",
+        "ChunkedEncodingError",
+    }
+)
+
+
+def _is_retryable_transport_error(exc):
+    # urllib.error.HTTPError is a URLError subclass but carries an HTTP status; a
+    # 4xx (other than 429) is a definitive answer, not a transient blip, so it
+    # must propagate on the first occurrence.
+    if isinstance(exc, urllib.error.HTTPError):
+        code = getattr(exc, "code", 0) or 0
+        return code == 429 or code >= 500
+    if isinstance(exc, _RETRYABLE_TRANSPORT_ERRORS):
+        return True
+    # requests/cloudscraper transient transport errors, matched by class name so
+    # the provider stays import-light. A requests HTTPError carries a response and
+    # would have a 4xx/5xx status, so it is deliberately excluded here.
+    module = type(exc).__module__ or ""
+    if module.startswith("requests") or module.startswith("urllib3"):
+        return type(exc).__name__ in _RETRYABLE_REQUESTS_ERROR_NAMES
+    return False
+
+
+def _retry_after_seconds(response):
+    headers = getattr(response, "headers", None) or {}
+    getter = getattr(headers, "get", None)
+    raw = getter("Retry-After") if getter else None
+    value = _as_int(raw)
+    if value is None or value < 0:
+        return None
+    return min(float(value), RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _backoff_delay(attempt):
+    # attempt is 1-based; first retry waits RETRY_BACKOFF_SECONDS, then doubles.
+    return min(RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1)), RETRY_BACKOFF_CAP_SECONDS)
+
+
 class OpenSubtitlesOrgProvider:
     def __init__(self):
         self._session = None
@@ -964,6 +1059,46 @@ class OpenSubtitlesOrgProvider:
         config = config or {}
         context = build_search_context(video, config)
         query = context.query[0] if context.query else _clean_text((video or {}).get("title") or (video or {}).get("series"))
+
+        # A known opensubtitles hash is the strongest possible match. Query the
+        # moviehash listing first so hash-matched results come back, then merge
+        # with the regular imdb/title lookup (deduplicated by subtitle id).
+        seen = set()
+        candidates = self._hash_candidates(video or {}, languages or [], context, config, seen)
+
+        candidates.extend(
+            self._regular_candidates(video or {}, languages or [], context, config, query, seen)
+        )
+        return candidates
+
+    def _hash_candidates(self, video, languages, context, config, seen):
+        hash_url = self._build_hash_search_url(context)
+        if not hash_url:
+            return []
+        hash_result = {
+            "title": context.query[0] if context.query else _clean_text(video.get("title") or video.get("series")),
+            "year": video.get("year"),
+            "imdb_id": context.imdb_id,
+            "kind": context.kind or "movie",
+            "url": hash_url,
+        }
+        if _subtitle_language_codes(languages):
+            return self._subtitles_for_result(
+                hash_result, video, languages, context, config, seen, is_hash_lookup=True
+            )
+        response = self._http_get(hash_url, config)
+        return self._candidates_from_items(
+            _parse_subtitle_rows(_response_text(response), hash_url),
+            hash_result,
+            video,
+            languages,
+            context,
+            config,
+            seen,
+            is_hash_lookup=True,
+        )
+
+    def _regular_candidates(self, video, languages, context, config, query, seen):
         search_url = self._build_search_url(query, context)
         search_response = self._http_get(search_url, config)
         search_html = _response_text(search_response)
@@ -971,25 +1106,25 @@ class OpenSubtitlesOrgProvider:
         if direct_items:
             direct_result = {
                 "title": query,
-                "year": (video or {}).get("year"),
+                "year": video.get("year"),
                 "imdb_id": context.imdb_id,
                 "kind": context.kind or "movie",
                 "url": search_url,
             }
-            if _subtitle_language_codes(languages or []) and "sublanguageid-all" in search_url:
+            if _subtitle_language_codes(languages) and "sublanguageid-all" in search_url:
                 language_candidates = self._subtitles_for_result(
-                    direct_result, video or {}, languages or [], context, config
+                    direct_result, video, languages, context, config, seen
                 )
                 if language_candidates:
                     return language_candidates
             return self._candidates_from_items(
-                direct_items, direct_result, video or {}, languages or [], context, config, set()
+                direct_items, direct_result, video, languages, context, config, seen
             )
         results = _parse_search_results(search_html, search_url, context.kind)
-        best_result = select_best_result(results, context.imdb_id, query, (video or {}).get("year"))
+        best_result = select_best_result(results, context.imdb_id, query, video.get("year"))
         if not best_result:
             return []
-        return self._subtitles_for_result(best_result, video or {}, languages or [], context, config)
+        return self._subtitles_for_result(best_result, video, languages, context, config, seen)
 
     def download(self, provider_payload, language, config):
         del language
@@ -1001,9 +1136,9 @@ class OpenSubtitlesOrgProvider:
         response = self._http_get(direct_url, config or {})
         content = getattr(response, "content", b"") or b""
         content_type = (getattr(response, "headers", {}) or {}).get("content-type", "").lower()
-        if content.startswith(b"PK") or "zip" in content_type:
-            content, filename = _extract_subtitle_from_zip(content, payload.get("filename"))
-            return _content_payload(content, format_=os.path.splitext(filename)[1].lstrip(".") or SUBTITLE_FORMAT)
+        archive = self._archive_download(content, content_type, payload)
+        if archive is not None:
+            return archive
         if b"<html" in content[:200].lower():
             page_html = _response_text(response)
             match = _DOWNLOAD_LINK_RE.search(page_html)
@@ -1011,12 +1146,38 @@ class OpenSubtitlesOrgProvider:
                 raise ServiceUnavailable("OpenSubtitles.org download page contained no subtitle link")
             response = self._http_get(_absolute_url(match.group("href"), BASE_URL), config or {})
             content = getattr(response, "content", b"") or b""
-            if content.startswith(b"PK"):
-                content, filename = _extract_subtitle_from_zip(content, payload.get("filename"))
-                return _content_payload(content, format_=os.path.splitext(filename)[1].lstrip(".") or SUBTITLE_FORMAT)
+            archive = self._archive_download(content, "", payload)
+            if archive is not None:
+                return archive
         if not content:
             raise ServiceUnavailable("OpenSubtitles.org downloaded empty subtitle")
         return _content_payload(content, format_=os.path.splitext(payload.get("filename") or "")[1].lstrip(".") or SUBTITLE_FORMAT)
+
+    def _archive_download(self, content, content_type, payload):
+        # Host-side extraction (Provider Hub v1.1+): hand back the raw archive bytes.
+        # Zip members are cheap to list, so select the member here; for rar/7z let the
+        # host pick by episode. Either way the host extracts and detects the encoding.
+        if not content:
+            return None
+        if zipfile.is_zipfile(io.BytesIO(content)) or content.startswith(b"PK") or "zip" in content_type:
+            return _archive_payload(content, _select_zip_member(content, payload.get("filename")))
+        if _is_rar(content) or _is_7z(content):
+            archive = {
+                "archive_b64": base64.b64encode(content).decode("ascii"),
+                "archive_sha256": hashlib.sha256(content).hexdigest(),
+                "episode": payload.get("episode"),
+            }
+            return archive
+        return None
+
+    def _build_hash_search_url(self, context):
+        if not context.hash:
+            return None
+        moviehash = urllib.parse.quote(context.hash, safe="")
+        url = f"{BASE_URL}/en/search/sublanguageid-all/moviehash-{moviehash}"
+        if context.size:
+            url += f"/moviebytesize-{urllib.parse.quote(str(context.size), safe='')}"
+        return url
 
     def _build_search_url(self, query, context):
         if context.use_tag_search and context.tag:
@@ -1036,7 +1197,7 @@ class OpenSubtitlesOrgProvider:
             params["SearchOnlyMovies"] = "on"
         return f"{BASE_URL}/en/search2?{urllib.parse.urlencode(params)}"
 
-    def _subtitles_for_result(self, result, video, languages, context, config):
+    def _subtitles_for_result(self, result, video, languages, context, config, seen=None, is_hash_lookup=False):
         language_codes = _subtitle_language_codes(languages)
         page_urls = []
         if language_codes:
@@ -1045,7 +1206,8 @@ class OpenSubtitlesOrgProvider:
         else:
             page_urls.append(result["url"])
         candidates = []
-        seen = set()
+        if seen is None:
+            seen = set()
         for page_url in page_urls:
             response = self._http_get(page_url, config)
             candidates.extend(
@@ -1057,11 +1219,12 @@ class OpenSubtitlesOrgProvider:
                     context,
                     config,
                     seen,
+                    is_hash_lookup=is_hash_lookup,
                 )
             )
         return candidates
 
-    def _candidates_from_items(self, items, result, video, languages, context, config, seen):
+    def _candidates_from_items(self, items, result, video, languages, context, config, seen, is_hash_lookup=False):
         candidates = []
         for item in items:
             if item["subtitle_id"] in seen:
@@ -1072,6 +1235,14 @@ class OpenSubtitlesOrgProvider:
                 continue
             if _episode_mismatch(item, context):
                 continue
+            # A moviehash lookup returns rows that genuinely match the requested
+            # hash. The native pages do not echo the MovieHash, so carry the
+            # requested hash onto those rows only, mirroring upstream attaching
+            # the queried hash to each result so the 'hash' match (and
+            # hash_verifiable) can be awarded when it equals video.hashes.
+            subtitle_hash = item.get("hash_value")
+            if is_hash_lookup and not subtitle_hash:
+                subtitle_hash = context.hash
             suppress_matches = _as_bool(config.get("skip_wrong_fps"), default=True) and _wrong_fps(video, item["fps"])
             candidates.append(
                 _candidate(
@@ -1087,7 +1258,7 @@ class OpenSubtitlesOrgProvider:
                     episode=context.episode,
                     filename=item["filename"],
                     fps=item["fps"],
-                    subtitle_hash=item.get("hash_value"),
+                    subtitle_hash=subtitle_hash,
                     uploader=item["uploader"],
                     download_count=item["download_count"],
                     video=video,
@@ -1107,10 +1278,7 @@ class OpenSubtitlesOrgProvider:
         self._apply_delay(config)
         session = self._get_session()
         timeout = _as_int(config.get("timeout")) or DEFAULT_TIMEOUT_SECONDS
-        try:
-            response = session.get(url, timeout=timeout, allow_redirects=True)
-        except Exception as exc:
-            raise ServiceUnavailable(f"OpenSubtitles.org request failed: {exc}") from exc
+        response = self._session_get(session, url, timeout)
         challenge_url = getattr(response, "url", "") or url
         if is_anubis_challenge(challenge_url, getattr(response, "status_code", 0)) or _extract_anubis_challenge(
             _response_text(response)
@@ -1130,6 +1298,52 @@ class OpenSubtitlesOrgProvider:
         if status >= 400:
             raise ServiceUnavailable(f"OpenSubtitles.org HTTP {status}")
         return response
+
+    def _session_get(self, session, url, timeout):
+        # Wrap only the raw transport GET in a bounded retry so a single transient
+        # network blip (connection reset, DNS hiccup, timeout, an isolated 5xx/429)
+        # does not abort the search/download. Challenge responses (Anubis /
+        # Cloudflare) and any 4xx other than 429 are returned untouched so the
+        # existing fallback and status-mapping logic decides what to do. The final
+        # failure raises the same error the provider raised before this retry.
+        last_exc = None
+        for attempt in range(1, RETRY_MAX_ATTEMPTS + 1):
+            try:
+                response = session.get(url, timeout=timeout, allow_redirects=True)
+            except Exception as exc:  # noqa: BLE001 - mirror prior catch-all mapping
+                if not _is_retryable_transport_error(exc):
+                    raise ServiceUnavailable(f"OpenSubtitles.org request failed: {exc}") from exc
+                last_exc = exc
+                if attempt >= RETRY_MAX_ATTEMPTS:
+                    raise ServiceUnavailable(f"OpenSubtitles.org request failed: {exc}") from exc
+                time.sleep(_backoff_delay(attempt))
+                continue
+            if attempt < RETRY_MAX_ATTEMPTS and self._should_retry_response(response):
+                delay = _retry_after_seconds(response)
+                time.sleep(delay if delay is not None else _backoff_delay(attempt))
+                continue
+            return response
+        # Unreachable: the loop always returns or raises, but keep a definite fallback.
+        if last_exc is not None:
+            raise ServiceUnavailable(f"OpenSubtitles.org request failed: {last_exc}")
+        raise ServiceUnavailable("OpenSubtitles.org request failed")
+
+    @staticmethod
+    def _should_retry_response(response):
+        # Retry only a genuine transient HTTP status. A Cloudflare or Anubis
+        # challenge can ride on a 503/403, so never retry those here: they belong
+        # to the challenge fallback path, not the transport blip path.
+        status = getattr(response, "status_code", 200) or 200
+        if status != 429 and status < 500:
+            return False
+        if _is_cloudflare_challenge(response):
+            return False
+        challenge_url = getattr(response, "url", "") or ""
+        if is_anubis_challenge(challenge_url, status):
+            return False
+        if _extract_anubis_challenge(_response_text(response)):
+            return False
+        return True
 
     def _apply_delay(self, config):
         delay_ms = _as_int((config or {}).get("request_delay_ms")) or 0

@@ -2,6 +2,7 @@ import base64
 import hashlib
 import importlib.util
 import io
+import json
 import unittest
 import zipfile
 from pathlib import Path
@@ -406,7 +407,7 @@ class SubDLProviderDownloadTests(unittest.TestCase):
         self.assertEqual(result["format"], "vtt")
         self.assertEqual(result["content_type"], "text/vtt")
 
-    def test_download_selects_requested_episode_from_pack_zip(self):
+    def test_download_returns_archive_with_selected_pack_member(self):
         provider = self.mod.SubDLProvider()
         wanted = b"1\n00:00:01,000 --> 00:00:02,000\nEpisode three\n"
         archive = _zip_bytes(
@@ -434,11 +435,41 @@ class SubDLProviderDownloadTests(unittest.TestCase):
             {"api_key": "test-key"},
         )
 
-        self.assertEqual(base64.b64decode(result["content_b64"]), wanted)
-        self.assertEqual(result["format"], "srt")
-        self.assertFalse(result["empty"])
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["member"], "Show.S01E03.srt")
+        self.assertNotIn("episode", result)
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
 
-    def test_download_returns_empty_when_pack_zip_has_no_requested_episode(self):
+    def test_download_returns_first_member_for_non_pack_zip(self):
+        provider = self.mod.SubDLProvider()
+        archive = _zip_bytes(
+            {
+                "B.movie.srt": b"second alphabetically",
+                "A.movie.srt": b"first alphabetically",
+                "notes.txt": b"not a subtitle",
+            }
+        )
+
+        provider._http_get_bytes = lambda url, timeout=30: archive
+        result = provider.download(
+            {
+                "provider": "subdl",
+                "schema": 1,
+                "download_url": "/subtitle/movie.zip",
+                "format": "zip",
+            },
+            {"alpha3": "eng"},
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["member"], "A.movie.srt")
+        self.assertNotIn("encoding", result)
+
+    def test_download_lets_host_pick_when_pack_zip_has_no_requested_episode(self):
         provider = self.mod.SubDLProvider()
         archive = _zip_bytes({"Show.S01E02.srt": b"episode two"})
 
@@ -459,8 +490,182 @@ class SubDLProviderDownloadTests(unittest.TestCase):
             {"api_key": "test-key"},
         )
 
-        self.assertTrue(result["empty"])
-        self.assertEqual(result["content_b64"], "")
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["episode"], 3)
+        self.assertNotIn("member", result)
+
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.SubDLProvider()
+        provider._http_get_bytes = lambda url, timeout=30: b"   "
+
+        with self.assertRaisesRegex(ValueError, "empty"):
+            provider.download(
+                {
+                    "provider": "subdl",
+                    "schema": 1,
+                    "download_url": "/subtitle/empty.srt",
+                    "format": "srt",
+                },
+                {"alpha3": "eng"},
+                {"api_key": "test-key"},
+            )
+
+    def test_download_rejects_html_error_page(self):
+        provider = self.mod.SubDLProvider()
+        provider._http_get_bytes = lambda url, timeout=30: b"<!DOCTYPE html><html><body>Not found</body></html>"
+
+        with self.assertRaisesRegex(ValueError, "HTML"):
+            provider.download(
+                {
+                    "provider": "subdl",
+                    "schema": 1,
+                    "download_url": "/subtitle/broken.srt",
+                    "format": "srt",
+                },
+                {"alpha3": "eng"},
+                {"api_key": "test-key"},
+            )
+
+
+class _FakeResponse:
+    def __init__(self, body):
+        self._body = body
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+def _http_error(code, body=b"", headers=None):
+    import urllib.error
+
+    return urllib.error.HTTPError(
+        url="https://api.subdl.com/api/v1/subtitles",
+        code=code,
+        msg="error",
+        hdrs=headers or {},
+        fp=io.BytesIO(body),
+    )
+
+
+class SubDLTransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.sleeps = []
+        self.mod.time.sleep = lambda seconds: self.sleeps.append(seconds)
+
+    def _patch_urlopen(self, sequence):
+        calls = {"count": 0}
+
+        def fake_urlopen(request, timeout=None):
+            del request, timeout
+            index = calls["count"]
+            calls["count"] += 1
+            outcome = sequence[index]
+            if isinstance(outcome, Exception):
+                raise outcome
+            return _FakeResponse(outcome)
+
+        self.mod.urllib.request.urlopen = fake_urlopen
+        return calls
+
+    def test_json_helper_retries_on_url_error_then_succeeds(self):
+        import urllib.error
+
+        body = json.dumps(_subdl_response()).encode("utf-8")
+        calls = self._patch_urlopen(
+            [urllib.error.URLError("connection reset"), body]
+        )
+
+        provider = self.mod.SubDLProvider()
+        data = provider._http_get_json({"api_key": "test-key"})
+
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(len(self.sleeps), 1)
+        self.assertTrue(data.get("status"))
+
+    def test_json_helper_retries_on_503_then_succeeds(self):
+        body = json.dumps(_subdl_response()).encode("utf-8")
+        calls = self._patch_urlopen(
+            [_http_error(503), _http_error(503), body]
+        )
+
+        provider = self.mod.SubDLProvider()
+        data = provider._http_get_json({"api_key": "test-key"})
+
+        self.assertEqual(calls["count"], 3)
+        self.assertEqual(len(self.sleeps), 2)
+        self.assertTrue(data.get("status"))
+
+    def test_json_helper_honors_retry_after_on_429(self):
+        body = json.dumps(_subdl_response()).encode("utf-8")
+        self._patch_urlopen(
+            [_http_error(429, headers={"Retry-After": "4"}), body]
+        )
+
+        provider = self.mod.SubDLProvider()
+        data = provider._http_get_json({"api_key": "test-key"})
+
+        self.assertEqual(self.sleeps, [4.0])
+        self.assertTrue(data.get("status"))
+
+    def test_json_helper_does_not_retry_404(self):
+        calls = self._patch_urlopen([_http_error(404, body=b"missing")])
+
+        provider = self.mod.SubDLProvider()
+        with self.assertRaises(RuntimeError):
+            provider._http_get_json({"api_key": "test-key"})
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(self.sleeps, [])
+
+    def test_json_helper_does_not_retry_403(self):
+        calls = self._patch_urlopen([_http_error(403, body=b"forbidden")])
+
+        provider = self.mod.SubDLProvider()
+        with self.assertRaises(ValueError):
+            provider._http_get_json({"api_key": "test-key"})
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(self.sleeps, [])
+
+    def test_json_helper_raises_after_exhausting_transient_retries(self):
+        calls = self._patch_urlopen(
+            [_http_error(503), _http_error(503), _http_error(503)]
+        )
+
+        provider = self.mod.SubDLProvider()
+        with self.assertRaises(RuntimeError):
+            provider._http_get_json({"api_key": "test-key"})
+
+        self.assertEqual(calls["count"], 3)
+        self.assertEqual(len(self.sleeps), 2)
+
+    def test_bytes_helper_retries_on_timeout_then_succeeds(self):
+        calls = self._patch_urlopen([TimeoutError("read timed out"), b"OK"])
+
+        provider = self.mod.SubDLProvider()
+        body = provider._http_get_bytes("https://dl.subdl.com/file.srt")
+
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(len(self.sleeps), 1)
+        self.assertEqual(body, b"OK")
+
+    def test_bytes_helper_does_not_retry_404(self):
+        calls = self._patch_urlopen([_http_error(404)])
+
+        provider = self.mod.SubDLProvider()
+        with self.assertRaises(self.mod.urllib.error.HTTPError):
+            provider._http_get_bytes("https://dl.subdl.com/missing.srt")
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(self.sleeps, [])
 
 
 if __name__ == "__main__":

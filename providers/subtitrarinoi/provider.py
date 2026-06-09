@@ -6,19 +6,11 @@ import html
 import io
 import os
 import re
-import shutil
-import subprocess
-import tempfile
 import time
 import unicodedata
 import urllib.parse
 import urllib.request
 import zipfile
-
-try:
-    import py7zz
-except ImportError:  # pragma: no cover, dependency is declared in manifest
-    py7zz = None
 
 PROVIDER_ID = "subtitrarinoi"
 BASE_URL = "https://www.subtitrari-noi.ro"
@@ -250,178 +242,129 @@ class SubtitrariNoiProvider:
 def extract_download(body, payload=None):
     payload = dict(payload or {})
     filename = payload.get("filename") or ""
+    # Reject broken responses up front: the download endpoint can answer with an empty
+    # stream or an HTML/error page that would otherwise look like a successful download.
     if not body:
-        return _content_payload(b"", _format_from_filename(filename), empty=True)
-    if _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        selected = select_subtitle_file([name for name, _content in files], payload)
-        return _content_payload(dict(files)[selected], _subtitle_extension(selected) or "srt")
-    stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist(), payload)
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
+        raise ValueError("subtitrarinoi download did not return a supported subtitle file")
+    if _is_archive_body(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
+        # the host, which lists it, detects encoding, and picks the member. A Subtitrari
+        # Noi archive is often a season pack ("Sezoanele 1-5 complete") that bundles one
+        # member per episode, and sometimes several releases for the same episode; the
+        # host's episode-only pick cannot tell repeated episode numbers across seasons or
+        # several releases apart. When we can list a zip we pin the member matching the
+        # requested season+episode and the scored release_info (the old select_subtitle_file
+        # intent). Otherwise (rar, single member, the requested episode absent, or no unique
+        # winner) let the host pick the member by episode.
+        archive = {
+            "archive_b64": _base64.b64encode(body).decode("ascii"),
+            "archive_sha256": _hashlib.sha256(body).hexdigest(),
+        }
+        member = _select_zip_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = payload.get("episode")
+        return archive
     subtitle_format = _subtitle_extension(filename)
     if not subtitle_format or _looks_like_unavailable_text(body):
         raise ValueError("subtitrarinoi download did not return a supported subtitle file")
+    # Direct, non-archive subtitle body.
     return _content_payload(body, subtitle_format)
 
 
-def select_subtitle_file(names, payload):
-    candidates = [name for name in names if _subtitle_extension(name) and not os.path.basename(name).startswith(".")]
-    if not candidates:
-        raise ValueError("subtitrarinoi archive contains no supported subtitle files")
-    if _requested_episode(payload) != (None, None):
-        candidates = [name for name in candidates if _filename_matches_requested_episode(name, payload)]
-        if not candidates:
-            raise ValueError("subtitrarinoi archive contains no subtitle for the requested episode")
-    return max(enumerate(candidates), key=lambda item: _subtitle_score(item[0], item[1], payload))[1]
+def _is_archive_body(body):
+    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
 
 
-def _subtitle_score(index, name, payload):
-    normalized = _normalize_release(name)
-    release_info = _normalize_release((payload or {}).get("release_info"))
-    score = -index
-    season, episode = _requested_episode(payload)
+def _select_zip_member(body, payload):
+    # Pin the zip member matching the requested season+episode and the scored release_info,
+    # reproducing the old select_subtitle_file() intent: narrow a season pack to the right
+    # episode, then break any remaining tie by the filename whose tokens overlap the
+    # provider's release_info. Listing only, no extraction or decoding: the host reads the
+    # named member and runs chardet. Returns None for rar (not stdlib-listable), a single
+    # member (nothing to disambiguate), the requested episode being absent, or no unique
+    # overlap winner, so the caller falls back to host-side episode selection.
+    payload = payload or {}
+    if _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body)):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        members = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/")
+            and _subtitle_extension(name)
+            and not name.rsplit("/", 1)[-1].startswith(".")
+        ]
+    if len(members) < 2:
+        return None  # a lone member: the host's episode pick already lands here
+    # Narrow to the requested episode first. The season pack repeats episode numbers across
+    # seasons, so match the season+episode together (SxxExx / NxNN / compact NNN) and never
+    # on a bare episode number that would collide with a different season.
+    season = _safe_int(payload.get("season"))
+    episode = _safe_int(payload.get("episode"))
+    pool = members
     if season is not None and episode is not None:
-        if f"s{season:02d}e{episode:02d}" in normalized:
-            score += 200
-        elif f"{season}x{episode:02d}" in normalized or f"{season}x{episode}" in normalized:
-            score += 180
-        elif f"e{episode:02d}" in normalized or f"e{episode}" in normalized:
-            score += 100
-    for token in ("2160p", "1080p", "720p", "web dl", "bluray", "hdtv"):
-        if token in normalized and token in release_info:
-            score += 10
-    for token in _tokens(release_info):
-        if len(token) >= 3 and token in _tokens(normalized):
-            score += 2
+        episode_pool = [name for name in members if _member_matches_episode(name, season, episode)]
+        if episode_pool:
+            pool = episode_pool
+        elif any(_member_has_episode_marker(name) for name in members):
+            # Episode markers present but none matches the requested one: pinning a member
+            # from another episode would hard-fail the host download, so defer.
+            return None
+    if len(pool) < 2:
+        return None  # a single candidate: host episode selection already lands here
+    # Break the remaining tie by release_info token overlap. Pin only a unique winner with a
+    # positive score; ties or no overlap mean defer to the host.
+    release_tokens = set(_tokens(payload.get("release_info")))
+    if not release_tokens:
+        return None  # nothing to disambiguate on; let the host pick by episode
+    best, best_score, tied = None, 0, False
+    for name in pool:
+        score = _member_release_score(name, release_tokens)
+        if score > best_score:
+            best, best_score, tied = name, score, False
+        elif score == best_score and best is not None:
+            tied = True
+    if best is None or best_score <= 0 or tied:
+        return None  # cannot confidently disambiguate; let the host pick by episode
+    return best
+
+
+def _member_release_score(name, release_tokens):
+    # Overlap count between the release_info tokens and the member filename tokens, with a
+    # heavy penalty for forced tracks so a forced sidecar never outranks the main subtitle.
+    # Only count tokens longer than two characters (as providers/subssabbz does): a stray
+    # short/common token such as "1", "2", or a part marker that appears in just one of two
+    # same-episode members must never become the sole differentiator that pins a wrong
+    # release. Bare short tokens are dropped so a real tie defers instead of guessing.
+    name_tokens = set(_tokens(name))
+    overlap = [token for token in release_tokens.intersection(name_tokens) if len(token) > 2]
+    score = len(overlap)
+    if "forced" in name_tokens:
+        score -= 5
     return score
 
 
-def _requested_episode(payload):
-    try:
-        season = int((payload or {}).get("season"))
-        episode = int((payload or {}).get("episode"))
-    except (TypeError, ValueError):
-        return None, None
-    return season, episode
-
-
-def _filename_matches_requested_episode(name, payload):
-    season, episode = _requested_episode(payload)
-    if season is None or episode is None:
+def _member_matches_episode(name, season, episode):
+    # Tolerate separated SxxExx tokens (S01.E02, S01 E02, S01-E02) as well as contiguous
+    # S01E02; keep (?!\d) so "e02" never matches "e020".
+    text = (name or "").lower()
+    if re.search(rf"s0*{season}[\s._-]*e0*{episode}(?!\d)", text):
         return True
-    normalized = _normalize_release(name)
-    return any(
-        re.search(rf"(?<!\d){re.escape(token)}(?!\d)", normalized)
-        for token in (
-            f"s{season:02d}e{episode:02d}",
-            f"{season}x{episode:02d}",
-            f"{season}x{episode}",
-            f"e{episode:02d}",
-            f"e{episode}",
-        )
-    )
+    if re.search(rf"(?<!\d){season}x0*{episode}(?!\d)", text):
+        return True
+    # Whole-token NNN form (e.g. S07E20 written as "720"): compare against delimited tokens
+    # so "720" never matches inside "720p" and "264" never matches inside "x264".
+    compact = f"{season}{episode:02d}"
+    return compact in _tokens(name)
 
 
-def _extract_rar_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"Subtitrari Noi RAR extraction failed: {details}") from errors[-1]
-    raise RuntimeError("Subtitrari Noi RAR extraction requires bundled py7zz")
-
-
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("Subtitrari Noi bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subtitrarinoi.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_unar(body):
-    return _extract_rar_files_with_command(body, "unar", ["unar", "-quiet", "-o"])
-
-
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("Subtitrari Noi RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subtitrarinoi.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [sevenzip, "x", "-y", f"-o{output_dir}", archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract Subtitrari Noi RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_command(body, command, args):
-    executable = shutil.which(command)
-    if not executable:
-        raise RuntimeError(f"Subtitrari Noi RAR fallback requires {command}")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subtitrarinoi.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [*args, output_dir, archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"{command} failed to extract Subtitrari Noi RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            relative_path = os.path.relpath(path, output_dir)
-            if not _subtitle_extension(relative_path):
-                continue
-            with open(path, "rb") as handle:
-                files.append((relative_path, handle.read()))
-    if not files:
-        raise ValueError("subtitrarinoi archive contains no supported subtitle files")
-    return files
+def _member_has_episode_marker(name):
+    text = (name or "").lower()
+    if re.search(r"s\d{1,2}[\s._-]*e\d{1,3}", text) or re.search(r"(?<!\d)\d{1,2}x\d{1,3}", text):
+        return True
+    return any(token.isdigit() and len(token) == 3 for token in _tokens(name))
 
 
 def _first_content_main_link(chunk):
@@ -651,30 +594,15 @@ def _format_from_filename(filename):
     return _subtitle_extension(filename or "") or "srt"
 
 
-def _content_payload(content, subtitle_format, empty=False):
-    if empty:
-        return {
-            "content_b64": "",
-            "content_sha256": "",
-            "content_type": _content_type(subtitle_format),
-            "format": subtitle_format,
-            "encoding": "utf-8",
-            "empty": True,
-        }
-    encoding = "utf-8"
-    for candidate in ("utf-8", "cp1250", "latin-1"):
-        try:
-            content.decode(candidate)
-            encoding = candidate
-            break
-        except UnicodeDecodeError:
-            continue
+def _content_payload(content, subtitle_format):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     return {
         "content_b64": _base64.b64encode(content).decode("ascii"),
         "content_sha256": _hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 

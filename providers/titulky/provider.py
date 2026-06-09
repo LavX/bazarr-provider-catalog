@@ -4,11 +4,8 @@ import base64
 import hashlib
 import html
 import io
-import os
 import re
-import shutil
-import subprocess
-import tempfile
+import socket
 import time
 import unicodedata
 import urllib.error
@@ -16,15 +13,17 @@ import urllib.parse
 import urllib.request
 import zipfile
 
-try:
-    import py7zz
-except ImportError:
-    py7zz = None
-
 PROVIDER_ID = "titulky"
 BASE_URL = "https://premium.titulky.com"
 DOWNLOAD_URL = f"{BASE_URL}/download.php?id="
 HTTP_TIMEOUT_SECONDS = 30
+# Transport-level retry for transient network blips (connection reset, DNS,
+# timeout, 5xx, 429). Mirrors upstream subliminal's RetryingSession: a single
+# blip should not abort a search/download. Non-transient failures (4xx other
+# than 429, auth/parse errors) propagate unchanged on the first occurrence.
+RETRY_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8.0
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt")
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -101,7 +100,7 @@ class TitulkyProvider:
         if response.status_code == 429:
             raise RuntimeError("Too many requests")
         _raise_for_status(response, url)
-        return extract_download(response.body, payload)
+        return build_download_payload(response.body, payload)
 
     def _ensure_logged_in(self, config):
         if self._logged_in:
@@ -159,7 +158,7 @@ class TitulkyProvider:
         opener = urllib.request.build_opener() if allow_redirects else urllib.request.build_opener(_NoRedirectHandler)
         request = urllib.request.Request(url, headers=self._headers(headers))
         try:
-            response = opener.open(request, timeout=timeout)
+            response = _open_with_retry(opener, request, timeout)
         except urllib.error.HTTPError as error:
             result = _http_error_response(error, url)
             self._store_cookies(result.headers)
@@ -176,7 +175,7 @@ class TitulkyProvider:
         request = urllib.request.Request(url, data=encoded, headers=self._headers(merged_headers))
         opener = urllib.request.build_opener(_NoRedirectHandler)
         try:
-            response = opener.open(request, timeout=timeout)
+            response = _open_with_retry(opener, request, timeout)
         except urllib.error.HTTPError as error:
             result = _http_error_response(error, url)
             self._store_cookies(result.headers)
@@ -272,43 +271,127 @@ def parse_fps(body):
     return _float(_decode(match.group("fps")).replace(",", "."))
 
 
-def extract_download(body, payload=None):
+def build_download_payload(body, payload=None):
     payload = payload or {}
-    if _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        selected = select_subtitle_file([name for name, _data in files], payload)
-        return _content_payload(dict(files)[selected], _subtitle_extension(selected) or "srt")
-    stream = io.BytesIO(body or b"")
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            names = archive.namelist()
-            candidates = [name for name in names if _subtitle_extension(name)]
-            if not candidates and len(names) == 1:
-                raise RuntimeError("Titulky download limit has been exceeded")
-            selected = select_subtitle_file(names, payload)
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
+    # Reject broken responses up front: download.php can answer with an empty stream or
+    # an HTML/error page that would otherwise look like a successful download.
+    if not body or not body.strip():
+        raise ValueError("titulky returned an empty response")
     if _looks_like_html(body):
         raise ValueError("titulky download did not return a supported subtitle file")
+    if _is_archive_body(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
+        # the host, which lists it, detects encoding, and picks the member. A Titulky zip
+        # can bundle several releases for the same episode (different group / resolution /
+        # source) plus an occasional forced track; the host's episode-only pick cannot tell
+        # them apart. When we can list a zip we pin the member whose filename overlaps the
+        # scored release_info (the old select_subtitle_file intent), preferring non-forced.
+        # Otherwise (rar, single member, the requested episode absent, or no unique winner)
+        # let the host pick the member by episode.
+        archive = {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+        }
+        member = _select_release_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = payload.get("episode")
+        return archive
     subtitle_format = _direct_subtitle_format(body, payload)
     if not subtitle_format:
         raise ValueError("titulky download did not return a supported subtitle file")
+    # Direct, non-archive subtitle body.
     return _content_payload(body, subtitle_format)
 
 
-def select_subtitle_file(names, payload):
-    candidates = [name for name in names if _subtitle_extension(name)]
-    if not candidates:
-        raise ValueError("titulky archive contains no supported subtitle files")
-    release_tokens = set(_tokens((payload or {}).get("release_info")))
+def _is_archive_body(body):
+    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
 
-    def score(name):
-        name_tokens = set(_tokens(name))
-        value = len(release_tokens.intersection(name_tokens))
-        if "forced" in name_tokens:
-            value -= 5
-        return value
 
-    return max(candidates, key=score)
+def _select_release_member(body, payload):
+    # Pin the zip member matching the scored release_info, reproducing the old
+    # select_subtitle_file() intent: choose the filename whose tokens overlap the
+    # provider's release_info and avoid forced tracks. Listing only, no extraction or
+    # decoding: the host reads the named member and runs chardet. Returns None for rar
+    # (not stdlib-listable), a single member (nothing to disambiguate), the requested
+    # episode being absent, or no unique overlap winner, so the caller falls back to
+    # host-side episode selection.
+    payload = payload or {}
+    if _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body)):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        members = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/")
+            and _subtitle_extension(name)
+            and not name.rsplit("/", 1)[-1].startswith(".")
+        ]
+    if len(members) < 2:
+        return None  # a lone member: the host's episode pick already lands here
+    # Narrow to the requested episode first; the host can already do this, but a pack with
+    # several releases per episode leaves it guessing among the matches.
+    season = _safe_int(payload.get("season"))
+    episode = _safe_int(payload.get("episode"))
+    pool = members
+    if season is not None and episode is not None:
+        episode_pool = [name for name in members if _member_matches_episode(name, season, episode)]
+        if episode_pool:
+            pool = episode_pool
+        elif any(_member_has_episode_marker(name) for name in members):
+            # Episode markers present but none matches the requested one: pinning a member
+            # from another episode would hard-fail the host download, so defer.
+            return None
+    if len(pool) < 2:
+        return None  # a single candidate: host episode selection already lands here
+    # Score by release_info token overlap and avoid forced tracks, then pin only a unique
+    # winner with a positive score. Ties or no overlap mean defer to the host.
+    release_tokens = set(_tokens(payload.get("release_info")))
+    if not release_tokens:
+        return None  # nothing to disambiguate on; let the host pick by episode
+    best, best_score, tied = None, 0, False
+    for name in pool:
+        score = _member_release_score(name, release_tokens)
+        if score > best_score:
+            best, best_score, tied = name, score, False
+        elif score == best_score and best is not None:
+            tied = True
+    if best is None or best_score <= 0 or tied:
+        return None  # cannot confidently disambiguate; let the host pick by episode
+    return best
+
+
+def _member_release_score(name, release_tokens):
+    # Mirror the old select_subtitle_file scoring: overlap count between the release_info
+    # tokens and the member filename tokens, with a heavy penalty for forced tracks so a
+    # forced sidecar never outranks the main subtitle.
+    name_tokens = set(_tokens(name))
+    score = len(release_tokens.intersection(name_tokens))
+    if "forced" in name_tokens:
+        score -= 5
+    return score
+
+
+def _member_matches_episode(name, season, episode):
+    # Tolerate separated SxxExx tokens (S01.E02, S01 E02, S01-E02) as well as contiguous
+    # S01E02; keep (?!\d) so "e02" never matches "e020".
+    text = (name or "").lower()
+    if re.search(rf"s0*{season}[\s._-]*e0*{episode}(?!\d)", text):
+        return True
+    if re.search(rf"(?<!\d){season}x0*{episode}(?!\d)", text):
+        return True
+    # Whole-token NNN form (e.g. S07E20 written as "720"): compare against delimited
+    # tokens so "720" never matches inside "720p" and "264" never matches "x264".
+    compact = f"{season}{episode:02d}"
+    return compact in _tokens(name)
+
+
+def _member_has_episode_marker(name):
+    text = (name or "").lower()
+    if re.search(r"s\d{1,2}[\s._-]*e\d{1,3}", text) or re.search(r"(?<!\d)\d{1,2}x\d{1,3}", text):
+        return True
+    return any(token.isdigit() and len(token) == 3 for token in _tokens(name))
 
 
 def _result_from_row(video, row, fps, config):
@@ -347,6 +430,8 @@ def _result_from_row(video, row, fps, config):
             "filename": filename,
             "release_info": row["release_info"],
             "language": language["alpha3"],
+            "season": _safe_int(video.get("season")) if video.get("kind") == "episode" else None,
+            "episode": row.get("episode"),
             "fps": fps,
         },
     }
@@ -453,91 +538,6 @@ def _framerate_equal(first, second):
     return False
 
 
-def _extract_rar_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"Titulky RAR extraction failed: {details}") from errors[-1]
-    raise RuntimeError("Titulky RAR extraction requires bundled py7zz")
-
-
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("Titulky bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "titulky.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_unar(body):
-    unar = shutil.which("unar")
-    if not unar:
-        raise RuntimeError("Titulky RAR fallback requires unar")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "titulky.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run([unar, "-quiet", "-o", output_dir, archive_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"unar failed to extract Titulky RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("Titulky RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "titulky.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run([sevenzip, "x", "-y", f"-o{output_dir}", archive_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract Titulky RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if not _subtitle_extension(rel):
-                continue
-            with open(path, "rb") as handle:
-                files.append((rel, handle.read()))
-    if not files:
-        raise ValueError("titulky archive contains no supported subtitle files")
-    return files
-
-
 def _is_rar_archive(body):
     return bool(body) and (
         body.startswith(b"Rar!\x1a\x07\x00")
@@ -568,14 +568,15 @@ def _direct_subtitle_format(body, payload):
 
 
 def _content_payload(content, subtitle_format):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     content = _fix_line_endings(content)
-    encoding = _detect_encoding(content)
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 
@@ -595,6 +596,57 @@ def _fix_line_endings(content):
 def _looks_like_html(body):
     sample = (body or b"")[:512].lstrip().lower()
     return sample.startswith(b"<!doctype html") or sample.startswith(b"<html") or b"<body" in sample
+
+
+def _open_with_retry(opener, request, timeout):
+    # Bounded transport retry around the raw urllib call only. Transient blips
+    # (connection reset/DNS/refused, timeouts, 5xx, 429) get up to
+    # RETRY_MAX_ATTEMPTS tries with exponential backoff; the final failure is
+    # re-raised so the caller's existing error handling runs unchanged. Anything
+    # non-transient (4xx other than 429, parse/auth errors) propagates on the
+    # first occurrence because it is never matched here.
+    last_error = None
+    for attempt in range(1, RETRY_MAX_ATTEMPTS + 1):
+        try:
+            return opener.open(request, timeout=timeout)
+        except urllib.error.HTTPError as error:
+            if not _is_retryable_status(error.code) or attempt >= RETRY_MAX_ATTEMPTS:
+                raise
+            delay = _retry_after_seconds(error) if error.code == 429 else None
+            error.close()
+            last_error = error
+        except (urllib.error.URLError, socket.timeout, TimeoutError) as error:
+            if attempt >= RETRY_MAX_ATTEMPTS:
+                raise
+            delay = None
+            last_error = error
+        _sleep_backoff(attempt, delay)
+    # Unreachable in practice: the loop either returns, retries, or re-raises.
+    raise last_error
+
+
+def _is_retryable_status(code):
+    code = int(code or 0)
+    return code == 429 or 500 <= code <= 599
+
+
+def _retry_after_seconds(error):
+    headers = getattr(error, "headers", None)
+    value = _header(headers, "retry-after") if headers else ""
+    seconds = _float(value)
+    if seconds is None or seconds < 0:
+        return None
+    return min(seconds, RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _backoff_delay(attempt):
+    return min(RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1)), RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _sleep_backoff(attempt, override=None):
+    delay = override if override is not None else _backoff_delay(attempt)
+    if delay > 0:
+        time.sleep(delay)
 
 
 def _http_error_response(error, url):
@@ -646,16 +698,6 @@ def _header_values(headers, name):
         if str(key).lower() == wanted:
             values.append(str(value))
     return values
-
-
-def _detect_encoding(content):
-    for encoding in ("utf-8", "cp1250", "latin-1"):
-        try:
-            (content or b"").decode(encoding)
-            return encoding
-        except UnicodeDecodeError:
-            continue
-    return "latin-1"
 
 
 def _strip_tags(value):

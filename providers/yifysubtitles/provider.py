@@ -155,9 +155,16 @@ def extract_download(body, payload=None):
         return _content_payload(b"", _format_from_filename(filename), empty=True)
     stream = io.BytesIO(body)
     if zipfile.is_zipfile(stream):
+        # Host-side extraction (Provider Hub v1.1+): list the archive cheaply with
+        # stdlib zipfile to pick the member, then hand the raw archive bytes back to
+        # the host, which extracts that member and detects encoding itself.
         with zipfile.ZipFile(stream) as archive:
             selected = select_subtitle_file(archive.namelist(), payload)
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "member": selected,
+        }
     if _looks_like_html(body):
         raise ValueError("yifysubtitles download returned HTML instead of a ZIP archive")
     return _content_payload(body, _format_from_filename(filename))
@@ -417,6 +424,9 @@ def _token_in_text(token, text):
 
 
 def _content_payload(content, fmt, empty=False):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     content = content or b""
     fmt = fmt or "srt"
     return {
@@ -424,7 +434,6 @@ def _content_payload(content, fmt, empty=False):
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(fmt),
         "format": fmt,
-        "encoding": _detect_subtitle_encoding(content),
         "empty": bool(empty),
     }
 
@@ -437,16 +446,6 @@ def _content_type(fmt):
     if fmt in ("ass", "ssa"):
         return "text/x-ssa"
     return "application/octet-stream"
-
-
-def _detect_subtitle_encoding(content):
-    if not content:
-        return "utf-8"
-    try:
-        content.decode("utf-8")
-    except UnicodeDecodeError:
-        return "latin-1"
-    return "utf-8"
 
 
 def _format_from_filename(filename):

@@ -4,21 +4,14 @@ import base64
 import hashlib
 import html
 import io
-import os
 import random
 import re
-import tempfile
 import time
 import unicodedata
 import urllib.parse
 import urllib.request
 import zipfile
 from http.cookiejar import CookieJar
-
-try:
-    import py7zz
-except ImportError:  # pragma: no cover, dependency is declared in manifest
-    py7zz = None
 
 PROVIDER_ID = "subs4free"
 BASE_URL = "https://www.subs4free.info"
@@ -151,38 +144,97 @@ def parse_download_form(body):
 
 def extract_download(body, payload=None):
     payload = payload or {}
-    if not body:
-        return _content_payload(b"", _format_from_filename(payload.get("filename")), empty=True)
-    stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist(), payload)
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
-    if _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        selected = select_subtitle_file([name for name, _data in files], payload)
-        return _content_payload(dict(files)[selected], _subtitle_extension(selected) or "srt")
+    # Reject broken responses: getSub.php can answer with an empty stream or an HTML/error
+    # page that otherwise looks like a successful download.
+    if not body or not body.strip():
+        raise ValueError("subs4free returned an empty download")
+    if _is_html_body(body):
+        raise ValueError("subs4free returned an HTML/error page instead of a subtitle")
+    if _is_archive_body(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to the
+        # host, which lists it, detects encoding, and picks the member. A subs4free zip is
+        # one release for one movie in one language, but it can still bundle several subtitle
+        # members (e.g. variant cuts). This is a movie-only provider, so there is no episode
+        # to select on: the host's episode pick has no signal. When we can list a zip we pin
+        # the member whose filename overlaps the scored release_info (the old
+        # select_subtitle_file intent); on rar, a single member, or no unique winner we fall
+        # back to the host (carrying the always-None movie episode).
+        archive = {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+        }
+        member = _select_release_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = payload.get("episode")
+        return archive
+    # Direct, non-archive subtitle body.
     return _content_payload(body, _format_from_filename(payload.get("filename")))
 
 
-def select_subtitle_file(names, payload=None):
+def _select_release_member(body, payload):
+    # Pin the zip member matching the scored release_info, reproducing the old
+    # select_subtitle_file() intent: choose the filename whose tokens overlap the provider's
+    # release_info (its filename slug carries the same release string). Listing only, no
+    # extraction or decoding: the host reads the named member and runs chardet. Returns None
+    # for rar (not stdlib-listable), a single member (nothing to disambiguate), no
+    # release_info to score on, or no unique winner, so the caller defers to the host.
     payload = payload or {}
-    candidates = [name for name in names if _subtitle_extension(name) and not _is_hidden_path(name)]
-    if not candidates:
-        raise ValueError("subs4free archive contains no supported subtitle files")
-    release = _normalize(payload.get("release_info") or payload.get("filename") or "")
-    if not release:
-        return candidates[0]
+    if _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body)):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        members = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/")
+            and _subtitle_extension(name)
+            and not name.rsplit("/", 1)[-1].startswith(".")
+        ]
+    if len(members) < 2:
+        return None  # a lone member: the host's episode pick already lands here
+    release_tokens = set(_tokens(payload.get("release_info") or payload.get("filename")))
+    if not release_tokens:
+        return None  # nothing to disambiguate on; let the host pick
+    best, best_score, tied = None, 0, False
+    for name in members:
+        score = _member_release_score(name, release_tokens)
+        if score > best_score:
+            best, best_score, tied = name, score, False
+        elif score == best_score and best is not None:
+            tied = True
+    if best is None or best_score <= 0 or tied:
+        return None  # cannot confidently disambiguate; defer to the host
+    return best
 
-    def score(name):
-        normalized = _normalize(os.path.basename(name))
-        score_value = 0
-        for token in release.split():
-            if token in normalized:
-                score_value += 1
-        return score_value
 
-    return max(candidates, key=score)
+def _member_release_score(name, release_tokens):
+    # Mirror the old select_subtitle_file scoring: overlap count between the release_info
+    # tokens and the member filename tokens, with a heavy penalty for forced tracks so a
+    # forced sidecar never outranks the main subtitle.
+    name_tokens = set(_tokens(name.rsplit("/", 1)[-1]))
+    score = len(release_tokens.intersection(name_tokens))
+    if "forced" in name_tokens:
+        score -= 5
+    return score
+
+
+def _is_archive_body(body):
+    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
+
+
+def _is_html_body(body):
+    if not body:
+        return False
+    head = body[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or head.startswith(b"<!--")
+        or b"<body" in head
+        or b"<head" in head
+    )
 
 
 def derive_matches(video, item):
@@ -315,6 +367,8 @@ class Subs4FreeProvider:
                 "filename": filename,
                 "release_info": item["release_info"],
                 "language": alpha3,
+                "season": item.get("season"),
+                "episode": item.get("episode"),
             },
         }
 
@@ -567,10 +621,6 @@ def _format_from_filename(filename):
     return _subtitle_extension(filename or "") or "srt"
 
 
-def _is_hidden_path(name):
-    return any(part.startswith(".") for part in (name or "").split("/"))
-
-
 def _is_rar_archive(body):
     return bool(body) and (
         body.startswith(b"Rar!\x1a\x07\x00")
@@ -578,41 +628,15 @@ def _is_rar_archive(body):
     )
 
 
-def _extract_rar_files(body):
-    if py7zz is None:
-        raise RuntimeError("Subs4Free RAR extraction requires bundled py7zz")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subs4free.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if _subtitle_extension(rel) and not _is_hidden_path(rel):
-                with open(path, "rb") as handle:
-                    files.append((rel, handle.read()))
-    if not files:
-        raise ValueError("subs4free archive contains no supported subtitle files")
-    return files
-
-
 def _content_payload(content, subtitle_format="srt", empty=False):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially latin-1, which never fails to decode) only reintroduces mojibake.
     content = _normalize_line_endings(content or b"")
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": "text/plain",
         "format": subtitle_format or "srt",
-        "encoding": _detect_subtitle_encoding(content),
         "empty": bool(empty),
     }
 
@@ -620,16 +644,6 @@ def _content_payload(content, subtitle_format="srt", empty=False):
 def _normalize_line_endings(content):
     normalized = content.replace(b"\r\n", b"\n")
     return normalized.replace(b"\r", b"\n")
-
-
-def _detect_subtitle_encoding(content):
-    if not content:
-        return "utf-8"
-    try:
-        content.decode("utf-8")
-    except UnicodeDecodeError:
-        return "latin-1"
-    return "utf-8"
 
 
 def _decode_payload_text(payload):

@@ -21,6 +21,9 @@ BASE_URL = "https://www.animekalesi.com"
 SERIES_INDEX_URL = f"{BASE_URL}/tum-anime-serileri.html"
 HTTP_TIMEOUT_SECONDS = 15
 HTTP_RETRIES = 2
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8.0
+RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 SUPPORTED_LANGUAGES = {"tur": "tr"}
 ALPHA2_TO_ALPHA3 = {value: key for key, value in SUPPORTED_LANGUAGES.items()}
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt")
@@ -198,12 +201,18 @@ class AnimeKalesiProvider:
             try:
                 with self._opener.open(request, timeout=timeout) as response:
                     return response.read()
-            except urllib.error.HTTPError:
-                raise
+            except urllib.error.HTTPError as error:
+                # Retry only on transient server-side statuses (5xx) and rate limiting
+                # (429). All other 4xx (auth, not found, gone, ...) propagate unchanged
+                # on the first occurrence.
+                if error.code not in RETRYABLE_STATUS_CODES or attempt >= HTTP_RETRIES:
+                    raise
+                time.sleep(_retry_delay(attempt, _retry_after_seconds(error)))
             except (TimeoutError, socket.timeout, urllib.error.URLError):
+                # Raw transport failures: connection refused, DNS, reset, timeout.
                 if attempt >= HTTP_RETRIES:
                     raise
-                time.sleep(0.25 * (attempt + 1))
+                time.sleep(_retry_delay(attempt))
         raise RuntimeError("unreachable animekalesi retry state")
 
     def search(self, video, languages, config):
@@ -307,23 +316,29 @@ class AnimeKalesiProvider:
         if not url:
             raise ValueError("animekalesi download requires download_url")
         body = self._http_get(url, referer=payload.get("page_url"))
-        body, subtitle_format = extract_download(body, payload)
-        return _content_payload(body, subtitle_format)
+        return _download_payload(body, payload)
 
 
-def extract_download(body, payload=None):
+def _download_payload(body, payload=None):
     payload = payload or {}
     if not body:
-        return b"", _format_from_filename(payload.get("filename"))
+        raise ValueError("animekalesi download returned an empty body")
     stream = io.BytesIO(body)
     if zipfile.is_zipfile(stream):
+        # Host-side extraction (Provider Hub v1.1+): list the zip with stdlib zipfile to
+        # pick the member, then hand the raw archive bytes plus that member name to the
+        # host, which extracts it and detects the encoding via Subtitle.normalize().
         with zipfile.ZipFile(stream) as archive:
             selected = select_subtitle_file(archive.namelist(), payload)
-            return _normalize_line_endings(archive.read(selected)), _subtitle_extension(selected) or "srt"
+        return {
+            "archive_b64": _base64.b64encode(body).decode("ascii"),
+            "archive_sha256": _hashlib.sha256(body).hexdigest(),
+            "member": selected,
+        }
     subtitle_format = _subtitle_format_from_body(body) or _format_from_filename(payload.get("filename"))
     if not _is_supported_subtitle_body(body, subtitle_format):
         raise ValueError("animekalesi direct download did not return a supported subtitle")
-    return _normalize_line_endings(body), subtitle_format
+    return _content_payload(_normalize_line_endings(body), subtitle_format)
 
 
 def select_subtitle_file(names, payload):
@@ -488,6 +503,27 @@ def _sleep(config):
         time.sleep(min(delay_ms, 5000) / 1000.0)
 
 
+def _retry_delay(attempt, retry_after=None):
+    # attempt is 0-based: 0 before the first retry, 1 before the second.
+    backoff = RETRY_BACKOFF_SECONDS * (2 ** attempt)
+    if retry_after is not None and retry_after > backoff:
+        backoff = retry_after
+    return min(backoff, RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _retry_after_seconds(error):
+    # Honor a Retry-After header (seconds form) when the server sends one on a 429.
+    headers = getattr(error, "headers", None)
+    value = headers.get("Retry-After") if headers else None
+    if not value:
+        return None
+    try:
+        seconds = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds >= 0 else None
+
+
 def _stable_id(url, alpha3):
     digest = _hashlib.sha1(f"{url}:{alpha3}".encode("utf-8")).hexdigest()[:16]
     return f"animekalesi-{digest}"
@@ -524,27 +560,15 @@ def _extension_rank(name):
 
 
 def _content_payload(body, subtitle_format):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     subtitle_format = subtitle_format or "srt"
-    if not body:
-        return {
-            "content_b64": "",
-            "content_sha256": "",
-            "content_type": _content_type(subtitle_format),
-            "format": subtitle_format,
-            "encoding": "utf-8",
-            "empty": True,
-        }
-    encoding = "utf-8"
-    try:
-        body.decode("utf-8")
-    except UnicodeDecodeError:
-        encoding = "latin-1"
     return {
         "content_b64": _base64.b64encode(body).decode("ascii"),
         "content_sha256": _hashlib.sha256(body).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 

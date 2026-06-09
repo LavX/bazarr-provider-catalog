@@ -1,6 +1,7 @@
 """Tests for subscene_best provider."""
 
 import base64
+import hashlib
 import io
 import json
 import sys
@@ -335,13 +336,26 @@ class TestSelectEpisodeFile(unittest.TestCase):
 
 
 class TestDownloadSubtitle(unittest.TestCase):
-    def test_extracts_supported_non_srt_file_from_zip(self):
+    def _assert_archive_payload(self, result, body, member):
+        # Host-side extraction (Provider Hub v1.1+): the worker forwards the raw archive
+        # bytes and the selected member. No worker-side extraction or encoding guessing.
+        self.assertIsNotNone(result)
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["member"], member)
+        self.assertFalse(result["empty"])
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
+        self.assertNotIn("episode", result)
+
+    def test_selects_supported_non_srt_member_from_zip(self):
         content = b"[Script Info]\nTitle: Test\n"
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zf:
             zf.writestr("Show.S01E05.ass", content)
+        body = zip_buffer.getvalue()
 
-        with patch("provider._http_get", return_value=zip_buffer.getvalue()):
+        with patch("provider._http_get", return_value=body):
             result = subscene_module._download_subtitle(
                 "/download/123",
                 video={"kind": "episode", "season": 1, "episode": 5},
@@ -349,18 +363,16 @@ class TestDownloadSubtitle(unittest.TestCase):
                 state={},
             )
 
-        self.assertIsNotNone(result)
-        self.assertEqual(result["content"], content)
-        self.assertEqual(result["filename"], "Show.S01E05.ass")
-        self.assertEqual(result["format"], "ass")
+        self._assert_archive_payload(result, body, "Show.S01E05.ass")
 
-    def test_extracts_sami_file_from_zip(self):
+    def test_selects_sami_member_from_zip(self):
         content = b"\xef\xbb\xbf<SAMI>\r\n<BODY>\r\n<SYNC Start=1000><P>Hello</P>"
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zf:
             zf.writestr("Dune.2021.1080p.WEBRip.x264-RARBG.smi", content)
+        body = zip_buffer.getvalue()
 
-        with patch("provider._http_get", return_value=zip_buffer.getvalue()):
+        with patch("provider._http_get", return_value=body):
             result = subscene_module._download_subtitle(
                 "/download/2604448",
                 video={"kind": "movie", "title": "Dune: Part One", "year": 2021},
@@ -368,18 +380,138 @@ class TestDownloadSubtitle(unittest.TestCase):
                 state={},
             )
 
-        self.assertIsNotNone(result)
-        self.assertEqual(result["content"], content)
-        self.assertEqual(result["filename"], "Dune.2021.1080p.WEBRip.x264-RARBG.smi")
-        self.assertEqual(result["format"], "smi")
+        self._assert_archive_payload(result, body, "Dune.2021.1080p.WEBRip.x264-RARBG.smi")
 
     def test_ignores_appledouble_sidecar_entries(self):
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zf:
             zf.writestr("__MACOSX/._Show.S01E05.srt", b"sidecar")
             zf.writestr("Show.S01E05.srt", b"actual subtitle")
+        body = zip_buffer.getvalue()
 
-        with patch("provider._http_get", return_value=zip_buffer.getvalue()):
+        with patch("provider._http_get", return_value=body):
+            result = subscene_module._download_subtitle(
+                "/download/123",
+                video={"kind": "episode", "season": 1, "episode": 5},
+                config={},
+                state={},
+            )
+
+        self._assert_archive_payload(result, body, "Show.S01E05.srt")
+
+    def _assert_content_payload(self, result, content, subtitle_format):
+        # Multipart subtitles are concatenated worker-side and returned as direct content,
+        # because the single-member host contract would deliver only one disc.
+        self.assertIsNotNone(result)
+        self.assertEqual(base64.b64decode(result["content_b64"]), content)
+        self.assertEqual(result["content_sha256"], hashlib.sha256(content).hexdigest())
+        self.assertEqual(result["format"], subtitle_format)
+        self.assertFalse(result["empty"])
+        self.assertNotIn("archive_b64", result)
+        self.assertNotIn("member", result)
+        self.assertNotIn("episode", result)
+        self.assertNotIn("encoding", result)
+
+    def test_concatenates_multipart_movie_members(self):
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("Movie.CD1.srt", b"part one")
+            zf.writestr("Movie.CD2.srt", b"part two")
+        body = zip_buffer.getvalue()
+
+        with patch("provider._http_get", return_value=body):
+            result = subscene_module._download_subtitle(
+                "/download/123",
+                video={"kind": "movie", "title": "Movie", "year": 2024},
+                config={},
+                state={},
+            )
+
+        # Both discs survive: CD1 and CD2 are joined in part order, not just CD1 pinned.
+        self._assert_content_payload(result, b"part one\n\npart two", "srt")
+
+    def test_concatenates_multipart_in_part_order(self):
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            # Written out of order to prove part-number ordering, not archive order.
+            zf.writestr("Movie.CD2.srt", b"part two")
+            zf.writestr("Movie.CD1.srt", b"part one")
+        body = zip_buffer.getvalue()
+
+        with patch("provider._http_get", return_value=body):
+            result = subscene_module._download_subtitle(
+                "/download/123",
+                video={"kind": "movie", "title": "Movie", "year": 2024},
+                config={},
+                state={},
+            )
+
+        self._assert_content_payload(result, b"part one\n\npart two", "srt")
+
+    def test_concatenates_multipart_non_srt_members(self):
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("Movie.CD1.ass", b"[Script Info]\npart one")
+            zf.writestr("Movie.CD2.ass", b"[Script Info]\npart two")
+        body = zip_buffer.getvalue()
+
+        with patch("provider._http_get", return_value=body):
+            result = subscene_module._download_subtitle(
+                "/download/123",
+                video={"kind": "movie", "title": "Movie", "year": 2024},
+                config={},
+                state={},
+            )
+
+        self._assert_content_payload(
+            result,
+            b"[Script Info]\npart one\n\n[Script Info]\npart two",
+            "ass",
+        )
+
+    def test_single_member_still_pins_member(self):
+        # A non-multipart zip keeps the host member-pin path; concatenation must not kick in.
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("Movie.2024.1080p.srt", b"only subtitle")
+        body = zip_buffer.getvalue()
+
+        with patch("provider._http_get", return_value=body):
+            result = subscene_module._download_subtitle(
+                "/download/123",
+                video={"kind": "movie", "title": "Movie", "year": 2024},
+                config={},
+                state={},
+            )
+
+        self._assert_archive_payload(result, body, "Movie.2024.1080p.srt")
+
+    def test_episode_multipart_does_not_shadow_matching_single_file(self):
+        # A stray CD1/CD2 pair for the wrong episode must not be concatenated when a single
+        # file matches the requested episode; the matching single member is pinned instead.
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("Show.S01E01.CD1.srt", b"wrong ep part one")
+            zf.writestr("Show.S01E01.CD2.srt", b"wrong ep part two")
+            zf.writestr("Show.S01E05.srt", b"right episode")
+        body = zip_buffer.getvalue()
+
+        with patch("provider._http_get", return_value=body):
+            result = subscene_module._download_subtitle(
+                "/download/123",
+                video={"kind": "episode", "season": 1, "episode": 5},
+                config={},
+                state={},
+            )
+
+        self._assert_archive_payload(result, body, "Show.S01E05.srt")
+
+    def test_multipart_rar_defers_to_host_episode(self):
+        # RAR is not stdlib-listable, so a multipart rar cannot be concatenated worker-side
+        # and must defer to the host episode path rather than pin a guessed member.
+        body = b"Rar!\x1a\x07\x00" + b"CD1/CD2 multipart rar payload"
+
+        with patch("provider._http_get", return_value=body):
             result = subscene_module._download_subtitle(
                 "/download/123",
                 video={"kind": "episode", "season": 1, "episode": 5},
@@ -388,31 +520,56 @@ class TestDownloadSubtitle(unittest.TestCase):
             )
 
         self.assertIsNotNone(result)
-        self.assertEqual(result["content"], b"actual subtitle")
-        self.assertEqual(result["filename"], "Show.S01E05.srt")
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["episode"], 5)
+        self.assertNotIn("member", result)
+        self.assertNotIn("content_b64", result)
 
-    def test_merges_multipart_movie_subtitles(self):
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w") as zf:
-            zf.writestr("Movie.CD1.srt", b"part one")
-            zf.writestr("Movie.CD2.srt", b"part two")
+    def test_forwards_rar_archive_with_episode(self):
+        body = b"Rar!\x1a\x07\x00rar archive payload"
 
-        with patch("provider._http_get", return_value=zip_buffer.getvalue()):
+        with patch("provider._http_get", return_value=body):
             result = subscene_module._download_subtitle(
                 "/download/123",
-                video={"kind": "movie", "title": "Movie", "year": 2024},
+                video={"kind": "episode", "season": 1, "episode": 5},
                 config={},
                 state={},
             )
 
         self.assertIsNotNone(result)
-        self.assertIn(b"part one", result["content"])
-        self.assertIn(b"part two", result["content"])
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["episode"], 5)
+        self.assertFalse(result["empty"])
+        self.assertNotIn("member", result)
 
-    def test_rejects_empty_subtitle_member(self):
+    def test_rejects_empty_body(self):
+        with patch("provider._http_get", return_value=b""):
+            result = subscene_module._download_subtitle(
+                "/download/123",
+                video={"kind": "episode", "season": 1, "episode": 5},
+                config={},
+                state={},
+            )
+
+        self.assertIsNone(result)
+
+    def test_rejects_html_error_body(self):
+        with patch("provider._http_get", return_value=b"<!DOCTYPE html><html><body>error</body></html>"):
+            result = subscene_module._download_subtitle(
+                "/download/123",
+                video={"kind": "episode", "season": 1, "episode": 5},
+                config={},
+                state={},
+            )
+
+        self.assertIsNone(result)
+
+    def test_rejects_zip_with_no_selectable_member(self):
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zf:
-            zf.writestr("Show.S01E05.srt", b"")
+            zf.writestr("Show.S01E01.srt", b"wrong episode")
+            zf.writestr("Show.S01E02.srt", b"wrong episode")
 
         with patch("provider._http_get", return_value=zip_buffer.getvalue()):
             result = subscene_module._download_subtitle(
@@ -1206,8 +1363,7 @@ class TestSubSceneProvider(unittest.TestCase):
         self.assertEqual(len(results), 0)
 
     @patch("provider._get_subtitle_detail")
-    @patch("provider._download_subtitle")
-    def test_download(self, mock_download, mock_detail):
+    def test_download_returns_archive_payload(self, mock_detail):
         mock_detail.return_value = {
             "download_url": "/download/123",
             "title": "Dune (2021)",
@@ -1219,22 +1375,22 @@ class TestSubSceneProvider(unittest.TestCase):
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zf:
             zf.writestr("test.srt", srt_content)
-        
-        mock_download.return_value = {
-            "content": srt_content,
-            "filename": "test.srt",
-            "format": "srt",
-        }
+        body = zip_buffer.getvalue()
 
-        subtitle = {"url": "/subtitle/123"}
+        subtitle = {"url": "/subtitle/123", "video": {"kind": "movie", "title": "Dune", "year": 2021}}
         config = {"request_delay_ms": 0}
 
-        result = self.provider.download(subtitle, None, config)
+        with patch("provider._http_get", return_value=body):
+            result = self.provider.download(subtitle, None, config)
+
         self.assertIsNotNone(result)
-        self.assertEqual(result["format"], "srt")
-        self.assertEqual(result["content_type"], "application/x-subrip")
-        self.assertEqual(base64.b64decode(result["content_b64"]), srt_content)
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["member"], "test.srt")
         self.assertFalse(result["empty"])
+        # No worker-side extraction or encoding guessing.
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
 
 
 if __name__ == "__main__":

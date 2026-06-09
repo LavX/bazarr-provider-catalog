@@ -2,7 +2,9 @@ import base64
 import hashlib
 import importlib.util
 import io
+import socket
 import unittest
+import urllib.error
 import zipfile
 from pathlib import Path
 
@@ -235,13 +237,12 @@ class SoustitreseuProviderTests(unittest.TestCase):
         self.assertEqual(provider.search({"kind": "episode", "series": "Game of Thrones"}, [{"alpha3": "fra"}], {}), [])
         self.assertEqual(provider.search({"kind": "movie", "title": "Dune"}, [{"alpha3": "deu"}], {}), [])
 
-    def test_download_selects_episode_language_from_zip_archive(self):
+    def test_download_zip_archive_returns_select_member(self):
         provider = self.mod.SoustitreseuProvider()
         body = _zip_body(
             {
                 "Game.Of.Thrones.101.ctu.720p.VF.NoTAG.srt": "french subtitle",
                 "Game.Of.Thrones.101.ctu.720p.VO.NoTAG.srt": "english subtitle",
-                "Game.Of.Thrones.102.ctu.720p.VO.NoTAG.srt": "wrong episode",
             }
         )
         provider._http_get = lambda url, timeout=30, referer=None: body
@@ -258,36 +259,334 @@ class SoustitreseuProviderTests(unittest.TestCase):
             {"alpha3": "eng", "alpha2": "en"},
             {},
         )
-        data = base64.b64decode(content["content_b64"])
 
-        self.assertEqual(data, b"english subtitle")
-        self.assertEqual(content["content_sha256"], hashlib.sha256(data).hexdigest())
-        self.assertEqual(content["format"], "srt")
+        # Archive mode: the worker hands the raw archive bytes back with select_member set.
+        # The host lists the members and calls select_archive_member to language-pin one;
+        # download() never extracts, names a member, or guesses an episode itself.
+        self.assertEqual(base64.b64decode(content["archive_b64"]), body)
+        self.assertEqual(content["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertIs(content["select_member"], True)
+        self.assertNotIn("member", content)
+        self.assertNotIn("episode", content)
+        self.assertNotIn("content_b64", content)
+        self.assertNotIn("encoding", content)
 
-    def test_download_prioritizes_episode_over_language_from_zip_archive(self):
+    def test_download_rar_archive_returns_select_member(self):
         provider = self.mod.SoustitreseuProvider()
-        body = _zip_body(
-            {
-                "Game.Of.Thrones.S01E01.VF.srt": "requested episode",
-                "Game.Of.Thrones.S01E02.VO.srt": "wrong episode",
-            }
-        )
+        # Minimal RAR4 signature; the host lists and extracts, the worker only forwards bytes
+        # and then language-pins via select_archive_member against the host-listed names.
+        body = b"Rar!\x1a\x07\x00" + b"\x00" * 32
         provider._http_get = lambda url, timeout=30, referer=None: body
 
         content = provider.download(
             {
-                "url": "https://www.sous-titres.eu/series/download/1f7d3i5ypv2bv0m/Game.Of.Thrones.S01.ENFR.zip",
-                "filename": "Game.Of.Thrones.S01.ENFR.zip",
+                "url": "https://www.sous-titres.eu/series/download/1f7d3i5ypv2bv0m/Game.Of.Thrones.S01.ENFR.rar",
+                "filename": "Game.Of.Thrones.S01.ENFR.rar",
                 "media_type": "series",
                 "season": 1,
-                "episode": 1,
-                "release_info": "Game.Of.Thrones.S01.ENFR.zip",
+                "episode": 7,
+                "release_info": "Game.Of.Thrones.S01.ENFR.rar",
             },
             {"alpha3": "eng", "alpha2": "en"},
             {},
         )
 
-        self.assertEqual(base64.b64decode(content["content_b64"]), b"requested episode")
+        self.assertEqual(base64.b64decode(content["archive_b64"]), body)
+        self.assertEqual(content["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertIs(content["select_member"], True)
+        self.assertNotIn("member", content)
+        self.assertNotIn("episode", content)
+        self.assertNotIn("content_b64", content)
+
+    def test_download_movie_archive_returns_select_member(self):
+        provider = self.mod.SoustitreseuProvider()
+        body = _zip_body({"Dune.Part.One.2021.WEB.VF.srt": "movie subtitle"})
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        content = provider.download(
+            {
+                "url": "https://www.sous-titres.eu/films/download/krbse0p1duwc8oi/Dune.Part.One.(2021).Z2.WEB.zip",
+                "filename": "Dune.Part.One.(2021).Z2.WEB.zip",
+                "media_type": "film",
+                "season": None,
+                "episode": None,
+                "release_info": "Dune.Part.One.(2021).Z2.WEB.zip",
+            },
+            {"alpha3": "fra", "alpha2": "fr"},
+            {},
+        )
+
+        self.assertEqual(base64.b64decode(content["archive_b64"]), body)
+        self.assertIs(content["select_member"], True)
+        self.assertNotIn("member", content)
+        self.assertNotIn("episode", content)
+        self.assertNotIn("content_b64", content)
+
+    def test_pick_archive_member_pins_language_when_archive_mixes_languages(self):
+        # The archive carries both VO (English) and VF (French); a French request must
+        # pin the VF member rather than let the host stream the English one.
+        members = [
+            "Game.Of.Thrones.101.ctu.720p.VF.NoTAG.srt",
+            "Game.Of.Thrones.101.ctu.720p.VO.NoTAG.srt",
+        ]
+        self.assertEqual(
+            self.mod._pick_archive_member(members, {"language": "fra", "season": 1, "episode": 1}),
+            ("Game.Of.Thrones.101.ctu.720p.VF.NoTAG.srt", "pin"),
+        )
+
+    def test_pick_archive_member_pins_language_episode_in_season_pack(self):
+        # Both languages and both episodes present: resolve language and episode together.
+        members = [
+            "Game.Of.Thrones.S01E01.VF.srt",
+            "Game.Of.Thrones.S01E01.VO.srt",
+            "Game.Of.Thrones.S01E02.VF.srt",
+            "Game.Of.Thrones.S01E02.VO.srt",
+        ]
+        self.assertEqual(
+            self.mod._pick_archive_member(members, {"language": "eng", "season": 1, "episode": 2}),
+            ("Game.Of.Thrones.S01E02.VO.srt", "pin"),
+        )
+
+    def test_pick_archive_member_defers_single_language(self):
+        # Only one language present: nothing to disambiguate, let the host pick by episode.
+        members = ["Game.Of.Thrones.S01E01.VF.srt", "Game.Of.Thrones.S01E02.VF.srt"]
+        self.assertEqual(
+            self.mod._pick_archive_member(members, {"language": "fra", "season": 1, "episode": 2}),
+            (None, "defer"),
+        )
+
+    def test_pick_archive_member_rejects_nxnn_episode_absent(self):
+        # A mixed-language pack whose members use the 1xNN form: a request for episode 2
+        # must NOT pin the "1x20" (episode 20) member via a "1x2" substring. The requested
+        # episode is absent from a multilingual pack, so reject (defer would risk English).
+        members = ["Game.Of.Thrones.1x20.VF.srt", "Game.Of.Thrones.1x20.VO.srt"]
+        self.assertEqual(
+            self.mod._pick_archive_member(members, {"language": "fra", "season": 1, "episode": 2}),
+            (None, "reject"),
+        )
+
+    def test_pick_archive_member_does_not_read_resolution_as_episode(self):
+        # S07E20 yields episode code "720", which must not match the "720p" resolution in a
+        # wrong-episode member. The requested episode is absent, so reject.
+        members = ["Show.S03E05.720p.VF.srt", "Show.S03E05.720p.VO.srt"]
+        self.assertEqual(
+            self.mod._pick_archive_member(members, {"language": "fra", "season": 7, "episode": 20}),
+            (None, "reject"),
+        )
+
+    def test_pick_archive_member_does_not_mislabel_french_word_as_english(self):
+        # "Asterix.en.Bretagne" is a French (VF) release; the bare ".en." token must not
+        # tag it English, so an English movie request pins the real VO member.
+        members = ["Asterix.en.Bretagne.VF.srt", "Asterix.in.Britain.VO.srt"]
+        self.assertEqual(
+            self.mod._pick_archive_member(members, {"language": "eng", "season": None, "episode": None}),
+            ("Asterix.in.Britain.VO.srt", "pin"),
+        )
+
+    def test_pick_archive_member_ignores_macosx_sidecar(self):
+        # An AppleDouble sidecar (listed first) matching the requested episode and language
+        # must not be pinned in place of the real subtitle member.
+        members = [
+            "__MACOSX/._Show.S01E01.VF.srt",
+            "Show.S01E01.VO.srt",
+            "Show.S01E01.VF.srt",
+        ]
+        member, decision = self.mod._pick_archive_member(
+            members, {"language": "fra", "season": 1, "episode": 1}
+        )
+        self.assertEqual((member, decision), ("Show.S01E01.VF.srt", "pin"))
+
+    def test_select_archive_member_op_pins_language(self):
+        provider = self.mod.SoustitreseuProvider()
+        members = [
+            "Game.Of.Thrones.101.ctu.720p.VF.NoTAG.srt",
+            "Game.Of.Thrones.101.ctu.720p.VO.NoTAG.srt",
+        ]
+        result = provider.select_archive_member(
+            {"language": "fra", "season": 1, "episode": 1}, {"alpha3": "fra", "alpha2": "fr"}, members, {}
+        )
+        self.assertEqual(
+            result, {"member": "Game.Of.Thrones.101.ctu.720p.VF.NoTAG.srt", "decision": "pin"}
+        )
+
+    def test_download_direct_subtitle_body_returns_content_mode(self):
+        provider = self.mod.SoustitreseuProvider()
+        body = b"1\n00:00:01,000 --> 00:00:02,000\nText\n"
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        content = provider.download(
+            {
+                "url": "https://www.sous-titres.eu/series/download/abc/Game.Of.Thrones.1x01.srt",
+                "filename": "Game.Of.Thrones.1x01.srt",
+                "media_type": "series",
+                "season": 1,
+                "episode": 1,
+            },
+            {"alpha3": "eng", "alpha2": "en"},
+            {},
+        )
+        data = base64.b64decode(content["content_b64"])
+
+        self.assertEqual(data, body)
+        self.assertEqual(content["content_sha256"], hashlib.sha256(data).hexdigest())
+        self.assertEqual(content["format"], "srt")
+        # Direct content path must not ship a worker-guessed encoding; the host normalizes.
+        self.assertNotIn("encoding", content)
+        self.assertNotIn("archive_b64", content)
+
+    def test_download_rejects_html_error_page(self):
+        provider = self.mod.SoustitreseuProvider()
+        provider._http_get = lambda url, timeout=30, referer=None: (
+            b"<!DOCTYPE html>\n<html><head><title>404</title></head>"
+            b"<body>Subtitle not found</body></html>"
+        )
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {
+                    "url": "https://www.sous-titres.eu/series/download/abc/Game.Of.Thrones.1x01.zip",
+                    "filename": "Game.Of.Thrones.1x01.zip",
+                },
+                {"alpha3": "eng", "alpha2": "en"},
+                {},
+            )
+
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.SoustitreseuProvider()
+        provider._http_get = lambda url, timeout=30, referer=None: b"   \r\n  "
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {
+                    "url": "https://www.sous-titres.eu/series/download/abc/Game.Of.Thrones.1x01.zip",
+                    "filename": "Game.Of.Thrones.1x01.zip",
+                },
+                {"alpha3": "eng", "alpha2": "en"},
+                {},
+            )
+
+
+class _FakeResponse:
+    def __init__(self, body):
+        self._body = body
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _FakeOpener:
+    """Stubs the lowest urllib transport: opener.open() raises a queued error or returns a body."""
+
+    def __init__(self, outcomes):
+        self._outcomes = list(outcomes)
+        self.calls = 0
+
+    def open(self, request, timeout=None):
+        del request, timeout
+        self.calls += 1
+        outcome = self._outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return _FakeResponse(outcome)
+
+
+class SoustitreseuTransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.sleeps = []
+        self.mod.time.sleep = lambda seconds: self.sleeps.append(seconds)
+
+    def _http_error(self, url, code, reason, headers=None):
+        # urllib.error.HTTPError allocates a temp file for its body; close it on
+        # teardown so 3.14 does not emit a ResourceWarning during GC.
+        error = urllib.error.HTTPError(url, code, reason, headers or {}, None)
+        self.addCleanup(error.close)
+        return error
+
+    def _provider_with_outcomes(self, outcomes):
+        provider = self.mod.SoustitreseuProvider()
+        opener = _FakeOpener(outcomes)
+        provider._opener = opener
+        return provider, opener
+
+    def test_http_get_retries_url_error_then_succeeds(self):
+        provider, opener = self._provider_with_outcomes(
+            [urllib.error.URLError("connection reset"), b"<html>ok</html>"]
+        )
+
+        body = provider._http_get("https://www.sous-titres.eu/search.html?q=x")
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(opener.calls, 2)
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_http_get_retries_timeout_then_succeeds(self):
+        provider, opener = self._provider_with_outcomes(
+            [socket.timeout("read timed out"), TimeoutError("timed out"), b"body"]
+        )
+
+        body = provider._http_get("https://www.sous-titres.eu/x.html")
+
+        self.assertEqual(body, b"body")
+        self.assertEqual(opener.calls, 3)
+        self.assertEqual(len(self.sleeps), 2)
+        # Exponential backoff: 0.5s then 1.0s.
+        self.assertEqual(self.sleeps, [0.5, 1.0])
+
+    def test_http_get_retries_503_then_succeeds(self):
+        error = self._http_error("https://www.sous-titres.eu/x.html", 503, "Service Unavailable")
+        provider, opener = self._provider_with_outcomes([error, b"recovered"])
+
+        body = provider._http_get("https://www.sous-titres.eu/x.html")
+
+        self.assertEqual(body, b"recovered")
+        self.assertEqual(opener.calls, 2)
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_http_get_honors_retry_after_on_429(self):
+        error = self._http_error(
+            "https://www.sous-titres.eu/x.html",
+            429,
+            "Too Many Requests",
+            {"Retry-After": "3"},
+        )
+        provider, opener = self._provider_with_outcomes([error, b"ok"])
+
+        body = provider._http_get("https://www.sous-titres.eu/x.html")
+
+        self.assertEqual(body, b"ok")
+        self.assertEqual(opener.calls, 2)
+        # Retry-After (3s) wins over the 0.5s base backoff.
+        self.assertEqual(self.sleeps, [3.0])
+
+    def test_http_get_does_not_retry_404(self):
+        error = self._http_error("https://www.sous-titres.eu/missing.html", 404, "Not Found")
+        # Only the error is queued: a retry would pop past it and raise IndexError,
+        # so reaching the assertions proves the 404 propagated on the first call.
+        provider, opener = self._provider_with_outcomes([error])
+
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            provider._http_get("https://www.sous-titres.eu/missing.html")
+
+        self.assertEqual(ctx.exception.code, 404)
+        self.assertEqual(opener.calls, 1)
+        self.assertEqual(self.sleeps, [])
+
+    def test_http_get_gives_up_after_max_attempts(self):
+        outcomes = [urllib.error.URLError("down")] * 3
+        provider, opener = self._provider_with_outcomes(outcomes)
+
+        with self.assertRaises(urllib.error.URLError):
+            provider._http_get("https://www.sous-titres.eu/x.html")
+
+        self.assertEqual(opener.calls, 3)
+        self.assertEqual(len(self.sleeps), 2)
 
 
 if __name__ == "__main__":
