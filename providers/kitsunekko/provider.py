@@ -51,14 +51,14 @@ def index_url_for_language(alpha3):
     root = LANGUAGE_ROOTS.get(alpha3)
     if not root:
         return None
-    return f"{BASE_URL}/dirlst.php?dir={urllib.parse.quote(root, safe='')}"
+    return f"{BASE_URL}/dirlist.php?dir={urllib.parse.quote(root, safe='')}"
 
 
 def parse_index_directories(html_bytes):
     rows = []
     for match in _ANCHOR_RE.finditer(html_bytes or b""):
         href = _decode_attr(match.group("href"))
-        if "dirlst.php?dir=" not in href:
+        if "dirlist.php?dir=" not in href:
             continue
         title = _strip_tags(match.group("title"))
         if title:

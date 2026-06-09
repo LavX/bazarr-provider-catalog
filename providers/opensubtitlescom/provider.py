@@ -4,6 +4,7 @@ import base64
 import hashlib
 import io
 import json
+import os
 import re
 import socket
 import time
@@ -14,7 +15,11 @@ import zipfile
 
 PROVIDER_ID = "opensubtitlescom"
 DEFAULT_HOST = "api.opensubtitles.com"
-USER_AGENT = "BazarrProviderHub/1.0"
+# OpenSubtitles.com gates API access on a registered User-Agent and returns
+# 403 "You cannot consume this service" for unregistered ones. Match the
+# proven Bazarr-ecosystem consumer UA (honoring SZ_USER_AGENT like the native
+# subliminal_patch provider) so login is accepted.
+USER_AGENT = os.environ.get("SZ_USER_AGENT", "Sub-Zero/2")
 HTTP_TIMEOUT_SECONDS = 30
 # Transport-level retry for transient network failures (connection reset, DNS,
 # timeouts, 5xx, 429). Non-transient failures (4xx other than 429, auth, parse)

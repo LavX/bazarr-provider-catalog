@@ -275,6 +275,11 @@ class BollyNookProvider:
         return extract_download(body, payload)
 
 
+def _is_rar_or_7z(body):
+    head = body[:8] if body else b""
+    return head.startswith((b"Rar!\x1a\x07", b"7z\xbc\xaf\x27\x1c"))
+
+
 def extract_download(body, payload=None):
     payload = payload or {}
     # Reject broken responses up front: an empty stream or an HTML/error page would
@@ -294,6 +299,15 @@ def extract_download(body, payload=None):
             "archive_b64": _base64.b64encode(body).decode("ascii"),
             "archive_sha256": _hashlib.sha256(body).hexdigest(),
             "member": selected,
+        }
+    if _is_rar_or_7z(body):
+        # RAR/7z: the stdlib-only worker can't list members, so hand the raw archive
+        # to the host (rarfile/py7zr), which extracts it and picks by episode. Without
+        # this branch a rar/7z body falls through and is mis-served as raw subtitle text.
+        return {
+            "archive_b64": _base64.b64encode(body).decode("ascii"),
+            "archive_sha256": _hashlib.sha256(body).hexdigest(),
+            "episode": payload.get("episode"),
         }
     # Direct, non-archive subtitle body.
     return _content_payload(body, _subtitle_extension(payload.get("filename", "")) or "srt")

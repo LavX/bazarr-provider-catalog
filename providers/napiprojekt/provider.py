@@ -4,6 +4,7 @@ import base64 as _base64
 import hashlib as _hashlib
 import html
 import json
+import os
 import re
 import socket
 import time
@@ -91,6 +92,36 @@ def _create_cloudscraper():
         fallback_options = dict(options)
         fallback_options.pop("enable_cookie_persistence", None)
         return cloudscraper.create_scraper(**fallback_options)
+
+
+_NAPIPROJEKT_HASH_READ_SIZE = 10 * 1024 * 1024  # NapiProjekt hashes the first 10 MiB
+
+
+def _existing_video_path(video):
+    """The reachable media file, if any. Present in Bazarr's native library flow;
+    absent in the file-less compat API (where the client supplies a hash instead)."""
+    for key in ("name", "original_path", "original_name"):
+        value = str((video or {}).get(key) or "").strip()
+        if value and os.path.isfile(value):
+            return value
+    return None
+
+
+def _compute_napiprojekt_hash(path):
+    """NapiProjekt's own hash: MD5 of the first 10 MiB of the file. The worker has
+    filesystem access, so when the real file is reachable we compute it here rather
+    than depending on the host to have pre-populated video.hashes['napiprojekt']
+    (mirrors napisy24's self-computed OpenSubtitles hash)."""
+    if not path:
+        return None
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read(_NAPIPROJEKT_HASH_READ_SIZE)
+    except OSError:
+        return None
+    if not data:
+        return None
+    return _hashlib.md5(data).hexdigest()
 
 
 def get_subhash(video_hash):
@@ -244,6 +275,12 @@ class NapiProjektProvider:
 
     def _hash_search(self, video, config):
         video_hash = ((video or {}).get("hashes") or {}).get("napiprojekt")
+        if not video_hash:
+            # Native (library) flow: the host doesn't pre-compute NapiProjekt's
+            # 32-char hash, but the worker can read the media file, so compute it
+            # here from the file itself (like napisy24's self-computed hash). The
+            # compat API flow has no file, so this stays None there.
+            video_hash = _compute_napiprojekt_hash(_existing_video_path(video))
         if not video_hash:
             return None
         body = self._http_get(hash_download_url(video_hash, "pl"), config=config)

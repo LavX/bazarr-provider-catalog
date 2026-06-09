@@ -83,7 +83,7 @@ Every provider here ships independently of Bazarr+ releases. [Contribute](#contr
 
 ## Install a provider into Bazarr+
 
-1. Open **Bazarr+** → Subtitle Hub → Marketplace.
+1. Open **Bazarr+** → **Settings** → **Providers** → Provider Hub → Marketplace.
 2. Point the catalog source at this repo's `catalog.json`:
    ```
    https://raw.githubusercontent.com/LavX/bazarr-provider-catalog/main/catalog.json
