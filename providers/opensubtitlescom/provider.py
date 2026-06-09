@@ -20,6 +20,11 @@ DEFAULT_HOST = "api.opensubtitles.com"
 # proven Bazarr-ecosystem consumer UA (honoring SZ_USER_AGENT like the native
 # subliminal_patch provider) so login is accepted.
 USER_AGENT = os.environ.get("SZ_USER_AGENT", "Sub-Zero/2")
+# Shared Bazarr-ecosystem OpenSubtitles.com API consumer key - the same built-in key
+# the native (shipped) provider uses (bazarr app/get_providers.py). It means users only
+# need a username + password and never have to register their own API consumer. A
+# user-supplied api_key still overrides this default.
+DEFAULT_API_KEY = "s38zmzVlW7IlYruWi7mHwDYl2SfMQoC1"
 HTTP_TIMEOUT_SECONDS = 30
 # Transport-level retry for transient network failures (connection reset, DNS,
 # timeouts, 5xx, 429). Non-transient failures (4xx other than 429, auth, parse)
@@ -543,7 +548,7 @@ class OpenSubtitlesComProvider:
     def _auth_headers(self, config, include_token=False):
         headers = {
             "Accept": "application/json",
-            "Api-Key": str(config.get("api_key") or ""),
+            "Api-Key": str(config.get("api_key") or DEFAULT_API_KEY),
             "Content-Type": "application/json",
             "User-Agent": USER_AGENT,
         }
@@ -552,7 +557,9 @@ class OpenSubtitlesComProvider:
         return headers
 
     def _require_config(self, config):
-        for key in ("username", "password", "api_key"):
+        # api_key is optional: blank falls back to the bundled DEFAULT_API_KEY, matching
+        # the shipped provider, so a username + password alone is enough.
+        for key in ("username", "password"):
             if not str((config or {}).get(key) or "").strip():
                 raise ValueError(f"OpenSubtitles.com {key} is required")
 

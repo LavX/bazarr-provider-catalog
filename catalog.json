@@ -2764,15 +2764,14 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "4c3c3fa412e3b538b5e0cc5c77de9b3844c667496ccea56b440678bb2ef38455",
+        "bundle_sha256": "0cc380fa377fdab008f09eb89c01210274f30a21b1ef1aff9a4aaf69e7ba1c63",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
             "api_key": {
-              "description": "OpenSubtitles.com API key.",
-              "minLength": 1,
+              "description": "Optional. Leave blank to use the built-in Bazarr+ OpenSubtitles.com consumer key (username + password is enough). Only set this to override with your own API consumer key.",
               "secret": true,
-              "title": "API key",
+              "title": "API key (optional)",
               "type": "string"
             },
             "include_ai_translated": {
@@ -2810,19 +2809,18 @@
           },
           "required": [
             "username",
-            "password",
-            "api_key"
+            "password"
           ],
           "type": "object"
         },
         "dependencies": {
           "requirements": []
         },
-        "description": "Uses the official OpenSubtitles.com API for movie and episode subtitles. Requires username, password, and API key.",
+        "description": "Uses the official OpenSubtitles.com API for movie and episode subtitles. Requires a username and password; a built-in API key is used by default (optionally override with your own).",
         "entry_class": "OpenSubtitlesComProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "beb97eb03a4762a2669eb9df36c8f3b5acb3912a558486d50d712d61f3a39ac4"
+          "provider.py": "3804bbc9469cf82919170ef509cfa4808a7e61838e37d5cb0e8d0d372b980d54"
         },
         "languages": [
           "abk",
@@ -2940,7 +2938,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.5"
+        "version": "0.1.6"
       }
     },
     {
