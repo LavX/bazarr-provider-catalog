@@ -1848,6 +1848,7 @@
         "files": {
           "provider.py": "eb7edddedff776c92098cbd89c562864e754f921cc3e31c8834f01301e125bd3"
         },
+        "flaresolverr": true,
         "languages": [
           "pol"
         ],
@@ -2318,6 +2319,7 @@
         "files": {
           "provider.py": "ef41e2f6caf036b421410d6e5ee0c9829b1f67f76029cbfd9d45c73bc6bc05b1"
         },
+        "flaresolverr": true,
         "languages": [
           "aar",
           "abk",
@@ -3509,6 +3511,7 @@
         "files": {
           "provider.py": "9f6c9352c93cf5e986d571fcbf6e4eaf114260daf631821a3ceb08774c62ba20"
         },
+        "flaresolverr": true,
         "languages": [
           "ara",
           "ben",
@@ -4000,6 +4003,7 @@
     },
     {
       "manifest": {
+        "anti_captcha": true,
         "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "0d67ada10fdf553269d15539246c039cf51f0a33b0f73abf24b262d78779f5a5",
         "config_schema": {
@@ -4336,6 +4340,7 @@
         "files": {
           "provider.py": "a29f744b266646a305223215d4af1b28676985784a401633b9224afee0e74aab"
         },
+        "flaresolverr": true,
         "languages": [
           "ell",
           "eng"
@@ -5910,6 +5915,7 @@
         "files": {
           "provider.py": "22fb337ae921fbe4e048f5cfe84ae425f97f3a49151d8250472a2910141812e1"
         },
+        "flaresolverr": true,
         "languages": [
           "tur",
           "eng"
@@ -6485,6 +6491,7 @@
         "files": {
           "provider.py": "b6ab96bba7349145fe92c54f52384c17777e322bb76919797445ebcd1f103907"
         },
+        "flaresolverr": true,
         "languages": [
           "heb"
         ],
@@ -6818,6 +6825,7 @@
         "files": {
           "provider.py": "a5d003fa58cea5dc4b5794802324739096fa9eda6d10373b491a89461acbc035"
         },
+        "flaresolverr": true,
         "languages": [
           "bul",
           "eng",
@@ -6932,6 +6940,7 @@
     },
     {
       "manifest": {
+        "anti_captcha": true,
         "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "23603c96ac81325d8da5628ec570be6ac17138036bf1e20c3fe7ccdf288a773a",
         "config_schema": {

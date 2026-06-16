@@ -1,4 +1,5 @@
 {
+  "anti_captcha": true,
   "api_version": "bazarr.provider-hub.v1",
   "bundle_sha256": "0d67ada10fdf553269d15539246c039cf51f0a33b0f73abf24b262d78779f5a5",
   "config_schema": {
@@ -335,6 +336,7 @@
   "files": {
     "provider.py": "a29f744b266646a305223215d4af1b28676985784a401633b9224afee0e74aab"
   },
+  "flaresolverr": true,
   "languages": [
     "ell",
     "eng"
