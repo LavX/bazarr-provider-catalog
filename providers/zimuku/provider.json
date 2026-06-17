@@ -1,4 +1,5 @@
 {
+  "anti_captcha": true,
   "api_version": "bazarr.provider-hub.v1",
   "bundle_sha256": "23603c96ac81325d8da5628ec570be6ac17138036bf1e20c3fe7ccdf288a773a",
   "config_schema": {
