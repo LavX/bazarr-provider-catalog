@@ -415,14 +415,14 @@ class GestdownProviderDownloadTests(unittest.TestCase):
             provider.download({"subtitle_id": "missing-url"}, {"alpha3": "eng"}, {})
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class GestdownReleaseFormattingTests(unittest.TestCase):
     """The API returns bare Addic7ed version tags with no series or episode
     marker, which starves guessit and costs score accuracy: the Provider Hub
-    host re-parses release_info when computing matches for hub candidates."""
+    host re-parses release_info when computing matches for hub candidates.
+
+    `releases` deliberately keeps the RAW tags. Provider-side release-group
+    matching searches that list, and injecting the series name into it would let
+    a group name that occurs in the show's title score a false match."""
 
     def setUp(self):
         self.mod = _load_provider_module()
@@ -448,57 +448,107 @@ class GestdownReleaseFormattingTests(unittest.TestCase):
         )
         return entries[0]
 
+    def _info(self, version, **kwargs):
+        return self._parse(version, **kwargs)["release_info"]
+
     def test_bare_tag_gains_series_and_episode(self):
-        entry = self._parse("LOL", series="Breaking Bad", season=1, episode=4)
-        self.assertEqual(entry["releases"], ["Breaking.Bad.S01E04.LOL"])
-        self.assertEqual(entry["release_info"], "Breaking.Bad.S01E04.LOL")
+        self.assertEqual(
+            self._info("LOL", series="Breaking Bad", season=1, episode=4),
+            "Breaking.Bad.S01E04.LOL",
+        )
 
     def test_each_comma_separated_tag_formatted_independently(self):
-        entry = self._parse(
-            "LOL, DVDRip ORPHEUS", series="Breaking Bad", season=1, episode=4
-        )
         self.assertEqual(
-            entry["releases"],
-            ["Breaking.Bad.S01E04.LOL", "Breaking.Bad.S01E04.DVDRip.ORPHEUS"],
+            self._info("LOL, DVDRip ORPHEUS", series="Breaking Bad", season=1, episode=4),
+            "Breaking.Bad.S01E04.LOL" + chr(10) + "Breaking.Bad.S01E04.DVDRip.ORPHEUS",
         )
+
+    def test_raw_tags_are_preserved_for_release_group_matching(self):
+        entry = self._parse("NTb", series="LOL: Last One Laughing", season=1, episode=4)
+        self.assertEqual(entry["releases"], ["NTb"])
+        self.assertEqual(entry["release_info"], "LOL:.Last.One.Laughing.S01E04.NTb")
+
+    def test_series_title_does_not_leak_into_release_group_matching(self):
+        """A group name occurring in the show's title must not score a match."""
+        entry = self._parse("NTb", series="LOL: Last One Laughing", season=1, episode=4)
+        video = {"kind": "episode", "release_group": "LOL"}
+        self.assertNotIn("release_group", self.mod.derive_matches(video, entry))
 
     def test_version_already_carrying_episode_marker_is_untouched(self):
-        entry = self._parse(
-            "Breaking.Bad.S01E04.WEB", series="Breaking Bad", season=1, episode=4
+        self.assertEqual(
+            self._info("Breaking.Bad.S01E04.WEB", series="Breaking Bad", season=1, episode=4),
+            "Breaking.Bad.S01E04.WEB",
         )
-        self.assertEqual(entry["releases"], ["Breaking.Bad.S01E04.WEB"])
 
     def test_version_in_nxm_notation_is_untouched(self):
-        entry = self._parse("1x04 HDTV", series="Breaking Bad", season=1, episode=4)
-        self.assertEqual(entry["releases"], ["1x04 HDTV"])
+        self.assertEqual(
+            self._info("1x04 HDTV", series="Breaking Bad", season=1, episode=4),
+            "1x04 HDTV",
+        )
+
+    def test_resolution_is_not_mistaken_for_an_episode_marker(self):
+        """A resolution like 1280x720 contains 0x and must not read as season 0."""
+        self.assertEqual(
+            self._info("1280x720 WEB", series="Specials", season=0, episode=5),
+            "Specials.S00E05.1280x720.WEB",
+        )
+
+    def test_codec_string_is_not_mistaken_for_an_episode_marker(self):
+        """A codec string like MAX1x264 contains 1x and must not read as season 1."""
+        self.assertEqual(
+            self._info("MAX1x264", series="Breaking Bad", season=1, episode=4),
+            "Breaking.Bad.S01E04.MAX1x264",
+        )
+
+    def test_group_name_is_not_mistaken_for_a_season_marker(self):
+        """A group name like 2HDS014U contains s01 and must not read as season 1."""
+        self.assertEqual(
+            self._info("HDTV.x264-2HDS014U", series="Breaking Bad", season=1, episode=4),
+            "Breaking.Bad.S01E04.HDTV.x264-2HDS014U",
+        )
 
     def test_version_already_carrying_series_name_is_untouched(self):
-        entry = self._parse(
-            "Breaking Bad WEB", series="Breaking Bad", season=1, episode=4
+        self.assertEqual(
+            self._info("Breaking Bad WEB", series="Breaking Bad", season=1, episode=4),
+            "Breaking Bad WEB",
         )
-        self.assertEqual(entry["releases"], ["Breaking Bad WEB"])
+
+    def test_single_letter_series_is_not_matched_inside_a_word(self):
+        """A show named V must not consider DVDRip to carry its title."""
+        self.assertEqual(
+            self._info("DVDRip ORPHEUS", series="V", season=1, episode=4),
+            "V.S01E04.DVDRip.ORPHEUS",
+        )
 
     def test_falls_back_to_episode_marker_without_series_name(self):
-        entry = self._parse("LOL", series=None, season=1, episode=4)
-        self.assertEqual(entry["releases"], ["S01E04.LOL"])
+        self.assertEqual(self._info("LOL", series=None, season=1, episode=4), "S01E04.LOL")
 
     def test_api_episode_object_wins_over_passed_values(self):
-        entry = self._parse(
-            "LOL",
-            series="Wrong Show",
-            season=9,
-            episode=9,
-            payload_extra={
-                "episode": {"show": "Breaking Bad", "season": 1, "number": 4}
-            },
+        self.assertEqual(
+            self._info(
+                "LOL",
+                series="Wrong Show",
+                season=9,
+                episode=9,
+                payload_extra={"episode": {"show": "Breaking Bad", "season": 1, "number": 4}},
+            ),
+            "Breaking.Bad.S01E04.LOL",
         )
-        self.assertEqual(entry["releases"], ["Breaking.Bad.S01E04.LOL"])
 
     def test_unformatted_when_no_episode_context_available(self):
-        entry = self._parse("LOL")
-        self.assertEqual(entry["releases"], ["LOL"])
+        self.assertEqual(self._info("LOL"), "LOL")
 
-    def test_string_season_and_episode_do_not_abort_the_listing(self):
-        """A malformed API response must not kill the whole language's results."""
-        entry = self._parse("LOL", series="Breaking Bad", season="1", episode="4")
-        self.assertEqual(entry["releases"], ["Breaking.Bad.S01E04.LOL"])
+    def test_string_season_and_episode_are_coerced(self):
+        self.assertEqual(
+            self._info("LOL", series="Breaking Bad", season="1", episode="4"),
+            "Breaking.Bad.S01E04.LOL",
+        )
+
+    def test_non_numeric_season_leaves_the_tag_unformatted(self):
+        """A malformed value must degrade one entry, not abort the listing."""
+        self.assertEqual(
+            self._info("LOL", series="Breaking Bad", season="TBA", episode=4), "LOL"
+        )
+
+if __name__ == "__main__":
+    unittest.main()
