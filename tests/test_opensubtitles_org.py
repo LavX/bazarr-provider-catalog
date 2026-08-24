@@ -1273,3 +1273,57 @@ class PowDeadlineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SerbianLanguageTests(unittest.TestCase):
+    """OpenSubtitles.org identifies Serbian by a legacy code that differs from
+    the standard one, and the site has historically emitted more than one
+    spelling. Getting either direction wrong makes Serbian silently unavailable:
+    the search asks for a language id the site does not use, and rows that do
+    come back are dropped by the language filter."""
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_request_uses_the_legacy_serbian_id(self):
+        language = self.mod.LanguageInfo(alpha3="srp", alpha2="sr")
+        self.assertEqual(self.mod._opensubtitles_code(language), "scc")
+
+    def test_legacy_serbian_codes_all_resolve_to_serbian(self):
+        for code in ("scc", "ser", "srp"):
+            with self.subTest(code=code):
+                language = self.mod._language_from_opensubtitles_code(code)
+                self.assertIsNotNone(language, f"{code} was dropped entirely")
+                self.assertEqual(language.alpha3, "srp")
+
+    def test_two_letter_serbian_resolves(self):
+        language = self.mod._language_from_opensubtitles_code("sr")
+        self.assertIsNotNone(language)
+        self.assertEqual(language.alpha3, "srp")
+
+    def test_serbian_rows_satisfy_a_serbian_request(self):
+        requested = [{"alpha3": "srp", "alpha2": "sr"}]
+        for code in ("scc", "ser", "sr"):
+            with self.subTest(code=code):
+                language = self.mod._language_from_opensubtitles_code(code)
+                self.assertTrue(
+                    self.mod._language_requested(language, requested),
+                    f"a row tagged {code} was filtered out of a Serbian search",
+                )
+
+    def test_unresolvable_row_is_skipped_not_labelled_english(self):
+        """Mislabelling is strictly worse than skipping: it silently pollutes
+        English results with subtitles in some other language."""
+        language = self.mod._language_from_subtitle_url(
+            "https://www.opensubtitles.org/en/subtitles/123/some-title",
+            fallback_url="https://www.opensubtitles.org/en/search/sublanguageid-all",
+        )
+        self.assertIsNone(language)
+
+    def test_resolvable_slug_still_wins(self):
+        language = self.mod._language_from_subtitle_url(
+            "https://www.opensubtitles.org/en/subtitles/123/some-title-scc",
+            fallback_url="https://www.opensubtitles.org/en/search/sublanguageid-all",
+        )
+        self.assertIsNotNone(language)
+        self.assertEqual(language.alpha3, "srp")

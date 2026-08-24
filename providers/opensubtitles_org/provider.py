@@ -130,6 +130,11 @@ _ALPHA2_TO_ALPHA3 = {value: key for key, value in _ALPHA3_TO_ALPHA2.items()}
 
 _ALPHA3_TO_OPENSUBTITLES = {
     "ces": "cze",
+    # OpenSubtitles.org identifies Serbian as "scc", not the standard "srp".
+    # Asking for "srp" returns nothing, which is why Serbian appeared to be
+    # missing from the site entirely. The legacy built-in provider maps this
+    # too; the mapping was lost when this plugin was written.
+    "srp": "scc",
     "deu": "ger",
     "ell": "gre",
     "eus": "baq",
@@ -170,6 +175,10 @@ _OPENSUBTITLES_TO_ALPHA3.update(
         "pob": "por",
         "rum": "ron",
         "scc": "srp",
+        # Second legacy spelling seen in the wild for the same language. Mapping
+        # it costs nothing if it never appears, whereas leaving it out drops the
+        # row silently.
+        "ser": "srp",
         "slo": "slk",
         "spl": "spa",
         "zht": "zho",
@@ -853,7 +862,13 @@ def _language_from_subtitle_url(url, fallback_url=None, forced=False, hi=False):
     language = _language_from_page_url(fallback_url, forced=forced, hi=hi)
     if language:
         return language
-    return _language_from_alpha2("en", forced=forced, hi=hi)
+    # Do not guess. This used to default to English, which meant every row whose
+    # language could not be determined was served to English searches as an
+    # English subtitle. On a "sublanguageid-all" listing the page URL yields no
+    # language either, so unparseable rows accumulated under English while the
+    # language they were actually in went missing. The caller skips a row with no
+    # language, which is the correct outcome: absent beats wrong.
+    return None
 
 
 def _parse_search_results(html_text, fallback_url, fallback_kind):
