@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "4f249ad323e27d2dd9ce3eba9176642cba92e053fe7dfbe428b88744c7bca111",
+  "bundle_sha256": "880ce8ffa6a6aade2e71a7c92f8275b6e0c4cdb0f0fbe47438bd312e94f555d1",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -329,7 +329,7 @@
   "entry_class": "OpenSubtitlesOrgProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "dedfc5dc34d4893052f2f356dfbd471a2ce4450355a1f13d1e5ace2be03d414b"
+    "provider.py": "a670c3f489433c59235095e5b38844ad88dbcd37e8e4d32cba468db860cebff6"
   },
   "flaresolverr": true,
   "languages": [

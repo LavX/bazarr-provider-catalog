@@ -1290,7 +1290,7 @@ class SerbianLanguageTests(unittest.TestCase):
         self.assertEqual(self.mod._opensubtitles_code(language), "scc")
 
     def test_legacy_serbian_codes_all_resolve_to_serbian(self):
-        for code in ("scc", "ser", "srp"):
+        for code in ("scc", "srp"):
             with self.subTest(code=code):
                 language = self.mod._language_from_opensubtitles_code(code)
                 self.assertIsNotNone(language, f"{code} was dropped entirely")
@@ -1303,7 +1303,7 @@ class SerbianLanguageTests(unittest.TestCase):
 
     def test_serbian_rows_satisfy_a_serbian_request(self):
         requested = [{"alpha3": "srp", "alpha2": "sr"}]
-        for code in ("scc", "ser", "sr"):
+        for code in ("scc", "sr"):
             with self.subTest(code=code):
                 language = self.mod._language_from_opensubtitles_code(code)
                 self.assertTrue(
@@ -1327,3 +1327,80 @@ class SerbianLanguageTests(unittest.TestCase):
         )
         self.assertIsNotNone(language)
         self.assertEqual(language.alpha3, "srp")
+
+
+class DirectListingDetectionTests(unittest.TestCase):
+    """Row parsing must keep detecting a direct subtitle listing even when a
+    row's language cannot be resolved from its link.
+
+    `_regular_candidates` branches on whether `_parse_subtitle_rows` returned
+    anything. If unresolvable rows are dropped there, an unfiltered listing whose
+    rows carry no language suffix looks empty, the page is misparsed as a movie
+    results page, and the search returns nothing. That would regress working
+    searches, which is worse than the mislabelling this change set out to fix.
+    """
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_rows_without_a_resolvable_language_are_still_detected(self):
+        rows = self.mod._parse_subtitle_rows(
+            HINDI_SUBTITLES_HTML,
+            "https://www.opensubtitles.org/en/search/sublanguageid-all/imdbid-tt1480055",
+        )
+        self.assertTrue(
+            rows, "an unfiltered listing must still register as a direct listing"
+        )
+
+    def test_such_rows_carry_no_language_rather_than_a_guess(self):
+        rows = self.mod._parse_subtitle_rows(
+            HINDI_SUBTITLES_HTML,
+            "https://www.opensubtitles.org/en/search/sublanguageid-all/imdbid-tt1480055",
+        )
+        self.assertIsNone(rows[0]["language"])
+
+
+class MontenegrinTests(unittest.TestCase):
+    """The manifest declares srp-ME, and the site has a distinct id for it."""
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_montenegrin_uses_its_own_site_id(self):
+        language = self.mod.LanguageInfo(
+            alpha3="srp", alpha2="sr", country_alpha2="ME"
+        )
+        self.assertEqual(self.mod._opensubtitles_code(language), "mne")
+
+    def test_plain_serbian_still_uses_the_legacy_serbian_id(self):
+        language = self.mod.LanguageInfo(alpha3="srp", alpha2="sr")
+        self.assertEqual(self.mod._opensubtitles_code(language), "scc")
+
+    def test_montenegrin_rows_resolve_back_to_montenegrin(self):
+        language = self.mod._language_from_opensubtitles_code("mne")
+        self.assertIsNotNone(language)
+        self.assertEqual(language.alpha3, "srp")
+        self.assertEqual(language.country_alpha2, "ME")
+
+
+class SlugFalsePositiveTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_a_spanish_title_ending_in_ser_does_not_satisfy_a_serbian_request(self):
+        """The slug resolver takes the last dash-separated token, so mapping a
+        plausible-looking three letter code the site does not actually emit
+        would turn ordinary titles into false Serbian rows. "ser" is a common
+        Spanish and Portuguese infinitive.
+
+        An unknown token still passes through as an unrecognised code, which is
+        pre-existing behaviour and cannot be tightened without a real language
+        database this plugin deliberately does not carry. What matters is that
+        it is never served to a Serbian search."""
+        language = self.mod._language_from_subtitle_url(
+            "https://www.opensubtitles.org/en/subtitles/123/llegar-a-ser",
+            fallback_url="https://www.opensubtitles.org/en/search/sublanguageid-all",
+        )
+        self.assertFalse(
+            self.mod._language_requested(language, [{"alpha3": "srp", "alpha2": "sr"}])
+        )

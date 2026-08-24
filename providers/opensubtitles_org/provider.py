@@ -175,10 +175,8 @@ _OPENSUBTITLES_TO_ALPHA3.update(
         "pob": "por",
         "rum": "ron",
         "scc": "srp",
-        # Second legacy spelling seen in the wild for the same language. Mapping
-        # it costs nothing if it never appears, whereas leaving it out drops the
-        # row silently.
-        "ser": "srp",
+        # Montenegrin has its own site id, and the manifest declares srp-ME.
+        "mne": "srp",
         "slo": "slk",
         "spl": "spa",
         "zht": "zho",
@@ -370,6 +368,8 @@ def _language_from_opensubtitles_code(code, forced=False, hi=False):
         return LanguageInfo(alpha3="por", alpha2="pt", country_alpha2="BR", forced=forced, hi=hi)
     if code == "spl":
         return LanguageInfo(alpha3="spa", alpha2="es", country_alpha2="MX", forced=forced, hi=hi)
+    if code == "mne":
+        return LanguageInfo(alpha3="srp", alpha2="sr", country_alpha2="ME", forced=forced, hi=hi)
     if len(code) == 2:
         return _language_from_alpha2(code, forced=forced, hi=hi)
     alpha3 = _OPENSUBTITLES_TO_ALPHA3.get(code, code if len(code) == 3 else "")
@@ -385,6 +385,10 @@ def _language_from_opensubtitles_code(code, forced=False, hi=False):
 
 def _opensubtitles_code(language):
     alpha3 = language.alpha3
+    if alpha3 == "srp" and language.country_alpha2 == "ME":
+        # The site distinguishes Montenegrin, and the manifest declares srp-ME.
+        # Without this it would be asked for as plain Serbian.
+        return "mne"
     if alpha3 == "por" and language.country_alpha2 == "BR":
         return "pob"
     if alpha3 == "spa" and language.country_alpha2 == "MX":
@@ -959,13 +963,17 @@ def _parse_subtitle_rows(html_text, movie_url):
         uploader_match = re.search(r"/en/profile/[^\"']+[\"'][^>]*>(?P<name>.*?)</a>", row, re.I | re.S)
         forced, hi = _row_language_flags(row)
         language = _language_from_subtitle_url(page_link, movie_url, forced=forced, hi=hi)
-        if not language:
-            continue
+        # A row whose language cannot be resolved is KEPT, carrying None. The
+        # caller decides whether a page is a direct subtitle listing by whether
+        # this returns anything, so dropping such rows makes an unfiltered
+        # listing look like a movie results page and the search returns nothing.
+        # Candidates are filtered on language later instead.
+        suffix = (language.alpha2 or language.alpha3) if language else "und"
         subtitles.append(
             {
                 "subtitle_id": subtitle_id,
                 "language": language,
-                "filename": f"{release_name.replace(' ', '.')}.{language.alpha2 or language.alpha3}.srt",
+                "filename": f"{release_name.replace(' ', '.')}.{suffix}.srt",
                 "release_name": release_name,
                 "uploader": _strip_tags(uploader_match.group("name")) if uploader_match else "anonymous",
                 "download_count": int(download_match.group("count")) if download_match else 0,
@@ -1257,6 +1265,9 @@ class OpenSubtitlesOrgProvider:
                 continue
             seen.add(item["subtitle_id"])
             language = item["language"]
+            # Rows kept purely so the page registers as a direct listing.
+            if language is None:
+                continue
             if not _language_requested(language, languages, config):
                 continue
             if _episode_mismatch(item, context):
