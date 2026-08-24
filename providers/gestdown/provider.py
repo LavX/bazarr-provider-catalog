@@ -194,6 +194,36 @@ def _clean_releases(version):
     return [item.strip() for item in str(version or "").split(",") if item.strip()]
 
 
+def _format_release(version_item, series, season, episode):
+    """Give a bare Addic7ed version tag a scene-style name.
+
+    The API returns tags like "LOL" or "DVDRip ORPHEUS" with no series title and
+    no season/episode marker. guessit extracts nothing from those, so the host
+    cannot derive source, resolution or release group when it re-parses
+    release_info, and every candidate scores on identifiers alone.
+
+    A tag that already identifies the episode, in either common notation, or
+    already carries the series name, is left exactly as it is.
+    """
+    season_num = _int_or_none(season)
+    episode_num = _int_or_none(episode)
+    if season_num is None or episode_num is None:
+        return version_item
+
+    lowered = version_item.lower()
+    if (
+        f"s{season_num:02d}" in lowered
+        or f"{season_num}x" in lowered
+        or (series and str(series).strip().lower() in lowered)
+    ):
+        return version_item
+
+    marker = f"S{season_num:02d}E{episode_num:02d}"
+    tag = version_item.replace(" ", ".")
+    show = str(series).strip().replace(" ", ".") if series else ""
+    return f"{show}.{marker}.{tag}" if show else f"{marker}.{tag}"
+
+
 def _absolute_url(uri):
     return urllib.parse.urljoin(BASE_URL, str(uri or ""))
 
@@ -244,8 +274,14 @@ def parse_show_lookup(body):
     return shows
 
 
-def parse_subtitle_results(body):
+def parse_subtitle_results(body, series=None, season=None, episode=None):
     payload = _json_loads(body)
+    # The response carries its own episode object; prefer it over whatever the
+    # search was issued with, since it describes the episode actually returned.
+    episode_info = payload.get("episode") or {}
+    series = episode_info.get("show") or series
+    season = episode_info.get("season") if episode_info.get("season") is not None else season
+    episode = episode_info.get("number") if episode_info.get("number") is not None else episode
     entries = []
     for item in payload.get("matchingSubtitles") or []:
         if not item.get("completed"):
@@ -254,7 +290,10 @@ def parse_subtitle_results(body):
         download_uri = item.get("downloadUri")
         if not subtitle_id or not download_uri:
             continue
-        releases = _clean_releases(item.get("version"))
+        releases = [
+            _format_release(item, series, season, episode)
+            for item in _clean_releases(item.get("version"))
+        ]
         release_info = "\n".join(releases) if releases else str(subtitle_id)
         entries.append(
             {
@@ -388,7 +427,12 @@ class GestdownProvider:
                     if exc.code == 404:
                         continue
                     raise
-                for entry in parse_subtitle_results(body):
+                for entry in parse_subtitle_results(
+                    body,
+                    series=show.get("name") or video.get("series"),
+                    season=season,
+                    episode=episode,
+                ):
                     key = (entry["subtitle_id"],) + _language_key(language_payload)
                     if key in seen:
                         continue

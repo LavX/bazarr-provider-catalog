@@ -66,8 +66,12 @@ class GestdownParserTests(unittest.TestCase):
         self.assertIn("69cf7d79-052c-4f12-a57d-995d77de43ad", ids)
         self.assertNotIn("draft-id", ids)
         first = entries[0]
+        # `version` keeps the raw API value; `release_info` is the scene-style
+        # name built from it plus the response's own episode object, which this
+        # fixture carries as Breaking Bad S01E01. Before that formatting the bare
+        # tag "0tv" gave guessit nothing to work with.
         self.assertEqual(first["version"], "0tv")
-        self.assertEqual(first["release_info"], "0tv")
+        self.assertEqual(first["release_info"], "Breaking.Bad.S01E01.0tv")
         self.assertEqual(first["download_count"], 418)
         self.assertFalse(first["hearing_impaired"])
         self.assertEqual(
@@ -413,3 +417,88 @@ class GestdownProviderDownloadTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GestdownReleaseFormattingTests(unittest.TestCase):
+    """The API returns bare Addic7ed version tags with no series or episode
+    marker, which starves guessit and costs score accuracy: the Provider Hub
+    host re-parses release_info when computing matches for hub candidates."""
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def _parse(self, version, payload_extra=None, **kwargs):
+        payload = {
+            "matchingSubtitles": [
+                {
+                    "subtitleId": "s1",
+                    "version": version,
+                    "completed": True,
+                    "hearingImpaired": False,
+                    "downloadUri": "/subtitles/download/s1",
+                    "qualities": [],
+                    "downloadCount": 0,
+                    "source": "Gestdown",
+                }
+            ]
+        }
+        payload.update(payload_extra or {})
+        entries = self.mod.parse_subtitle_results(
+            json.dumps(payload).encode(), **kwargs
+        )
+        return entries[0]
+
+    def test_bare_tag_gains_series_and_episode(self):
+        entry = self._parse("LOL", series="Breaking Bad", season=1, episode=4)
+        self.assertEqual(entry["releases"], ["Breaking.Bad.S01E04.LOL"])
+        self.assertEqual(entry["release_info"], "Breaking.Bad.S01E04.LOL")
+
+    def test_each_comma_separated_tag_formatted_independently(self):
+        entry = self._parse(
+            "LOL, DVDRip ORPHEUS", series="Breaking Bad", season=1, episode=4
+        )
+        self.assertEqual(
+            entry["releases"],
+            ["Breaking.Bad.S01E04.LOL", "Breaking.Bad.S01E04.DVDRip.ORPHEUS"],
+        )
+
+    def test_version_already_carrying_episode_marker_is_untouched(self):
+        entry = self._parse(
+            "Breaking.Bad.S01E04.WEB", series="Breaking Bad", season=1, episode=4
+        )
+        self.assertEqual(entry["releases"], ["Breaking.Bad.S01E04.WEB"])
+
+    def test_version_in_nxm_notation_is_untouched(self):
+        entry = self._parse("1x04 HDTV", series="Breaking Bad", season=1, episode=4)
+        self.assertEqual(entry["releases"], ["1x04 HDTV"])
+
+    def test_version_already_carrying_series_name_is_untouched(self):
+        entry = self._parse(
+            "Breaking Bad WEB", series="Breaking Bad", season=1, episode=4
+        )
+        self.assertEqual(entry["releases"], ["Breaking Bad WEB"])
+
+    def test_falls_back_to_episode_marker_without_series_name(self):
+        entry = self._parse("LOL", series=None, season=1, episode=4)
+        self.assertEqual(entry["releases"], ["S01E04.LOL"])
+
+    def test_api_episode_object_wins_over_passed_values(self):
+        entry = self._parse(
+            "LOL",
+            series="Wrong Show",
+            season=9,
+            episode=9,
+            payload_extra={
+                "episode": {"show": "Breaking Bad", "season": 1, "number": 4}
+            },
+        )
+        self.assertEqual(entry["releases"], ["Breaking.Bad.S01E04.LOL"])
+
+    def test_unformatted_when_no_episode_context_available(self):
+        entry = self._parse("LOL")
+        self.assertEqual(entry["releases"], ["LOL"])
+
+    def test_string_season_and_episode_do_not_abort_the_listing(self):
+        """A malformed API response must not kill the whole language's results."""
+        entry = self._parse("LOL", series="Breaking Bad", season="1", episode="4")
+        self.assertEqual(entry["releases"], ["Breaking.Bad.S01E04.LOL"])
