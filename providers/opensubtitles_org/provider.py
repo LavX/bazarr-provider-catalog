@@ -975,8 +975,9 @@ def _language_from_subtitle_url(url, fallback_url=None, forced=False, hi=False):
     # language could not be determined was served to English searches as an
     # English subtitle. On a "sublanguageid-all" listing the page URL yields no
     # language either, so unparseable rows accumulated under English while the
-    # language they were actually in went missing. The caller skips a row with no
-    # language, which is the correct outcome: absent beats wrong.
+    # language they were actually in went missing. The caller keeps such a row,
+    # so the page still registers as a direct subtitle listing, and drops it when
+    # candidates are built: absent beats wrong.
     return None
 
 
@@ -1245,9 +1246,9 @@ class OpenSubtitlesOrgProvider:
         search_url = self._build_search_url(query, context)
         search_response = self._http_get(search_url, config)
         search_html = _response_text(search_response)
-        # Follow the URL we landed on rather than the one we asked for: a title
-        # lookup can be redirected onto the real listing, whose path is what
-        # carries the language filter.
+        # Prefer the URL we landed on over the one we asked for: a title lookup
+        # can be redirected onto the real listing, whose path segment is the only
+        # place that listing states its language filter.
         listing_url = _landed_url(search_response, search_url)
         direct_items = _parse_subtitle_rows(
             search_html, listing_url, _language_source_url(listing_url, search_url)

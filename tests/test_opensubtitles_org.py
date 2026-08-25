@@ -1307,9 +1307,11 @@ class SerbianLanguageTests(unittest.TestCase):
                     f"a row tagged {code} was filtered out of a Serbian search",
                 )
 
-    def test_unresolvable_row_is_skipped_not_labelled_english(self):
-        """Mislabelling is strictly worse than skipping: it silently pollutes
-        English results with subtitles in some other language."""
+    def test_unresolvable_row_carries_no_language_rather_than_english(self):
+        """Mislabelling is strictly worse than carrying no language: it silently
+        pollutes English results with subtitles in some other language. The row
+        itself is kept, so the page still registers as a direct listing, and it
+        is dropped when candidates are built."""
         language = self.mod._language_from_subtitle_url(
             "https://www.opensubtitles.org/en/subtitles/123/some-title",
             fallback_url="https://www.opensubtitles.org/en/search/sublanguageid-all",
