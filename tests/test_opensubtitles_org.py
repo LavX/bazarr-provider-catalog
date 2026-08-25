@@ -1767,5 +1767,74 @@ class RefetchContainmentTests(unittest.TestCase):
         self.assertEqual(calls, [result["url"]])
 
 
+SERBIAN_SLUG_SUBTITLES_HTML = """
+<table>
+  <tr>
+    <td id="main1952619109">
+      <strong><a href="/en/subtitles/1952619109/game-of-thrones-winter-is-coming-scc">"Game of Thrones" Winter Is Coming (2011)</a></strong><br />
+      Game.of.Thrones.S01E01.1080p.WEB-DL<br />
+      <a href="/en/profile/uploader">syncmaster</a>
+      <a href="/en/subtitleserve/sub/1952619109">4312x</a>
+      <span class="p">23.976</span>
+    </td>
+  </tr>
+</table>
+"""
+
+
+class MontenegrinListingTests(unittest.TestCase):
+    """Montenegrin has its own site id, so a Montenegrin request no longer maps
+    onto the plain Serbian one. A row on a Montenegrin listing whose slug still
+    carries the Serbian code then reads as country-less Serbian, which the
+    country match rejects, and the search returns nothing."""
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_a_serbian_slug_on_a_montenegrin_listing_stays_montenegrin(self):
+        language = self.mod._language_from_subtitle_url(
+            "https://www.opensubtitles.org/en/subtitles/123/some-title-scc",
+            fallback_url="https://www.opensubtitles.org/en/search/sublanguageid-mne/imdbid-1480055",
+        )
+        self.assertEqual(language.alpha3, "srp")
+        self.assertEqual(language.country_alpha2, "ME")
+
+    def test_a_serbian_listing_does_not_gain_a_country(self):
+        language = self.mod._language_from_subtitle_url(
+            "https://www.opensubtitles.org/en/subtitles/123/some-title-scc",
+            fallback_url="https://www.opensubtitles.org/en/search/sublanguageid-scc/imdbid-1480055",
+        )
+        self.assertEqual(language.alpha3, "srp")
+        self.assertIsNone(language.country_alpha2)
+
+    def test_a_different_language_never_takes_the_listing_country(self):
+        language = self.mod._language_from_subtitle_url(
+            "https://www.opensubtitles.org/en/subtitles/123/some-title-ger",
+            fallback_url="https://www.opensubtitles.org/en/search/sublanguageid-mne/imdbid-1480055",
+        )
+        self.assertEqual(language.alpha3, "deu")
+        self.assertIsNone(language.country_alpha2)
+
+    def test_a_montenegrin_search_returns_the_rows_of_its_own_listing(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        calls = []
+
+        def fake_get(url, config):
+            calls.append(url)
+            return FakeResponse(url, text=SERBIAN_SLUG_SUBTITLES_HTML)
+
+        provider._http_get = fake_get
+
+        results = provider.search(
+            EPISODE_VIDEO,
+            [{"alpha3": "srp", "alpha2": "sr", "country_alpha2": "ME"}],
+            {"skip_wrong_fps": True},
+        )
+
+        self.assertTrue(any("sublanguageid-mne" in url for url in calls), calls)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["language"]["alpha3"], "srp")
+
+
 if __name__ == "__main__":
     unittest.main()

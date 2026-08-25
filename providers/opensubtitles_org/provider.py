@@ -13,7 +13,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as _dataclass_replace
 
 try:
     import cloudscraper
@@ -178,8 +178,8 @@ _OPENSUBTITLES_TO_ALPHA3.update(
         "pob": "por",
         "rum": "ron",
         "scc": "srp",
-        # Montenegrin has its own site id, and the manifest declares srp-ME.
-        "mne": "srp",
+        # No "mne" entry: _language_from_opensubtitles_code answers Montenegrin
+        # above, with the country this table cannot carry.
         "slo": "slk",
         "spl": "spa",
         "zht": "zho",
@@ -943,16 +943,34 @@ def _release_name_from_row(row, title_text):
     return re.sub(r"\s*\(\d{4}\).*$", "", title_text).strip()
 
 
+def _with_listing_country(language, listing_language):
+    """Let the listing supply a country the row slug leaves out.
+
+    The site has one id for Serbian and another for Montenegrin, but a row on a
+    Montenegrin listing can still be slugged with the plain Serbian code. Read
+    literally that row is country-less Serbian, which no longer satisfies a
+    Montenegrin request, so a Montenegrin search comes back empty. The listing
+    the site answered is the more specific statement of the two, so it supplies
+    the country whenever the language itself agrees. A slug naming a different
+    language, or one that already carries its own country, is left alone.
+    """
+    if not listing_language or not listing_language.country_alpha2:
+        return language
+    if language.country_alpha2 or language.alpha3 != listing_language.alpha3:
+        return language
+    return _dataclass_replace(language, country_alpha2=listing_language.country_alpha2)
+
+
 def _language_from_subtitle_url(url, fallback_url=None, forced=False, hi=False):
     slug = urllib.parse.urlparse(url).path.rstrip("/").split("/")[-1]
+    listing_language = _language_from_page_url(fallback_url, forced=forced, hi=hi)
     if "-" in slug:
         code = slug.rsplit("-", 1)[-1].lower()
         language = _language_from_opensubtitles_code(code, forced=forced, hi=hi)
         if language:
-            return language
-    language = _language_from_page_url(fallback_url, forced=forced, hi=hi)
-    if language:
-        return language
+            return _with_listing_country(language, listing_language)
+    if listing_language:
+        return listing_language
     # Do not guess. This used to default to English, which meant every row whose
     # language could not be determined was served to English searches as an
     # English subtitle. On a "sublanguageid-all" listing the page URL yields no
