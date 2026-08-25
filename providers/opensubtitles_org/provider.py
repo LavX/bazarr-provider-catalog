@@ -829,6 +829,28 @@ def _language_from_page_url(url, forced=False, hi=False):
     return _language_from_opensubtitles_code(match.group("code"), forced=forced, hi=hi)
 
 
+def _language_filtered_url(url, language_code):
+    """Restrict a listing URL to one site language id, or None if it cannot be.
+
+    An imdb/tag/hash listing carries a "sublanguageid-all" segment to swap. A
+    title lookup goes through /en/search2 instead, which has no such segment and
+    only grows one once the site redirects onto the real listing, so fall back to
+    the form's own SubLanguageID field when we are still on the search2 URL.
+    """
+    if "sublanguageid-all" in (url or ""):
+        return url.replace("sublanguageid-all", f"sublanguageid-{language_code}")
+    parsed = urllib.parse.urlparse(url or "")
+    if parsed.path.endswith("/search2"):
+        params = [
+            (name, value)
+            for name, value in urllib.parse.parse_qsl(parsed.query)
+            if name.lower() != "sublanguageid"
+        ]
+        params.append(("SubLanguageID", language_code))
+        return urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(params)))
+    return None
+
+
 def _row_language_flags(row):
     text = _strip_tags(row).lower()
     hi = "hearing impaired" in text or "hearing-impaired" in text
@@ -1136,16 +1158,21 @@ class OpenSubtitlesOrgProvider:
         search_url = self._build_search_url(query, context)
         search_response = self._http_get(search_url, config)
         search_html = _response_text(search_response)
-        direct_items = _parse_subtitle_rows(search_html, search_url)
+        # Follow the URL we landed on, not the one we asked for. A title lookup
+        # redirects off /en/search2, and only the landing URL carries the language
+        # segment the refetch below needs.
+        listing_url = getattr(search_response, "url", "") or search_url
+        direct_items = _parse_subtitle_rows(search_html, listing_url)
         if direct_items:
             direct_result = {
                 "title": query,
                 "year": video.get("year"),
                 "imdb_id": context.imdb_id,
                 "kind": context.kind or "movie",
-                "url": search_url,
+                "url": listing_url,
             }
-            if _subtitle_language_codes(languages) and "sublanguageid-all" in search_url:
+            language_codes = _subtitle_language_codes(languages)
+            if language_codes and _language_filtered_url(listing_url, language_codes[0]):
                 language_candidates = self._subtitles_for_result(
                     direct_result, video, languages, context, config, seen
                 )
@@ -1154,7 +1181,7 @@ class OpenSubtitlesOrgProvider:
             return self._candidates_from_items(
                 direct_items, direct_result, video, languages, context, config, seen
             )
-        results = _parse_search_results(search_html, search_url, context.kind)
+        results = _parse_search_results(search_html, listing_url, context.kind)
         best_result = select_best_result(results, context.imdb_id, query, video.get("year"))
         if not best_result:
             return []
@@ -1236,7 +1263,7 @@ class OpenSubtitlesOrgProvider:
         page_urls = []
         if language_codes:
             for language_code in language_codes:
-                page_urls.append(result["url"].replace("sublanguageid-all", f"sublanguageid-{language_code}"))
+                page_urls.append(_language_filtered_url(result["url"], language_code) or result["url"])
         else:
             page_urls.append(result["url"])
         candidates = []
@@ -1244,9 +1271,12 @@ class OpenSubtitlesOrgProvider:
             seen = set()
         for page_url in page_urls:
             response = self._http_get(page_url, config)
+            # Same reason as in _regular_candidates: a search2 language filter
+            # redirects, and the row language is read off the URL we landed on.
+            landed_url = getattr(response, "url", "") or page_url
             candidates.extend(
                 self._candidates_from_items(
-                    _parse_subtitle_rows(_response_text(response), page_url),
+                    _parse_subtitle_rows(_response_text(response), landed_url),
                     result,
                     video,
                     languages,

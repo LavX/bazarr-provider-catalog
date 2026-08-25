@@ -1404,3 +1404,79 @@ class SlugFalsePositiveTests(unittest.TestCase):
         self.assertFalse(
             self.mod._language_requested(language, [{"alpha3": "srp", "alpha2": "sr"}])
         )
+
+
+class TitleOnlyDirectListingTests(unittest.TestCase):
+    """A video with no IMDb id searches through /en/search2, which can land on a
+    direct subtitle listing whose links carry no language suffix.
+
+    Those rows are kept with no language so the page still registers as a direct
+    listing, then dropped at candidate build time. Unless the requested language
+    is refetched they are dropped for good and the search returns nothing, which
+    is exactly what the tag and IMDb paths were fixed to stop doing.
+    """
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def _title_only_video(self):
+        video = dict(EPISODE_VIDEO)
+        video.pop("imdb_id")
+        video.pop("series_imdb_id")
+        return video
+
+    def test_redirected_listing_is_refetched_in_the_requested_language(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        landing_url = "https://www.opensubtitles.org/en/search/sublanguageid-all/idmovie-77777"
+        calls = []
+
+        def fake_get(url, config):
+            calls.append(url)
+            if "search2?" in url:
+                # The site redirects a title search onto the real listing URL.
+                return FakeResponse(landing_url, text=HINDI_SUBTITLES_HTML)
+            if "sublanguageid-hin/idmovie-77777" in url:
+                return FakeResponse(url, text=HINDI_SUBTITLES_HTML)
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = fake_get
+
+        results = provider.search(
+            self._title_only_video(),
+            [{"alpha3": "hin"}],
+            {"skip_wrong_fps": True},
+        )
+
+        self.assertIn(
+            "https://www.opensubtitles.org/en/search/sublanguageid-hin/idmovie-77777",
+            calls,
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["language"]["alpha3"], "hin")
+
+    def test_unredirected_title_search_is_refetched_with_a_language_filter(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        calls = []
+
+        def fake_get(url, config):
+            calls.append(url)
+            if "search2?" in url and "SubLanguageID=hin" in url:
+                return FakeResponse(
+                    "https://www.opensubtitles.org/en/search/sublanguageid-hin/idmovie-77777",
+                    text=HINDI_SUBTITLES_HTML,
+                )
+            if "search2?" in url:
+                return FakeResponse(url, text=HINDI_SUBTITLES_HTML)
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = fake_get
+
+        results = provider.search(
+            self._title_only_video(),
+            [{"alpha3": "hin"}],
+            {"skip_wrong_fps": True},
+        )
+
+        self.assertTrue(any("SubLanguageID=hin" in url for url in calls))
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["language"]["alpha3"], "hin")
