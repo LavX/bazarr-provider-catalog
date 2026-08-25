@@ -822,7 +822,10 @@ def _absolute_url(url, base=BASE_URL):
 
 
 def _is_site_url(url):
-    host = (urllib.parse.urlparse(url or "").hostname or "").lower()
+    parsed = urllib.parse.urlparse(url or "")
+    if parsed.scheme.lower() not in ("http", "https"):
+        return False
+    host = (parsed.hostname or "").lower()
     if not host:
         return False
     return host == _SITE_DOMAIN or host.endswith(f".{_SITE_DOMAIN}")

@@ -1656,6 +1656,25 @@ class LandedUrlTrustTests(unittest.TestCase):
                 "evil.example", result["provider_payload"]["download_url"]
             )
 
+    def test_only_http_urls_on_the_site_are_trusted(self):
+        for url in (
+            "https://www.opensubtitles.org/en/search/imdbid-1480055",
+            "http://opensubtitles.org/en/search/imdbid-1480055",
+            "https://dl.opensubtitles.org/en/download/sub/1",
+        ):
+            with self.subTest(url=url):
+                self.assertTrue(self.mod._is_site_url(url))
+        for url in (
+            "https://evil.example/en/search/imdbid-1480055",
+            "https://evil-opensubtitles.org/en/search",
+            "https://www.opensubtitles.org.evil.example/en/search",
+            "file:///etc/passwd",
+            "ftp://www.opensubtitles.org/x",
+            "",
+        ):
+            with self.subTest(url=url):
+                self.assertFalse(self.mod._is_site_url(url))
+
     def test_a_canonicalising_redirect_does_not_disable_the_refetch(self):
         """The site may answer the sublanguageid-all listing on its canonical URL,
         which carries no filter. The refetch has to fall back to the URL we asked
