@@ -1245,9 +1245,16 @@ class OpenSubtitlesOrgProvider:
                 "url": filter_url or listing_url,
             }
             if filter_url:
-                language_candidates = self._subtitles_for_result(
-                    direct_result, video, languages, context, config, seen
-                )
+                # Speculative: the listing in hand already answers the search, and
+                # the refetch only narrows it to the requested languages. The site
+                # throttles bursts, so let a transient block on the extra requests
+                # fall back to what we have rather than lose the whole search.
+                try:
+                    language_candidates = self._subtitles_for_result(
+                        direct_result, video, languages, context, config, seen
+                    )
+                except OpenSubtitlesError:
+                    language_candidates = []
                 if language_candidates:
                     return language_candidates
             return self._candidates_from_items(
@@ -1348,7 +1355,11 @@ class OpenSubtitlesOrgProvider:
         page_urls = []
         if language_codes:
             for language_code in language_codes:
-                page_urls.append(_language_filtered_url(result["url"], language_code) or result["url"])
+                # A listing that cannot carry the filter collapses every language
+                # onto the same URL. Fetch it once instead of once per language.
+                page_url = _language_filtered_url(result["url"], language_code) or result["url"]
+                if page_url not in page_urls:
+                    page_urls.append(page_url)
         else:
             page_urls.append(result["url"])
         candidates = []

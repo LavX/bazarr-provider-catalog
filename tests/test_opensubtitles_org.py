@@ -1699,5 +1699,73 @@ class LandedUrlTrustTests(unittest.TestCase):
         self.assertEqual(rows[0]["language"].alpha3, "hin")
 
 
+class RefetchContainmentTests(unittest.TestCase):
+    """The speculative language refetch is an optimisation on top of results the
+    search already holds. A transient anti-bot block on it must not throw those
+    away: recovering the whole search from one 401/403/429 is the property the
+    challenge retry work was built for."""
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def _title_only_video(self):
+        video = dict(EPISODE_VIDEO)
+        video.pop("imdb_id")
+        video.pop("series_imdb_id")
+        return video
+
+    def _search_with_failing_refetch(self, error):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        landing_url = "https://www.opensubtitles.org/en/search/sublanguageid-all/idmovie-77777"
+
+        def fake_get(url, config):
+            if "search2?" in url:
+                return FakeResponse(landing_url, text=SUBTITLES_HTML)
+            raise error
+
+        provider._http_get = fake_get
+        return provider.search(
+            self._title_only_video(), LANGUAGES, {"skip_wrong_fps": True}
+        )
+
+    def test_a_rate_limited_refetch_keeps_the_candidates_already_in_hand(self):
+        results = self._search_with_failing_refetch(self.mod.RateLimited("429"))
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["language"]["alpha3"], "eng")
+
+    def test_a_blocked_refetch_keeps_the_candidates_already_in_hand(self):
+        results = self._search_with_failing_refetch(
+            self.mod.ServiceUnavailable("OpenSubtitles.org HTTP 403")
+        )
+        self.assertEqual(len(results), 1)
+
+    def test_an_unfilterable_listing_is_not_fetched_once_per_language(self):
+        """When the result URL cannot carry a language filter every language
+        collapses onto the same URL, so fetching it once per requested language
+        is pure amplification against a site that throttles bursts."""
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        calls = []
+
+        def fake_get(url, config):
+            calls.append(url)
+            return FakeResponse(url, text=SUBTITLES_HTML)
+
+        provider._http_get = fake_get
+        result = {
+            "title": "Game of Thrones",
+            "kind": "episode",
+            "url": "https://www.opensubtitles.org/en/search/idmovie-77777",
+        }
+        context = self.mod.build_search_context(EPISODE_VIDEO, {})
+        provider._subtitles_for_result(
+            result,
+            EPISODE_VIDEO,
+            [{"alpha3": "eng"}, {"alpha3": "deu"}, {"alpha3": "hin"}],
+            context,
+            {},
+        )
+        self.assertEqual(calls, [result["url"]])
+
+
 if __name__ == "__main__":
     unittest.main()
