@@ -13,7 +13,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as _dataclass_replace
 
 try:
     import cloudscraper
@@ -23,6 +23,8 @@ except ImportError:  # pragma: no cover, dependency is declared in provider.json
 PROVIDER_ID = "opensubtitles"
 BASE_URL = "https://www.opensubtitles.org"
 DOWNLOAD_BASE_URL = "https://dl.opensubtitles.org"
+# Registrable host of the site, used to check that a redirect stayed on it.
+_SITE_DOMAIN = "opensubtitles.org"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -66,6 +68,7 @@ _HREF_RE = re.compile(r"""href=["'](?P<href>[^"']+)["']""", re.I)
 _TAG_RE = re.compile(r"<[^>]+>")
 _SUBTITLE_LINK_RE = re.compile(r"""href=["'](?P<href>/en/subtitles/(?P<id>\d+)[^"']*)["']""", re.I)
 _SUBLANGUAGE_RE = re.compile(r"/sublanguageid-(?P<code>[a-z0-9,]+)", re.I)
+_SEARCH_FORM_PATH_RE = re.compile(r"/search2/?$", re.I)
 _DOWNLOAD_LINK_RE = re.compile(
     r"""href=["'](?P<href>(?:https?://(?:www\.|dl\.)?opensubtitles\.org)?/(?:en/)?(?:download|subtitleserve)/(?:sub/)?[^"']+)["']""",
     re.I,
@@ -130,6 +133,11 @@ _ALPHA2_TO_ALPHA3 = {value: key for key, value in _ALPHA3_TO_ALPHA2.items()}
 
 _ALPHA3_TO_OPENSUBTITLES = {
     "ces": "cze",
+    # OpenSubtitles.org identifies Serbian as "scc", not the standard "srp".
+    # Asking for "srp" returns nothing, which is why Serbian appeared to be
+    # missing from the site entirely. The legacy built-in provider maps this
+    # too; the mapping was lost when this plugin was written.
+    "srp": "scc",
     "deu": "ger",
     "ell": "gre",
     "eus": "baq",
@@ -170,6 +178,8 @@ _OPENSUBTITLES_TO_ALPHA3.update(
         "pob": "por",
         "rum": "ron",
         "scc": "srp",
+        # No "mne" entry: _language_from_opensubtitles_code answers Montenegrin
+        # above, with the country this table cannot carry.
         "slo": "slk",
         "spl": "spa",
         "zht": "zho",
@@ -361,6 +371,8 @@ def _language_from_opensubtitles_code(code, forced=False, hi=False):
         return LanguageInfo(alpha3="por", alpha2="pt", country_alpha2="BR", forced=forced, hi=hi)
     if code == "spl":
         return LanguageInfo(alpha3="spa", alpha2="es", country_alpha2="MX", forced=forced, hi=hi)
+    if code == "mne":
+        return LanguageInfo(alpha3="srp", alpha2="sr", country_alpha2="ME", forced=forced, hi=hi)
     if len(code) == 2:
         return _language_from_alpha2(code, forced=forced, hi=hi)
     alpha3 = _OPENSUBTITLES_TO_ALPHA3.get(code, code if len(code) == 3 else "")
@@ -376,6 +388,10 @@ def _language_from_opensubtitles_code(code, forced=False, hi=False):
 
 def _opensubtitles_code(language):
     alpha3 = language.alpha3
+    if alpha3 == "srp" and language.country_alpha2 == "ME":
+        # The site distinguishes Montenegrin, and the manifest declares srp-ME.
+        # Without this it would be asked for as plain Serbian.
+        return "mne"
     if alpha3 == "por" and language.country_alpha2 == "BR":
         return "pob"
     if alpha3 == "spa" and language.country_alpha2 == "MX":
@@ -805,15 +821,102 @@ def _absolute_url(url, base=BASE_URL):
     return urllib.parse.urljoin(base, value)
 
 
+def _is_site_url(url):
+    parsed = urllib.parse.urlparse(url or "")
+    if parsed.scheme.lower() not in ("http", "https"):
+        return False
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return False
+    return host == _SITE_DOMAIN or host.endswith(f".{_SITE_DOMAIN}")
+
+
+def _landed_url(response, requested_url):
+    """The URL a fetch landed on, as long as it is still on the site.
+
+    It becomes a refetch target, the base row hrefs are resolved against, and the
+    source of the row language, so a redirect off the site would otherwise steer
+    all three. Anything off-site falls back to the URL we asked for.
+    """
+    landed = _clean_text(getattr(response, "url", ""))
+    if landed and _is_site_url(landed):
+        return landed
+    return requested_url
+
+
 def _response_text(response):
     return getattr(response, "text", "") or (getattr(response, "content", b"") or b"").decode("utf-8", "replace")
 
 
+def _page_language_code(url):
+    """The site language id a listing URL is restricted to, or "" when it is not.
+
+    The site spells the restriction two ways. A canonical listing carries a
+    /sublanguageid-<code>/ path segment. The search form at /en/search2 carries
+    its own SubLanguageID field instead, and a filtered request can be answered
+    in place rather than redirected onto the canonical path, so the query string
+    has to be read as well or such a page yields no language at all.
+    """
+    parsed = urllib.parse.urlparse(url or "")
+    match = _SUBLANGUAGE_RE.search(parsed.path)
+    if match:
+        return match.group("code")
+    for name, value in urllib.parse.parse_qsl(parsed.query):
+        if name.lower() == "sublanguageid":
+            return value
+    return ""
+
+
 def _language_from_page_url(url, forced=False, hi=False):
-    match = _SUBLANGUAGE_RE.search(urllib.parse.urlparse(url or "").path)
-    if not match:
+    return _language_from_opensubtitles_code(_page_language_code(url), forced=forced, hi=hi)
+
+
+def _language_filtered_url(url, language_code):
+    """Restrict a listing URL to one site language id, or None if it cannot be.
+
+    Two shapes can be restricted. An imdb/tag/hash listing carries the filter as
+    a /sublanguageid-all/ path segment, swapped in place. The search form at
+    /en/search2 carries the form's own SubLanguageID field instead, and only
+    grows a path segment once the site redirects onto the real listing.
+    Everything else is left alone, including a listing already narrowed to one
+    language, which the caller has no reason to refetch.
+
+    Matching runs on the parsed components, since the URL now comes back from the
+    site rather than being built here: a search term, a fragment or the site's own
+    casing must not be mistaken for the filter.
+    """
+    parsed = urllib.parse.urlparse(url or "")
+    match = _SUBLANGUAGE_RE.search(parsed.path)
+    if match:
+        if match.group("code").lower() != "all":
+            return None
+        head = parsed.path[: match.start()]
+        tail = parsed.path[match.end() :]
+        return urllib.parse.urlunparse(
+            parsed._replace(path=f"{head}/sublanguageid-{language_code}{tail}")
+        )
+    if not _SEARCH_FORM_PATH_RE.search(parsed.path):
         return None
-    return _language_from_opensubtitles_code(match.group("code"), forced=forced, hi=hi)
+    params = [
+        (name, value)
+        for name, value in urllib.parse.parse_qsl(parsed.query)
+        if name.lower() != "sublanguageid"
+    ]
+    params.append(("SubLanguageID", language_code))
+    return urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(params)))
+
+
+def _language_source_url(landed_url, requested_url):
+    """The URL a fetched page's rows read their language off.
+
+    Prefer the URL the fetch landed on: a redirect onto the canonical listing is
+    how the site spells the filter it applied. Fall back to the URL we asked for
+    when the landing one carries no filter, so a canonicalising redirect cannot
+    strip the language off rows we did ask to have filtered.
+    """
+    if _page_language_code(landed_url):
+        return landed_url
+    return requested_url or landed_url
 
 
 def _row_language_flags(row):
@@ -843,17 +946,42 @@ def _release_name_from_row(row, title_text):
     return re.sub(r"\s*\(\d{4}\).*$", "", title_text).strip()
 
 
+def _with_listing_country(language, listing_language):
+    """Let the listing supply a country the row slug leaves out.
+
+    The site has one id for Serbian and another for Montenegrin, but a row on a
+    Montenegrin listing can still be slugged with the plain Serbian code. Read
+    literally that row is country-less Serbian, which no longer satisfies a
+    Montenegrin request, so a Montenegrin search comes back empty. The listing
+    the site answered is the more specific statement of the two, so it supplies
+    the country whenever the language itself agrees. A slug naming a different
+    language, or one that already carries its own country, is left alone.
+    """
+    if not listing_language or not listing_language.country_alpha2:
+        return language
+    if language.country_alpha2 or language.alpha3 != listing_language.alpha3:
+        return language
+    return _dataclass_replace(language, country_alpha2=listing_language.country_alpha2)
+
+
 def _language_from_subtitle_url(url, fallback_url=None, forced=False, hi=False):
     slug = urllib.parse.urlparse(url).path.rstrip("/").split("/")[-1]
+    listing_language = _language_from_page_url(fallback_url, forced=forced, hi=hi)
     if "-" in slug:
         code = slug.rsplit("-", 1)[-1].lower()
         language = _language_from_opensubtitles_code(code, forced=forced, hi=hi)
         if language:
-            return language
-    language = _language_from_page_url(fallback_url, forced=forced, hi=hi)
-    if language:
-        return language
-    return _language_from_alpha2("en", forced=forced, hi=hi)
+            return _with_listing_country(language, listing_language)
+    if listing_language:
+        return listing_language
+    # Do not guess. This used to default to English, which meant every row whose
+    # language could not be determined was served to English searches as an
+    # English subtitle. On a "sublanguageid-all" listing the page URL yields no
+    # language either, so unparseable rows accumulated under English while the
+    # language they were actually in went missing. The caller keeps such a row,
+    # so the page still registers as a direct subtitle listing, and drops it when
+    # candidates are built: absent beats wrong.
+    return None
 
 
 def _parse_search_results(html_text, fallback_url, fallback_kind):
@@ -922,7 +1050,11 @@ def select_best_result(results, imdb_id, query, year):
     return max(results, key=lambda item: _score_result(item, imdb_id, query, year))
 
 
-def _parse_subtitle_rows(html_text, movie_url):
+def _parse_subtitle_rows(html_text, movie_url, language_url=None):
+    # movie_url is the base row hrefs are resolved against; language_url is what
+    # a row with no language of its own falls back to. They differ when a fetch
+    # lands on a URL that no longer carries the filter we asked for.
+    language_url = language_url or movie_url
     subtitles = []
     for row_match in _SEARCH_ROW_RE.finditer(html_text or ""):
         row = row_match.group("body")
@@ -943,14 +1075,18 @@ def _parse_subtitle_rows(html_text, movie_url):
         )
         uploader_match = re.search(r"/en/profile/[^\"']+[\"'][^>]*>(?P<name>.*?)</a>", row, re.I | re.S)
         forced, hi = _row_language_flags(row)
-        language = _language_from_subtitle_url(page_link, movie_url, forced=forced, hi=hi)
-        if not language:
-            continue
+        language = _language_from_subtitle_url(page_link, language_url, forced=forced, hi=hi)
+        # A row whose language cannot be resolved is KEPT, carrying None. The
+        # caller decides whether a page is a direct subtitle listing by whether
+        # this returns anything, so dropping such rows makes an unfiltered
+        # listing look like a movie results page and the search returns nothing.
+        # Candidates are filtered on language later instead.
+        suffix = (language.alpha2 or language.alpha3) if language else "und"
         subtitles.append(
             {
                 "subtitle_id": subtitle_id,
                 "language": language,
-                "filename": f"{release_name.replace(' ', '.')}.{language.alpha2 or language.alpha3}.srt",
+                "filename": f"{release_name.replace(' ', '.')}.{suffix}.srt",
                 "release_name": release_name,
                 "uploader": _strip_tags(uploader_match.group("name")) if uploader_match else "anonymous",
                 "download_count": int(download_match.group("count")) if download_match else 0,
@@ -1113,29 +1249,57 @@ class OpenSubtitlesOrgProvider:
         search_url = self._build_search_url(query, context)
         search_response = self._http_get(search_url, config)
         search_html = _response_text(search_response)
-        direct_items = _parse_subtitle_rows(search_html, search_url)
+        # Prefer the URL we landed on over the one we asked for: a title lookup
+        # can be redirected onto the real listing, whose path segment is the only
+        # place that listing states its language filter.
+        listing_url = _landed_url(search_response, search_url)
+        direct_items = _parse_subtitle_rows(
+            search_html, listing_url, _language_source_url(listing_url, search_url)
+        )
         if direct_items:
+            language_codes = _subtitle_language_codes(languages)
+            filter_url = self._language_filter_base(language_codes, listing_url, search_url)
             direct_result = {
                 "title": query,
                 "year": video.get("year"),
                 "imdb_id": context.imdb_id,
                 "kind": context.kind or "movie",
-                "url": search_url,
+                "url": filter_url or listing_url,
             }
-            if _subtitle_language_codes(languages) and "sublanguageid-all" in search_url:
-                language_candidates = self._subtitles_for_result(
-                    direct_result, video, languages, context, config, seen
-                )
+            if filter_url:
+                # Speculative: the listing in hand already answers the search, and
+                # the refetch only narrows it to the requested languages. The site
+                # throttles bursts, so let a transient block on the extra requests
+                # fall back to what we have rather than lose the whole search.
+                try:
+                    language_candidates = self._subtitles_for_result(
+                        direct_result, video, languages, context, config, seen
+                    )
+                except OpenSubtitlesError:
+                    language_candidates = []
                 if language_candidates:
                     return language_candidates
             return self._candidates_from_items(
                 direct_items, direct_result, video, languages, context, config, seen
             )
-        results = _parse_search_results(search_html, search_url, context.kind)
+        results = _parse_search_results(search_html, listing_url, context.kind)
         best_result = select_best_result(results, context.imdb_id, query, video.get("year"))
         if not best_result:
             return []
         return self._subtitles_for_result(best_result, video, languages, context, config, seen)
+
+    @staticmethod
+    def _language_filter_base(language_codes, *urls):
+        # Whichever of these URLs can express the language filter. The URL we
+        # landed on is preferred, since it is the listing the site chose, but a
+        # canonicalising redirect can drop the filter segment, and that must not
+        # silently turn the refetch off: fall back to what we asked for.
+        if not language_codes:
+            return None
+        for url in urls:
+            if url and _language_filtered_url(url, language_codes[0]):
+                return url
+        return None
 
     def download(self, provider_payload, language, config):
         del language
@@ -1213,17 +1377,39 @@ class OpenSubtitlesOrgProvider:
         page_urls = []
         if language_codes:
             for language_code in language_codes:
-                page_urls.append(result["url"].replace("sublanguageid-all", f"sublanguageid-{language_code}"))
+                # A listing that cannot carry the filter collapses every language
+                # onto the same URL. Fetch it once instead of once per language.
+                page_url = _language_filtered_url(result["url"], language_code) or result["url"]
+                if page_url not in page_urls:
+                    page_urls.append(page_url)
         else:
             page_urls.append(result["url"])
         candidates = []
         if seen is None:
             seen = set()
+        failure = None
         for page_url in page_urls:
-            response = self._http_get(page_url, config)
+            # One language page failing must not discard the ones that already
+            # worked. Their subtitle ids are in `seen` by then, so the caller's
+            # fallback pass would skip them as duplicates and the whole search
+            # would come back empty over a single transient block. Keep what was
+            # fetched, and only re-raise if nothing was.
+            try:
+                response = self._http_get(page_url, config)
+            except OpenSubtitlesError as error:
+                failure = failure or error
+                continue
+            # Same reason as in _regular_candidates: a language filtered request
+            # can be redirected onto the canonical listing, and the row language
+            # is read off whichever URL still carries the filter.
+            landed_url = _landed_url(response, page_url)
             candidates.extend(
                 self._candidates_from_items(
-                    _parse_subtitle_rows(_response_text(response), page_url),
+                    _parse_subtitle_rows(
+                        _response_text(response),
+                        landed_url,
+                        _language_source_url(landed_url, page_url),
+                    ),
                     result,
                     video,
                     languages,
@@ -1233,6 +1419,8 @@ class OpenSubtitlesOrgProvider:
                     is_hash_lookup=is_hash_lookup,
                 )
             )
+        if failure is not None and not candidates:
+            raise failure
         return candidates
 
     def _candidates_from_items(self, items, result, video, languages, context, config, seen, is_hash_lookup=False):
@@ -1240,8 +1428,14 @@ class OpenSubtitlesOrgProvider:
         for item in items:
             if item["subtitle_id"] in seen:
                 continue
-            seen.add(item["subtitle_id"])
             language = item["language"]
+            # Rows kept purely so the page registers as a direct listing. No
+            # verdict has been reached on such a row, so its id is deliberately
+            # left unseen: a later pass over a page that does resolve it must not
+            # skip it as a duplicate.
+            if language is None:
+                continue
+            seen.add(item["subtitle_id"])
             if not _language_requested(language, languages, config):
                 continue
             if _episode_mismatch(item, context):

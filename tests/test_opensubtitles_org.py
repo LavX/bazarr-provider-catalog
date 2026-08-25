@@ -1271,5 +1271,591 @@ class PowDeadlineTests(unittest.TestCase):
             )
 
 
+class SerbianLanguageTests(unittest.TestCase):
+    """OpenSubtitles.org identifies Serbian by a legacy code that differs from
+    the standard one, and the site has historically emitted more than one
+    spelling. Getting either direction wrong makes Serbian silently unavailable:
+    the search asks for a language id the site does not use, and rows that do
+    come back are dropped by the language filter."""
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_request_uses_the_legacy_serbian_id(self):
+        language = self.mod.LanguageInfo(alpha3="srp", alpha2="sr")
+        self.assertEqual(self.mod._opensubtitles_code(language), "scc")
+
+    def test_legacy_serbian_codes_all_resolve_to_serbian(self):
+        for code in ("scc", "srp"):
+            with self.subTest(code=code):
+                language = self.mod._language_from_opensubtitles_code(code)
+                self.assertIsNotNone(language, f"{code} was dropped entirely")
+                self.assertEqual(language.alpha3, "srp")
+
+    def test_two_letter_serbian_resolves(self):
+        language = self.mod._language_from_opensubtitles_code("sr")
+        self.assertIsNotNone(language)
+        self.assertEqual(language.alpha3, "srp")
+
+    def test_serbian_rows_satisfy_a_serbian_request(self):
+        requested = [{"alpha3": "srp", "alpha2": "sr"}]
+        for code in ("scc", "sr"):
+            with self.subTest(code=code):
+                language = self.mod._language_from_opensubtitles_code(code)
+                self.assertTrue(
+                    self.mod._language_requested(language, requested),
+                    f"a row tagged {code} was filtered out of a Serbian search",
+                )
+
+    def test_unresolvable_row_carries_no_language_rather_than_english(self):
+        """Mislabelling is strictly worse than carrying no language: it silently
+        pollutes English results with subtitles in some other language. The row
+        itself is kept, so the page still registers as a direct listing, and it
+        is dropped when candidates are built."""
+        language = self.mod._language_from_subtitle_url(
+            "https://www.opensubtitles.org/en/subtitles/123/some-title",
+            fallback_url="https://www.opensubtitles.org/en/search/sublanguageid-all",
+        )
+        self.assertIsNone(language)
+
+    def test_resolvable_slug_still_wins(self):
+        language = self.mod._language_from_subtitle_url(
+            "https://www.opensubtitles.org/en/subtitles/123/some-title-scc",
+            fallback_url="https://www.opensubtitles.org/en/search/sublanguageid-all",
+        )
+        self.assertIsNotNone(language)
+        self.assertEqual(language.alpha3, "srp")
+
+
+class DirectListingDetectionTests(unittest.TestCase):
+    """Row parsing must keep detecting a direct subtitle listing even when a
+    row's language cannot be resolved from its link.
+
+    `_regular_candidates` branches on whether `_parse_subtitle_rows` returned
+    anything. If unresolvable rows are dropped there, an unfiltered listing whose
+    rows carry no language suffix looks empty, the page is misparsed as a movie
+    results page, and the search returns nothing. That would regress working
+    searches, which is worse than the mislabelling this change set out to fix.
+    """
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_rows_without_a_resolvable_language_are_still_detected(self):
+        rows = self.mod._parse_subtitle_rows(
+            HINDI_SUBTITLES_HTML,
+            "https://www.opensubtitles.org/en/search/sublanguageid-all/imdbid-tt1480055",
+        )
+        self.assertTrue(
+            rows, "an unfiltered listing must still register as a direct listing"
+        )
+
+    def test_such_rows_carry_no_language_rather_than_a_guess(self):
+        rows = self.mod._parse_subtitle_rows(
+            HINDI_SUBTITLES_HTML,
+            "https://www.opensubtitles.org/en/search/sublanguageid-all/imdbid-tt1480055",
+        )
+        self.assertIsNone(rows[0]["language"])
+
+
+class MontenegrinTests(unittest.TestCase):
+    """The manifest declares srp-ME, and the site has a distinct id for it."""
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_montenegrin_uses_its_own_site_id(self):
+        language = self.mod.LanguageInfo(
+            alpha3="srp", alpha2="sr", country_alpha2="ME"
+        )
+        self.assertEqual(self.mod._opensubtitles_code(language), "mne")
+
+    def test_plain_serbian_still_uses_the_legacy_serbian_id(self):
+        language = self.mod.LanguageInfo(alpha3="srp", alpha2="sr")
+        self.assertEqual(self.mod._opensubtitles_code(language), "scc")
+
+    def test_montenegrin_rows_resolve_back_to_montenegrin(self):
+        language = self.mod._language_from_opensubtitles_code("mne")
+        self.assertIsNotNone(language)
+        self.assertEqual(language.alpha3, "srp")
+        self.assertEqual(language.country_alpha2, "ME")
+
+
+class SlugFalsePositiveTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_a_spanish_title_ending_in_ser_does_not_satisfy_a_serbian_request(self):
+        """The slug resolver takes the last dash-separated token, so mapping a
+        plausible-looking three letter code the site does not actually emit
+        would turn ordinary titles into false Serbian rows. "ser" is a common
+        Spanish and Portuguese infinitive.
+
+        An unknown token still passes through as an unrecognised code, which is
+        pre-existing behaviour and cannot be tightened without a real language
+        database this plugin deliberately does not carry. What matters is that
+        it is never served to a Serbian search."""
+        language = self.mod._language_from_subtitle_url(
+            "https://www.opensubtitles.org/en/subtitles/123/llegar-a-ser",
+            fallback_url="https://www.opensubtitles.org/en/search/sublanguageid-all",
+        )
+        self.assertFalse(
+            self.mod._language_requested(language, [{"alpha3": "srp", "alpha2": "sr"}])
+        )
+
+
+class TitleOnlyDirectListingTests(unittest.TestCase):
+    """A video with no IMDb id searches through /en/search2, which can land on a
+    direct subtitle listing whose links carry no language suffix.
+
+    Those rows are kept with no language so the page still registers as a direct
+    listing, then dropped at candidate build time. Unless the requested language
+    is refetched they are dropped for good and the search returns nothing, which
+    is exactly what the tag and IMDb paths were fixed to stop doing.
+    """
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def _title_only_video(self):
+        video = dict(EPISODE_VIDEO)
+        video.pop("imdb_id")
+        video.pop("series_imdb_id")
+        return video
+
+    def test_redirected_listing_is_refetched_in_the_requested_language(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        landing_url = "https://www.opensubtitles.org/en/search/sublanguageid-all/idmovie-77777"
+        calls = []
+
+        def fake_get(url, config):
+            calls.append(url)
+            if "search2?" in url:
+                # The site redirects a title search onto the real listing URL.
+                return FakeResponse(landing_url, text=HINDI_SUBTITLES_HTML)
+            if "sublanguageid-hin/idmovie-77777" in url:
+                return FakeResponse(url, text=HINDI_SUBTITLES_HTML)
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = fake_get
+
+        results = provider.search(
+            self._title_only_video(),
+            [{"alpha3": "hin"}],
+            {"skip_wrong_fps": True},
+        )
+
+        self.assertIn(
+            "https://www.opensubtitles.org/en/search/sublanguageid-hin/idmovie-77777",
+            calls,
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["language"]["alpha3"], "hin")
+
+    def test_unredirected_title_search_is_refetched_with_a_language_filter(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        calls = []
+
+        def fake_get(url, config):
+            calls.append(url)
+            if "search2?" in url and "SubLanguageID=hin" in url:
+                return FakeResponse(
+                    "https://www.opensubtitles.org/en/search/sublanguageid-hin/idmovie-77777",
+                    text=HINDI_SUBTITLES_HTML,
+                )
+            if "search2?" in url:
+                return FakeResponse(url, text=HINDI_SUBTITLES_HTML)
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = fake_get
+
+        results = provider.search(
+            self._title_only_video(),
+            [{"alpha3": "hin"}],
+            {"skip_wrong_fps": True},
+        )
+
+        self.assertTrue(any("SubLanguageID=hin" in url for url in calls))
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["language"]["alpha3"], "hin")
+
+    def test_in_place_language_filter_still_resolves_its_rows(self):
+        """The site may honour SubLanguageID without redirecting off /en/search2.
+
+        The filter then lives in the query string only, so reading the language
+        from the path alone leaves every row unresolved, they are all dropped at
+        candidate build time, and the search returns nothing: the exact failure
+        this branch exists to remove.
+        """
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        calls = []
+
+        def fake_get(url, config):
+            calls.append(url)
+            # Served in place: the response URL is the one we asked for.
+            return FakeResponse(url, text=HINDI_SUBTITLES_HTML)
+
+        provider._http_get = fake_get
+
+        results = provider.search(
+            self._title_only_video(),
+            [{"alpha3": "hin"}],
+            {"skip_wrong_fps": True},
+        )
+
+        self.assertTrue(any("SubLanguageID=hin" in url for url in calls))
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["language"]["alpha3"], "hin")
+
+
+class UnresolvedRowDeduplicationTests(unittest.TestCase):
+    """A row kept only so the page registers as a direct listing must not burn
+    its subtitle id.
+
+    Such a row carries no language and is dropped when candidates are built. If
+    the id is recorded as seen anyway, a later pass over the same subtitle, on a
+    page that does resolve it, is silently skipped as a duplicate.
+    """
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_a_row_with_no_language_does_not_consume_its_id(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        context = self.mod.build_search_context(EPISODE_VIDEO, {})
+        items = self.mod._parse_subtitle_rows(
+            HINDI_SUBTITLES_HTML,
+            "https://www.opensubtitles.org/en/search/sublanguageid-all/idmovie-77777",
+        )
+        self.assertIsNone(items[0]["language"])
+        seen = set()
+        provider._candidates_from_items(
+            items, {"title": "x", "kind": "episode"}, EPISODE_VIDEO, [{"alpha3": "hin"}], context, {}, seen
+        )
+        self.assertEqual(seen, set())
+
+    def test_a_later_pass_can_still_resolve_a_row_an_earlier_pass_could_not(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        context = self.mod.build_search_context(EPISODE_VIDEO, {})
+        result = {"title": "Game of Thrones", "kind": "episode"}
+        languages = [{"alpha3": "hin"}]
+        unresolved = self.mod._parse_subtitle_rows(
+            HINDI_SUBTITLES_HTML,
+            "https://www.opensubtitles.org/en/search/sublanguageid-all/idmovie-77777",
+        )
+        resolved = self.mod._parse_subtitle_rows(
+            HINDI_SUBTITLES_HTML,
+            "https://www.opensubtitles.org/en/search/sublanguageid-hin/idmovie-77777",
+        )
+        self.assertEqual(unresolved[0]["subtitle_id"], resolved[0]["subtitle_id"])
+
+        seen = set()
+        self.assertEqual(
+            provider._candidates_from_items(
+                unresolved, result, EPISODE_VIDEO, languages, context, {}, seen
+            ),
+            [],
+        )
+        self.assertEqual(
+            len(
+                provider._candidates_from_items(
+                    resolved, result, EPISODE_VIDEO, languages, context, {}, seen
+                )
+            ),
+            1,
+            "the resolved pass was skipped as a duplicate of the unresolved one",
+        )
+
+
+class LanguageFilteredUrlTests(unittest.TestCase):
+    """The filter is matched on URL components, not on the raw string.
+
+    Since the URL now comes back from the site rather than being built here, its
+    casing and shape are not ours to assume. The sibling reader _SUBLANGUAGE_RE
+    is already case insensitive.
+    """
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_the_path_segment_matches_whatever_case_the_site_used(self):
+        self.assertEqual(
+            self.mod._language_filtered_url(
+                "https://www.opensubtitles.org/en/search/SubLanguageID-all/idmovie-77777",
+                "hin",
+            ),
+            "https://www.opensubtitles.org/en/search/sublanguageid-hin/idmovie-77777",
+        )
+
+    def test_a_search_term_is_never_rewritten(self):
+        filtered = self.mod._language_filtered_url(
+            "https://www.opensubtitles.org/en/search2?MovieName=sublanguageid-all&action=search",
+            "hin",
+        )
+        self.assertIn("MovieName=sublanguageid-all", filtered)
+        self.assertIn("SubLanguageID=hin", filtered)
+
+    def test_a_fragment_is_left_alone(self):
+        filtered = self.mod._language_filtered_url(
+            "https://www.opensubtitles.org/en/search2?MovieName=x&action=search#sublanguageid-all",
+            "hin",
+        )
+        self.assertTrue(filtered.endswith("#sublanguageid-all"), filtered)
+        self.assertIn("SubLanguageID=hin", filtered)
+
+    def test_a_trailing_slash_does_not_disable_the_filter(self):
+        filtered = self.mod._language_filtered_url(
+            "https://www.opensubtitles.org/en/search2/?MovieName=x&action=search",
+            "hin",
+        )
+        self.assertIsNotNone(filtered)
+        self.assertIn("SubLanguageID=hin", filtered)
+
+    def test_a_listing_already_narrowed_to_one_language_is_left_alone(self):
+        self.assertIsNone(
+            self.mod._language_filtered_url(
+                "https://www.opensubtitles.org/en/search/sublanguageid-eng/imdbid-1480055",
+                "hin",
+            )
+        )
+
+
+class LandedUrlTrustTests(unittest.TestCase):
+    """The URL a fetch landed on becomes a refetch target, the base row hrefs are
+    resolved against and the source of the row language. A redirect off the site
+    must not be able to steer any of that."""
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_an_off_site_redirect_is_not_followed_or_joined_against(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        calls = []
+
+        def fake_get(url, config):
+            calls.append(url)
+            return FakeResponse(
+                "https://evil.example/en/search/sublanguageid-all/idmovie-1",
+                text=SUBTITLES_HTML,
+            )
+
+        provider._http_get = fake_get
+
+        video = dict(EPISODE_VIDEO)
+        video.pop("imdb_id")
+        video.pop("series_imdb_id")
+        results = provider.search(video, LANGUAGES, {"skip_wrong_fps": True})
+
+        self.assertFalse(
+            [url for url in calls if "evil.example" in url],
+            f"an off-site redirect was refetched: {calls}",
+        )
+        for result in results:
+            self.assertNotIn("evil.example", result["page_link"])
+            self.assertNotIn(
+                "evil.example", result["provider_payload"]["download_url"]
+            )
+
+    def test_only_http_urls_on_the_site_are_trusted(self):
+        for url in (
+            "https://www.opensubtitles.org/en/search/imdbid-1480055",
+            "http://opensubtitles.org/en/search/imdbid-1480055",
+            "https://dl.opensubtitles.org/en/download/sub/1",
+        ):
+            with self.subTest(url=url):
+                self.assertTrue(self.mod._is_site_url(url))
+        for url in (
+            "https://evil.example/en/search/imdbid-1480055",
+            "https://evil-opensubtitles.org/en/search",
+            "https://www.opensubtitles.org.evil.example/en/search",
+            "file:///etc/passwd",
+            "ftp://www.opensubtitles.org/x",
+            "",
+        ):
+            with self.subTest(url=url):
+                self.assertFalse(self.mod._is_site_url(url))
+
+    def test_a_canonicalising_redirect_does_not_disable_the_refetch(self):
+        """The site may answer the sublanguageid-all listing on its canonical URL,
+        which carries no filter. The refetch has to fall back to the URL we asked
+        for, or a language search silently stops being filtered."""
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        calls = []
+
+        def fake_get(url, config):
+            calls.append(url)
+            if "sublanguageid-all" in url:
+                return FakeResponse(
+                    "https://www.opensubtitles.org/en/search/imdbid-1480055",
+                    text=HINDI_SUBTITLES_HTML,
+                )
+            return FakeResponse(url, text=HINDI_SUBTITLES_HTML)
+
+        provider._http_get = fake_get
+
+        results = provider.search(
+            EPISODE_VIDEO, [{"alpha3": "hin"}], {"skip_wrong_fps": True}
+        )
+
+        self.assertTrue(
+            any("sublanguageid-hin" in url for url in calls),
+            f"the language refetch never happened: {calls}",
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["language"]["alpha3"], "hin")
+
+    def test_a_canonicalising_redirect_does_not_unlabel_the_rows(self):
+        """A filtered fetch answered on a URL that drops the filter still has to
+        resolve its rows, from the filter we asked for."""
+        self.assertIsNone(
+            self.mod._language_from_page_url(
+                "https://www.opensubtitles.org/en/search/imdbid-1480055"
+            )
+        )
+        rows = self.mod._parse_subtitle_rows(
+            HINDI_SUBTITLES_HTML,
+            "https://www.opensubtitles.org/en/search/imdbid-1480055",
+            "https://www.opensubtitles.org/en/search/sublanguageid-hin/imdbid-1480055",
+        )
+        self.assertEqual(rows[0]["language"].alpha3, "hin")
+
+
+class RefetchContainmentTests(unittest.TestCase):
+    """The speculative language refetch is an optimisation on top of results the
+    search already holds. A transient anti-bot block on it must not throw those
+    away: recovering the whole search from one 401/403/429 is the property the
+    challenge retry work was built for."""
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def _title_only_video(self):
+        video = dict(EPISODE_VIDEO)
+        video.pop("imdb_id")
+        video.pop("series_imdb_id")
+        return video
+
+    def _search_with_failing_refetch(self, error):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        landing_url = "https://www.opensubtitles.org/en/search/sublanguageid-all/idmovie-77777"
+
+        def fake_get(url, config):
+            if "search2?" in url:
+                return FakeResponse(landing_url, text=SUBTITLES_HTML)
+            raise error
+
+        provider._http_get = fake_get
+        return provider.search(
+            self._title_only_video(), LANGUAGES, {"skip_wrong_fps": True}
+        )
+
+    def test_a_rate_limited_refetch_keeps_the_candidates_already_in_hand(self):
+        results = self._search_with_failing_refetch(self.mod.RateLimited("429"))
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["language"]["alpha3"], "eng")
+
+    def test_a_blocked_refetch_keeps_the_candidates_already_in_hand(self):
+        results = self._search_with_failing_refetch(
+            self.mod.ServiceUnavailable("OpenSubtitles.org HTTP 403")
+        )
+        self.assertEqual(len(results), 1)
+
+    def test_an_unfilterable_listing_is_not_fetched_once_per_language(self):
+        """When the result URL cannot carry a language filter every language
+        collapses onto the same URL, so fetching it once per requested language
+        is pure amplification against a site that throttles bursts."""
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        calls = []
+
+        def fake_get(url, config):
+            calls.append(url)
+            return FakeResponse(url, text=SUBTITLES_HTML)
+
+        provider._http_get = fake_get
+        result = {
+            "title": "Game of Thrones",
+            "kind": "episode",
+            "url": "https://www.opensubtitles.org/en/search/idmovie-77777",
+        }
+        context = self.mod.build_search_context(EPISODE_VIDEO, {})
+        provider._subtitles_for_result(
+            result,
+            EPISODE_VIDEO,
+            [{"alpha3": "eng"}, {"alpha3": "deu"}, {"alpha3": "hin"}],
+            context,
+            {},
+        )
+        self.assertEqual(calls, [result["url"]])
+
+
+SERBIAN_SLUG_SUBTITLES_HTML = """
+<table>
+  <tr>
+    <td id="main1952619109">
+      <strong><a href="/en/subtitles/1952619109/game-of-thrones-winter-is-coming-scc">"Game of Thrones" Winter Is Coming (2011)</a></strong><br />
+      Game.of.Thrones.S01E01.1080p.WEB-DL<br />
+      <a href="/en/profile/uploader">syncmaster</a>
+      <a href="/en/subtitleserve/sub/1952619109">4312x</a>
+      <span class="p">23.976</span>
+    </td>
+  </tr>
+</table>
+"""
+
+
+class MontenegrinListingTests(unittest.TestCase):
+    """Montenegrin has its own site id, so a Montenegrin request no longer maps
+    onto the plain Serbian one. A row on a Montenegrin listing whose slug still
+    carries the Serbian code then reads as country-less Serbian, which the
+    country match rejects, and the search returns nothing."""
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_a_serbian_slug_on_a_montenegrin_listing_stays_montenegrin(self):
+        language = self.mod._language_from_subtitle_url(
+            "https://www.opensubtitles.org/en/subtitles/123/some-title-scc",
+            fallback_url="https://www.opensubtitles.org/en/search/sublanguageid-mne/imdbid-1480055",
+        )
+        self.assertEqual(language.alpha3, "srp")
+        self.assertEqual(language.country_alpha2, "ME")
+
+    def test_a_serbian_listing_does_not_gain_a_country(self):
+        language = self.mod._language_from_subtitle_url(
+            "https://www.opensubtitles.org/en/subtitles/123/some-title-scc",
+            fallback_url="https://www.opensubtitles.org/en/search/sublanguageid-scc/imdbid-1480055",
+        )
+        self.assertEqual(language.alpha3, "srp")
+        self.assertIsNone(language.country_alpha2)
+
+    def test_a_different_language_never_takes_the_listing_country(self):
+        language = self.mod._language_from_subtitle_url(
+            "https://www.opensubtitles.org/en/subtitles/123/some-title-ger",
+            fallback_url="https://www.opensubtitles.org/en/search/sublanguageid-mne/imdbid-1480055",
+        )
+        self.assertEqual(language.alpha3, "deu")
+        self.assertIsNone(language.country_alpha2)
+
+    def test_a_montenegrin_search_returns_the_rows_of_its_own_listing(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        calls = []
+
+        def fake_get(url, config):
+            calls.append(url)
+            return FakeResponse(url, text=SERBIAN_SLUG_SUBTITLES_HTML)
+
+        provider._http_get = fake_get
+
+        results = provider.search(
+            EPISODE_VIDEO,
+            [{"alpha3": "srp", "alpha2": "sr", "country_alpha2": "ME"}],
+            {"skip_wrong_fps": True},
+        )
+
+        self.assertTrue(any("sublanguageid-mne" in url for url in calls), calls)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["language"]["alpha3"], "srp")
+
+
 if __name__ == "__main__":
     unittest.main()
