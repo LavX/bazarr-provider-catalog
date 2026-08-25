@@ -1271,10 +1271,6 @@ class PowDeadlineTests(unittest.TestCase):
             )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class SerbianLanguageTests(unittest.TestCase):
     """OpenSubtitles.org identifies Serbian by a legacy code that differs from
     the standard one, and the site has historically emitted more than one
@@ -1480,3 +1476,7 @@ class TitleOnlyDirectListingTests(unittest.TestCase):
         self.assertTrue(any("SubLanguageID=hin" in url for url in calls))
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["language"]["alpha3"], "hin")
+
+
+if __name__ == "__main__":
+    unittest.main()
