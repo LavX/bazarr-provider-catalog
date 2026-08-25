@@ -1387,8 +1387,18 @@ class OpenSubtitlesOrgProvider:
         candidates = []
         if seen is None:
             seen = set()
+        failure = None
         for page_url in page_urls:
-            response = self._http_get(page_url, config)
+            # One language page failing must not discard the ones that already
+            # worked. Their subtitle ids are in `seen` by then, so the caller's
+            # fallback pass would skip them as duplicates and the whole search
+            # would come back empty over a single transient block. Keep what was
+            # fetched, and only re-raise if nothing was.
+            try:
+                response = self._http_get(page_url, config)
+            except OpenSubtitlesError as error:
+                failure = failure or error
+                continue
             # Same reason as in _regular_candidates: a language filtered request
             # can be redirected onto the canonical listing, and the row language
             # is read off whichever URL still carries the filter.
@@ -1409,6 +1419,8 @@ class OpenSubtitlesOrgProvider:
                     is_hash_lookup=is_hash_lookup,
                 )
             )
+        if failure is not None and not candidates:
+            raise failure
         return candidates
 
     def _candidates_from_items(self, items, result, video, languages, context, config, seen, is_hash_lookup=False):

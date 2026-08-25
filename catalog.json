@@ -1988,7 +1988,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "d212f831f88ef78b67df9cb604c8ac620f26397a8fc4b74f9dd85057f305c4e1",
+        "bundle_sha256": "d2ae33123e361a89d5a6dda335928295a7fc9ab755cfb9fdcc81bc221747c70d",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -2317,7 +2317,7 @@
         "entry_class": "OpenSubtitlesOrgProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "9dce68f3c8d3651de264844a96358897215703be788da6df8b40b1376315e759"
+          "provider.py": "5797386d4f126b2d27f655b2a5add2872c9ab682540880468c1c93ec4a56f15f"
         },
         "flaresolverr": true,
         "languages": [
