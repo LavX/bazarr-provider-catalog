@@ -766,7 +766,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "9dd94f412e7b7ce24e33ecad87e9b19142da28bad84017e6ed7e651556c15365",
+        "bundle_sha256": "7377b68d6a2f6ec6d6f6b1eb2f3a0d82c2fe8f3b39ae939e20982c97d241f526",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -796,7 +796,7 @@
         "entry_class": "GestdownProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "0c18f4b97a86ccec72e895dadd8794a9fd644b1a6be77b95a96e436123a83b83"
+          "provider.py": "70efb4e036296d18da7c18e8ef49ab791fb0c57155907552f52277484f4a189e"
         },
         "languages": [
           "ara",
@@ -862,7 +862,7 @@
         "supported_media": [
           "episode"
         ],
-        "version": "0.1.1"
+        "version": "0.1.2"
       }
     },
     {
