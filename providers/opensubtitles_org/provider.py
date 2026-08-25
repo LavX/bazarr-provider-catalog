@@ -23,6 +23,8 @@ except ImportError:  # pragma: no cover, dependency is declared in provider.json
 PROVIDER_ID = "opensubtitles"
 BASE_URL = "https://www.opensubtitles.org"
 DOWNLOAD_BASE_URL = "https://dl.opensubtitles.org"
+# Registrable host of the site, used to check that a redirect stayed on it.
+_SITE_DOMAIN = "opensubtitles.org"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -66,6 +68,7 @@ _HREF_RE = re.compile(r"""href=["'](?P<href>[^"']+)["']""", re.I)
 _TAG_RE = re.compile(r"<[^>]+>")
 _SUBTITLE_LINK_RE = re.compile(r"""href=["'](?P<href>/en/subtitles/(?P<id>\d+)[^"']*)["']""", re.I)
 _SUBLANGUAGE_RE = re.compile(r"/sublanguageid-(?P<code>[a-z0-9,]+)", re.I)
+_SEARCH_FORM_PATH_RE = re.compile(r"/search2/?$", re.I)
 _DOWNLOAD_LINK_RE = re.compile(
     r"""href=["'](?P<href>(?:https?://(?:www\.|dl\.)?opensubtitles\.org)?/(?:en/)?(?:download|subtitleserve)/(?:sub/)?[^"']+)["']""",
     re.I,
@@ -818,6 +821,26 @@ def _absolute_url(url, base=BASE_URL):
     return urllib.parse.urljoin(base, value)
 
 
+def _is_site_url(url):
+    host = (urllib.parse.urlparse(url or "").hostname or "").lower()
+    if not host:
+        return False
+    return host == _SITE_DOMAIN or host.endswith(f".{_SITE_DOMAIN}")
+
+
+def _landed_url(response, requested_url):
+    """The URL a fetch landed on, as long as it is still on the site.
+
+    It becomes a refetch target, the base row hrefs are resolved against, and the
+    source of the row language, so a redirect off the site would otherwise steer
+    all three. Anything off-site falls back to the URL we asked for.
+    """
+    landed = _clean_text(getattr(response, "url", ""))
+    if landed and _is_site_url(landed):
+        return landed
+    return requested_url
+
+
 def _response_text(response):
     return getattr(response, "text", "") or (getattr(response, "content", b"") or b"").decode("utf-8", "replace")
 
@@ -848,23 +871,49 @@ def _language_from_page_url(url, forced=False, hi=False):
 def _language_filtered_url(url, language_code):
     """Restrict a listing URL to one site language id, or None if it cannot be.
 
-    An imdb/tag/hash listing carries a "sublanguageid-all" segment to swap. A
-    title lookup goes through /en/search2 instead, which has no such segment and
-    only grows one once the site redirects onto the real listing, so fall back to
-    the form's own SubLanguageID field when we are still on the search2 URL.
+    Two shapes can be restricted. An imdb/tag/hash listing carries the filter as
+    a /sublanguageid-all/ path segment, swapped in place. The search form at
+    /en/search2 carries the form's own SubLanguageID field instead, and only
+    grows a path segment once the site redirects onto the real listing.
+    Everything else is left alone, including a listing already narrowed to one
+    language, which the caller has no reason to refetch.
+
+    Matching runs on the parsed components, since the URL now comes back from the
+    site rather than being built here: a search term, a fragment or the site's own
+    casing must not be mistaken for the filter.
     """
-    if "sublanguageid-all" in (url or ""):
-        return url.replace("sublanguageid-all", f"sublanguageid-{language_code}")
     parsed = urllib.parse.urlparse(url or "")
-    if parsed.path.endswith("/search2"):
-        params = [
-            (name, value)
-            for name, value in urllib.parse.parse_qsl(parsed.query)
-            if name.lower() != "sublanguageid"
-        ]
-        params.append(("SubLanguageID", language_code))
-        return urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(params)))
-    return None
+    match = _SUBLANGUAGE_RE.search(parsed.path)
+    if match:
+        if match.group("code").lower() != "all":
+            return None
+        head = parsed.path[: match.start()]
+        tail = parsed.path[match.end() :]
+        return urllib.parse.urlunparse(
+            parsed._replace(path=f"{head}/sublanguageid-{language_code}{tail}")
+        )
+    if not _SEARCH_FORM_PATH_RE.search(parsed.path):
+        return None
+    params = [
+        (name, value)
+        for name, value in urllib.parse.parse_qsl(parsed.query)
+        if name.lower() != "sublanguageid"
+    ]
+    params.append(("SubLanguageID", language_code))
+    return urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(params)))
+
+
+def _language_source_url(landed_url, requested_url):
+    """The URL a fetched page's rows read their language off.
+
+    Prefer the URL the fetch landed on: a redirect onto the canonical listing is
+    how the site spells the filter it applied. Fall back to the URL we asked for
+    when the landing one carries no filter, so a canonicalising redirect cannot
+    strip the language off rows we did ask to have filtered.
+    """
+    if _page_language_code(landed_url):
+        return landed_url
+    return requested_url or landed_url
 
 
 def _row_language_flags(row):
@@ -979,7 +1028,11 @@ def select_best_result(results, imdb_id, query, year):
     return max(results, key=lambda item: _score_result(item, imdb_id, query, year))
 
 
-def _parse_subtitle_rows(html_text, movie_url):
+def _parse_subtitle_rows(html_text, movie_url, language_url=None):
+    # movie_url is the base row hrefs are resolved against; language_url is what
+    # a row with no language of its own falls back to. They differ when a fetch
+    # lands on a URL that no longer carries the filter we asked for.
+    language_url = language_url or movie_url
     subtitles = []
     for row_match in _SEARCH_ROW_RE.finditer(html_text or ""):
         row = row_match.group("body")
@@ -1000,7 +1053,7 @@ def _parse_subtitle_rows(html_text, movie_url):
         )
         uploader_match = re.search(r"/en/profile/[^\"']+[\"'][^>]*>(?P<name>.*?)</a>", row, re.I | re.S)
         forced, hi = _row_language_flags(row)
-        language = _language_from_subtitle_url(page_link, movie_url, forced=forced, hi=hi)
+        language = _language_from_subtitle_url(page_link, language_url, forced=forced, hi=hi)
         # A row whose language cannot be resolved is KEPT, carrying None. The
         # caller decides whether a page is a direct subtitle listing by whether
         # this returns anything, so dropping such rows makes an unfiltered
@@ -1174,21 +1227,24 @@ class OpenSubtitlesOrgProvider:
         search_url = self._build_search_url(query, context)
         search_response = self._http_get(search_url, config)
         search_html = _response_text(search_response)
-        # Follow the URL we landed on, not the one we asked for. A title lookup
-        # redirects off /en/search2, and only the landing URL carries the language
-        # segment the refetch below needs.
-        listing_url = getattr(search_response, "url", "") or search_url
-        direct_items = _parse_subtitle_rows(search_html, listing_url)
+        # Follow the URL we landed on rather than the one we asked for: a title
+        # lookup can be redirected onto the real listing, whose path is what
+        # carries the language filter.
+        listing_url = _landed_url(search_response, search_url)
+        direct_items = _parse_subtitle_rows(
+            search_html, listing_url, _language_source_url(listing_url, search_url)
+        )
         if direct_items:
+            language_codes = _subtitle_language_codes(languages)
+            filter_url = self._language_filter_base(language_codes, listing_url, search_url)
             direct_result = {
                 "title": query,
                 "year": video.get("year"),
                 "imdb_id": context.imdb_id,
                 "kind": context.kind or "movie",
-                "url": listing_url,
+                "url": filter_url or listing_url,
             }
-            language_codes = _subtitle_language_codes(languages)
-            if language_codes and _language_filtered_url(listing_url, language_codes[0]):
+            if filter_url:
                 language_candidates = self._subtitles_for_result(
                     direct_result, video, languages, context, config, seen
                 )
@@ -1202,6 +1258,19 @@ class OpenSubtitlesOrgProvider:
         if not best_result:
             return []
         return self._subtitles_for_result(best_result, video, languages, context, config, seen)
+
+    @staticmethod
+    def _language_filter_base(language_codes, *urls):
+        # Whichever of these URLs can express the language filter. The URL we
+        # landed on is preferred, since it is the listing the site chose, but a
+        # canonicalising redirect can drop the filter segment, and that must not
+        # silently turn the refetch off: fall back to what we asked for.
+        if not language_codes:
+            return None
+        for url in urls:
+            if url and _language_filtered_url(url, language_codes[0]):
+                return url
+        return None
 
     def download(self, provider_payload, language, config):
         del language
@@ -1287,12 +1356,17 @@ class OpenSubtitlesOrgProvider:
             seen = set()
         for page_url in page_urls:
             response = self._http_get(page_url, config)
-            # Same reason as in _regular_candidates: a search2 language filter
-            # redirects, and the row language is read off the URL we landed on.
-            landed_url = getattr(response, "url", "") or page_url
+            # Same reason as in _regular_candidates: a language filtered request
+            # can be redirected onto the canonical listing, and the row language
+            # is read off whichever URL still carries the filter.
+            landed_url = _landed_url(response, page_url)
             candidates.extend(
                 self._candidates_from_items(
-                    _parse_subtitle_rows(_response_text(response), landed_url),
+                    _parse_subtitle_rows(
+                        _response_text(response),
+                        landed_url,
+                        _language_source_url(landed_url, page_url),
+                    ),
                     result,
                     video,
                     languages,

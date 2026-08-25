@@ -1534,15 +1534,138 @@ class UnresolvedRowDeduplicationTests(unittest.TestCase):
 
     def test_a_later_pass_can_still_resolve_a_row_an_earlier_pass_could_not(self):
         provider = self.mod.OpenSubtitlesOrgProvider()
+        context = self.mod.build_search_context(EPISODE_VIDEO, {})
+        result = {"title": "Game of Thrones", "kind": "episode"}
+        languages = [{"alpha3": "hin"}]
+        unresolved = self.mod._parse_subtitle_rows(
+            HINDI_SUBTITLES_HTML,
+            "https://www.opensubtitles.org/en/search/sublanguageid-all/idmovie-77777",
+        )
+        resolved = self.mod._parse_subtitle_rows(
+            HINDI_SUBTITLES_HTML,
+            "https://www.opensubtitles.org/en/search/sublanguageid-hin/idmovie-77777",
+        )
+        self.assertEqual(unresolved[0]["subtitle_id"], resolved[0]["subtitle_id"])
+
+        seen = set()
+        self.assertEqual(
+            provider._candidates_from_items(
+                unresolved, result, EPISODE_VIDEO, languages, context, {}, seen
+            ),
+            [],
+        )
+        self.assertEqual(
+            len(
+                provider._candidates_from_items(
+                    resolved, result, EPISODE_VIDEO, languages, context, {}, seen
+                )
+            ),
+            1,
+            "the resolved pass was skipped as a duplicate of the unresolved one",
+        )
+
+
+class LanguageFilteredUrlTests(unittest.TestCase):
+    """The filter is matched on URL components, not on the raw string.
+
+    Since the URL now comes back from the site rather than being built here, its
+    casing and shape are not ours to assume. The sibling reader _SUBLANGUAGE_RE
+    is already case insensitive.
+    """
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_the_path_segment_matches_whatever_case_the_site_used(self):
+        self.assertEqual(
+            self.mod._language_filtered_url(
+                "https://www.opensubtitles.org/en/search/SubLanguageID-all/idmovie-77777",
+                "hin",
+            ),
+            "https://www.opensubtitles.org/en/search/sublanguageid-hin/idmovie-77777",
+        )
+
+    def test_a_search_term_is_never_rewritten(self):
+        filtered = self.mod._language_filtered_url(
+            "https://www.opensubtitles.org/en/search2?MovieName=sublanguageid-all&action=search",
+            "hin",
+        )
+        self.assertIn("MovieName=sublanguageid-all", filtered)
+        self.assertIn("SubLanguageID=hin", filtered)
+
+    def test_a_fragment_is_left_alone(self):
+        filtered = self.mod._language_filtered_url(
+            "https://www.opensubtitles.org/en/search2?MovieName=x&action=search#sublanguageid-all",
+            "hin",
+        )
+        self.assertTrue(filtered.endswith("#sublanguageid-all"), filtered)
+        self.assertIn("SubLanguageID=hin", filtered)
+
+    def test_a_trailing_slash_does_not_disable_the_filter(self):
+        filtered = self.mod._language_filtered_url(
+            "https://www.opensubtitles.org/en/search2/?MovieName=x&action=search",
+            "hin",
+        )
+        self.assertIsNotNone(filtered)
+        self.assertIn("SubLanguageID=hin", filtered)
+
+    def test_a_listing_already_narrowed_to_one_language_is_left_alone(self):
+        self.assertIsNone(
+            self.mod._language_filtered_url(
+                "https://www.opensubtitles.org/en/search/sublanguageid-eng/imdbid-1480055",
+                "hin",
+            )
+        )
+
+
+class LandedUrlTrustTests(unittest.TestCase):
+    """The URL a fetch landed on becomes a refetch target, the base row hrefs are
+    resolved against and the source of the row language. A redirect off the site
+    must not be able to steer any of that."""
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_an_off_site_redirect_is_not_followed_or_joined_against(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
         calls = []
 
         def fake_get(url, config):
             calls.append(url)
-            if "sublanguageid-ger" in url:
-                # The site canonicalises the German request and drops the filter,
-                # so nothing on this page says what language its rows are in.
+            return FakeResponse(
+                "https://evil.example/en/search/sublanguageid-all/idmovie-1",
+                text=SUBTITLES_HTML,
+            )
+
+        provider._http_get = fake_get
+
+        video = dict(EPISODE_VIDEO)
+        video.pop("imdb_id")
+        video.pop("series_imdb_id")
+        results = provider.search(video, LANGUAGES, {"skip_wrong_fps": True})
+
+        self.assertFalse(
+            [url for url in calls if "evil.example" in url],
+            f"an off-site redirect was refetched: {calls}",
+        )
+        for result in results:
+            self.assertNotIn("evil.example", result["page_link"])
+            self.assertNotIn(
+                "evil.example", result["provider_payload"]["download_url"]
+            )
+
+    def test_a_canonicalising_redirect_does_not_disable_the_refetch(self):
+        """The site may answer the sublanguageid-all listing on its canonical URL,
+        which carries no filter. The refetch has to fall back to the URL we asked
+        for, or a language search silently stops being filtered."""
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        calls = []
+
+        def fake_get(url, config):
+            calls.append(url)
+            if "sublanguageid-all" in url:
                 return FakeResponse(
-                    "https://www.opensubtitles.org/en/search/idmovie-77777",
+                    "https://www.opensubtitles.org/en/search/imdbid-1480055",
                     text=HINDI_SUBTITLES_HTML,
                 )
             return FakeResponse(url, text=HINDI_SUBTITLES_HTML)
@@ -1550,14 +1673,30 @@ class UnresolvedRowDeduplicationTests(unittest.TestCase):
         provider._http_get = fake_get
 
         results = provider.search(
-            EPISODE_VIDEO,
-            [{"alpha3": "deu"}, {"alpha3": "hin"}],
-            {"skip_wrong_fps": True},
+            EPISODE_VIDEO, [{"alpha3": "hin"}], {"skip_wrong_fps": True}
         )
 
-        self.assertEqual(
-            [result["language"]["alpha3"] for result in results], ["hin"]
+        self.assertTrue(
+            any("sublanguageid-hin" in url for url in calls),
+            f"the language refetch never happened: {calls}",
         )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["language"]["alpha3"], "hin")
+
+    def test_a_canonicalising_redirect_does_not_unlabel_the_rows(self):
+        """A filtered fetch answered on a URL that drops the filter still has to
+        resolve its rows, from the filter we asked for."""
+        self.assertIsNone(
+            self.mod._language_from_page_url(
+                "https://www.opensubtitles.org/en/search/imdbid-1480055"
+            )
+        )
+        rows = self.mod._parse_subtitle_rows(
+            HINDI_SUBTITLES_HTML,
+            "https://www.opensubtitles.org/en/search/imdbid-1480055",
+            "https://www.opensubtitles.org/en/search/sublanguageid-hin/imdbid-1480055",
+        )
+        self.assertEqual(rows[0]["language"].alpha3, "hin")
 
 
 if __name__ == "__main__":
