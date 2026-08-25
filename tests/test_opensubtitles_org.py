@@ -1477,6 +1477,88 @@ class TitleOnlyDirectListingTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["language"]["alpha3"], "hin")
 
+    def test_in_place_language_filter_still_resolves_its_rows(self):
+        """The site may honour SubLanguageID without redirecting off /en/search2.
+
+        The filter then lives in the query string only, so reading the language
+        from the path alone leaves every row unresolved, they are all dropped at
+        candidate build time, and the search returns nothing: the exact failure
+        this branch exists to remove.
+        """
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        calls = []
+
+        def fake_get(url, config):
+            calls.append(url)
+            # Served in place: the response URL is the one we asked for.
+            return FakeResponse(url, text=HINDI_SUBTITLES_HTML)
+
+        provider._http_get = fake_get
+
+        results = provider.search(
+            self._title_only_video(),
+            [{"alpha3": "hin"}],
+            {"skip_wrong_fps": True},
+        )
+
+        self.assertTrue(any("SubLanguageID=hin" in url for url in calls))
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["language"]["alpha3"], "hin")
+
+
+class UnresolvedRowDeduplicationTests(unittest.TestCase):
+    """A row kept only so the page registers as a direct listing must not burn
+    its subtitle id.
+
+    Such a row carries no language and is dropped when candidates are built. If
+    the id is recorded as seen anyway, a later pass over the same subtitle, on a
+    page that does resolve it, is silently skipped as a duplicate.
+    """
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_a_row_with_no_language_does_not_consume_its_id(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        context = self.mod.build_search_context(EPISODE_VIDEO, {})
+        items = self.mod._parse_subtitle_rows(
+            HINDI_SUBTITLES_HTML,
+            "https://www.opensubtitles.org/en/search/sublanguageid-all/idmovie-77777",
+        )
+        self.assertIsNone(items[0]["language"])
+        seen = set()
+        provider._candidates_from_items(
+            items, {"title": "x", "kind": "episode"}, EPISODE_VIDEO, [{"alpha3": "hin"}], context, {}, seen
+        )
+        self.assertEqual(seen, set())
+
+    def test_a_later_pass_can_still_resolve_a_row_an_earlier_pass_could_not(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        calls = []
+
+        def fake_get(url, config):
+            calls.append(url)
+            if "sublanguageid-ger" in url:
+                # The site canonicalises the German request and drops the filter,
+                # so nothing on this page says what language its rows are in.
+                return FakeResponse(
+                    "https://www.opensubtitles.org/en/search/idmovie-77777",
+                    text=HINDI_SUBTITLES_HTML,
+                )
+            return FakeResponse(url, text=HINDI_SUBTITLES_HTML)
+
+        provider._http_get = fake_get
+
+        results = provider.search(
+            EPISODE_VIDEO,
+            [{"alpha3": "deu"}, {"alpha3": "hin"}],
+            {"skip_wrong_fps": True},
+        )
+
+        self.assertEqual(
+            [result["language"]["alpha3"] for result in results], ["hin"]
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

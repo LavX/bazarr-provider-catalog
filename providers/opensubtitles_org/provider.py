@@ -822,11 +822,27 @@ def _response_text(response):
     return getattr(response, "text", "") or (getattr(response, "content", b"") or b"").decode("utf-8", "replace")
 
 
+def _page_language_code(url):
+    """The site language id a listing URL is restricted to, or "" when it is not.
+
+    The site spells the restriction two ways. A canonical listing carries a
+    /sublanguageid-<code>/ path segment. The search form at /en/search2 carries
+    its own SubLanguageID field instead, and a filtered request can be answered
+    in place rather than redirected onto the canonical path, so the query string
+    has to be read as well or such a page yields no language at all.
+    """
+    parsed = urllib.parse.urlparse(url or "")
+    match = _SUBLANGUAGE_RE.search(parsed.path)
+    if match:
+        return match.group("code")
+    for name, value in urllib.parse.parse_qsl(parsed.query):
+        if name.lower() == "sublanguageid":
+            return value
+    return ""
+
+
 def _language_from_page_url(url, forced=False, hi=False):
-    match = _SUBLANGUAGE_RE.search(urllib.parse.urlparse(url or "").path)
-    if not match:
-        return None
-    return _language_from_opensubtitles_code(match.group("code"), forced=forced, hi=hi)
+    return _language_from_opensubtitles_code(_page_language_code(url), forced=forced, hi=hi)
 
 
 def _language_filtered_url(url, language_code):
@@ -1293,11 +1309,14 @@ class OpenSubtitlesOrgProvider:
         for item in items:
             if item["subtitle_id"] in seen:
                 continue
-            seen.add(item["subtitle_id"])
             language = item["language"]
-            # Rows kept purely so the page registers as a direct listing.
+            # Rows kept purely so the page registers as a direct listing. No
+            # verdict has been reached on such a row, so its id is deliberately
+            # left unseen: a later pass over a page that does resolve it must not
+            # skip it as a duplicate.
             if language is None:
                 continue
+            seen.add(item["subtitle_id"])
             if not _language_requested(language, languages, config):
                 continue
             if _episode_mismatch(item, context):
