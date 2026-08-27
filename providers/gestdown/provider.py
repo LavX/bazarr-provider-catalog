@@ -209,6 +209,79 @@ def _series_already_named(series, lowered):
     return re.search(rf"(?<![a-z0-9]){pattern}(?![a-z0-9])", lowered) is not None
 
 
+# What turns a season into a whole season. "complete" and "pack" say it on their
+# own; "full" does not, because "Full HD" is a resolution, so it counts only in
+# the phrase "full season". "season" is deliberately absent: it is the token that
+# names the season in the first place, so accepting it here would classify an
+# ordinary "Season 1 WEB-DL" as a pack and defeat the formatter for the most
+# common tag shape there is.
+_PACK_QUALIFIER = re.compile(
+    r"(?<![a-z0-9])(?:complete|pack)(?![a-z0-9])"
+    r"|(?<![a-z0-9])full[^a-z0-9]+season(?![a-z0-9])"
+)
+
+
+def _season_pack_for(lowered, season_num):
+    """True when the tag names the whole of the requested season.
+
+    A pack covers the episode being asked for without naming it, so prefixing
+    "Show.SxxEyy." would leave two conflicting season markers in one name and
+    give guessit less to work with than the proper pack name it already had.
+
+    Only the requested season counts: "S03.COMPLETE" says nothing about a
+    season 1 episode and still deserves the marker. Both spellings of the number
+    are accepted, since Gestdown returns "S01", "Season 1" and "Season 01".
+    """
+    if _SERIES_PACK.search(lowered):
+        return True
+    if not _names_season(lowered, season_num):
+        return False
+    return _PACK_QUALIFIER.search(lowered) is not None
+
+
+# "s01-s03", "s01-03", "seasons 1-3", "season 1-season 3". The endpoints are
+# captured so the caller can ask whether the requested season falls between them.
+_SEASON_RANGE = re.compile(
+    r"(?<![a-z0-9])s(\d{1,4})[^a-z0-9]*(?:-|to)[^a-z0-9]*s?(\d{1,4})(?![a-z0-9])"
+    r"|(?<![a-z0-9])seasons?[^a-z0-9]*(\d{1,4})[^a-z0-9]*(?:-|to)[^a-z0-9]*"
+    r"(?:seasons?[^a-z0-9]*)?(\d{1,4})(?![0-9])"
+)
+
+# A pack of the whole show. It covers the requested season whatever that season
+# is, so unlike every other pack shape it needs no number. Both words are
+# required: "complete" alone says nothing about scope, and "series" alone is an
+# ordinary word in a release name ("Series.Finale").
+# "tv" is allowed between the two words because "Complete TV Series" is as
+# ordinary a spelling as "Complete Series". Nothing else is: an arbitrary word
+# in between would start matching release names that only happen to contain both.
+_SERIES_PACK = re.compile(
+    r"(?<![a-z0-9])(?:complete|full)[^a-z0-9]+(?:tv[^a-z0-9]+)?"
+    r"(?:series|show|collection)(?![a-z0-9])"
+    r"|(?<![a-z0-9])(?:series|show|collection)[^a-z0-9]+(?:complete|pack)(?![a-z0-9])"
+)
+
+
+def _names_season(lowered, season_num):
+    """Whether the tag names the requested season, singly or inside a range.
+
+    A multi-season pack covers the requested episode exactly as a single-season
+    one does, so "S01-S03.COMPLETE" has to count for a season 2 episode.
+    """
+    singles = (
+        rf"(?<![a-z0-9])s0*{season_num}(?![a-z0-9])",
+        rf"(?<![a-z0-9])seasons?[^a-z0-9]*0*{season_num}(?![0-9])",
+    )
+    if any(re.search(pattern, lowered) for pattern in singles):
+        return True
+
+    for match in _SEASON_RANGE.finditer(lowered):
+        first, last = (match.group(1), match.group(2)) if match.group(1) else (
+            match.group(3), match.group(4))
+        if int(first) <= season_num <= int(last):
+            return True
+    return False
+
+
 def _episode_already_marked(lowered, season_num, episode_num):
     """True when the tag already identifies the episode, in either notation.
 
@@ -240,6 +313,8 @@ def _format_release(version_item, series, season, episode):
 
     lowered = version_item.lower()
     if _episode_already_marked(lowered, season_num, episode_num):
+        return version_item
+    if _season_pack_for(lowered, season_num):
         return version_item
     if series and _series_already_named(series, lowered):
         return version_item
