@@ -476,6 +476,39 @@ class GestdownReleaseFormattingTests(unittest.TestCase):
             "Season 1 COMPLETE BluRay",
         )
 
+    def test_a_zero_padded_pack_is_left_alone(self):
+        """Gestdown returns both spellings; only the unpadded one was recognised."""
+        self.assertEqual(
+            self._info("Season 01 COMPLETE", series="Breaking Bad", season=1, episode=2),
+            "Season 01 COMPLETE",
+        )
+
+    def test_a_complete_season_pack_named_the_other_way_round_is_left_alone(self):
+        self.assertEqual(
+            self._info("COMPLETE.SEASON.01.1080p", series="Breaking Bad", season=1,
+                       episode=2),
+            "COMPLETE.SEASON.01.1080p",
+        )
+
+    def test_naming_the_season_is_not_on_its_own_a_pack(self):
+        """`season` cannot be its own whole-season qualifier.
+
+        An ordinary episode tag that happens to say which season it belongs to
+        still needs the episode marker, or the formatter is defeated by the most
+        common tag shape there is.
+        """
+        self.assertEqual(
+            self._info("Season 1 WEB-DL", series="Breaking Bad", season=1, episode=2),
+            "Breaking.Bad.S01E02.Season.1.WEB-DL",
+        )
+
+    def test_full_describing_the_resolution_is_not_a_pack(self):
+        """`Full HD` is a resolution. Only `full season` says whole season."""
+        self.assertEqual(
+            self._info("S01.Full.HD.WEB-DL", series="Breaking Bad", season=1, episode=2),
+            "Breaking.Bad.S01E02.S01.Full.HD.WEB-DL",
+        )
+
     def test_a_pack_for_another_season_is_still_formatted(self):
         """Season 3 says nothing about the season 1 episode being requested."""
         self.assertEqual(

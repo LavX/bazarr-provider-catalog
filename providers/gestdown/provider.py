@@ -209,6 +209,18 @@ def _series_already_named(series, lowered):
     return re.search(rf"(?<![a-z0-9]){pattern}(?![a-z0-9])", lowered) is not None
 
 
+# What turns a season into a whole season. "complete" and "pack" say it on their
+# own; "full" does not, because "Full HD" is a resolution, so it counts only in
+# the phrase "full season". "season" is deliberately absent: it is the token that
+# names the season in the first place, so accepting it here would classify an
+# ordinary "Season 1 WEB-DL" as a pack and defeat the formatter for the most
+# common tag shape there is.
+_PACK_QUALIFIER = re.compile(
+    r"(?<![a-z0-9])(?:complete|pack)(?![a-z0-9])"
+    r"|(?<![a-z0-9])full[^a-z0-9]+season(?![a-z0-9])"
+)
+
+
 def _season_pack_for(lowered, season_num):
     """True when the tag names the whole of the requested season.
 
@@ -217,16 +229,16 @@ def _season_pack_for(lowered, season_num):
     give guessit less to work with than the proper pack name it already had.
 
     Only the requested season counts: "S03.COMPLETE" says nothing about a
-    season 1 episode and still deserves the marker.
+    season 1 episode and still deserves the marker. Both spellings of the number
+    are accepted, since Gestdown returns "S01", "Season 1" and "Season 01".
     """
     patterns = (
-        rf"(?<![a-z0-9])s{season_num:02d}(?![a-z0-9])",
-        rf"(?<![a-z0-9])season[^a-z0-9]?{season_num}(?![0-9])",
+        rf"(?<![a-z0-9])s0*{season_num}(?![a-z0-9])",
+        rf"(?<![a-z0-9])season[^a-z0-9]*0*{season_num}(?![0-9])",
     )
     if not any(re.search(pattern, lowered) for pattern in patterns):
         return False
-    return re.search(r"(?<![a-z0-9])(complete|full|pack|season)(?![a-z0-9])",
-                     lowered) is not None
+    return _PACK_QUALIFIER.search(lowered) is not None
 
 
 def _episode_already_marked(lowered, season_num, episode_num):
