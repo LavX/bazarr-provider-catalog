@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "39336457ee86749f9be4c2324441acc58d20fc1cd0ffe39014672e756367adb2",
+  "bundle_sha256": "58b50250eb204805faf365458c523059e181473183df568081c2bea52a3ac984",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -30,7 +30,7 @@
   "entry_class": "GestdownProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "2252e55eb7945783a42417f4391f8107d202fe5a694e53ae40706a396ad64c7a"
+    "provider.py": "23e0d07ac099d9e7e41d1a29425d368045fe179a2882edbbed8818b3674ae792"
   },
   "languages": [
     "ara",

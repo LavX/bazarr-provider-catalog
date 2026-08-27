@@ -232,16 +232,28 @@ def _season_pack_for(lowered, season_num):
     season 1 episode and still deserves the marker. Both spellings of the number
     are accepted, since Gestdown returns "S01", "Season 1" and "Season 01".
     """
+    if _SERIES_PACK.search(lowered):
+        return True
     if not _names_season(lowered, season_num):
         return False
     return _PACK_QUALIFIER.search(lowered) is not None
 
 
-# "s01-s03", "s01-03", "seasons 1-3". The endpoints are captured so the caller
-# can ask whether the requested season falls between them.
+# "s01-s03", "s01-03", "seasons 1-3", "season 1-season 3". The endpoints are
+# captured so the caller can ask whether the requested season falls between them.
 _SEASON_RANGE = re.compile(
     r"(?<![a-z0-9])s(\d{1,4})[^a-z0-9]*(?:-|to)[^a-z0-9]*s?(\d{1,4})(?![a-z0-9])"
-    r"|(?<![a-z0-9])seasons?[^a-z0-9]*(\d{1,4})[^a-z0-9]*(?:-|to)[^a-z0-9]*(\d{1,4})(?![0-9])"
+    r"|(?<![a-z0-9])seasons?[^a-z0-9]*(\d{1,4})[^a-z0-9]*(?:-|to)[^a-z0-9]*"
+    r"(?:seasons?[^a-z0-9]*)?(\d{1,4})(?![0-9])"
+)
+
+# A pack of the whole show. It covers the requested season whatever that season
+# is, so unlike every other pack shape it needs no number. Both words are
+# required: "complete" alone says nothing about scope, and "series" alone is an
+# ordinary word in a release name ("Series.Finale").
+_SERIES_PACK = re.compile(
+    r"(?<![a-z0-9])(?:complete|full)[^a-z0-9]+(?:series|show|collection)(?![a-z0-9])"
+    r"|(?<![a-z0-9])(?:series|show|collection)[^a-z0-9]+(?:complete|pack)(?![a-z0-9])"
 )
 
 
