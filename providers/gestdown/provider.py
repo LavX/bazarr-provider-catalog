@@ -251,8 +251,12 @@ _SEASON_RANGE = re.compile(
 # is, so unlike every other pack shape it needs no number. Both words are
 # required: "complete" alone says nothing about scope, and "series" alone is an
 # ordinary word in a release name ("Series.Finale").
+# "tv" is allowed between the two words because "Complete TV Series" is as
+# ordinary a spelling as "Complete Series". Nothing else is: an arbitrary word
+# in between would start matching release names that only happen to contain both.
 _SERIES_PACK = re.compile(
-    r"(?<![a-z0-9])(?:complete|full)[^a-z0-9]+(?:series|show|collection)(?![a-z0-9])"
+    r"(?<![a-z0-9])(?:complete|full)[^a-z0-9]+(?:tv[^a-z0-9]+)?"
+    r"(?:series|show|collection)(?![a-z0-9])"
     r"|(?<![a-z0-9])(?:series|show|collection)[^a-z0-9]+(?:complete|pack)(?![a-z0-9])"
 )
 

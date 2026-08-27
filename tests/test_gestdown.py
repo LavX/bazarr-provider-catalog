@@ -577,6 +577,14 @@ class GestdownReleaseFormattingTests(unittest.TestCase):
             "Breaking.Bad.S01E02.S10.COMPLETE",
         )
 
+    def test_a_complete_tv_series_pack_is_left_alone(self):
+        """`TV` sits between the two words that matter."""
+        for tag in ("Complete TV Series BluRay", "Complete.TV.Show",
+                    "The.Complete.Series.1080p", "TV.Series.COMPLETE"):
+            with self.subTest(tag=tag):
+                self.assertEqual(
+                    self._info(tag, series="Breaking Bad", season=2, episode=2), tag)
+
     def test_a_pack_for_another_season_is_still_formatted(self):
         """Season 3 says nothing about the season 1 episode being requested."""
         self.assertEqual(
