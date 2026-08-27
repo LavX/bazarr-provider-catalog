@@ -457,6 +457,32 @@ class GestdownReleaseFormattingTests(unittest.TestCase):
             "Breaking.Bad.S01E04.LOL",
         )
 
+    def test_a_season_pack_tag_is_left_alone(self):
+        """A pack covers the requested episode without naming it.
+
+        Prefixing "Show.S01E02." onto "S01.COMPLETE.1080p" produces a name with
+        two conflicting season markers, which is worse for guessit than the
+        proper pack name it already had.
+        """
+        self.assertEqual(
+            self._info("S01.COMPLETE.1080p", series="Breaking Bad", season=1, episode=2),
+            "S01.COMPLETE.1080p",
+        )
+
+    def test_a_complete_season_pack_in_words_is_left_alone(self):
+        self.assertEqual(
+            self._info("Season 1 COMPLETE BluRay", series="Breaking Bad", season=1,
+                       episode=2),
+            "Season 1 COMPLETE BluRay",
+        )
+
+    def test_a_pack_for_another_season_is_still_formatted(self):
+        """Season 3 says nothing about the season 1 episode being requested."""
+        self.assertEqual(
+            self._info("S03.COMPLETE.1080p", series="Breaking Bad", season=1, episode=2),
+            "Breaking.Bad.S01E02.S03.COMPLETE.1080p",
+        )
+
     def test_each_comma_separated_tag_formatted_independently(self):
         self.assertEqual(
             self._info("LOL, DVDRip ORPHEUS", series="Breaking Bad", season=1, episode=4),

@@ -209,6 +209,26 @@ def _series_already_named(series, lowered):
     return re.search(rf"(?<![a-z0-9]){pattern}(?![a-z0-9])", lowered) is not None
 
 
+def _season_pack_for(lowered, season_num):
+    """True when the tag names the whole of the requested season.
+
+    A pack covers the episode being asked for without naming it, so prefixing
+    "Show.SxxEyy." would leave two conflicting season markers in one name and
+    give guessit less to work with than the proper pack name it already had.
+
+    Only the requested season counts: "S03.COMPLETE" says nothing about a
+    season 1 episode and still deserves the marker.
+    """
+    patterns = (
+        rf"(?<![a-z0-9])s{season_num:02d}(?![a-z0-9])",
+        rf"(?<![a-z0-9])season[^a-z0-9]?{season_num}(?![0-9])",
+    )
+    if not any(re.search(pattern, lowered) for pattern in patterns):
+        return False
+    return re.search(r"(?<![a-z0-9])(complete|full|pack|season)(?![a-z0-9])",
+                     lowered) is not None
+
+
 def _episode_already_marked(lowered, season_num, episode_num):
     """True when the tag already identifies the episode, in either notation.
 
@@ -240,6 +260,8 @@ def _format_release(version_item, series, season, episode):
 
     lowered = version_item.lower()
     if _episode_already_marked(lowered, season_num, episode_num):
+        return version_item
+    if _season_pack_for(lowered, season_num):
         return version_item
     if series and _series_already_named(series, lowered):
         return version_item
