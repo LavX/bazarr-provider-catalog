@@ -509,6 +509,26 @@ class GestdownReleaseFormattingTests(unittest.TestCase):
             "Breaking.Bad.S01E02.S01.Full.HD.WEB-DL",
         )
 
+    def test_a_multi_season_pack_covering_this_season_is_left_alone(self):
+        """S01-S03 covers a season 2 episode as surely as S02 would."""
+        self.assertEqual(
+            self._info("S01-S03.COMPLETE", series="Breaking Bad", season=2, episode=2),
+            "S01-S03.COMPLETE",
+        )
+
+    def test_a_plural_word_form_range_is_left_alone(self):
+        self.assertEqual(
+            self._info("Seasons 1-3 COMPLETE", series="Breaking Bad", season=2,
+                       episode=2),
+            "Seasons 1-3 COMPLETE",
+        )
+
+    def test_a_range_that_excludes_this_season_is_still_formatted(self):
+        self.assertEqual(
+            self._info("S03-S05.COMPLETE", series="Breaking Bad", season=1, episode=2),
+            "Breaking.Bad.S01E02.S03-S05.COMPLETE",
+        )
+
     def test_a_pack_for_another_season_is_still_formatted(self):
         """Season 3 says nothing about the season 1 episode being requested."""
         self.assertEqual(

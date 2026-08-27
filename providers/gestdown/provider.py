@@ -232,13 +232,38 @@ def _season_pack_for(lowered, season_num):
     season 1 episode and still deserves the marker. Both spellings of the number
     are accepted, since Gestdown returns "S01", "Season 1" and "Season 01".
     """
-    patterns = (
-        rf"(?<![a-z0-9])s0*{season_num}(?![a-z0-9])",
-        rf"(?<![a-z0-9])season[^a-z0-9]*0*{season_num}(?![0-9])",
-    )
-    if not any(re.search(pattern, lowered) for pattern in patterns):
+    if not _names_season(lowered, season_num):
         return False
     return _PACK_QUALIFIER.search(lowered) is not None
+
+
+# "s01-s03", "s01-03", "seasons 1-3". The endpoints are captured so the caller
+# can ask whether the requested season falls between them.
+_SEASON_RANGE = re.compile(
+    r"(?<![a-z0-9])s(\d{1,4})[^a-z0-9]*(?:-|to)[^a-z0-9]*s?(\d{1,4})(?![a-z0-9])"
+    r"|(?<![a-z0-9])seasons?[^a-z0-9]*(\d{1,4})[^a-z0-9]*(?:-|to)[^a-z0-9]*(\d{1,4})(?![0-9])"
+)
+
+
+def _names_season(lowered, season_num):
+    """Whether the tag names the requested season, singly or inside a range.
+
+    A multi-season pack covers the requested episode exactly as a single-season
+    one does, so "S01-S03.COMPLETE" has to count for a season 2 episode.
+    """
+    singles = (
+        rf"(?<![a-z0-9])s0*{season_num}(?![a-z0-9])",
+        rf"(?<![a-z0-9])seasons?[^a-z0-9]*0*{season_num}(?![0-9])",
+    )
+    if any(re.search(pattern, lowered) for pattern in singles):
+        return True
+
+    for match in _SEASON_RANGE.finditer(lowered):
+        first, last = (match.group(1), match.group(2)) if match.group(1) else (
+            match.group(3), match.group(4))
+        if int(first) <= season_num <= int(last):
+            return True
+    return False
 
 
 def _episode_already_marked(lowered, season_num, episode_num):
