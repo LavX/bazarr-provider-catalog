@@ -153,6 +153,19 @@ class LegendasDivxParityTests(unittest.TestCase):
                     case["expected"],
                 )
 
+    def test_the_plugin_diverges_from_the_builtin_only_where_recorded(self):
+        """Every deliberate divergence is pinned, so neither side drifts unnoticed."""
+        for case in PARITY["member_matches_episode_intentional_divergences"]:
+            with self.subTest(name=case["name"], episode=case["episode"]):
+                self.assertNotEqual(case["builtin"], case["plugin"])
+                self.assertTrue(case["reason"].strip())
+                self.assertEqual(
+                    self.mod.member_matches_episode(
+                        case["name"], case["season"], case["episode"], case["absolute_episode"]
+                    ),
+                    case["plugin"],
+                )
+
     def test_member_episode_matching_matches_the_builtin(self):
         for case in PARITY["member_matches_episode"]:
             with self.subTest(name=case["name"], episode=case["episode"]):
@@ -1245,6 +1258,56 @@ class LegendasDivxSecondReviewRegressionTests(unittest.TestCase):
         provider = self._provider(routes)
         with self.assertRaises(self.mod.IPAddressBlocked):
             provider.search(VIDEO_DUNE, [POR], dict(CREDENTIALS))
+
+
+
+
+class LegendasDivxOracleSweepRegressionTests(unittest.TestCase):
+    """Divergences from the built-in found by sweeping realistic member names.
+
+    These were not reported by review; they came out of running both
+    implementations over the same names and comparing. Each one is a member the
+    plugin resolved differently from the implementation that was verified against
+    the live site.
+    """
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_only_a_leading_number_reads_as_season_plus_episode(self):
+        # This site's packs open with the number: 105 is season one episode five.
+        self.assertTrue(self.mod.member_matches_episode("105 - Pilot.srt", 1, 5))
+        # An anime member's number is absolute, and reading it compactly as well
+        # would let it answer for season one episode five too.
+        self.assertFalse(
+            self.mod.member_matches_episode("[Group] Anime - 105 [720p].srt", 1, 5)
+        )
+        self.assertTrue(
+            self.mod.member_matches_episode("[Group] Anime - 105 [720p].srt", 1, 105, 105)
+        )
+
+    def test_a_compact_number_does_not_also_stand_for_itself_as_an_episode(self):
+        # "105 - Pilot.srt" is episode five, so it must not answer for episode 105.
+        self.assertFalse(self.mod.member_matches_episode("105 - Pilot.srt", 1, 105))
+        self.assertTrue(self.mod.member_matches_episode("105 - Pilot.srt", 1, 105, 105))
+
+    def test_a_numbered_part_or_disc_is_not_an_episode(self):
+        for name in ("Show.Part.2.srt", "Show.Parte.2.srt", "Show.CD2.srt", "Show.Vol.2.srt"):
+            with self.subTest(name=name):
+                # States nothing about numbering, so it contradicts nothing.
+                self.assertTrue(self.mod.member_matches_episode(name, 1, 1))
+                self.assertTrue(self.mod.member_matches_episode(name, 2, 7))
+
+    def test_a_folder_that_contradicts_the_file_name_answers_for_neither(self):
+        name = "Pack S02/Show.S01E07.srt"
+        self.assertFalse(self.mod.member_matches_episode(name, 1, 7))
+        self.assertFalse(self.mod.member_matches_episode(name, 2, 7))
+
+    def test_a_folder_that_agrees_with_the_file_name_still_matches(self):
+        self.assertTrue(self.mod.member_matches_episode("Pack S01/Show.S01E07.srt", 1, 7))
+        self.assertTrue(
+            self.mod.member_matches_episode("Breaking Bad S01/Breaking.Bad.S01E03.srt", 1, 3)
+        )
 
 
 

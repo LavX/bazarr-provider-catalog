@@ -166,7 +166,11 @@ _RELEASE_NOISE_RE = re.compile(
     r"|\b\d{1,2}\W?bit\b"
     r"|\b(?:19|20)\d{2}\b"
     r"|\bmp3\b|\bmp4\b|\bx?\d{2,4}kbps\b"
-    r"|\bh\W?26[45]\b",
+    r"|\bh\W?26[45]\b"
+    # A numbered part, disc or volume is not an episode. Without this a member
+    # called "Show.Part.2.srt" claims episode two and is rejected for every other
+    # episode, where the built-in reads it as stating nothing at all.
+    r"|\b(?:parte?|cd|disc[oa]?|dvd|vol(?:ume)?)\W?\d{1,2}\b",
     re.I,
 )
 # What may follow an episode number: end of token, or the "E" of the next episode.
@@ -1141,20 +1145,19 @@ def member_matches_episode(name, season, episode, absolute=None):
     """
     if episode is None:
         return True
-    wanted = {episode}
-    if absolute is not None:
-        wanted.add(absolute)
-
-    for reading_season, reading_episodes in _episode_readings(_member_text(name)) or [(None, None)]:
-        if reading_episodes is None:
-            # The name says nothing about numbering, which is not a contradiction.
-            return True
+    readings = _episode_readings(_member_text(name))
+    if not readings:
+        # The name says nothing about numbering, which is not a contradiction.
+        return True
+    for reading_season, reading_episodes, reading_absolutes in readings:
         if reading_season is not None and season is not None and reading_season != season:
             # An explicit season is a claim about season-relative numbering, so
             # Show.S01E14 is not the subtitle for S02E01 just because that
             # episode's absolute number happens to be 14.
             continue
-        if reading_episodes & wanted:
+        if episode in reading_episodes:
+            return True
+        if absolute is not None and absolute in reading_absolutes:
             return True
     return False
 
@@ -1162,8 +1165,9 @@ def member_matches_episode(name, season, episode, absolute=None):
 def _episode_readings(text):
     """Every (season, episodes) a normalised member name could be claiming.
 
-    A list, not one merged pair, because a bare number is genuinely ambiguous and
-    the readings must not cross-contaminate: packs from this site name members
+    Each reading is (season, season-relative episodes, absolute numbers). A list,
+    not one merged reading, because a bare number is genuinely ambiguous and the
+    readings must not cross-contaminate: packs from this site name members
     "103 - Pilot.srt" (season one, episode three) while anime packs name them
     "One Piece - 310" (an absolute number). Merging those would let the season
     from one reading veto the episode from the other, which rejects every anime
@@ -1184,16 +1188,25 @@ def _episode_readings(text):
             else:
                 episodes.add(number)
             previous = number
-        readings.append((int(match.group("season")), episodes))
+        readings.append((int(match.group("season")), episodes, set()))
     for match in _EXPLICIT_XFORM_RE.finditer(text):
-        readings.append((int(match.group("season")), {int(match.group("episode"))}))
+        readings.append((int(match.group("season")), {int(match.group("episode"))}, set()))
     if readings:
+        directory_seasons = _season_tokens(text.rsplit("/", 1)[0]) if "/" in text else set()
+        if directory_seasons:
+            consistent = [reading for reading in readings if reading[0] in directory_seasons]
+            if not consistent:
+                # The folder and the file name disagree about the season. One of
+                # them is wrong and nothing in the name says which, so this member
+                # answers for neither: a reading that can never match.
+                return [(None, set(), set())]
+            readings = consistent
         return readings
 
     season_match = _SEASON_WORD_RE.search(text)
     season_word = int(season_match.group("season")) if season_match else None
     for match in _EXPLICIT_EPISODE_ONLY_RE.finditer(text):
-        readings.append((season_word, {int(match.group("episode"))}))
+        readings.append((season_word, {int(match.group("episode"))}, set()))
     if readings:
         return readings
 
@@ -1202,24 +1215,40 @@ def _episode_readings(text):
     # season, not an episode, so leaving it in would let "Season 1/02.srt" pass for
     # episode one.
     bare = _RELEASE_NOISE_RE.sub(" ", _SEASON_WORD_RE.sub(" ", text))
+    basename_start = bare.rfind("/") + 1
     for match in _BARE_NUMBER_RE.finditer(bare):
         number = int(match.group("number"))
         if number <= 0:
             continue
-        # As an episode or absolute number on its own, under whatever season the
-        # path already stated: "Season 1/02.srt" is season one episode two, and
-        # dropping that season would let it answer a request for season two.
-        readings.append((season_word, {number}))
-        if number >= 100:
-            # and as the compact season-plus-episode this site uses in packs.
-            head, tail = divmod(number, 100)
-            if tail:
-                readings.append((head, {tail}))
-        if number >= 1000:
-            head, tail = divmod(number, 1000)
-            if tail:
-                readings.append((head, {tail}))
+        # The compact season-plus-episode reading applies only to the number the
+        # file name opens with, which is the shape this site's packs use:
+        # "105 - Pilot.srt" is season one episode five. A number further along is
+        # an absolute one ("[Group] Anime - 105 [720p].srt"), and reading that
+        # compactly as well would let it answer for season one episode five too.
+        compact = []
+        if not bare[basename_start:match.start()].strip():
+            for divisor in (100, 1000):
+                if number >= divisor:
+                    head, tail = divmod(number, divisor)
+                    if tail:
+                        compact.append((head, {tail}, set()))
+        if compact:
+            # It reads as season plus episode, so on its own the number can only
+            # still be an absolute one. Letting it stand for a season-relative
+            # episode as well would make "105 - Pilot.srt" answer a request for
+            # episode 105 on top of the episode five it actually is.
+            readings.append((season_word, set(), {number}))
+            readings.extend(compact)
+        else:
+            # Under whatever season the path already stated: "Season 1/02.srt" is
+            # season one episode two, and dropping that season would let it answer
+            # a request for season two.
+            readings.append((season_word, {number}, {number}))
     return readings
+
+
+def _season_tokens(text):
+    return {int(match.group("season")) for match in _SEASON_WORD_RE.finditer(text or "")}
 
 
 # ---------------------------------------------------------------------- guards
