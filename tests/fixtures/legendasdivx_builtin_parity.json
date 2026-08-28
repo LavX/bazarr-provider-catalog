@@ -1,0 +1,239 @@
+{
+  "generated_from": "custom_libs/subliminal_patch/providers/legendasdivx.py",
+  "clean_release_line": [
+    {
+      "text": "Legendas anteriormente enviadas pelo cristiano170, ressincronizadas por mim para a(s) release(s):",
+      "expected": ", ressincronizadas por mim para a(s) release(s):"
+    },
+    {
+      "text": "Sincronizadas para a versão: The.Matrix.1999.DVDRip.XviD-DEViSE",
+      "expected": "The.Matrix.1999.DVDRip.XviD-DEViSE"
+    },
+    {
+      "text": "ripadas por mim - The.Matrix.1999.1080p",
+      "expected": "The.Matrix.1999.1080p"
+    },
+    {
+      "text": "**The.Truman.Show.1998.720p.BluRay.x264-SEPTiC**",
+      "expected": "The.Truman.Show.1998.720p.BluRay.x264-SEPTiC"
+    },
+    {
+      "text": "ajustei a sincronia para a release: X.Y.Z",
+      "expected": "X.Y.Z"
+    },
+    {
+      "text": "Legendas para a versãoThe.Complete.First.Season",
+      "expected": "The.Complete.First.Season"
+    },
+    {
+      "text": "traduzidas do dvd. para o filme: Alguma.Coisa.2001",
+      "expected": "para o filme: Alguma.Coisa.2001"
+    }
+  ],
+  "extract_release_info": [
+    {
+      "title": "The Truman Show",
+      "year": 1998,
+      "desc": "Legendas anteriormente enviadas pelo cristiano170, ressincronizadas por mim para a(s) release(s):\n\n**The.Truman.Show.1998.720p.BluRay.x264-SEPTiC**",
+      "expected": "The.Truman.Show.1998.720p.BluRay.x264-SEPTiC"
+    },
+    {
+      "title": "The Truman Show",
+      "year": 1998,
+      "desc": "Não há descrição disponível",
+      "expected": "The Truman Show (1998)"
+    },
+    {
+      "title": "The Truman Show",
+      "year": 1998,
+      "desc": "Sincronizadas para a versão: The.Truman.Show.1998.DVDRip.XviD.AC3-DEViSE",
+      "expected": "The.Truman.Show.1998.DVDRip.XviD.AC3-DEViSE"
+    },
+    {
+      "title": "The Matrix",
+      "year": 1999,
+      "desc": "Sincronizadas para a release: The.Matrix.1999.1080p.BluRay.x264-SPARKS",
+      "expected": "The.Matrix.1999.1080p.BluRay.x264-SPARKS"
+    },
+    {
+      "title": "Dune: Part One",
+      "year": 2021,
+      "desc": "Sincronizadas para a release: Dune.Part.One.2021.1080p.WEB-DL.DDP5.1.H.264-NTb",
+      "expected": "Dune.Part.One.2021.1080p.WEB-DL.DDP5.1.H.264-NTb"
+    },
+    {
+      "title": "Dune: Part One",
+      "year": 2021,
+      "desc": "Legendas ripadas por mim para a versão: Dune.Part.One.2021.720p.BluRay.x264-GROUP",
+      "expected": "Dune.Part.One.2021.720p.BluRay.x264-GROUP"
+    },
+    {
+      "title": "Chernobyl",
+      "year": 2019,
+      "desc": "Legendas anteriormente enviadas pelo fulano, ressincronizadas por mim para a(s) release(s):\nChernobyl.S01E01.1080p.WEB.H264-MEMENTO",
+      "expected": "Chernobyl.S01E01.1080p.WEB.H264-MEMENTO"
+    },
+    {
+      "title": "Chernobyl",
+      "year": 2019,
+      "desc": "Sincronizadas para a versão: Chernobyl.S01E01.1080p.WEB.H264-MEMENTO",
+      "expected": "Chernobyl.S01E01.1080p.WEB.H264-MEMENTO"
+    },
+    {
+      "title": "Chernobyl",
+      "year": 2019,
+      "desc": "n/a",
+      "expected": "Chernobyl (2019)"
+    },
+    {
+      "title": "Chernobyl",
+      "year": 2019,
+      "desc": "",
+      "expected": "Chernobyl (2019)"
+    },
+    {
+      "title": "Chernobyl",
+      "year": null,
+      "desc": "Enjoy!\nObrigado ao uploader original.",
+      "expected": "Chernobyl"
+    },
+    {
+      "title": "The Matrix",
+      "year": 1999,
+      "desc": "ajustei a sincronia para o release: The.Matrix.1999.REMASTERED.1080p.BluRay.x265-RARBG",
+      "expected": "The.Matrix.1999.REMASTERED.1080p.BluRay.x265-RARBG"
+    },
+    {
+      "title": "The Matrix",
+      "year": 1999,
+      "desc": "sinc: HDTV",
+      "expected": "The Matrix (1999)"
+    },
+    {
+      "title": "Breaking Bad",
+      "year": 2008,
+      "desc": "Legendas para a versãoThe.Complete.First.Season.720p.BluRay.x264-GROUP",
+      "expected": "The.Complete.First.Season.720p.BluRay.x264-GROUP"
+    },
+    {
+      "title": "Interstellar",
+      "year": 2014,
+      "desc": "corrigidos alguns erros. Interstellar.2014.1080p.BluRay.x264-YIFY",
+      "expected": "Interstellar.2014.1080p.BluRay.x264-YIFY"
+    }
+  ],
+  "member_matches_episode": [
+    {
+      "name": "101 - Pilot.srt",
+      "season": 1,
+      "episode": 1,
+      "absolute_episode": null,
+      "expected": true
+    },
+    {
+      "name": "103 - ...And the Bag's in the River.srt",
+      "season": 1,
+      "episode": 3,
+      "absolute_episode": null,
+      "expected": true
+    },
+    {
+      "name": "107 - A No-Rough-Stuff-Type Deal.srt",
+      "season": 1,
+      "episode": 8,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "107 - A No-Rough-Stuff-Type Deal.srt",
+      "season": 1,
+      "episode": 7,
+      "absolute_episode": null,
+      "expected": true
+    },
+    {
+      "name": "Breaking.Bad.S01E01.srt",
+      "season": 1,
+      "episode": 5,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Breaking.Bad.S01E05.srt",
+      "season": 1,
+      "episode": 5,
+      "absolute_episode": null,
+      "expected": true
+    },
+    {
+      "name": "Show.S01E01/subtitle.srt",
+      "season": 1,
+      "episode": 2,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E02/subtitle.srt",
+      "season": 1,
+      "episode": 2,
+      "absolute_episode": null,
+      "expected": true
+    },
+    {
+      "name": "Show.S01E01-E02.srt",
+      "season": 1,
+      "episode": 2,
+      "absolute_episode": null,
+      "expected": true
+    },
+    {
+      "name": "Show.S01E01E02.srt",
+      "season": 1,
+      "episode": 2,
+      "absolute_episode": null,
+      "expected": true
+    },
+    {
+      "name": "[HorribleSubs] One Piece - 310 [1080p].srt",
+      "season": 10,
+      "episode": 14,
+      "absolute_episode": 310,
+      "expected": true
+    },
+    {
+      "name": "[HorribleSubs] One Piece - 311 [1080p].srt",
+      "season": 10,
+      "episode": 14,
+      "absolute_episode": 310,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E14.srt",
+      "season": 2,
+      "episode": 1,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.2x05.srt",
+      "season": 2,
+      "episode": 5,
+      "absolute_episode": null,
+      "expected": true
+    },
+    {
+      "name": "Show.2x05.srt",
+      "season": 2,
+      "episode": 6,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "legenda.srt",
+      "season": 1,
+      "episode": 3,
+      "absolute_episode": null,
+      "expected": true
+    }
+  ]
+}
