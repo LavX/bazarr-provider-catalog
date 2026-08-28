@@ -25,7 +25,11 @@ Port of the built-in `legendasdivx` provider onto the Provider Hub catalog.
   phpBB session cookie is what makes search and download work. FlareSolverr is an optional fallback
   when cloudscraper still receives a challenge, and it replays the challenged request with its
   method and body intact: replaying a challenged login POST as a GET would throw the credentials
-  away, so FlareSolverr could never recover a challenge on the login submission.
+  away, so FlareSolverr could never recover a challenge on the login submission. Its browser
+  follows redirects, so a solved page that lands on the login endpoint is turned back into a
+  redirect for the caller, which is the signal re-authentication keys off. The cookies it solves
+  are written into the stdlib cookie jar as well as the scraper's, because the fallback HTTP path
+  sends cookies from that jar and nowhere else.
 - **What counts as a challenge.** A `Server: cloudflare` header only says the response came through
   the proxy; the site's own 403, 429 and 503 carry it too. A response is treated as a challenge only
   when it says so, through `cf-mitigated: challenge` or a challenge marker in the body. Otherwise an
@@ -57,9 +61,21 @@ Port of the built-in `legendasdivx` provider onto the Provider Hub catalog.
   pack shape.
 - Movie searches send `imdb=`, so nothing on the backend guarantees the film. An `imdb_id` match is
   claimed only when the id actually appears in the result.
+- A result whose description cell is missing is still a result: the header already states the title
+  and year, and the release name falls back to them.
+- A direct (non-archive) download reports the format its bytes actually are, from
+  `Content-Disposition`, the final URL, or a sniff of the body. The candidate's filename is
+  synthetic and always says `.zip`, so trusting it would label an ASS or VTT file as SubRip.
+- `bloqueado` is ordinary Portuguese and turns up in uploader descriptions, so the IP-block guard
+  matches the notice (the word near `IP`) rather than the bare word.
+- Pagination uses ceiling division. Flooring and adding one costs a request for a page that does not
+  exist whenever the result count is an exact multiple of the page size, against a site with a
+  strict daily search limit.
 - The login POST answers 200 whether or not the credentials were accepted. Success is decided from
-  the session cookies: phpBB leaves the anonymous user id (`phpbb3_2z8zs_u == 1`) behind on a
-  rejected login, and no session id at all when it refused to start a session.
+  the session cookies: a session id on its own proves nothing, because phpBB hands one to anonymous
+  visitors too, so a cookie naming a real (non-anonymous) user id is required as well. Both cookies
+  are matched by shape (`phpbb3_*_u`, `phpbb3_*_sid` or `PHPSESSID`) rather than by the board
+  prefix, so a prefix change cannot quietly turn "no user cookie found" into "accept anything".
 - A session that expires under a reused worker shows up as a redirect to the login page. The plugin
   drops the phpBB cookies, logs in again and retries once. The Cloudflare clearance cookie is kept:
   it is unrelated to the phpBB session and expensive to re-obtain. A redirect that survives the
@@ -82,18 +98,21 @@ this work). Recording what that means, so a field failure is diagnosable:
   2. *Host-side archive extraction.* New code with no live-verified equivalent. If a download fails
      with "no usable subtitle member" or "select_archive_member rejected the archive", the member
      names are the thing to look at.
-  3. *The login form's captcha path.* The plugin detects a reCAPTCHA sitekey on the login page and
-     can post a solver token, but no captcha has been observed on this form. If login fails with
-     the captcha message and the form turns out to use phpBB's own image or Q&A captcha rather than
-     reCAPTCHA, that path needs rewriting, not configuring.
+  3. *The login form's captcha path.* The plugin detects a reCAPTCHA or hCaptcha sitekey on the
+     login page and posts the solver token under that captcha's own field, but no captcha has been
+     observed on this form. If login fails with the captcha message and the form turns out to use
+     phpBB's own image or Q&A captcha instead, that path needs rewriting, not configuring.
   4. *Result markup details.* The HTML fixtures are modelled on the markup in the built-in's own
      test suite, not on a fresh capture. Title, year and uploader are read from the result header;
      if the site nests them differently, `_parse_sub_header` is where that shows up.
   5. *The bare-number reading of archive member names.* Without guessit the plugin reads a bare
      number three ways (episode, absolute number, compact season-plus-episode) after stripping
      release tags and any season token, and a season stated by a path segment binds those readings
-     so `Season 1/02.srt` cannot answer a request for season two. It agrees with the built-in on
-     every recorded case, but an unusual member name could still be read differently.
+     so `Season 1/02.srt` cannot answer a request for season two. Member names keep their
+     separators for this, because collapsing them would make the range in `S01E01-03` (which covers
+     episode two) indistinguishable from the stray number in `S01E01.2160p` (which does not). It
+     agrees with the built-in on every recorded case, but an unusual member name could still be
+     read differently.
 
 Asking the built-in's contributor to try a plugin build is the cheapest way to close items 1 and 2.
 

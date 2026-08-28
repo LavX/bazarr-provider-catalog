@@ -234,6 +234,398 @@
       "episode": 3,
       "absolute_episode": null,
       "expected": true
+    },
+    {
+      "name": "Show.S01E01-03.srt",
+      "season": 1,
+      "episode": 1,
+      "absolute_episode": null,
+      "expected": true
+    },
+    {
+      "name": "Show.S01E01-03.srt",
+      "season": 1,
+      "episode": 2,
+      "absolute_episode": null,
+      "expected": true
+    },
+    {
+      "name": "Show.S01E01-03.srt",
+      "season": 1,
+      "episode": 3,
+      "absolute_episode": null,
+      "expected": true
+    },
+    {
+      "name": "Show.S01E01-03.srt",
+      "season": 1,
+      "episode": 4,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E01-03.srt",
+      "season": 1,
+      "episode": 80,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E01-03.srt",
+      "season": 1,
+      "episode": 160,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E01-03.srt",
+      "season": 2,
+      "episode": 2,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E01-E03.srt",
+      "season": 1,
+      "episode": 1,
+      "absolute_episode": null,
+      "expected": true
+    },
+    {
+      "name": "Show.S01E01-E03.srt",
+      "season": 1,
+      "episode": 2,
+      "absolute_episode": null,
+      "expected": true
+    },
+    {
+      "name": "Show.S01E01-E03.srt",
+      "season": 1,
+      "episode": 3,
+      "absolute_episode": null,
+      "expected": true
+    },
+    {
+      "name": "Show.S01E01-E03.srt",
+      "season": 1,
+      "episode": 4,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E01-E03.srt",
+      "season": 1,
+      "episode": 80,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E01-E03.srt",
+      "season": 1,
+      "episode": 160,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E01-E03.srt",
+      "season": 2,
+      "episode": 2,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E01E03.srt",
+      "season": 1,
+      "episode": 1,
+      "absolute_episode": null,
+      "expected": true
+    },
+    {
+      "name": "Show.S01E01E03.srt",
+      "season": 1,
+      "episode": 2,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E01E03.srt",
+      "season": 1,
+      "episode": 3,
+      "absolute_episode": null,
+      "expected": true
+    },
+    {
+      "name": "Show.S01E01E03.srt",
+      "season": 1,
+      "episode": 4,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E01E03.srt",
+      "season": 1,
+      "episode": 80,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E01E03.srt",
+      "season": 1,
+      "episode": 160,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E01E03.srt",
+      "season": 2,
+      "episode": 2,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E01.2160p.srt",
+      "season": 1,
+      "episode": 1,
+      "absolute_episode": null,
+      "expected": true
+    },
+    {
+      "name": "Show.S01E01.2160p.srt",
+      "season": 1,
+      "episode": 2,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E01.2160p.srt",
+      "season": 1,
+      "episode": 3,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E01.2160p.srt",
+      "season": 1,
+      "episode": 4,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E01.2160p.srt",
+      "season": 1,
+      "episode": 80,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E01.2160p.srt",
+      "season": 1,
+      "episode": 160,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E01.2160p.srt",
+      "season": 2,
+      "episode": 2,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E01.1080p.x264.srt",
+      "season": 1,
+      "episode": 1,
+      "absolute_episode": null,
+      "expected": true
+    },
+    {
+      "name": "Show.S01E01.1080p.x264.srt",
+      "season": 1,
+      "episode": 2,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E01.1080p.x264.srt",
+      "season": 1,
+      "episode": 3,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E01.1080p.x264.srt",
+      "season": 1,
+      "episode": 4,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E01.1080p.x264.srt",
+      "season": 1,
+      "episode": 80,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E01.1080p.x264.srt",
+      "season": 1,
+      "episode": 160,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01E01.1080p.x264.srt",
+      "season": 2,
+      "episode": 2,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Season 1/02.srt",
+      "season": 1,
+      "episode": 1,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Season 1/02.srt",
+      "season": 1,
+      "episode": 2,
+      "absolute_episode": null,
+      "expected": true
+    },
+    {
+      "name": "Season 1/02.srt",
+      "season": 1,
+      "episode": 3,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Season 1/02.srt",
+      "season": 1,
+      "episode": 4,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Season 1/02.srt",
+      "season": 1,
+      "episode": 80,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Season 1/02.srt",
+      "season": 1,
+      "episode": 160,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Season 1/02.srt",
+      "season": 2,
+      "episode": 2,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01/02.srt",
+      "season": 1,
+      "episode": 1,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01/02.srt",
+      "season": 1,
+      "episode": 2,
+      "absolute_episode": null,
+      "expected": true
+    },
+    {
+      "name": "Show.S01/02.srt",
+      "season": 1,
+      "episode": 3,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01/02.srt",
+      "season": 1,
+      "episode": 4,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01/02.srt",
+      "season": 1,
+      "episode": 80,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01/02.srt",
+      "season": 1,
+      "episode": 160,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Show.S01/02.srt",
+      "season": 2,
+      "episode": 2,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Temporada 1/02.srt",
+      "season": 1,
+      "episode": 1,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Temporada 1/02.srt",
+      "season": 1,
+      "episode": 2,
+      "absolute_episode": null,
+      "expected": true
+    },
+    {
+      "name": "Temporada 1/02.srt",
+      "season": 1,
+      "episode": 3,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Temporada 1/02.srt",
+      "season": 1,
+      "episode": 4,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Temporada 1/02.srt",
+      "season": 1,
+      "episode": 80,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Temporada 1/02.srt",
+      "season": 1,
+      "episode": 160,
+      "absolute_episode": null,
+      "expected": false
+    },
+    {
+      "name": "Temporada 1/02.srt",
+      "season": 2,
+      "episode": 2,
+      "absolute_episode": null,
+      "expected": false
     }
   ]
 }

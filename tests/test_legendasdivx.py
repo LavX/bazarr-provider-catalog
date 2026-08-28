@@ -962,5 +962,291 @@ class LegendasDivxReviewRegressionTests(unittest.TestCase):
 
 
 
+
+class LegendasDivxSecondReviewRegressionTests(unittest.TestCase):
+    """Regressions from the second review round."""
+
+    PAGE_LINK = "https://www.legendasdivx.pt/modules.php?name=Downloads&d_op=getit&lid=1101"
+    LOGIN_URL = "https://www.legendasdivx.pt/forum/ucp.php?mode=login"
+    FLARESOLVERR = "http://127.0.0.1:8191/v1"
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def _provider(self, routes, cookies=AUTHENTICATED_COOKIES, authenticated=True):
+        provider = self.mod.LegendasDivxProvider()
+        provider._scraper = FakeScraper(routes, cookies)
+        provider._scraper_initialized = True
+        provider._authenticated = authenticated
+        return provider
+
+    def _stub_flaresolverr(self, solution, sent=None):
+        class _Solved:
+            def __init__(self, payload):
+                self._payload = payload
+
+            def read(self):
+                return json.dumps(self._payload).encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def fake_urlopen(request, timeout=None):
+            del timeout
+            if sent is not None:
+                sent.append(json.loads(request.data.decode("utf-8")))
+            return _Solved({"status": "ok", "solution": solution})
+
+        return fake_urlopen
+
+    # --- a login page returned by FlareSolverr is still a login redirect
+
+    def test_flaresolverr_returning_the_login_page_is_treated_as_a_redirect(self):
+        challenge = _Response(
+            503, b"<html><title>Just a moment...</title></html>", headers={"Server": "cloudflare"}
+        )
+        provider = self._provider({("GET", self.PAGE_LINK): challenge})
+        original = self.mod.urllib.request.urlopen
+        self.mod.urllib.request.urlopen = self._stub_flaresolverr(
+            {
+                "status": 200,
+                "url": self.LOGIN_URL,
+                "response": LOGIN_HTML.decode("utf-8"),
+            }
+        )
+        try:
+            response = provider._flaresolverr_request(
+                "GET", self.PAGE_LINK, None, {"flaresolverr_url": self.FLARESOLVERR}
+            )
+        finally:
+            self.mod.urllib.request.urlopen = original
+        self.assertIn(response.status, self.mod.REDIRECT_STATUS_CODES)
+
+    def test_a_search_solved_into_the_login_page_is_an_authentication_failure(self):
+        challenge = _Response(
+            503, b"<html><title>Just a moment...</title></html>", headers={"Server": "cloudflare"}
+        )
+        routes = {("GET", self.LOGIN_URL): _Response(200, LOGIN_HTML)}
+
+        def login_post(scraper):
+            for name, value in AUTHENTICATED_COOKIES.items():
+                scraper.cookies.set(name, value)
+            return _Response(200, b"<html><body>Ligado</body></html>")
+
+        routes[("POST", self.LOGIN_URL)] = login_post
+        for url in self.mod.build_search_urls(VIDEO_DUNE, "por"):
+            routes[("GET", url)] = challenge
+        provider = self._provider(routes)
+        original = self.mod.urllib.request.urlopen
+        self.mod.urllib.request.urlopen = self._stub_flaresolverr(
+            {"status": 200, "url": self.LOGIN_URL, "response": LOGIN_HTML.decode("utf-8")}
+        )
+        try:
+            with self.assertRaises(self.mod.AuthenticationError):
+                provider.search(
+                    VIDEO_DUNE, [POR], dict(CREDENTIALS, flaresolverr_url=self.FLARESOLVERR)
+                )
+        finally:
+            self.mod.urllib.request.urlopen = original
+
+    # --- the stdlib fallback has to send the cookies FlareSolverr solved
+
+    def test_solved_cookies_reach_the_stdlib_cookie_jar(self):
+        provider = self.mod.LegendasDivxProvider()
+        provider._scraper = None
+        provider._scraper_initialized = True
+        provider._store_flaresolverr_solution(
+            {
+                "userAgent": "FlareSolverr/UA",
+                "cookies": [
+                    {"name": name, "value": value}
+                    for name, value in AUTHENTICATED_COOKIES.items()
+                ],
+            }
+        )
+        self.assertIsNotNone(provider._cookie_jar)
+        jar = {cookie.name: cookie.value for cookie in provider._cookie_jar}
+        self.assertEqual(jar.get("PHPSESSID"), "sess4242")
+        self.assertEqual(jar.get("phpbb3_2z8zs_u"), "4242")
+
+    # --- pagination must not request a page past the end of the results
+
+    def test_page_count_does_not_add_an_empty_final_page(self):
+        for count, expected in ((10, 1), (20, 2), (21, 3), (12, 2), (1, 1), (0, 1)):
+            with self.subTest(count=count):
+                body = f'<div class="pager_bar">({count} encontradas)</div>'.encode("utf-8")
+                self.assertEqual(self.mod._page_count(body), expected)
+
+    # --- a direct download keeps its real format
+
+    def test_a_direct_non_srt_download_keeps_its_format(self):
+        payload = {"filename": "legendasdivx.some-release.pt.zip"}
+        ass = self.mod._download_payload(b"[Script Info]\nTitle: x\n", payload)
+        self.assertEqual(ass["format"], "ass")
+        self.assertEqual(ass["content_type"], "text/x-ssa")
+        vtt = self.mod._download_payload(b"WEBVTT\n\n00:01.000 --> 00:02.000\nOla\n", payload)
+        self.assertEqual(vtt["format"], "vtt")
+
+    def test_a_content_disposition_filename_decides_the_format(self):
+        payload = {"filename": "legendasdivx.some-release.pt.zip"}
+        result = self.mod._download_payload(
+            b"1\n00:00:01,000 --> 00:00:02,000\nOla\n",
+            payload,
+            headers={"Content-Disposition": 'attachment; filename="Show.S01E01.vtt"'},
+        )
+        self.assertEqual(result["format"], "vtt")
+
+    def test_a_plain_srt_is_still_srt(self):
+        result = self.mod._download_payload(
+            b"1\n00:00:01,000 --> 00:00:02,000\nOla\n",
+            {"filename": "legendasdivx.some-release.pt.zip"},
+        )
+        self.assertEqual(result["format"], "srt")
+
+    # --- compact multi-episode ranges
+
+    def test_a_compact_episode_range_covers_its_whole_span(self):
+        for episode in (1, 2, 3):
+            with self.subTest(episode=episode):
+                self.assertTrue(
+                    self.mod.member_matches_episode("Show.S01E01-03.srt", 1, episode)
+                )
+        self.assertFalse(self.mod.member_matches_episode("Show.S01E01-03.srt", 1, 4))
+
+    def test_a_resolution_tag_is_not_read_as_a_second_episode(self):
+        self.assertFalse(self.mod.member_matches_episode("Show.S01E01.2160p.srt", 1, 2))
+        self.assertFalse(self.mod.member_matches_episode("Show.S01E01.1080p.x264.srt", 1, 80))
+
+    # --- a row without a description is still a row
+
+    def test_a_result_without_a_description_is_kept(self):
+        chunk = (
+            '<html><body><div class="sub_box">'
+            '<div class="sub_header"><b>The Matrix</b> (1999) - '
+            '<a href="profile.php?u=1">someone</a></div>'
+            "<table><tr><th>Idioma:</th>"
+            '<td><img src="images/flags/portugal.png" /></td>'
+            "<th>Hits:</th><td>7</td><th>Frame Rate:</th><td>23.976</td></tr></table>"
+            '<div class="sub_footer">'
+            '<a class="sub_download" href="?name=Downloads&amp;d_op=getit&amp;lid=9001">D</a>'
+            "</div></div></body></html>"
+        ).encode("utf-8")
+        rows = self.mod.parse_search_results(chunk)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["lid"], "9001")
+        self.assertEqual(rows[0]["release_info"], "The Matrix (1999)")
+
+    def test_a_result_without_a_download_link_is_still_dropped(self):
+        chunk = (
+            '<html><body><div class="sub_box">'
+            '<div class="sub_header"><b>The Matrix</b> (1999)</div>'
+            "<table><tr><th>Idioma:</th>"
+            '<td><img src="images/flags/portugal.png" /></td></tr></table>'
+            '<td class="td_desc brd_up">The.Matrix.1999.1080p.BluRay.x264-SPARKS</td>'
+            "</div></body></html>"
+        ).encode("utf-8")
+        self.assertEqual(self.mod.parse_search_results(chunk), [])
+
+    # --- hcaptcha uses hcaptcha's site key and field
+
+    def test_an_hcaptcha_login_uses_the_hcaptcha_field_and_site_key(self):
+        page = (
+            b"<html><body><form method='post'>"
+            b"<input type='hidden' name='sid' value='abc' />"
+            b"<div class=\"h-captcha\" data-sitekey=\"HCAP-SITE-KEY\"></div>"
+            b"</form></body></html>"
+        )
+
+        def login_post(scraper):
+            for name, value in AUTHENTICATED_COOKIES.items():
+                scraper.cookies.set(name, value)
+            return _Response(200, b"<html><body>Ligado</body></html>")
+
+        provider = self._provider(
+            {
+                ("GET", self.LOGIN_URL): _Response(200, page),
+                ("POST", self.LOGIN_URL): login_post,
+            },
+            cookies={},
+            authenticated=False,
+        )
+        seen = {}
+
+        def fake_solver(site_key, page_url, config):
+            seen["site_key"] = site_key
+            return "hcaptcha-token"
+
+        provider._captcha_response = fake_solver
+        provider._ensure_authenticated(dict(CREDENTIALS, captcha_solver_url="http://solver"))
+        self.assertEqual(seen["site_key"], "HCAP-SITE-KEY")
+        post = [call for call in provider._scraper.calls if call[0] == "POST"][0]
+        self.assertEqual(post[2]["h-captcha-response"], "hcaptcha-token")
+        self.assertNotIn("g-recaptcha-response", post[2])
+
+    # --- an authenticated session needs a phpBB user cookie
+
+    def test_a_session_without_a_phpbb_user_cookie_is_not_authenticated(self):
+        def login_post(scraper):
+            scraper.cookies.set("PHPSESSID", "sess0")
+            return _Response(200, b"<html><body>ok</body></html>")
+
+        provider = self._provider(
+            {
+                ("GET", self.LOGIN_URL): _Response(200, LOGIN_HTML),
+                ("POST", self.LOGIN_URL): login_post,
+            },
+            cookies={},
+            authenticated=False,
+        )
+        with self.assertRaises(self.mod.AuthenticationError):
+            provider._ensure_authenticated(dict(CREDENTIALS))
+
+    def test_a_different_board_prefix_still_authenticates(self):
+        def login_post(scraper):
+            scraper.cookies.set("phpbb3_9xyz1_u", "77")
+            scraper.cookies.set("phpbb3_9xyz1_sid", "deadbeef")
+            return _Response(200, b"<html><body>ok</body></html>")
+
+        provider = self._provider(
+            {
+                ("GET", self.LOGIN_URL): _Response(200, LOGIN_HTML),
+                ("POST", self.LOGIN_URL): login_post,
+            },
+            cookies={},
+            authenticated=False,
+        )
+        provider._ensure_authenticated(dict(CREDENTIALS))
+        self.assertTrue(provider._authenticated)
+
+    # --- "bloqueado" in a description is not an IP block
+
+    def test_the_word_blocked_in_a_description_does_not_abort_the_search(self):
+        body = SEARCH_DUNE_HTML.replace(
+            b"Sincronizadas para a release:",
+            b"O uploader foi bloqueado no forum. Sincronizadas para a release:",
+        )
+        routes = {}
+        for url in self.mod.build_search_urls(VIDEO_DUNE, "por"):
+            routes[("GET", url)] = _Response(200, body)
+            for page in range(2, self.mod.MAX_PAGES + 1):
+                routes[("GET", f"{url}&page={page}")] = _Response(200, b"<html></html>")
+        provider = self._provider(routes)
+        results = provider.search(VIDEO_DUNE, [POR], dict(CREDENTIALS))
+        self.assertEqual(len(results), 3)
+
+    def test_a_real_ip_block_notice_still_aborts_the_search(self):
+        body = b"<html><body>O seu IP foi bloqueado neste servidor.</body></html>"
+        routes = {}
+        for url in self.mod.build_search_urls(VIDEO_DUNE, "por"):
+            routes[("GET", url)] = _Response(200, body)
+        provider = self._provider(routes)
+        with self.assertRaises(self.mod.IPAddressBlocked):
+            provider.search(VIDEO_DUNE, [POR], dict(CREDENTIALS))
+
+
+
 if __name__ == "__main__":
     unittest.main()

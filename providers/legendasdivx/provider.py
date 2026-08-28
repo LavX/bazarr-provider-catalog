@@ -31,7 +31,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-from http.cookiejar import CookieJar
+from http.cookiejar import Cookie, CookieJar
 
 try:
     import cloudscraper
@@ -48,6 +48,9 @@ HTTP_TIMEOUT_SECONDS = 30
 SAFE_SEARCH_LIMIT = 145
 MAX_PAGES = 6
 RESULTS_PER_PAGE = 10
+# Widest hyphenated episode range a member name may expand into, so a malformed
+# name cannot turn into a set of hundreds of episodes.
+MAX_EPISODE_RANGE = 100
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt", ".smi", ".mpl")
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -70,8 +73,12 @@ REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
 # phpBB names its cookies after the board prefix. u == 1 is the anonymous user,
 # which is what a rejected login leaves behind, so a 200 response on its own
 # proves nothing about being logged in.
-COOKIE_USER_ID = "phpbb3_2z8zs_u"
-COOKIE_SESSION_IDS = ("PHPSESSID", "phpbb3_2z8zs_sid")
+COOKIE_DOMAIN = ".legendasdivx.pt"
+# The user and session cookies are matched by shape rather than by the board
+# prefix: the prefix is site configuration, and a change to it must not silently
+# turn "logged in" into "no user cookie found, so accept anything".
+_PHPBB_USER_COOKIE_RE = re.compile(r"^phpbb3?_.+_u$", re.I)
+_PHPBB_SESSION_COOKIE_RE = re.compile(r"^(?:phpsessid|phpbb3?_.+_sid)$", re.I)
 # Cookies that are the login session. Everything else in the jar, the
 # Cloudflare clearance above all, survives a re-login: it is expensive to get
 # back and has nothing to do with whether the credentials are still good.
@@ -130,6 +137,21 @@ _RECAPTCHA_KEY_RES = (
     re.compile(r"data-sitekey=[\"'](?P<key>[^\"']+)[\"'][^>]*\bg-recaptcha\b", re.I),
     re.compile(r"grecaptcha\.execute\([\"'](?P<key>[^\"']+)[\"']", re.I),
 )
+_HCAPTCHA_KEY_RES = (
+    re.compile(r"h-captcha\b[^>]*\bdata-sitekey=[\"'](?P<key>[^\"']+)[\"']", re.I),
+    re.compile(r"data-sitekey=[\"'](?P<key>[^\"']+)[\"'][^>]*\bh-captcha\b", re.I),
+    re.compile(r"hcaptcha\.execute\([\"'](?P<key>[^\"']+)[\"']", re.I),
+)
+# The site's IP-block notice, not the bare word: "bloqueado" is ordinary
+# Portuguese and turns up in uploader descriptions, where it must not abort a
+# whole search as an account-level block.
+_IP_BLOCK_RE = re.compile(
+    r"\bips?\b.{0,40}?\bbloquead[oa]s?\b|\bbloquead[oa]s?\b.{0,40}?\bips?\b", re.I
+)
+_CONTENT_DISPOSITION_RE = re.compile(
+    r"filename\*?=(?:utf-8\'\')?[\"\']?(?P<name>[^\"\';]+)", re.I
+)
+_MICRODVD_RE = re.compile(rb"^\{\d+\}\{\d+\}")
 _RAR4_MAGIC = b"Rar!\x1a\x07\x00"
 _RAR5_MAGIC = b"Rar!\x1a\x07\x01\x00"
 
@@ -147,16 +169,23 @@ _RELEASE_NOISE_RE = re.compile(
     r"|\bh\W?26[45]\b",
     re.I,
 )
+# What may follow an episode number: end of token, or the "E" of the next episode.
+# Anything else alphanumeric means the digits were part of something else, which
+# is what stops "S01E01.1080p" from reading as a second episode 108.
+_EPISODE_END = r"(?![0-9])(?![a-df-z])(?!e(?![0-9]))"
 _EXPLICIT_EPISODE_RE = re.compile(
-    r"\bs0*(?P<season>\d{1,2})\s*[._\- ]?\s*e0*(?P<episode>\d{1,3})"
-    r"(?P<extra>(?:\s*[-_. ]?\s*e0*\d{1,3})*)",
+    r"\bs0*(?P<season>\d{1,2})\s*[._\- ]?\s*e0*(?P<episode>\d{1,3})" + _EPISODE_END
+    # A continuation is another E token, or a bare number behind a real separator
+    # so the compact "S01E01-03" range is covered too.
+    + r"(?P<extra>(?:\s*[-_.]\s*e?0*\d{1,3}" + _EPISODE_END
+    + r"|\s*e0*\d{1,3}" + _EPISODE_END + r")*)",
     re.I,
 )
 _EXPLICIT_XFORM_RE = re.compile(r"\b(?P<season>\d{1,2})x0*(?P<episode>\d{1,3})\b", re.I)
 _EXPLICIT_EPISODE_ONLY_RE = re.compile(
     r"\b(?:e|ep|episode|episodio|epis\w?dio)\.?\s*0*(?P<episode>\d{1,3})\b", re.I
 )
-_EXTRA_EPISODE_RE = re.compile(r"e0*(?P<episode>\d{1,3})", re.I)
+_EXTRA_EPISODE_RE = re.compile(r"(?P<sep>[-_.]?)\s*e?0*(?P<episode>\d{1,3})" + _EPISODE_END, re.I)
 _SEASON_WORD_RE = re.compile(r"\b(?:s|season|temporada)\.?\s*0*(?P<season>\d{1,2})\b", re.I)
 _BARE_NUMBER_RE = re.compile(r"(?<![0-9a-zA-Z])(?P<number>\d{1,4})(?![0-9a-zA-Z])")
 
@@ -260,7 +289,7 @@ class LegendasDivxProvider:
             )
         _raise_for_status(response, "LegendasDivx download")
         _assert_download_allowed(response)
-        return _download_payload(response.body, payload)
+        return _download_payload(response.body, payload, response.headers, response.url)
 
     def select_archive_member(self, provider_payload, language, members, config):
         """Pick the archive member for the wanted episode.
@@ -349,8 +378,8 @@ class LegendasDivxProvider:
         data.update({"username": username, "password": password})
         data.setdefault("login", "Login")
 
-        site_key = _captcha_site_key(login_text)
-        if site_key or _captcha_required(login_text):
+        kind, site_key = _captcha_challenge(login_text)
+        if kind:
             token = self._captcha_response(site_key, LOGIN_URL, config)
             if not token:
                 raise AuthenticationError(
@@ -358,8 +387,13 @@ class LegendasDivxProvider:
                     "(plus captcha_solver_token if the solver needs one) or captcha_response in the "
                     "provider settings."
                 )
-            data["g-recaptcha-response"] = token
-            data["recaptcha_response"] = token
+            # The field name is the captcha's, not a guess: an hCaptcha token
+            # submitted as g-recaptcha-response is simply discarded by the form.
+            if kind == "hcaptcha":
+                data["h-captcha-response"] = token
+            else:
+                data["g-recaptcha-response"] = token
+                data["recaptcha_response"] = token
 
         _sleep(config)
         response = self._http_post(
@@ -373,9 +407,11 @@ class LegendasDivxProvider:
         # id behind on a rejected login, and no session id at all when the board
         # refused to start a session.
         cookies = self.session_cookies()
-        user_id = cookies.get(COOKIE_USER_ID)
-        session_id = next((cookies.get(name) for name in COOKIE_SESSION_IDS if cookies.get(name)), None)
-        if user_id == ANONYMOUS_USER_ID or not session_id:
+        user_id = _phpbb_user_id(cookies)
+        session_id = _phpbb_session_id(cookies)
+        # A session id on its own proves nothing: phpBB hands one to anonymous
+        # visitors too. Only a cookie naming a real user id says we are logged in.
+        if not user_id or user_id == ANONYMOUS_USER_ID or not session_id:
             raise AuthenticationError(
                 "LegendasDivx did not return an authenticated session, check your credentials"
             )
@@ -575,7 +611,14 @@ class LegendasDivxProvider:
         if _is_cloudflare_challenge(status, solution.get("headers") or {}, body):
             raise CloudflareBlockedError("LegendasDivx FlareSolverr response is still a Cloudflare block")
         self._store_flaresolverr_solution(solution)
-        return HttpResponse(status, body, solution.get("headers") or {}, solution.get("url") or url)
+        solved_url = str(solution.get("url") or url)
+        if _is_login_url(solved_url) and not _is_login_url(url):
+            # FlareSolverr's browser follows redirects, so an expired session comes
+            # back as a 200 on the login page and the 3xx the callers key
+            # reauthentication off is gone. Without this a search parses the login
+            # page as zero results and a download fails as HTML.
+            return HttpResponse(302, body, solution.get("headers") or {}, solved_url)
+        return HttpResponse(status, body, solution.get("headers") or {}, solved_url)
 
     def _store_flaresolverr_solution(self, solution):
         user_agent = solution.get("userAgent")
@@ -590,9 +633,16 @@ class LegendasDivxProvider:
             self._flaresolverr_cookies[name] = value
             if self._scraper is not None:
                 try:
-                    self._scraper.cookies.set(name, value, domain=".legendasdivx.pt")
+                    self._scraper.cookies.set(name, value, domain=COOKIE_DOMAIN)
                 except Exception:  # pragma: no cover, defensive against jar shapes
                     pass
+            else:
+                # The stdlib fallback sends cookies from its jar and nowhere else,
+                # so a login solved through FlareSolverr has to land there or the
+                # next unchallenged request goes out anonymous.
+                if self._cookie_jar is None:
+                    self._cookie_jar = CookieJar()
+                self._cookie_jar.set_cookie(_jar_cookie(name, value))
 
     def _get_scraper(self):
         if not self._scraper_initialized:
@@ -747,10 +797,13 @@ def _parse_sub_box(chunk):
     language = _language_from_chunk(chunk)
     if not language:
         return None
-    description = _match_multiline_text(_DESC_RE, chunk)
     page_link = _download_link(chunk)
-    if not description or not page_link:
+    if not page_link:
         return None
+    # The description cell is optional. Dropping the row when it is missing loses
+    # a perfectly usable upload whose title and year the header already states,
+    # and makes extract_release_info's empty-description fallback unreachable.
+    description = _match_multiline_text(_DESC_RE, chunk)
     title, year, uploader = _parse_sub_header(chunk)
     return {
         "lid": _subtitle_id_from_url(page_link),
@@ -1003,7 +1056,7 @@ def _score_from_matches(matches, item):
 # -------------------------------------------------------------------- download
 
 
-def _download_payload(body, payload):
+def _download_payload(body, payload, headers=None, url=""):
     payload = payload or {}
     if not body or not body.strip():
         raise ValueError("legendasdivx download returned an empty body")
@@ -1020,7 +1073,9 @@ def _download_payload(body, payload):
         }
     if _looks_like_html(body):
         raise ValueError("legendasdivx download returned an HTML page instead of a subtitle")
-    return _content_payload(_normalize_line_endings(body), _format_from_filename(payload.get("filename")))
+    return _content_payload(
+        _normalize_line_endings(body), _direct_subtitle_format(body, headers, url, payload)
+    )
 
 
 def pick_archive_member(members, payload):
@@ -1062,7 +1117,9 @@ def pick_archive_member(members, payload):
 
     def rank(name):
         score = 0
-        if season is not None and re.search(rf"\bs0*{season}\s*e0*{episode}\b", _normalize_release(name), re.I):
+        if season is not None and re.search(
+            rf"\bs0*{season}\s*e0*{episode}" + _EPISODE_END, _member_text(name), re.I
+        ):
             score += 120
         score += 4 * len(release_tokens & _release_tokens(name))
         return score
@@ -1088,7 +1145,7 @@ def member_matches_episode(name, season, episode, absolute=None):
     if absolute is not None:
         wanted.add(absolute)
 
-    for reading_season, reading_episodes in _episode_readings(_normalize_release(name)) or [(None, None)]:
+    for reading_season, reading_episodes in _episode_readings(_member_text(name)) or [(None, None)]:
         if reading_episodes is None:
             # The name says nothing about numbering, which is not a contradiction.
             return True
@@ -1115,9 +1172,18 @@ def _episode_readings(text):
     readings = []
 
     for match in _EXPLICIT_EPISODE_RE.finditer(text):
-        episodes = {int(match.group("episode"))}
+        first = int(match.group("episode"))
+        episodes = {first}
+        previous = first
         for extra in _EXTRA_EPISODE_RE.finditer(match.group("extra") or ""):
-            episodes.add(int(extra.group("episode")))
+            number = int(extra.group("episode"))
+            if extra.group("sep") == "-" and previous < number <= previous + MAX_EPISODE_RANGE:
+                # A hyphen is a range, so S01E01-03 covers episode two as well.
+                # E-glued numbers are a list: S01E01E03 does not.
+                episodes.update(range(previous, number + 1))
+            else:
+                episodes.add(number)
+            previous = number
         readings.append((int(match.group("season")), episodes))
     for match in _EXPLICIT_XFORM_RE.finditer(text):
         readings.append((int(match.group("season")), {int(match.group("episode"))}))
@@ -1188,7 +1254,7 @@ def _raise_for_status(response, context):
 
 
 def _is_ip_blocked(text):
-    return "bloqueado" in _normalize(text)
+    return bool(_IP_BLOCK_RE.search(_normalize(text)))
 
 
 def _is_cloudflare_challenge(status, headers, body):
@@ -1217,17 +1283,65 @@ def _is_cloudflare_exception(error):
     return "cloudflare" in str(error).lower()
 
 
-def _captcha_site_key(text):
-    for pattern in _RECAPTCHA_KEY_RES:
-        match = pattern.search(text or "")
-        if match:
-            return match.group("key")
+def _captcha_challenge(text):
+    """(kind, site_key) for the captcha guarding a page, or (None, None).
+
+    The kind decides the field the token is submitted under, so detecting a
+    captcha without knowing which one it is would submit a valid token under a
+    name the form ignores.
+    """
+    for kind, patterns in (("hcaptcha", _HCAPTCHA_KEY_RES), ("recaptcha", _RECAPTCHA_KEY_RES)):
+        for pattern in patterns:
+            match = pattern.search(text or "")
+            if match:
+                return kind, match.group("key")
+    lowered = (text or "").lower()
+    if "h-captcha" in lowered or "hcaptcha" in lowered:
+        return "hcaptcha", None
+    if "g-recaptcha" in lowered or "grecaptcha" in lowered:
+        return "recaptcha", None
+    return None, None
+
+
+def _phpbb_user_id(cookies):
+    for name, value in (cookies or {}).items():
+        if _PHPBB_USER_COOKIE_RE.match(str(name)):
+            return str(value)
     return None
 
 
-def _captcha_required(text):
-    lowered = (text or "").lower()
-    return "g-recaptcha" in lowered or "grecaptcha" in lowered or "h-captcha" in lowered
+def _phpbb_session_id(cookies):
+    for name, value in (cookies or {}).items():
+        if value and _PHPBB_SESSION_COOKIE_RE.match(str(name)):
+            return str(value)
+    return None
+
+
+def _is_login_url(url):
+    lowered = str(url or "").lower()
+    return "ucp.php" in lowered and "mode=login" in lowered
+
+
+def _jar_cookie(name, value, domain=COOKIE_DOMAIN):
+    return Cookie(
+        version=0,
+        name=str(name),
+        value=str(value),
+        port=None,
+        port_specified=False,
+        domain=domain,
+        domain_specified=True,
+        domain_initial_dot=domain.startswith("."),
+        path="/",
+        path_specified=True,
+        secure=False,
+        expires=None,
+        discard=True,
+        comment=None,
+        comment_url=None,
+        rest={},
+        rfc2109=False,
+    )
 
 
 def _flaresolverr_url(config):
@@ -1249,7 +1363,10 @@ def _page_count(body):
     count = _safe_int(re.sub(r"[^\d]", "", match.group("count")), 0)
     if count <= 0:
         return 1
-    return min(MAX_PAGES, (count // RESULTS_PER_PAGE) + 1)
+    # Ceiling, not floor plus one: an exact multiple of the page size would
+    # otherwise cost one request for a page that does not exist, against a site
+    # with a strict daily search limit.
+    return min(MAX_PAGES, -(-count // RESULTS_PER_PAGE))
 
 
 def _search_count(text):
@@ -1412,8 +1529,40 @@ def _subtitle_extension(name):
     return None
 
 
-def _format_from_filename(filename):
-    return _subtitle_extension(filename or "") or "srt"
+def _direct_subtitle_format(body, headers, url, payload):
+    """The real format of a non-archive download.
+
+    Every candidate carries a synthetic ".zip" filename built during search, so
+    trusting it would label an ASS or VTT download as SubRip and hand the host
+    bytes that do not match the extension it writes.
+    """
+    for candidate in (_content_disposition_filename(headers), urllib.parse.urlparse(str(url or "")).path):
+        extension = _subtitle_extension(candidate)
+        if extension:
+            return extension
+    return _sniff_subtitle_format(body) or _subtitle_extension(payload.get("filename")) or "srt"
+
+
+def _content_disposition_filename(headers):
+    for key, value in (headers or {}).items():
+        if str(key).lower() != "content-disposition":
+            continue
+        match = _CONTENT_DISPOSITION_RE.search(str(value))
+        if match:
+            return urllib.parse.unquote(match.group("name").strip())
+    return ""
+
+
+def _sniff_subtitle_format(body):
+    head = (body or b"")[:512].lstrip()
+    lowered = head.lower()
+    if lowered.startswith(b"webvtt"):
+        return "vtt"
+    if b"[script info]" in lowered or b"dialogue:" in lowered:
+        return "ass"
+    if _MICRODVD_RE.match(head):
+        return "sub"
+    return None
 
 
 def _content_payload(body, subtitle_format):
@@ -1481,8 +1630,14 @@ def _release_tokens(value):
     return {token for token in re.split(r"[^A-Za-z0-9]+", str(value or "").lower()) if token}
 
 
-def _normalize_release(value):
-    return " ".join(token for token in re.split(r"[^A-Za-z0-9]+", str(value or "").lower()) if token)
+def _member_text(value):
+    """A member path lowercased, with its separators left alone.
+
+    Collapsing "-" and "." into spaces would make the compact range in
+    "Show.S01E01-03.srt" indistinguishable from the stray number in
+    "Show.S01E01.2160p.srt".
+    """
+    return _WS_RE.sub(" ", str(value or "").replace("\\", "/").lower()).strip()
 
 
 def _normalize(value):

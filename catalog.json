@@ -1318,7 +1318,7 @@
       "manifest": {
         "anti_captcha": true,
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "73fbeee3d7f218944ef6fe3b32f11cf5f115df2c5ba2f7f7abe093759248a43c",
+        "bundle_sha256": "777f96a3470527fc014c4a646b80b26fda1d7272eae7527f58db2ded15f966eb",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1673,7 +1673,7 @@
         "entry_class": "LegendasDivxProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "ca3b25a0728d48e46380c7705dede2061c45255fa909d68fbbed7ce09ebebc13"
+          "provider.py": "aef6bc30876b7bc559b7cc7875b58d47d9400d2094af0e5be4dab42660db5625"
         },
         "flaresolverr": true,
         "languages": [
