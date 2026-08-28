@@ -62,6 +62,8 @@ CLOUDFLARE_BODY_MARKERS = (
     "cf-challenge",
     "cf-error-details",
     "cf_chl_opt",
+    "enable javascript and cookies to continue",
+    "checking your browser before accessing",
 )
 REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
 
@@ -293,6 +295,13 @@ class LegendasDivxProvider:
             response = self._http_get(
                 search_url, config=config, referer=f"{BASE_URL}/index.php", allow_redirects=False
             )
+            if response.status in REDIRECT_STATUS_CODES:
+                # Still at the login page after logging in again. _raise_for_status
+                # accepts a 302, so without this the redirect body parses as an
+                # empty result page and the search silently returns nothing.
+                raise AuthenticationError(
+                    "LegendasDivx search redirected to the login page, the session is not authenticated"
+                )
         _raise_for_status(response, "LegendasDivx search")
         return response
 
@@ -313,6 +322,11 @@ class LegendasDivxProvider:
                 response = self._http_get(
                     f"{search_url}&page={page}", config=config, referer=search_url, allow_redirects=False
                 )
+                if response.status in REDIRECT_STATUS_CODES:
+                    raise AuthenticationError(
+                        "LegendasDivx search page redirected to the login page, the session is "
+                        "not authenticated"
+                    )
             _raise_for_status(response, "LegendasDivx search page")
             _assert_search_available(response)
             rows.extend(parse_search_results(response.body))
@@ -452,7 +466,7 @@ class LegendasDivxProvider:
                 )
             except Exception as error:
                 if _flaresolverr_url(config) and _is_cloudflare_exception(error):
-                    return self._flaresolverr_get(url, config)
+                    return self._flaresolverr_request(method, url, data, config)
                 raise
             # response.content is already decoded: urllib3 unwraps gzip, deflate and
             # brotli before requests hands it over. Decompressing it here on the
@@ -469,7 +483,7 @@ class LegendasDivxProvider:
             )
             if _is_cloudflare_challenge(result.status, result.headers, result.body):
                 if _flaresolverr_url(config):
-                    return self._flaresolverr_get(url, config)
+                    return self._flaresolverr_request(method, url, data, config)
                 raise CloudflareBlockedError(
                     "LegendasDivx hit a Cloudflare block and no FlareSolverr URL is configured"
                 )
@@ -497,7 +511,7 @@ class LegendasDivxProvider:
             result = HttpResponse(error.code, error.read(), _response_headers(error.headers), url)
         if _is_cloudflare_challenge(result.status, result.headers, result.body):
             if _flaresolverr_url(config):
-                return self._flaresolverr_get(url, config)
+                return self._flaresolverr_request(method, url, data, config)
             raise CloudflareBlockedError(
                 "LegendasDivx hit a Cloudflare block and no FlareSolverr URL is configured"
             )
@@ -511,7 +525,15 @@ class LegendasDivxProvider:
             handlers.append(_NoRedirect())
         return urllib.request.build_opener(*handlers)
 
-    def _flaresolverr_get(self, url, config):
+    def _flaresolverr_request(self, method, url, data, config):
+        """Replay the challenged request through FlareSolverr, method and body intact.
+
+        Replaying a POST as a GET would throw the form away. On the login form
+        that means the credentials never reach the site, the solved page is read
+        as the login response, and no authenticated cookies exist, so configuring
+        FlareSolverr could never recover from a challenge on the login submission.
+        FlareSolverr posts a urlencoded body, which is what this site's forms are.
+        """
         endpoint = _flaresolverr_url(config)
         if not endpoint:
             raise CloudflareBlockedError(
@@ -519,6 +541,9 @@ class LegendasDivxProvider:
             )
         timeout_ms = _flaresolverr_timeout_ms(config)
         payload = {"cmd": "request.get", "url": url, "maxTimeout": timeout_ms}
+        if str(method).upper() == "POST":
+            payload["cmd"] = "request.post"
+            payload["postData"] = urllib.parse.urlencode(data or {})
         cookies = self.session_cookies()
         if cookies:
             payload["cookies"] = [{"name": name, "value": value} for name, value in cookies.items()]
@@ -1107,13 +1132,18 @@ def _episode_readings(text):
         return readings
 
     # No explicit spelling. Strip the release tags that are pure digits once the
-    # name is split on punctuation, then read whatever bare numbers are left.
-    for match in _BARE_NUMBER_RE.finditer(_RELEASE_NOISE_RE.sub(" ", text)):
+    # name is split on punctuation, and the season token itself: its number is a
+    # season, not an episode, so leaving it in would let "Season 1/02.srt" pass for
+    # episode one.
+    bare = _RELEASE_NOISE_RE.sub(" ", _SEASON_WORD_RE.sub(" ", text))
+    for match in _BARE_NUMBER_RE.finditer(bare):
         number = int(match.group("number"))
         if number <= 0:
             continue
-        # As an episode or absolute number on its own,
-        readings.append((None, {number}))
+        # As an episode or absolute number on its own, under whatever season the
+        # path already stated: "Season 1/02.srt" is season one episode two, and
+        # dropping that season would let it answer a request for season two.
+        readings.append((season_word, {number}))
         if number >= 100:
             # and as the compact season-plus-episode this site uses in packs.
             head, tail = divmod(number, 100)
@@ -1162,13 +1192,20 @@ def _is_ip_blocked(text):
 
 
 def _is_cloudflare_challenge(status, headers, body):
+    """True only for an actual challenge, not for anything Cloudflare proxied.
+
+    A "Server: cloudflare" header says the response came through the proxy, not
+    that it is a challenge: the site's own 403, 429 and 503 carry it too. Treating
+    those as challenges swallows the authentication, quota, IP-block and outage
+    errors before anything can classify them, and sends a pointless solve request
+    when FlareSolverr is configured. The challenge announces itself either with
+    cf-mitigated: challenge or in the body.
+    """
     normalized = {str(key).lower(): str(value) for key, value in (headers or {}).items()}
-    if "cf-mitigated" in normalized:
+    if normalized.get("cf-mitigated", "").strip().lower() == "challenge":
         return True
     if _safe_int(status, 0) not in CLOUDFLARE_STATUS_CODES:
         return False
-    if "cloudflare" in normalized.get("server", "").lower():
-        return True
     text = body.decode("utf-8", "ignore").lower() if isinstance(body, bytes) else str(body or "").lower()
     return any(marker in text for marker in CLOUDFLARE_BODY_MARKERS)
 

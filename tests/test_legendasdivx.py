@@ -750,5 +750,217 @@ class LegendasDivxManifestTests(unittest.TestCase):
             self.assertNotIn(banned, source)
 
 
+
+class LegendasDivxReviewRegressionTests(unittest.TestCase):
+    """Regressions from the review of the first port commit.
+
+    Each of these reproduced a real defect before the fix: a persistent login
+    redirect read as an empty result page, a season-only path segment dropped
+    when a member name falls through to bare numbers, an ordinary origin error
+    proxied by Cloudflare classified as a challenge, and a challenged login POST
+    replayed as a GET with the credentials thrown away.
+    """
+
+    PAGE_LINK = "https://www.legendasdivx.pt/modules.php?name=Downloads&d_op=getit&lid=1101"
+    LOGIN_URL = "https://www.legendasdivx.pt/forum/ucp.php?mode=login"
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def _provider(self, routes, cookies=AUTHENTICATED_COOKIES, authenticated=True):
+        provider = self.mod.LegendasDivxProvider()
+        provider._scraper = FakeScraper(routes, cookies)
+        provider._scraper_initialized = True
+        provider._authenticated = authenticated
+        return provider
+
+    def _login_routes(self, cookies_after_login=AUTHENTICATED_COOKIES):
+        def login_post(scraper):
+            for name, value in cookies_after_login.items():
+                scraper.cookies.set(name, value)
+            return _Response(200, b"<html><body>Ligado</body></html>")
+
+        return {
+            ("GET", self.LOGIN_URL): _Response(200, LOGIN_HTML),
+            ("POST", self.LOGIN_URL): login_post,
+        }
+
+    # --- a persistent login redirect is an authentication failure, not "no results"
+
+    def test_a_search_still_redirected_after_relogin_is_an_authentication_failure(self):
+        routes = self._login_routes()
+        redirect = _Response(302, b"", headers={"Location": self.LOGIN_URL})
+        for url in self.mod.build_search_urls(VIDEO_DUNE, "por"):
+            routes[("GET", url)] = [redirect, redirect]
+        provider = self._provider(routes)
+        with self.assertRaises(self.mod.AuthenticationError):
+            provider.search(VIDEO_DUNE, [POR], dict(CREDENTIALS))
+
+    def test_a_pagination_redirect_that_survives_relogin_is_an_authentication_failure(self):
+        routes = self._login_routes()
+        redirect = _Response(302, b"", headers={"Location": self.LOGIN_URL})
+        for url in self.mod.build_search_urls(VIDEO_DUNE, "por"):
+            routes[("GET", url)] = _Response(200, SEARCH_DUNE_HTML)
+            routes[("GET", f"{url}&page=2")] = [redirect, redirect]
+        provider = self._provider(routes)
+        with self.assertRaises(self.mod.AuthenticationError):
+            provider.search(VIDEO_DUNE, [POR], dict(CREDENTIALS))
+
+    # --- a season stated by a path segment still binds a bare episode number
+
+    def test_a_season_only_path_segment_binds_the_bare_episode_number(self):
+        for name in ("Season 1/02.srt", "Show.S01/02.srt", "Temporada 1/02.srt"):
+            with self.subTest(name=name):
+                self.assertTrue(self.mod.member_matches_episode(name, 1, 2))
+                # Season two episode two is not season one episode two.
+                self.assertFalse(self.mod.member_matches_episode(name, 2, 2))
+
+    def test_a_season_number_is_not_also_read_as_an_episode(self):
+        self.assertFalse(self.mod.member_matches_episode("Season 1/02.srt", 1, 1))
+
+    def test_a_season_only_pack_does_not_pin_a_member_from_another_season(self):
+        members = ["Season 1/01.srt", "Season 1/02.srt"]
+        self.assertEqual(
+            self.mod.pick_archive_member(members, {"season": 2, "episode": 2}), (None, "reject")
+        )
+
+    # --- an ordinary origin error proxied by Cloudflare is not a challenge
+
+    def test_a_proxied_origin_error_is_not_a_cloudflare_challenge(self):
+        for status, body in (
+            (403, b"<html><body>O seu IP foi bloqueado</body></html>"),
+            (429, b"<html><body>Demasiados pedidos</body></html>"),
+            (503, b"<html><body>Manutencao</body></html>"),
+        ):
+            with self.subTest(status=status):
+                self.assertFalse(
+                    self.mod._is_cloudflare_challenge(status, {"Server": "cloudflare"}, body)
+                )
+
+    def test_a_real_challenge_is_still_detected(self):
+        self.assertTrue(
+            self.mod._is_cloudflare_challenge(
+                403, {"Server": "cloudflare"}, b"<html><title>Just a moment...</title></html>"
+            )
+        )
+        self.assertTrue(
+            self.mod._is_cloudflare_challenge(403, {"cf-mitigated": "challenge"}, b"")
+        )
+
+    def test_a_proxied_ip_block_reaches_the_ip_block_error(self):
+        body = b"<html><body>O seu IP foi bloqueado</body></html>"
+        routes = {("GET", self.PAGE_LINK): _Response(403, body, headers={"Server": "cloudflare"})}
+        provider = self._provider(routes)
+        with self.assertRaises(self.mod.IPAddressBlocked):
+            provider.download({"page_link": self.PAGE_LINK}, POR, dict(CREDENTIALS))
+
+    # --- a challenged POST keeps its method and its form data
+
+    def test_a_challenged_login_post_is_replayed_as_a_post_through_flaresolverr(self):
+        challenge = _Response(
+            503,
+            b"<html><title>Just a moment...</title><body>cf-challenge</body></html>",
+            headers={"Server": "cloudflare"},
+        )
+        routes = {
+            ("GET", self.LOGIN_URL): _Response(200, LOGIN_HTML),
+            ("POST", self.LOGIN_URL): challenge,
+        }
+        provider = self._provider(routes, cookies={}, authenticated=False)
+        sent = []
+
+        class _Solved:
+            def __init__(self, payload):
+                self._payload = payload
+
+            def read(self):
+                return json.dumps(self._payload).encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def fake_urlopen(request, timeout=None):
+            del timeout
+            sent.append(json.loads(request.data.decode("utf-8")))
+            return _Solved(
+                {
+                    "status": "ok",
+                    "solution": {
+                        "status": 200,
+                        "url": self.LOGIN_URL,
+                        "userAgent": "FlareSolverr/UA",
+                        "response": "<html><body>Ligado</body></html>",
+                        "cookies": [
+                            {"name": name, "value": value}
+                            for name, value in AUTHENTICATED_COOKIES.items()
+                        ],
+                    },
+                }
+            )
+
+        original = self.mod.urllib.request.urlopen
+        self.mod.urllib.request.urlopen = fake_urlopen
+        try:
+            provider._ensure_authenticated(
+                dict(CREDENTIALS, flaresolverr_url="http://127.0.0.1:8191/v1")
+            )
+        finally:
+            self.mod.urllib.request.urlopen = original
+
+        self.assertTrue(provider._authenticated)
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0]["cmd"], "request.post")
+        self.assertIn("username=user", sent[0]["postData"])
+        self.assertIn("sid=1890def6632a667396e33b8df3ac94ac", sent[0]["postData"])
+
+    def test_a_challenged_get_still_uses_request_get(self):
+        challenge = _Response(
+            503,
+            b"<html><title>Just a moment...</title></html>",
+            headers={"Server": "cloudflare"},
+        )
+        provider = self._provider({("GET", self.PAGE_LINK): challenge})
+        sent = []
+
+        class _Solved:
+            def read(self):
+                return json.dumps(
+                    {
+                        "status": "ok",
+                        "solution": {"status": 200, "response": "1\n00:00:01,000 --> 00:00:02,000\nOla\n"},
+                    }
+                ).encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def fake_urlopen(request, timeout=None):
+            del timeout
+            sent.append(json.loads(request.data.decode("utf-8")))
+            return _Solved()
+
+        original = self.mod.urllib.request.urlopen
+        self.mod.urllib.request.urlopen = fake_urlopen
+        try:
+            payload = provider.download(
+                {"page_link": self.PAGE_LINK, "filename": "x.srt"},
+                POR,
+                dict(CREDENTIALS, flaresolverr_url="http://127.0.0.1:8191/v1"),
+            )
+        finally:
+            self.mod.urllib.request.urlopen = original
+
+        self.assertEqual(sent[0]["cmd"], "request.get")
+        self.assertNotIn("postData", sent[0])
+        self.assertIn("content_b64", payload)
+
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -23,7 +23,14 @@ Port of the built-in `legendasdivx` provider onto the Provider Hub catalog.
 - **HTTP.** The site is Cloudflare-fronted, so the plugin uses ai-cloudscraper (the catalog's
   convention for gated providers) and keeps one scraper for the worker's lifetime, because the
   phpBB session cookie is what makes search and download work. FlareSolverr is an optional fallback
-  when cloudscraper still receives a challenge.
+  when cloudscraper still receives a challenge, and it replays the challenged request with its
+  method and body intact: replaying a challenged login POST as a GET would throw the credentials
+  away, so FlareSolverr could never recover a challenge on the login submission.
+- **What counts as a challenge.** A `Server: cloudflare` header only says the response came through
+  the proxy; the site's own 403, 429 and 503 carry it too. A response is treated as a challenge only
+  when it says so, through `cf-mitigated: challenge` or a challenge marker in the body. Otherwise an
+  IP block, a bad password or an outage would be swallowed as a Cloudflare problem, and a pointless
+  solve request would be sent.
 - **No manual decompression.** cloudscraper advertises brotli and gzip, and urllib3 has already
   decoded the body by the time `response.content` is read. The plugin never decompresses a body.
   This is the failure that was fixed in the built-in's session, and
@@ -55,7 +62,9 @@ Port of the built-in `legendasdivx` provider onto the Provider Hub catalog.
   rejected login, and no session id at all when it refused to start a session.
 - A session that expires under a reused worker shows up as a redirect to the login page. The plugin
   drops the phpBB cookies, logs in again and retries once. The Cloudflare clearance cookie is kept:
-  it is unrelated to the phpBB session and expensive to re-obtain.
+  it is unrelated to the phpBB session and expensive to re-obtain. A redirect that survives the
+  re-login raises rather than being parsed: a 302 body is an empty result page, so search and
+  pagination would otherwise report "no subtitles" for what is an authentication failure.
 
 ## Known-unverified areas
 
@@ -82,8 +91,9 @@ this work). Recording what that means, so a field failure is diagnosable:
      if the site nests them differently, `_parse_sub_header` is where that shows up.
   5. *The bare-number reading of archive member names.* Without guessit the plugin reads a bare
      number three ways (episode, absolute number, compact season-plus-episode) after stripping
-     release tags. It agrees with the built-in on every recorded case, but an unusual member name
-     could still be read differently.
+     release tags and any season token, and a season stated by a path segment binds those readings
+     so `Season 1/02.srt` cannot answer a request for season two. It agrees with the built-in on
+     every recorded case, but an unusual member name could still be read differently.
 
 Asking the built-in's contributor to try a plugin build is the cheapest way to close items 1 and 2.
 
