@@ -457,6 +457,141 @@ class GestdownReleaseFormattingTests(unittest.TestCase):
             "Breaking.Bad.S01E04.LOL",
         )
 
+    def test_a_season_pack_tag_is_left_alone(self):
+        """A pack covers the requested episode without naming it.
+
+        Prefixing "Show.S01E02." onto "S01.COMPLETE.1080p" produces a name with
+        two conflicting season markers, which is worse for guessit than the
+        proper pack name it already had.
+        """
+        self.assertEqual(
+            self._info("S01.COMPLETE.1080p", series="Breaking Bad", season=1, episode=2),
+            "S01.COMPLETE.1080p",
+        )
+
+    def test_a_complete_season_pack_in_words_is_left_alone(self):
+        self.assertEqual(
+            self._info("Season 1 COMPLETE BluRay", series="Breaking Bad", season=1,
+                       episode=2),
+            "Season 1 COMPLETE BluRay",
+        )
+
+    def test_a_zero_padded_pack_is_left_alone(self):
+        """Gestdown returns both spellings; only the unpadded one was recognised."""
+        self.assertEqual(
+            self._info("Season 01 COMPLETE", series="Breaking Bad", season=1, episode=2),
+            "Season 01 COMPLETE",
+        )
+
+    def test_a_complete_season_pack_named_the_other_way_round_is_left_alone(self):
+        self.assertEqual(
+            self._info("COMPLETE.SEASON.01.1080p", series="Breaking Bad", season=1,
+                       episode=2),
+            "COMPLETE.SEASON.01.1080p",
+        )
+
+    def test_naming_the_season_is_not_on_its_own_a_pack(self):
+        """`season` cannot be its own whole-season qualifier.
+
+        An ordinary episode tag that happens to say which season it belongs to
+        still needs the episode marker, or the formatter is defeated by the most
+        common tag shape there is.
+        """
+        self.assertEqual(
+            self._info("Season 1 WEB-DL", series="Breaking Bad", season=1, episode=2),
+            "Breaking.Bad.S01E02.Season.1.WEB-DL",
+        )
+
+    def test_full_describing_the_resolution_is_not_a_pack(self):
+        """`Full HD` is a resolution. Only `full season` says whole season."""
+        self.assertEqual(
+            self._info("S01.Full.HD.WEB-DL", series="Breaking Bad", season=1, episode=2),
+            "Breaking.Bad.S01E02.S01.Full.HD.WEB-DL",
+        )
+
+    def test_a_multi_season_pack_covering_this_season_is_left_alone(self):
+        """S01-S03 covers a season 2 episode as surely as S02 would."""
+        self.assertEqual(
+            self._info("S01-S03.COMPLETE", series="Breaking Bad", season=2, episode=2),
+            "S01-S03.COMPLETE",
+        )
+
+    def test_a_plural_word_form_range_is_left_alone(self):
+        self.assertEqual(
+            self._info("Seasons 1-3 COMPLETE", series="Breaking Bad", season=2,
+                       episode=2),
+            "Seasons 1-3 COMPLETE",
+        )
+
+    def test_a_range_that_excludes_this_season_is_still_formatted(self):
+        self.assertEqual(
+            self._info("S03-S05.COMPLETE", series="Breaking Bad", season=1, episode=2),
+            "Breaking.Bad.S01E02.S03-S05.COMPLETE",
+        )
+
+    def test_a_repeated_word_form_range_is_left_alone(self):
+        self.assertEqual(
+            self._info("Season 1-Season 3 COMPLETE", series="Breaking Bad", season=2,
+                       episode=2),
+            "Season 1-Season 3 COMPLETE",
+        )
+
+    def test_a_complete_series_pack_needs_no_season_number(self):
+        """A series-wide pack covers every season, so it covers this one."""
+        self.assertEqual(
+            self._info("Complete Series BluRay", series="Breaking Bad", season=2,
+                       episode=2),
+            "Complete Series BluRay",
+        )
+
+    def test_a_series_pack_in_the_other_word_order_is_left_alone(self):
+        self.assertEqual(
+            self._info("Series.COMPLETE.1080p", series="Breaking Bad", season=2,
+                       episode=2),
+            "Series.COMPLETE.1080p",
+        )
+
+    def test_a_bare_complete_with_no_season_or_series_is_still_formatted(self):
+        """`COMPLETE` alone says nothing about scope. Do not guess."""
+        self.assertEqual(
+            self._info("COMPLETE.1080p", series="Breaking Bad", season=2, episode=2),
+            "Breaking.Bad.S02E02.COMPLETE.1080p",
+        )
+
+    def test_the_word_series_alone_is_not_a_pack(self):
+        self.assertEqual(
+            self._info("Series.Finale.1080p", series="Breaking Bad", season=2, episode=2),
+            "Breaking.Bad.S02E02.Series.Finale.1080p",
+        )
+
+    def test_a_show_pack_is_left_alone(self):
+        self.assertEqual(
+            self._info("Show.Pack.720p", series="Breaking Bad", season=2, episode=2),
+            "Show.Pack.720p",
+        )
+
+    def test_a_higher_season_is_not_matched_by_its_leading_digit(self):
+        """S10 must not read as season 1 through the zero-padding allowance."""
+        self.assertEqual(
+            self._info("S10.COMPLETE", series="Breaking Bad", season=1, episode=2),
+            "Breaking.Bad.S01E02.S10.COMPLETE",
+        )
+
+    def test_a_complete_tv_series_pack_is_left_alone(self):
+        """`TV` sits between the two words that matter."""
+        for tag in ("Complete TV Series BluRay", "Complete.TV.Show",
+                    "The.Complete.Series.1080p", "TV.Series.COMPLETE"):
+            with self.subTest(tag=tag):
+                self.assertEqual(
+                    self._info(tag, series="Breaking Bad", season=2, episode=2), tag)
+
+    def test_a_pack_for_another_season_is_still_formatted(self):
+        """Season 3 says nothing about the season 1 episode being requested."""
+        self.assertEqual(
+            self._info("S03.COMPLETE.1080p", series="Breaking Bad", season=1, episode=2),
+            "Breaking.Bad.S01E02.S03.COMPLETE.1080p",
+        )
+
     def test_each_comma_separated_tag_formatted_independently(self):
         self.assertEqual(
             self._info("LOL, DVDRip ORPHEUS", series="Breaking Bad", season=1, episode=4),

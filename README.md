@@ -33,6 +33,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`jimaku`](providers/jimaku/) | 0.1.0 | Uses the [Jimaku](https://jimaku.cc) API for Japanese movie and episode subtitles. Requires API key. |
 | [`kitsunekko`](providers/kitsunekko/) | 0.1.0 | Scrapes [Kitsunekko](https://kitsunekko.net) for anime subtitle directories and ZIP packs. No login or API key. |
 | [`ktuvit`](providers/ktuvit/) | 0.1.1 | Uses [Ktuvit.me](https://www.ktuvit.me) services for Hebrew movie and episode subtitles. Requires email and hashed password. |
+| [`legendasdivx`](providers/legendasdivx/) | 0.2.0 | Scrapes [LegendasDivx](https://www.legendasdivx.pt) for European and Brazilian Portuguese movie and episode subtitles. Requires username and password. Uses ai-cloudscraper, with optional FlareSolverr and captcha solver fallbacks. |
 | [`legendasnet`](providers/legendasnet/) | 0.1.0 | Uses the [Legendas.net](https://legendas.net) API for Brazilian Portuguese movie and episode subtitles. Requires username and password. |
 | [`moviesubtitles`](providers/moviesubtitles/) | 0.1.0 | Scrapes [Moviesubtitles.org](https://www.moviesubtitles.org) for movie subtitles, including multipart archives. No login or API key. |
 | [`napisy24`](providers/napisy24/) | 0.1.2 | Uses the [Napisy24](https://napisy24.pl) hash API for Polish movie and episode subtitles. Optional username and password. |
@@ -112,6 +113,7 @@ Every provider here ships independently of Bazarr+ releases. [Contribute](#contr
 - `providers/jimaku/`: uses the Jimaku API for Japanese movie and episode subtitles.
 - `providers/kitsunekko/`: scrapes Kitsunekko anime subtitle directories and ZIP packs.
 - `providers/ktuvit/`: uses Ktuvit.me services for Hebrew movie and episode subtitles.
+- `providers/legendasdivx/`: scrapes LegendasDivx for European and Brazilian Portuguese movie and episode subtitles.
 - `providers/legendasnet/`: uses the Legendas.net API for Brazilian Portuguese movie and episode subtitles.
 - `providers/moviesubtitles/`: scrapes Moviesubtitles.org movie subtitle listings and multipart downloads.
 - `providers/napisy24/`: uses the Napisy24 hash API for Polish movie and episode subtitles.
