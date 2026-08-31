@@ -437,7 +437,27 @@ class PrijevodiOnlineProvider:
             value = cookie.get("value")
             if not name or value is None:
                 continue
-            self._cookie_jar.set_cookie(_jar_cookie(name, value))
+            # A jar keeps one cookie per (domain, path, name), so a stale
+            # clearance scoped to another domain variant would ride along as a
+            # second cf_clearance and Cloudflare may keep rejecting. Drop every
+            # same-name cookie first, then store under the solution's own
+            # domain and path when it names them.
+            stale = [
+                existing for existing in self._cookie_jar if existing.name == name
+            ]
+            for existing in stale:
+                try:
+                    self._cookie_jar.clear(existing.domain, existing.path, existing.name)
+                except KeyError:  # pragma: no cover, already gone
+                    pass
+            self._cookie_jar.set_cookie(
+                _jar_cookie(
+                    name,
+                    value,
+                    domain=str(cookie.get("domain") or COOKIE_DOMAIN),
+                    path=str(cookie.get("path") or "/"),
+                )
+            )
 
     def search(self, video, languages, config):
         if (video or {}).get("kind") != "episode":
@@ -754,7 +774,7 @@ def _flaresolverr_timeout_ms(config):
     return max(5000, min(25000, value))
 
 
-def _jar_cookie(name, value, domain=COOKIE_DOMAIN):
+def _jar_cookie(name, value, domain=COOKIE_DOMAIN, path="/"):
     return Cookie(
         version=0,
         name=str(name),
@@ -764,7 +784,7 @@ def _jar_cookie(name, value, domain=COOKIE_DOMAIN):
         domain=domain,
         domain_specified=True,
         domain_initial_dot=domain.startswith("."),
-        path="/",
+        path=path,
         path_specified=True,
         secure=True,
         expires=None,

@@ -1010,6 +1010,29 @@ class PrijevodiOnlineCloudflareTests(unittest.TestCase):
         provider._pause({"request_delay_ms": 3000})
         self.assertEqual(slept, [3.0])
 
+    def test_a_fresh_clearance_replaces_stale_domain_variants(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        # A stale clearance scoped to the www host, as a browser would set it.
+        provider._cookie_jar.set_cookie(
+            self.mod._jar_cookie("cf_clearance", "stale", domain="www.prijevodi-online.org")
+        )
+        provider._store_flaresolverr_solution(
+            {
+                "userAgent": "FS UA",
+                "cookies": [
+                    {
+                        "name": "cf_clearance",
+                        "value": "fresh",
+                        "domain": ".prijevodi-online.org",
+                        "path": "/",
+                    }
+                ],
+            }
+        )
+        clearances = [c for c in provider._cookie_jar if c.name == "cf_clearance"]
+        self.assertEqual([c.value for c in clearances], ["fresh"])
+        self.assertEqual(clearances[0].domain, ".prijevodi-online.org")
+
     def test_manifest_declares_the_flaresolverr_capability(self):
         manifest = json.loads((PROVIDER_DIR / "provider.json").read_text("utf-8"))
         self.assertIs(manifest.get("flaresolverr"), True)
