@@ -673,3 +673,378 @@ class PrijevodiOnlineTransportRetryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _RecordingOpener:
+    """Returns scripted bodies while keeping every request for inspection."""
+
+    def __init__(self, sequence):
+        self._sequence = list(sequence)
+        self.requests = []
+
+    def open(self, request, timeout=None):
+        del timeout
+        self.requests.append(request)
+        entry = self._sequence.pop(0)
+        if isinstance(entry, Exception):
+            raise entry
+
+        class _Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        return _Response(entry)
+
+
+def _challenge_error(url="https://www.prijevodi-online.org/serije/index/s"):
+    return urllib.error.HTTPError(
+        url,
+        403,
+        "Forbidden",
+        {"Server": "cloudflare", "cf-mitigated": "challenge", "Content-Type": "text/html"},
+        io.BytesIO(b"<html><title>Just a moment...</title></html>"),
+    )
+
+
+def _solution(body="<html>ok</html>", status=200, cookies=(), user_agent="FS UA", url=None):
+    return {
+        "status": "ok",
+        "solution": {
+            "url": url or "https://www.prijevodi-online.org/serije/index/s",
+            "status": status,
+            "response": body,
+            "cookies": [{"name": name, "value": value} for name, value in cookies],
+            "userAgent": user_agent,
+        },
+    }
+
+
+class PrijevodiOnlineCloudflareTests(unittest.TestCase):
+    """The site fronts everything with a Cloudflare managed challenge now; the
+    provider delegates challenged requests to FlareSolverr and reuses the
+    solved cookies and User-Agent, or fails with an actionable message."""
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self._orig_sleep = self.mod.time.sleep
+        self.mod.time.sleep = lambda seconds: None
+
+    def tearDown(self):
+        self.mod.time.sleep = self._orig_sleep
+
+    def _provider(self, opener, config=None, solutions=None):
+        provider = self.mod.PrijevodiOnlineProvider()
+        provider._opener = opener
+        provider._config = dict(config or {})
+        self.solver_payloads = []
+
+        def transport(payload):
+            self.solver_payloads.append(payload)
+            return (solutions or []).pop(0)
+
+        provider._flaresolverr_transport = transport
+        return provider
+
+    def test_challenge_without_flaresolverr_raises_a_clear_error(self):
+        opener = _RecordingOpener([_challenge_error()])
+        provider = self._provider(opener)
+        with self.assertRaises(self.mod.CloudflareBlockedError) as caught:
+            provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+        self.assertIn("FlareSolverr", str(caught.exception))
+        # A challenge is not a transient failure: no retry storm against the wall.
+        self.assertEqual(len(opener.requests), 1)
+
+    def test_challenge_is_solved_through_flaresolverr(self):
+        opener = _RecordingOpener([_challenge_error(), b"<html>later</html>"])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution(cookies=[("cf_clearance", "token")])],
+        )
+
+        body = provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+
+        # The solve earns cookies and a User-Agent; the payload itself comes
+        # from replaying the original request through the opener.
+        self.assertEqual(body, b"<html>later</html>")
+        self.assertEqual(self.solver_payloads[0]["cmd"], "request.get")
+        jar = {cookie.name: cookie.value for cookie in provider._cookie_jar}
+        self.assertEqual(jar.get("cf_clearance"), "token")
+        # The clearance cookie is bound to the browser that earned it, so the
+        # replay (and every later request) presents the solved User-Agent.
+        self.assertEqual(opener.requests[-1].get_header("User-agent"), "FS UA")
+
+    def test_challenged_post_is_replayed_as_a_flaresolverr_post(self):
+        opener = _RecordingOpener([_challenge_error(), b"rows"])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution(body="rows")],
+        )
+
+        body = provider._http_post(
+            "https://www.prijevodi-online.org/prijevod/get/1", {"key": "abc"}
+        )
+
+        self.assertEqual(body, b"rows")
+        payload = self.solver_payloads[0]
+        self.assertEqual(payload["cmd"], "request.post")
+        self.assertEqual(payload["postData"], "key=abc")
+        # The replay is a real POST again, body intact.
+        replay = opener.requests[-1]
+        self.assertEqual(replay.get_method(), "POST")
+        self.assertEqual(replay.data, b"key=abc")
+
+    def test_a_solution_that_is_still_a_challenge_raises(self):
+        opener = _RecordingOpener([_challenge_error()])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution(body="<html>Just a moment...</html>", status=403)],
+        )
+        with self.assertRaises(self.mod.CloudflareBlockedError):
+            provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+
+    def test_a_plain_403_still_raises_http_error(self):
+        opener = _RecordingOpener([_http_error(403)])
+        provider = self._provider(opener)
+        with self.assertRaises(urllib.error.HTTPError):
+            provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+
+    def test_search_threads_config_into_the_transport(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        provider._opener = _RecordingOpener([_challenge_error()])
+        with self.assertRaises(self.mod.CloudflareBlockedError):
+            provider.search(
+                {"kind": "episode", "series": "Show", "season": 1, "episode": 1},
+                [{"alpha3": "hrv"}],
+                {"flaresolverr_url": ""},
+            )
+
+
+    def test_binary_downloads_survive_the_clearance(self):
+        archive = b"PK\x03\x04\x00binary\xffbytes"
+        opener = _RecordingOpener([_challenge_error(), archive])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution(cookies=[("cf_clearance", "token")])],
+        )
+        body = provider._http_get("https://www.prijevodi-online.org/preuzmi/1/hr")
+        # FlareSolverr's JSON response field cannot carry a ZIP intact; the
+        # bytes must come from the replay, exactly as the server sent them.
+        self.assertEqual(body, archive)
+
+    def test_transient_errors_after_the_clearance_keep_their_retry(self):
+        opener = _RecordingOpener([_challenge_error(), _http_error(503), b"fine"])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution()],
+        )
+        body = provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+        self.assertEqual(body, b"fine")
+
+    def test_a_challenge_on_the_replay_is_a_hard_failure_not_a_loop(self):
+        opener = _RecordingOpener([_challenge_error(), _challenge_error()])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution()],
+        )
+        with self.assertRaises(self.mod.CloudflareBlockedError):
+            provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+        self.assertEqual(len(self.solver_payloads), 1)
+
+    def test_a_generic_cloudflare_error_page_is_not_a_challenge(self):
+        # Cloudflare's ordinary error template carries cf-error-details too; a
+        # plain 403 with it must keep its meaning instead of demanding a solver.
+        error = urllib.error.HTTPError(
+            "https://www.prijevodi-online.org/serije/index/s",
+            403,
+            "Forbidden",
+            {"Server": "cloudflare", "Content-Type": "text/html"},
+            io.BytesIO(b"<html>cf-error-details: access denied</html>"),
+        )
+        provider = self._provider(_RecordingOpener([error]))
+        with self.assertRaises(urllib.error.HTTPError):
+            provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+
+    def test_the_solve_window_fits_the_worker_deadline(self):
+        self.assertEqual(
+            self.mod._flaresolverr_timeout_ms({"flaresolverr_timeout_ms": 30000}), 25000
+        )
+
+    def test_the_replay_drops_the_stale_cookie_header(self):
+        # The opener's cookie processor stamps requests with the jar's (stale)
+        # clearance; a request that already carries a Cookie header is left
+        # alone by the processor, so the replay must shed it or the fresh
+        # clearance never gets sent.
+        opener = _RecordingOpener([_challenge_error(), b"ok"])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution(cookies=[("cf_clearance", "fresh")])],
+        )
+        import urllib.request as _ur
+
+        request = _ur.Request(
+            "https://www.prijevodi-online.org/serije/index/s",
+            headers={"User-Agent": "old", "Cookie": "cf_clearance=stale"},
+        )
+        body = provider._open_with_retry(request, 10)
+        self.assertEqual(body, b"ok")
+        replay = opener.requests[-1]
+        self.assertIsNone(replay.get_header("Cookie"))
+        self.assertEqual(replay.get_header("User-agent"), "FS UA")
+
+    def test_an_exhausted_deadline_refuses_to_solve(self):
+        opener = _RecordingOpener([_challenge_error()])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution()],
+        )
+        import urllib.request as _ur
+
+        request = _ur.Request("https://www.prijevodi-online.org/serije/index/s")
+        with self.assertRaises(self.mod.CloudflareBlockedError) as caught:
+            provider._open_with_retry(
+                request, 10, deadline=self.mod.time.monotonic() + 3
+            )
+        self.assertIn("deadline", str(caught.exception))
+        # No solver call was even attempted: the budget could not fit one.
+        self.assertEqual(self.solver_payloads, [])
+
+    def test_the_solve_window_shrinks_to_the_remaining_budget(self):
+        opener = _RecordingOpener([_challenge_error(), b"ok"])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1", "flaresolverr_timeout_ms": 25000},
+            solutions=[_solution()],
+        )
+        import urllib.request as _ur
+
+        request = _ur.Request("https://www.prijevodi-online.org/serije/index/s")
+        provider._open_with_retry(
+            request, 10, deadline=self.mod.time.monotonic() + 13
+        )
+        # 13s budget minus the 5s replay reserve and the 2s solver transport
+        # buffer leaves ~6s for the solver, not the configured 25s: even a
+        # solver that uses its whole window cannot eat the replay reserve.
+        self.assertLessEqual(self.solver_payloads[0]["maxTimeout"], 6000)
+        self.assertGreaterEqual(self.solver_payloads[0]["maxTimeout"], 5000)
+
+    def test_a_429_challenge_reaches_the_solver(self):
+        error = urllib.error.HTTPError(
+            "https://www.prijevodi-online.org/serije/index/s",
+            429,
+            "Too Many Requests",
+            {"Server": "cloudflare", "cf-mitigated": "challenge"},
+            io.BytesIO(b"<html><title>Just a moment...</title></html>"),
+        )
+        opener = _RecordingOpener([error, b"ok"])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution()],
+        )
+        body = provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+        self.assertEqual(body, b"ok")
+        self.assertEqual(len(self.solver_payloads), 1)
+
+    def test_a_plain_429_keeps_its_retry_semantics(self):
+        opener = _RecordingOpener([_http_error(429), b"ok"])
+        provider = self._provider(opener)
+        body = provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+        self.assertEqual(body, b"ok")
+        self.assertEqual(self.solver_payloads, [])
+
+    def test_search_arms_the_shared_deadline_before_its_first_request(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        provider._opener = _RecordingOpener(
+            [urllib.error.URLError("down")] * (self.mod.HTTP_RETRIES + 1)
+        )
+        with self.assertRaises(urllib.error.URLError):
+            provider.search(
+                {"kind": "episode", "series": "Show", "season": 1, "episode": 1},
+                [{"alpha3": "hrv"}],
+                {},
+            )
+        self.assertIsNotNone(provider._deadline)
+        remaining = provider._deadline - self.mod.time.monotonic()
+        self.assertLessEqual(remaining, self.mod.WORKER_DEADLINE_SECONDS)
+
+    def test_an_instance_deadline_is_picked_up_and_bounds_the_solve(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        provider._deadline = self.mod.time.monotonic() + 3
+        provider._opener = _RecordingOpener([_challenge_error()])
+        provider._config = {"flaresolverr_url": "http://fs:8191/v1"}
+        provider._flaresolverr_transport = lambda payload: (_ for _ in ()).throw(
+            AssertionError("solver must not run on an exhausted shared budget")
+        )
+        import urllib.request as _ur
+
+        with self.assertRaises(self.mod.CloudflareBlockedError) as caught:
+            provider._open_with_retry(
+                _ur.Request("https://www.prijevodi-online.org/serije/index/s"), 10
+            )
+        self.assertIn("deadline", str(caught.exception))
+
+    def test_politeness_delays_never_sleep_into_the_deadline(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        slept = []
+        self.mod.time.sleep = lambda seconds: slept.append(seconds)
+        provider._deadline = self.mod.time.monotonic() + 2
+        provider._pause({"request_delay_ms": 5000})
+        self.assertTrue(all(seconds <= 1.0 for seconds in slept), slept)
+
+    def test_politeness_delays_run_in_full_with_budget_to_spare(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        slept = []
+        self.mod.time.sleep = lambda seconds: slept.append(seconds)
+        provider._deadline = self.mod.time.monotonic() + 20
+        provider._pause({"request_delay_ms": 3000})
+        self.assertEqual(slept, [3.0])
+
+    def test_a_fresh_clearance_replaces_stale_domain_variants(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        # A stale clearance scoped to the www host, as a browser would set it.
+        provider._cookie_jar.set_cookie(
+            self.mod._jar_cookie("cf_clearance", "stale", domain="www.prijevodi-online.org")
+        )
+        provider._store_flaresolverr_solution(
+            {
+                "userAgent": "FS UA",
+                "cookies": [
+                    {
+                        "name": "cf_clearance",
+                        "value": "fresh",
+                        "domain": ".prijevodi-online.org",
+                        "path": "/",
+                    }
+                ],
+            }
+        )
+        clearances = [c for c in provider._cookie_jar if c.name == "cf_clearance"]
+        self.assertEqual([c.value for c in clearances], ["fresh"])
+        self.assertEqual(clearances[0].domain, ".prijevodi-online.org")
+
+    def test_the_waf_block_page_is_not_a_challenge(self):
+        # Error 1020 and friends title themselves "Attention Required!"; no
+        # solver clears an IP block, so it must surface as the 403 it is.
+        self.assertFalse(self.mod._is_cloudflare_challenge(
+            403,
+            {"Server": "cloudflare"},
+            b"<html><title>Attention Required! | Cloudflare</title></html>",
+        ))
+
+    def test_manifest_declares_the_flaresolverr_capability(self):
+        manifest = json.loads((PROVIDER_DIR / "provider.json").read_text("utf-8"))
+        self.assertIs(manifest.get("flaresolverr"), True)
+        properties = manifest["config_schema"]["properties"]
+        self.assertIn("flaresolverr_url", properties)
+        self.assertIn("flaresolverr_timeout_ms", properties)

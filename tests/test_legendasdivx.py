@@ -19,6 +19,7 @@ import io
 import json
 import unittest
 import zipfile
+from http.cookiejar import CookieJar
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1313,3 +1314,93 @@ class LegendasDivxOracleSweepRegressionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewFindingsOnTheMergedHead(unittest.TestCase):
+    """The four findings recorded when the port was promoted with review open.
+
+    Each test states the exact scenario from the finding, so a regression
+    reproduces the original report rather than a synthetic approximation.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = _load_provider_module()
+
+    # Finding 1: a compact season+episode reading must not contradict the
+    # season the folder already claims.
+    def test_compact_reading_yields_to_the_folder_season(self):
+        self.assertFalse(self.mod.member_matches_episode("Season 2/105 - Pilot.srt", 1, 5))
+
+    def test_compact_reading_consistent_with_the_folder_season_matches(self):
+        self.assertTrue(self.mod.member_matches_episode("Season 1/105 - Pilot.srt", 1, 5))
+
+    def test_conflicting_compact_number_still_counts_under_its_own_folder(self):
+        # The number itself is not a season claim; under its stated folder it
+        # can still be episode 105 (or an absolute number), just never S01E05.
+        self.assertTrue(self.mod.member_matches_episode("Season 2/105 - Pilot.srt", 2, 105))
+
+    # Finding 2: DTS-HD MA channel counts are release noise, not episodes.
+    def test_dts_hd_ma_channels_are_not_episode_numbers(self):
+        self.assertTrue(self.mod.member_matches_episode("Show.1080p.BluRay.DTS-HD.MA.5.1.srt", 1, 2))
+
+    def test_plain_dts_hd_channels_stay_stripped(self):
+        self.assertTrue(self.mod.member_matches_episode("Show.1080p.BluRay.DTS-HD.5.1.srt", 1, 2))
+
+    # Finding 3: the live session jar outranks the FlareSolverr cookie cache,
+    # or a solved anonymous login page keeps vetoing a later successful login.
+    def test_live_jar_cookies_beat_the_flaresolverr_cache(self):
+        provider = self.mod.LegendasDivxProvider()
+        provider._flaresolverr_cookies = {"phpbb3_2z8zs_u": "1", "PHPSESSID": "stale"}
+        provider._cookie_jar = CookieJar()
+        for name, value in AUTHENTICATED_COOKIES.items():
+            provider._cookie_jar.set_cookie(self.mod._jar_cookie(name, value))
+        cookies = provider.session_cookies()
+        self.assertEqual(cookies["phpbb3_2z8zs_u"], "4242")
+        self.assertEqual(cookies["PHPSESSID"], "sess4242")
+
+    def test_flaresolverr_cookies_still_serve_when_the_jars_lack_them(self):
+        provider = self.mod.LegendasDivxProvider()
+        provider._flaresolverr_cookies = {"cf_clearance": "solved"}
+        self.assertEqual(provider.session_cookies()["cf_clearance"], "solved")
+
+    # Finding 4: every explicit episode spelling the matcher accepts must also
+    # earn the explicit-member ranking bonus.
+    def test_hyphen_separated_explicit_member_outranks_release_overlap(self):
+        member, decision = self.mod.pick_archive_member(
+            ["Show.Release.srt", "Show.S01-E02.srt"],
+            {"season": 1, "episode": 2, "release_info": "Show.Release"},
+        )
+        self.assertEqual(decision, "pin")
+        self.assertEqual(member, "Show.S01-E02.srt")
+
+    def test_a_generic_cloudflare_error_page_is_not_a_challenge(self):
+        # Cloudflare's ordinary error template carries cf-error-details too; a
+        # plain 403 must keep its meaning instead of triggering a solve.
+        self.assertFalse(self.mod._is_cloudflare_challenge(
+            403,
+            {"Server": "cloudflare"},
+            b"<html>cf-error-details: access denied</html>",
+        ))
+
+    def test_the_waf_block_page_is_not_a_challenge(self):
+        # Error 1020 and friends title themselves "Attention Required!"; no
+        # solver clears an IP block, so it must keep its ordinary meaning.
+        self.assertFalse(self.mod._is_cloudflare_challenge(
+            403,
+            {"Server": "cloudflare"},
+            b"<html><title>Attention Required! | Cloudflare</title></html>",
+        ))
+
+    def test_the_challenge_page_body_is_still_recognized(self):
+        self.assertTrue(self.mod._is_cloudflare_challenge(
+            403, {"Server": "cloudflare"}, b"<html><title>Just a moment...</title></html>"
+        ))
+
+    def test_cross_form_explicit_member_outranks_release_overlap(self):
+        member, decision = self.mod.pick_archive_member(
+            ["Show.Release.srt", "Show.1x02.srt"],
+            {"season": 1, "episode": 2, "release_info": "Show.Release"},
+        )
+        self.assertEqual(decision, "pin")
+        self.assertEqual(member, "Show.1x02.srt")

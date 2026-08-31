@@ -4,6 +4,7 @@ import base64
 import hashlib
 import html
 import io
+import json
 import os
 import re
 import socket
@@ -13,7 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-from http.cookiejar import CookieJar
+from http.cookiejar import Cookie, CookieJar
 
 PROVIDER_ID = "prijevodionline"
 BASE_URL = "https://www.prijevodi-online.org"
@@ -47,6 +48,51 @@ USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
 )
+COOKIE_DOMAIN = ".prijevodi-online.org"
+# The site fronts everything with a Cloudflare managed challenge, which no
+# plain HTTP client clears: challenged requests are delegated to FlareSolverr
+# and the solved cookies and User-Agent are reused, so later requests pass on
+# their own clearance. A challenge announces itself either with the
+# cf-mitigated header or with the challenge page body; a plain 403/503 from
+# the site keeps its ordinary meaning.
+CLOUDFLARE_STATUS_CODES = {403, 503}
+# A rate-limit challenge arrives as 429 with cf-mitigated: challenge; the
+# header is definitive, so 429 must reach the detector. Body-marker detection
+# stays restricted to CLOUDFLARE_STATUS_CODES so an ordinary 429 keeps its
+# Retry-After retry semantics.
+CLOUDFLARE_CHECK_STATUSES = {403, 429, 503}
+# Challenge-specific markers only: Cloudflare's generic error template (an
+# ordinary 403 access-denied or 503 outage page) contains cf-error-details
+# too, and misreading those as challenges would replace the site's real
+# errors with a misleading FlareSolverr message or a pointless solve.
+# "Attention Required! | Cloudflare" is deliberately absent: that is the WAF
+# block page (error 1020 and friends), which no solver clears; treating it as
+# a challenge turns an IP block into a misleading FlareSolverr error.
+CLOUDFLARE_BODY_MARKERS = (
+    "just a moment",
+    "cf-challenge",
+    "cf_chl_opt",
+    "enable javascript and cookies to continue",
+    "checking your browser before accessing",
+)
+DEFAULT_FLARESOLVERR_TIMEOUT_MS = 25000
+# The Provider Hub kills a worker call at 30 seconds. Everything one request
+# does (the challenged attempt, the solve, the byte-preserving replay and its
+# retries) shares that budget, or the worker dies after a successful solve
+# with nothing to show for it. The reserve keeps enough of the budget back
+# for the replay to actually run; the safety margin is the time to hand the
+# result over.
+WORKER_DEADLINE_SECONDS = 30
+DEADLINE_SAFETY_SECONDS = 2
+REPLAY_RESERVE_SECONDS = 5
+# The solver HTTP call is allowed maxTimeout plus this transport buffer, so
+# the buffer must come out of the solve window, not out of the replay reserve.
+SOLVER_TRANSPORT_BUFFER_SECONDS = 2
+MIN_SOLVE_WINDOW_MS = 5000
+
+
+class CloudflareBlockedError(RuntimeError):
+    """Cloudflare answered with a challenge that could not be cleared."""
 
 _SERIES_ROW_RE = re.compile(r"<tr\b[^>]*id=['\"]serija-(?P<id>\d+)['\"][^>]*>(?P<body>.*?)</tr>", re.I | re.S)
 _ANCHOR_RE = re.compile(r"<a\b[^>]*href=['\"](?P<href>[^'\"]+)['\"][^>]*>(?P<body>.*?)</a>", re.I | re.S)
@@ -169,10 +215,16 @@ class PrijevodiOnlineProvider:
     def __init__(self):
         self._cookie_jar = CookieJar()
         self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cookie_jar))
+        self._config = {}
+        self._deadline = None
+        # The Cloudflare clearance cookie is bound to the User-Agent that
+        # earned it, so once FlareSolverr solves a challenge every request
+        # must present the solved agent instead of the static default.
+        self._user_agent = USER_AGENT
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": self._user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "hr-HR,hr;q=0.9,sr;q=0.8,en-US;q=0.7,en;q=0.6",
         }
@@ -183,7 +235,7 @@ class PrijevodiOnlineProvider:
 
     def _http_post(self, url, data, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": self._user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "hr-HR,hr;q=0.9,sr;q=0.8,en-US;q=0.7,en;q=0.6",
             "X-Requested-With": "XMLHttpRequest",
@@ -202,21 +254,51 @@ class PrijevodiOnlineProvider:
         # safe to repeat, so the same bounded retry applies.
         return self._open_with_retry(request, timeout)
 
-    def _open_with_retry(self, request, timeout):
+    def _open_with_retry(self, request, timeout, allow_solve=True, deadline=None):
+        if deadline is None:
+            # search()/download() set the shared budget at entry; a direct call
+            # (tests, future callers) still gets a full fresh one.
+            deadline = self._deadline
+        if deadline is None:
+            deadline = time.monotonic() + WORKER_DEADLINE_SECONDS - DEADLINE_SAFETY_SECONDS
         # Wrap ONLY the raw urllib transport in a bounded retry. Retries cover
         # transient failures (connection reset/DNS/refused, timeouts, HTTP 5xx
         # and 429) and nothing else: 4xx other than 429, parse errors, and any
         # non-network exception propagate unchanged on their first occurrence.
         for attempt in range(1, HTTP_RETRIES + 2):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    "prijevodi-online.org request ran out of its worker-deadline budget"
+                )
             try:
-                with self._opener.open(request, timeout=timeout) as response:
+                with self._opener.open(request, timeout=min(timeout, remaining)) as response:
                     return response.read()
             except urllib.error.HTTPError as error:
+                if error.code in CLOUDFLARE_CHECK_STATUSES:
+                    body = b""
+                    try:
+                        body = error.read()
+                    except Exception:  # pragma: no cover, defensive read
+                        pass
+                    if _is_cloudflare_challenge(error.code, error.headers, body):
+                        # A challenge is not transient: retrying hammers the
+                        # wall. Delegate to FlareSolverr (or fail actionably).
+                        if not allow_solve:
+                            raise CloudflareBlockedError(
+                                "prijevodi-online.org is still challenged after a "
+                                "FlareSolverr clearance"
+                            )
+                        return self._solve_challenge(request, timeout, deadline)
                 if not _is_retryable_status(error.code) or attempt >= HTTP_RETRIES + 1:
+                    raise
+                if time.monotonic() + _backoff_seconds(attempt, _retry_after_seconds(error)) >= deadline:
                     raise
                 _sleep_backoff(attempt, _retry_after_seconds(error))
             except (socket.timeout, TimeoutError):
                 if attempt >= HTTP_RETRIES + 1:
+                    raise
+                if time.monotonic() + _backoff_seconds(attempt, None) >= deadline:
                     raise
                 _sleep_backoff(attempt, None)
             except urllib.error.URLError:
@@ -225,7 +307,159 @@ class PrijevodiOnlineProvider:
                 # genuine transport failure that is always transient here.
                 if attempt >= HTTP_RETRIES + 1:
                     raise
+                if time.monotonic() + _backoff_seconds(attempt, None) >= deadline:
+                    raise
                 _sleep_backoff(attempt, None)
+
+    def _pause(self, config):
+        """The politeness delay, clamped so it never sleeps into the deadline.
+
+        The worker being killed mid-sleep reports nothing; a delay that does
+        not fit the remaining budget is pure waste, since the transport would
+        reject the next request anyway.
+        """
+        delay_ms = (config or {}).get("request_delay_ms", 0) or 0
+        delay = min(int(delay_ms), 5000) / 1000.0 if delay_ms > 0 else 0.0
+        if self._deadline is not None:
+            delay = max(0.0, min(delay, self._deadline - time.monotonic() - 1.0))
+        if delay > 0:
+            time.sleep(delay)
+
+    def _solve_challenge(self, request, timeout, deadline):
+        """Clear the challenge, then replay the original request ourselves.
+
+        The solve is used only for what it earns: the clearance cookies and
+        the User-Agent they are bound to. FlareSolverr's own response body is
+        JSON text, which cannot carry a ZIP/RAR download intact, and using it
+        would also bypass the transport retry for the origin's transient
+        errors. Replaying through the opener keeps downloads byte-exact and
+        keeps 429/5xx on their ordinary bounded-retry path; a challenge on the
+        replay means the clearance did not take, which is a hard failure, not
+        a loop.
+        """
+        endpoint = _flaresolverr_url(self._config)
+        if not endpoint:
+            raise CloudflareBlockedError(
+                "prijevodi-online.org answered with a Cloudflare challenge; "
+                "configure a FlareSolverr URL in the provider settings to clear it"
+            )
+        remaining_ms = int(
+            (
+                deadline
+                - time.monotonic()
+                - REPLAY_RESERVE_SECONDS
+                - SOLVER_TRANSPORT_BUFFER_SECONDS
+            )
+            * 1000
+        )
+        if remaining_ms < MIN_SOLVE_WINDOW_MS:
+            raise CloudflareBlockedError(
+                "prijevodi-online.org needs a Cloudflare solve but the worker "
+                "deadline leaves no room for one; the next attempt starts fresh"
+            )
+        timeout_ms = min(_flaresolverr_timeout_ms(self._config), remaining_ms)
+        payload = {"cmd": "request.get", "url": request.full_url, "maxTimeout": timeout_ms}
+        if request.data:
+            # Replaying the subtitle-list POST as a GET would drop the key the
+            # endpoint requires; FlareSolverr posts a urlencoded body, which is
+            # exactly what this site expects.
+            payload["cmd"] = "request.post"
+            payload["postData"] = request.data.decode("utf-8")
+        cookies = [{"name": cookie.name, "value": cookie.value} for cookie in self._cookie_jar]
+        if cookies:
+            payload["cookies"] = cookies
+        parsed = self._flaresolverr_transport(payload)
+        if not isinstance(parsed, dict) or parsed.get("status") not in (None, "ok"):
+            message = ""
+            if isinstance(parsed, dict):
+                message = str(parsed.get("message") or "")
+            raise CloudflareBlockedError(
+                f"PrijevodiOnline {message or 'FlareSolverr did not solve the challenge'}"
+            )
+        solution = parsed.get("solution") or {}
+        body = (solution.get("response") or "").encode("utf-8")
+        status = _safe_int(solution.get("status")) or 0
+        if _is_cloudflare_challenge(status, solution.get("headers") or {}, body):
+            raise CloudflareBlockedError(
+                "PrijevodiOnline FlareSolverr response is still a Cloudflare block"
+            )
+        self._store_flaresolverr_solution(solution)
+        replay = urllib.request.Request(
+            request.full_url,
+            data=request.data,
+            # The opener's cookie processor stamped the ORIGINAL request with a
+            # Cookie header (the stale clearance included), and a request that
+            # already carries one is left alone by the processor. Drop it so
+            # the replay is stamped fresh from the jar the solve just filled.
+            headers={
+                key: value
+                for key, value in request.header_items()
+                if key.lower() != "cookie"
+            },
+            method=request.get_method(),
+        )
+        replay.add_header("User-Agent", self._user_agent)
+        return self._open_with_retry(replay, timeout, allow_solve=False, deadline=deadline)
+
+    def _flaresolverr_transport(self, payload):
+        """POST one command to FlareSolverr and return the parsed JSON.
+
+        An instance attribute (like ``_opener``) so tests can script it.
+        """
+        endpoint = _flaresolverr_url(self._config)
+        timeout_ms = _safe_int(payload.get("maxTimeout")) or _flaresolverr_timeout_ms(self._config)
+        request = urllib.request.Request(
+            endpoint,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(
+                request, timeout=timeout_ms / 1000 + SOLVER_TRANSPORT_BUFFER_SECONDS
+            ) as response:
+                raw = response.read()
+        except Exception as error:
+            raise CloudflareBlockedError(
+                f"PrijevodiOnline FlareSolverr request failed: {error}"
+            ) from error
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise CloudflareBlockedError(
+                "PrijevodiOnline FlareSolverr returned invalid JSON"
+            ) from error
+
+    def _store_flaresolverr_solution(self, solution):
+        user_agent = solution.get("userAgent")
+        if user_agent:
+            self._user_agent = str(user_agent)
+        for cookie in solution.get("cookies") or []:
+            name = cookie.get("name")
+            value = cookie.get("value")
+            if not name or value is None:
+                continue
+            # A jar keeps one cookie per (domain, path, name), so a stale
+            # clearance scoped to another domain variant would ride along as a
+            # second cf_clearance and Cloudflare may keep rejecting. Drop every
+            # same-name cookie first, then store under the solution's own
+            # domain and path when it names them.
+            stale = [
+                existing for existing in self._cookie_jar if existing.name == name
+            ]
+            for existing in stale:
+                try:
+                    self._cookie_jar.clear(existing.domain, existing.path, existing.name)
+                except KeyError:  # pragma: no cover, already gone
+                    pass
+            self._cookie_jar.set_cookie(
+                _jar_cookie(
+                    name,
+                    value,
+                    domain=str(cookie.get("domain") or COOKIE_DOMAIN),
+                    path=str(cookie.get("path") or "/"),
+                )
+            )
 
     def search(self, video, languages, config):
         if (video or {}).get("kind") != "episode":
@@ -240,20 +474,25 @@ class PrijevodiOnlineProvider:
             return []
 
         config = dict(config or {})
+        self._config = config
+        # Every request this search makes (index walks, series page, subtitle
+        # POST, a solve and its replay, the politeness delays between them)
+        # shares one budget under the Provider Hub's worker deadline.
+        self._deadline = time.monotonic() + WORKER_DEADLINE_SECONDS - DEADLINE_SAFETY_SECONDS
         titles = _series_titles(video)
         for series_title in titles:
-            _sleep(config)
+            self._pause(config)
             series = self._find_series(series_title)
             if not series:
                 continue
-            _sleep(config)
+            self._pause(config)
             series_body = self._http_get(series["url"], referer=_index_url(series_title))
             page = parse_series_page(series_body)
             episode_info = page["episodes"].get((season, episode))
             if not episode_info:
                 continue
             subtitles_url = f"{BASE_URL}/prijevod/get/{episode_info['episode_id']}"
-            _sleep(config)
+            self._pause(config)
             subtitle_rows = parse_subtitle_rows(
                 self._http_post(
                     subtitles_url,
@@ -356,7 +595,9 @@ class PrijevodiOnlineProvider:
         }
 
     def download(self, provider_payload, language, config):
-        del language, config
+        del language
+        self._config = dict(config or {})
+        self._deadline = time.monotonic() + WORKER_DEADLINE_SECONDS - DEADLINE_SAFETY_SECONDS
         payload = dict(provider_payload or {})
         url = payload.get("url")
         if not url:
@@ -502,6 +743,58 @@ def _safe_int(value):
         return int(str(value).strip())
     except (TypeError, ValueError):
         return None
+
+
+def _is_cloudflare_challenge(status, headers, body):
+    """True only for an actual challenge, not for anything Cloudflare proxied.
+
+    A "Server: cloudflare" header says the response came through the proxy, not
+    that it is a challenge: the site's own 403 and 503 carry it too. The
+    challenge announces itself either with cf-mitigated: challenge or in the
+    body.
+    """
+    normalized = {str(key).lower(): str(value) for key, value in (headers or {}).items()}
+    if normalized.get("cf-mitigated", "").strip().lower() == "challenge":
+        return True
+    if (_safe_int(status) or 0) not in CLOUDFLARE_STATUS_CODES:
+        return False
+    text = body.decode("utf-8", "ignore").lower() if isinstance(body, bytes) else str(body or "").lower()
+    return any(marker in text for marker in CLOUDFLARE_BODY_MARKERS)
+
+
+def _flaresolverr_url(config):
+    return str((config or {}).get("flaresolverr_url") or "").strip()
+
+
+def _flaresolverr_timeout_ms(config):
+    value = _safe_int((config or {}).get("flaresolverr_timeout_ms"))
+    if value is None:
+        value = DEFAULT_FLARESOLVERR_TIMEOUT_MS
+    # Capped below the Provider Hub's 30s worker deadline: the solver HTTP
+    # call waits timeout + 2s of transport overhead, and a worker killed
+    # mid-solve reports nothing useful.
+    return max(5000, min(25000, value))
+
+
+def _jar_cookie(name, value, domain=COOKIE_DOMAIN, path="/"):
+    return Cookie(
+        version=0,
+        name=str(name),
+        value=str(value),
+        port=None,
+        port_specified=False,
+        domain=domain,
+        domain_specified=True,
+        domain_initial_dot=domain.startswith("."),
+        path=path,
+        path_specified=True,
+        secure=True,
+        expires=None,
+        discard=True,
+        comment=None,
+        comment_url=None,
+        rest={},
+    )
 
 
 def _episode_fields(body):
@@ -666,12 +959,6 @@ def _ascii_fold(value):
     return normalized.encode("ascii", "ignore").decode("ascii")
 
 
-def _sleep(config):
-    delay_ms = (config or {}).get("request_delay_ms", 0) or 0
-    if delay_ms > 0:
-        time.sleep(min(int(delay_ms), 5000) / 1000.0)
-
-
 def _is_retryable_status(code):
     return code == 429 or 500 <= int(code) <= 599
 
@@ -693,14 +980,18 @@ def _retry_after_seconds(error):
     return seconds if seconds >= 0 else None
 
 
-def _sleep_backoff(attempt, retry_after):
+def _backoff_seconds(attempt, retry_after):
     # Exponential backoff with a small base, capped. A valid Retry-After wins.
     if retry_after is not None:
         delay = retry_after
     else:
         delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    return min(delay, RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _sleep_backoff(attempt, retry_after):
     # Call the module-level time.sleep so tests can monkeypatch it.
-    time.sleep(min(delay, RETRY_BACKOFF_CAP_SECONDS))
+    time.sleep(_backoff_seconds(attempt, retry_after))
 
 
 def _strip_tags(value):
