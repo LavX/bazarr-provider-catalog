@@ -56,11 +56,14 @@ COOKIE_DOMAIN = ".prijevodi-online.org"
 # cf-mitigated header or with the challenge page body; a plain 403/503 from
 # the site keeps its ordinary meaning.
 CLOUDFLARE_STATUS_CODES = {403, 503}
+# Challenge-specific markers only: Cloudflare's generic error template (an
+# ordinary 403 access-denied or 503 outage page) contains cf-error-details
+# too, and misreading those as challenges would replace the site's real
+# errors with a misleading FlareSolverr message or a pointless solve.
 CLOUDFLARE_BODY_MARKERS = (
     "attention required! | cloudflare",
     "just a moment",
     "cf-challenge",
-    "cf-error-details",
     "cf_chl_opt",
     "enable javascript and cookies to continue",
     "checking your browser before accessing",
@@ -230,7 +233,7 @@ class PrijevodiOnlineProvider:
         # safe to repeat, so the same bounded retry applies.
         return self._open_with_retry(request, timeout)
 
-    def _open_with_retry(self, request, timeout):
+    def _open_with_retry(self, request, timeout, allow_solve=True):
         # Wrap ONLY the raw urllib transport in a bounded retry. Retries cover
         # transient failures (connection reset/DNS/refused, timeouts, HTTP 5xx
         # and 429) and nothing else: 4xx other than 429, parse errors, and any
@@ -249,7 +252,12 @@ class PrijevodiOnlineProvider:
                     if _is_cloudflare_challenge(error.code, error.headers, body):
                         # A challenge is not transient: retrying hammers the
                         # wall. Delegate to FlareSolverr (or fail actionably).
-                        return self._solve_challenge(request)
+                        if not allow_solve:
+                            raise CloudflareBlockedError(
+                                "prijevodi-online.org is still challenged after a "
+                                "FlareSolverr clearance"
+                            )
+                        return self._solve_challenge(request, timeout)
                 if not _is_retryable_status(error.code) or attempt >= HTTP_RETRIES + 1:
                     raise
                 _sleep_backoff(attempt, _retry_after_seconds(error))
@@ -265,7 +273,18 @@ class PrijevodiOnlineProvider:
                     raise
                 _sleep_backoff(attempt, None)
 
-    def _solve_challenge(self, request):
+    def _solve_challenge(self, request, timeout):
+        """Clear the challenge, then replay the original request ourselves.
+
+        The solve is used only for what it earns: the clearance cookies and
+        the User-Agent they are bound to. FlareSolverr's own response body is
+        JSON text, which cannot carry a ZIP/RAR download intact, and using it
+        would also bypass the transport retry for the origin's transient
+        errors. Replaying through the opener keeps downloads byte-exact and
+        keeps 429/5xx on their ordinary bounded-retry path; a challenge on the
+        replay means the clearance did not take, which is a hard failure, not
+        a loop.
+        """
         endpoint = _flaresolverr_url(self._config)
         if not endpoint:
             raise CloudflareBlockedError(
@@ -298,12 +317,15 @@ class PrijevodiOnlineProvider:
             raise CloudflareBlockedError(
                 "PrijevodiOnline FlareSolverr response is still a Cloudflare block"
             )
-        if status >= 400:
-            raise CloudflareBlockedError(
-                f"PrijevodiOnline request failed with HTTP {status} via FlareSolverr"
-            )
         self._store_flaresolverr_solution(solution)
-        return body
+        replay = urllib.request.Request(
+            request.full_url,
+            data=request.data,
+            headers={key: value for key, value in request.header_items()},
+            method=request.get_method(),
+        )
+        replay.add_header("User-Agent", self._user_agent)
+        return self._open_with_retry(replay, timeout, allow_solve=False)
 
     def _flaresolverr_transport(self, payload):
         """POST one command to FlareSolverr and return the parsed JSON.
@@ -647,7 +669,10 @@ def _flaresolverr_timeout_ms(config):
     value = _safe_int((config or {}).get("flaresolverr_timeout_ms"))
     if value is None:
         value = DEFAULT_FLARESOLVERR_TIMEOUT_MS
-    return max(5000, min(30000, value))
+    # Capped below the Provider Hub's 30s worker deadline: the solver HTTP
+    # call waits timeout + 2s of transport overhead, and a worker killed
+    # mid-solve reports nothing useful.
+    return max(5000, min(25000, value))
 
 
 def _jar_cookie(name, value, domain=COOKIE_DOMAIN):

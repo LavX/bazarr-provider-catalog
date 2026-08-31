@@ -767,17 +767,18 @@ class PrijevodiOnlineCloudflareTests(unittest.TestCase):
 
         body = provider._http_get("https://www.prijevodi-online.org/serije/index/s")
 
-        self.assertEqual(body, b"<html>ok</html>")
+        # The solve earns cookies and a User-Agent; the payload itself comes
+        # from replaying the original request through the opener.
+        self.assertEqual(body, b"<html>later</html>")
         self.assertEqual(self.solver_payloads[0]["cmd"], "request.get")
         jar = {cookie.name: cookie.value for cookie in provider._cookie_jar}
         self.assertEqual(jar.get("cf_clearance"), "token")
-        # The clearance cookie is bound to the browser that earned it, so every
-        # later request must present the solved User-Agent.
-        provider._http_get("https://www.prijevodi-online.org/serije/index/t")
+        # The clearance cookie is bound to the browser that earned it, so the
+        # replay (and every later request) presents the solved User-Agent.
         self.assertEqual(opener.requests[-1].get_header("User-agent"), "FS UA")
 
     def test_challenged_post_is_replayed_as_a_flaresolverr_post(self):
-        opener = _RecordingOpener([_challenge_error()])
+        opener = _RecordingOpener([_challenge_error(), b"rows"])
         provider = self._provider(
             opener,
             config={"flaresolverr_url": "http://fs:8191/v1"},
@@ -792,6 +793,10 @@ class PrijevodiOnlineCloudflareTests(unittest.TestCase):
         payload = self.solver_payloads[0]
         self.assertEqual(payload["cmd"], "request.post")
         self.assertEqual(payload["postData"], "key=abc")
+        # The replay is a real POST again, body intact.
+        replay = opener.requests[-1]
+        self.assertEqual(replay.get_method(), "POST")
+        self.assertEqual(replay.data, b"key=abc")
 
     def test_a_solution_that_is_still_a_challenge_raises(self):
         opener = _RecordingOpener([_challenge_error()])
@@ -818,6 +823,60 @@ class PrijevodiOnlineCloudflareTests(unittest.TestCase):
                 [{"alpha3": "hrv"}],
                 {"flaresolverr_url": ""},
             )
+
+
+    def test_binary_downloads_survive_the_clearance(self):
+        archive = b"PK\x03\x04\x00binary\xffbytes"
+        opener = _RecordingOpener([_challenge_error(), archive])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution(cookies=[("cf_clearance", "token")])],
+        )
+        body = provider._http_get("https://www.prijevodi-online.org/preuzmi/1/hr")
+        # FlareSolverr's JSON response field cannot carry a ZIP intact; the
+        # bytes must come from the replay, exactly as the server sent them.
+        self.assertEqual(body, archive)
+
+    def test_transient_errors_after_the_clearance_keep_their_retry(self):
+        opener = _RecordingOpener([_challenge_error(), _http_error(503), b"fine"])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution()],
+        )
+        body = provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+        self.assertEqual(body, b"fine")
+
+    def test_a_challenge_on_the_replay_is_a_hard_failure_not_a_loop(self):
+        opener = _RecordingOpener([_challenge_error(), _challenge_error()])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution()],
+        )
+        with self.assertRaises(self.mod.CloudflareBlockedError):
+            provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+        self.assertEqual(len(self.solver_payloads), 1)
+
+    def test_a_generic_cloudflare_error_page_is_not_a_challenge(self):
+        # Cloudflare's ordinary error template carries cf-error-details too; a
+        # plain 403 with it must keep its meaning instead of demanding a solver.
+        error = urllib.error.HTTPError(
+            "https://www.prijevodi-online.org/serije/index/s",
+            403,
+            "Forbidden",
+            {"Server": "cloudflare", "Content-Type": "text/html"},
+            io.BytesIO(b"<html>cf-error-details: access denied</html>"),
+        )
+        provider = self._provider(_RecordingOpener([error]))
+        with self.assertRaises(urllib.error.HTTPError):
+            provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+
+    def test_the_solve_window_fits_the_worker_deadline(self):
+        self.assertEqual(
+            self.mod._flaresolverr_timeout_ms({"flaresolverr_timeout_ms": 30000}), 25000
+        )
 
     def test_manifest_declares_the_flaresolverr_capability(self):
         manifest = json.loads((PROVIDER_DIR / "provider.json").read_text("utf-8"))
