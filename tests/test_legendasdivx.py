@@ -1374,6 +1374,29 @@ class ReviewFindingsOnTheMergedHead(unittest.TestCase):
         self.assertEqual(decision, "pin")
         self.assertEqual(member, "Show.S01-E02.srt")
 
+    def test_a_generic_cloudflare_error_page_is_not_a_challenge(self):
+        # Cloudflare's ordinary error template carries cf-error-details too; a
+        # plain 403 must keep its meaning instead of triggering a solve.
+        self.assertFalse(self.mod._is_cloudflare_challenge(
+            403,
+            {"Server": "cloudflare"},
+            b"<html>cf-error-details: access denied</html>",
+        ))
+
+    def test_the_waf_block_page_is_not_a_challenge(self):
+        # Error 1020 and friends title themselves "Attention Required!"; no
+        # solver clears an IP block, so it must keep its ordinary meaning.
+        self.assertFalse(self.mod._is_cloudflare_challenge(
+            403,
+            {"Server": "cloudflare"},
+            b"<html><title>Attention Required! | Cloudflare</title></html>",
+        ))
+
+    def test_the_challenge_page_body_is_still_recognized(self):
+        self.assertTrue(self.mod._is_cloudflare_challenge(
+            403, {"Server": "cloudflare"}, b"<html><title>Just a moment...</title></html>"
+        ))
+
     def test_cross_form_explicit_member_outranks_release_overlap(self):
         member, decision = self.mod.pick_archive_member(
             ["Show.Release.srt", "Show.1x02.srt"],

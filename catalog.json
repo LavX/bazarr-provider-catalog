@@ -1318,7 +1318,7 @@
       "manifest": {
         "anti_captcha": true,
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "a1ac273d19b83ffc80711a6f76afe98dd69ab52c9219defe09d24bf29c5b95db",
+        "bundle_sha256": "e14357dc2e3aaf6f4c4163134cb1d3ac9343225a427b42c909fd46ca49ab22ed",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1673,7 +1673,7 @@
         "entry_class": "LegendasDivxProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "4ef6d73f14ae472d54bfbcf5911aa1eae806970fe660119a50323a30eb9d956d"
+          "provider.py": "4f321c64a08ba4fb482fb7122ec2782c50420af093a37011fe5e4dfc32e84565"
         },
         "flaresolverr": true,
         "languages": [
@@ -1702,7 +1702,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.2.1"
+        "version": "0.2.2"
       }
     },
     {
@@ -3330,10 +3330,24 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "49d621d22ee20524c197002ffb67c18b8c636e121e9679ffaf9ae260c7db1f7e",
+        "bundle_sha256": "d2569692e2b5c73d3467d7b96d11dd3e4df1a479e8a1bceb502637a0ad3e75aa",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
+            "flaresolverr_timeout_ms": {
+              "default": 25000,
+              "description": "Maximum time FlareSolverr may spend fetching a page after a Cloudflare challenge.",
+              "maximum": 30000,
+              "minimum": 5000,
+              "title": "FlareSolverr timeout (ms)",
+              "type": "integer"
+            },
+            "flaresolverr_url": {
+              "default": "",
+              "description": "FlareSolverr /v1 endpoint used when prijevodi-online.org answers with a Cloudflare challenge. The site fronts everything with one, so the provider needs this to work at all from most networks.",
+              "title": "FlareSolverr URL",
+              "type": "string"
+            },
             "request_delay_ms": {
               "default": 0,
               "description": "Optional politeness delay between HTTP calls to prijevodi-online.org.",
@@ -3352,8 +3366,9 @@
         "entry_class": "PrijevodiOnlineProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "a63b5bf3ac837e1aed79ff8b1de96788781f45952c96e886be278e1e869cf866"
+          "provider.py": "7d7e276db3ad0dbd31099a07775cb51b1ac73c80b5639bced285b2e3b59a8b15"
         },
+        "flaresolverr": true,
         "languages": [
           "cnr",
           "hbs",
@@ -3376,7 +3391,7 @@
         "supported_media": [
           "episode"
         ],
-        "version": "0.1.6"
+        "version": "0.2.0"
       }
     },
     {
