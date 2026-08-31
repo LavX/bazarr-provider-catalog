@@ -673,3 +673,155 @@ class PrijevodiOnlineTransportRetryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _RecordingOpener:
+    """Returns scripted bodies while keeping every request for inspection."""
+
+    def __init__(self, sequence):
+        self._sequence = list(sequence)
+        self.requests = []
+
+    def open(self, request, timeout=None):
+        del timeout
+        self.requests.append(request)
+        entry = self._sequence.pop(0)
+        if isinstance(entry, Exception):
+            raise entry
+
+        class _Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        return _Response(entry)
+
+
+def _challenge_error(url="https://www.prijevodi-online.org/serije/index/s"):
+    return urllib.error.HTTPError(
+        url,
+        403,
+        "Forbidden",
+        {"Server": "cloudflare", "cf-mitigated": "challenge", "Content-Type": "text/html"},
+        io.BytesIO(b"<html><title>Just a moment...</title></html>"),
+    )
+
+
+def _solution(body="<html>ok</html>", status=200, cookies=(), user_agent="FS UA", url=None):
+    return {
+        "status": "ok",
+        "solution": {
+            "url": url or "https://www.prijevodi-online.org/serije/index/s",
+            "status": status,
+            "response": body,
+            "cookies": [{"name": name, "value": value} for name, value in cookies],
+            "userAgent": user_agent,
+        },
+    }
+
+
+class PrijevodiOnlineCloudflareTests(unittest.TestCase):
+    """The site fronts everything with a Cloudflare managed challenge now; the
+    provider delegates challenged requests to FlareSolverr and reuses the
+    solved cookies and User-Agent, or fails with an actionable message."""
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self._orig_sleep = self.mod.time.sleep
+        self.mod.time.sleep = lambda seconds: None
+
+    def tearDown(self):
+        self.mod.time.sleep = self._orig_sleep
+
+    def _provider(self, opener, config=None, solutions=None):
+        provider = self.mod.PrijevodiOnlineProvider()
+        provider._opener = opener
+        provider._config = dict(config or {})
+        self.solver_payloads = []
+
+        def transport(payload):
+            self.solver_payloads.append(payload)
+            return (solutions or []).pop(0)
+
+        provider._flaresolverr_transport = transport
+        return provider
+
+    def test_challenge_without_flaresolverr_raises_a_clear_error(self):
+        opener = _RecordingOpener([_challenge_error()])
+        provider = self._provider(opener)
+        with self.assertRaises(self.mod.CloudflareBlockedError) as caught:
+            provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+        self.assertIn("FlareSolverr", str(caught.exception))
+        # A challenge is not a transient failure: no retry storm against the wall.
+        self.assertEqual(len(opener.requests), 1)
+
+    def test_challenge_is_solved_through_flaresolverr(self):
+        opener = _RecordingOpener([_challenge_error(), b"<html>later</html>"])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution(cookies=[("cf_clearance", "token")])],
+        )
+
+        body = provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(self.solver_payloads[0]["cmd"], "request.get")
+        jar = {cookie.name: cookie.value for cookie in provider._cookie_jar}
+        self.assertEqual(jar.get("cf_clearance"), "token")
+        # The clearance cookie is bound to the browser that earned it, so every
+        # later request must present the solved User-Agent.
+        provider._http_get("https://www.prijevodi-online.org/serije/index/t")
+        self.assertEqual(opener.requests[-1].get_header("User-agent"), "FS UA")
+
+    def test_challenged_post_is_replayed_as_a_flaresolverr_post(self):
+        opener = _RecordingOpener([_challenge_error()])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution(body="rows")],
+        )
+
+        body = provider._http_post(
+            "https://www.prijevodi-online.org/prijevod/get/1", {"key": "abc"}
+        )
+
+        self.assertEqual(body, b"rows")
+        payload = self.solver_payloads[0]
+        self.assertEqual(payload["cmd"], "request.post")
+        self.assertEqual(payload["postData"], "key=abc")
+
+    def test_a_solution_that_is_still_a_challenge_raises(self):
+        opener = _RecordingOpener([_challenge_error()])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution(body="<html>Just a moment...</html>", status=403)],
+        )
+        with self.assertRaises(self.mod.CloudflareBlockedError):
+            provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+
+    def test_a_plain_403_still_raises_http_error(self):
+        opener = _RecordingOpener([_http_error(403)])
+        provider = self._provider(opener)
+        with self.assertRaises(urllib.error.HTTPError):
+            provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+
+    def test_search_threads_config_into_the_transport(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        provider._opener = _RecordingOpener([_challenge_error()])
+        with self.assertRaises(self.mod.CloudflareBlockedError):
+            provider.search(
+                {"kind": "episode", "series": "Show", "season": 1, "episode": 1},
+                [{"alpha3": "hrv"}],
+                {"flaresolverr_url": ""},
+            )
+
+    def test_manifest_declares_the_flaresolverr_capability(self):
+        manifest = json.loads((PROVIDER_DIR / "provider.json").read_text("utf-8"))
+        self.assertIs(manifest.get("flaresolverr"), True)
+        properties = manifest["config_schema"]["properties"]
+        self.assertIn("flaresolverr_url", properties)
+        self.assertIn("flaresolverr_timeout_ms", properties)

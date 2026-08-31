@@ -4,6 +4,7 @@ import base64
 import hashlib
 import html
 import io
+import json
 import os
 import re
 import socket
@@ -13,7 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-from http.cookiejar import CookieJar
+from http.cookiejar import Cookie, CookieJar
 
 PROVIDER_ID = "prijevodionline"
 BASE_URL = "https://www.prijevodi-online.org"
@@ -47,6 +48,28 @@ USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
 )
+COOKIE_DOMAIN = ".prijevodi-online.org"
+# The site fronts everything with a Cloudflare managed challenge, which no
+# plain HTTP client clears: challenged requests are delegated to FlareSolverr
+# and the solved cookies and User-Agent are reused, so later requests pass on
+# their own clearance. A challenge announces itself either with the
+# cf-mitigated header or with the challenge page body; a plain 403/503 from
+# the site keeps its ordinary meaning.
+CLOUDFLARE_STATUS_CODES = {403, 503}
+CLOUDFLARE_BODY_MARKERS = (
+    "attention required! | cloudflare",
+    "just a moment",
+    "cf-challenge",
+    "cf-error-details",
+    "cf_chl_opt",
+    "enable javascript and cookies to continue",
+    "checking your browser before accessing",
+)
+DEFAULT_FLARESOLVERR_TIMEOUT_MS = 25000
+
+
+class CloudflareBlockedError(RuntimeError):
+    """Cloudflare answered with a challenge that could not be cleared."""
 
 _SERIES_ROW_RE = re.compile(r"<tr\b[^>]*id=['\"]serija-(?P<id>\d+)['\"][^>]*>(?P<body>.*?)</tr>", re.I | re.S)
 _ANCHOR_RE = re.compile(r"<a\b[^>]*href=['\"](?P<href>[^'\"]+)['\"][^>]*>(?P<body>.*?)</a>", re.I | re.S)
@@ -169,10 +192,15 @@ class PrijevodiOnlineProvider:
     def __init__(self):
         self._cookie_jar = CookieJar()
         self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cookie_jar))
+        self._config = {}
+        # The Cloudflare clearance cookie is bound to the User-Agent that
+        # earned it, so once FlareSolverr solves a challenge every request
+        # must present the solved agent instead of the static default.
+        self._user_agent = USER_AGENT
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": self._user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "hr-HR,hr;q=0.9,sr;q=0.8,en-US;q=0.7,en;q=0.6",
         }
@@ -183,7 +211,7 @@ class PrijevodiOnlineProvider:
 
     def _http_post(self, url, data, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": self._user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "hr-HR,hr;q=0.9,sr;q=0.8,en-US;q=0.7,en;q=0.6",
             "X-Requested-With": "XMLHttpRequest",
@@ -212,6 +240,16 @@ class PrijevodiOnlineProvider:
                 with self._opener.open(request, timeout=timeout) as response:
                     return response.read()
             except urllib.error.HTTPError as error:
+                if error.code in CLOUDFLARE_STATUS_CODES:
+                    body = b""
+                    try:
+                        body = error.read()
+                    except Exception:  # pragma: no cover, defensive read
+                        pass
+                    if _is_cloudflare_challenge(error.code, error.headers, body):
+                        # A challenge is not transient: retrying hammers the
+                        # wall. Delegate to FlareSolverr (or fail actionably).
+                        return self._solve_challenge(request)
                 if not _is_retryable_status(error.code) or attempt >= HTTP_RETRIES + 1:
                     raise
                 _sleep_backoff(attempt, _retry_after_seconds(error))
@@ -227,6 +265,84 @@ class PrijevodiOnlineProvider:
                     raise
                 _sleep_backoff(attempt, None)
 
+    def _solve_challenge(self, request):
+        endpoint = _flaresolverr_url(self._config)
+        if not endpoint:
+            raise CloudflareBlockedError(
+                "prijevodi-online.org answered with a Cloudflare challenge; "
+                "configure a FlareSolverr URL in the provider settings to clear it"
+            )
+        timeout_ms = _flaresolverr_timeout_ms(self._config)
+        payload = {"cmd": "request.get", "url": request.full_url, "maxTimeout": timeout_ms}
+        if request.data:
+            # Replaying the subtitle-list POST as a GET would drop the key the
+            # endpoint requires; FlareSolverr posts a urlencoded body, which is
+            # exactly what this site expects.
+            payload["cmd"] = "request.post"
+            payload["postData"] = request.data.decode("utf-8")
+        cookies = [{"name": cookie.name, "value": cookie.value} for cookie in self._cookie_jar]
+        if cookies:
+            payload["cookies"] = cookies
+        parsed = self._flaresolverr_transport(payload)
+        if not isinstance(parsed, dict) or parsed.get("status") not in (None, "ok"):
+            message = ""
+            if isinstance(parsed, dict):
+                message = str(parsed.get("message") or "")
+            raise CloudflareBlockedError(
+                f"PrijevodiOnline {message or 'FlareSolverr did not solve the challenge'}"
+            )
+        solution = parsed.get("solution") or {}
+        body = (solution.get("response") or "").encode("utf-8")
+        status = _safe_int(solution.get("status")) or 0
+        if _is_cloudflare_challenge(status, solution.get("headers") or {}, body):
+            raise CloudflareBlockedError(
+                "PrijevodiOnline FlareSolverr response is still a Cloudflare block"
+            )
+        if status >= 400:
+            raise CloudflareBlockedError(
+                f"PrijevodiOnline request failed with HTTP {status} via FlareSolverr"
+            )
+        self._store_flaresolverr_solution(solution)
+        return body
+
+    def _flaresolverr_transport(self, payload):
+        """POST one command to FlareSolverr and return the parsed JSON.
+
+        An instance attribute (like ``_opener``) so tests can script it.
+        """
+        endpoint = _flaresolverr_url(self._config)
+        timeout_ms = _flaresolverr_timeout_ms(self._config)
+        request = urllib.request.Request(
+            endpoint,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_ms / 1000 + 2) as response:
+                raw = response.read()
+        except Exception as error:
+            raise CloudflareBlockedError(
+                f"PrijevodiOnline FlareSolverr request failed: {error}"
+            ) from error
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise CloudflareBlockedError(
+                "PrijevodiOnline FlareSolverr returned invalid JSON"
+            ) from error
+
+    def _store_flaresolverr_solution(self, solution):
+        user_agent = solution.get("userAgent")
+        if user_agent:
+            self._user_agent = str(user_agent)
+        for cookie in solution.get("cookies") or []:
+            name = cookie.get("name")
+            value = cookie.get("value")
+            if not name or value is None:
+                continue
+            self._cookie_jar.set_cookie(_jar_cookie(name, value))
+
     def search(self, video, languages, config):
         if (video or {}).get("kind") != "episode":
             return []
@@ -240,6 +356,7 @@ class PrijevodiOnlineProvider:
             return []
 
         config = dict(config or {})
+        self._config = config
         titles = _series_titles(video)
         for series_title in titles:
             _sleep(config)
@@ -356,7 +473,8 @@ class PrijevodiOnlineProvider:
         }
 
     def download(self, provider_payload, language, config):
-        del language, config
+        del language
+        self._config = dict(config or {})
         payload = dict(provider_payload or {})
         url = payload.get("url")
         if not url:
@@ -502,6 +620,55 @@ def _safe_int(value):
         return int(str(value).strip())
     except (TypeError, ValueError):
         return None
+
+
+def _is_cloudflare_challenge(status, headers, body):
+    """True only for an actual challenge, not for anything Cloudflare proxied.
+
+    A "Server: cloudflare" header says the response came through the proxy, not
+    that it is a challenge: the site's own 403 and 503 carry it too. The
+    challenge announces itself either with cf-mitigated: challenge or in the
+    body.
+    """
+    normalized = {str(key).lower(): str(value) for key, value in (headers or {}).items()}
+    if normalized.get("cf-mitigated", "").strip().lower() == "challenge":
+        return True
+    if (_safe_int(status) or 0) not in CLOUDFLARE_STATUS_CODES:
+        return False
+    text = body.decode("utf-8", "ignore").lower() if isinstance(body, bytes) else str(body or "").lower()
+    return any(marker in text for marker in CLOUDFLARE_BODY_MARKERS)
+
+
+def _flaresolverr_url(config):
+    return str((config or {}).get("flaresolverr_url") or "").strip()
+
+
+def _flaresolverr_timeout_ms(config):
+    value = _safe_int((config or {}).get("flaresolverr_timeout_ms"))
+    if value is None:
+        value = DEFAULT_FLARESOLVERR_TIMEOUT_MS
+    return max(5000, min(30000, value))
+
+
+def _jar_cookie(name, value, domain=COOKIE_DOMAIN):
+    return Cookie(
+        version=0,
+        name=str(name),
+        value=str(value),
+        port=None,
+        port_specified=False,
+        domain=domain,
+        domain_specified=True,
+        domain_initial_dot=domain.startswith("."),
+        path="/",
+        path_specified=True,
+        secure=True,
+        expires=None,
+        discard=True,
+        comment=None,
+        comment_url=None,
+        rest={},
+    )
 
 
 def _episode_fields(body):
