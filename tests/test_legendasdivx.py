@@ -1313,3 +1313,18 @@ class LegendasDivxOracleSweepRegressionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+    def test_a_generic_cloudflare_error_page_is_not_a_challenge(self):
+        # Cloudflare's ordinary error template carries cf-error-details too; a
+        # plain 403 must keep its meaning instead of triggering a solve.
+        self.assertFalse(self.mod._is_cloudflare_challenge(
+            403,
+            {"Server": "cloudflare"},
+            b"<html>cf-error-details: access denied</html>",
+        ))
+
+    def test_the_challenge_page_body_is_still_recognized(self):
+        self.assertTrue(self.mod._is_cloudflare_challenge(
+            403, {"Server": "cloudflare"}, b"<html><title>Just a moment...</title></html>"
+        ))
