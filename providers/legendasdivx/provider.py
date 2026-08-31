@@ -165,7 +165,7 @@ _RELEASE_NOISE_RE = re.compile(
     r"\b\d{3,4}[ip]\b"
     r"|\b[xh]\.?\s?26[45]\b"
     r"|\bhevc\b|\bavc\b|\bxvid\b|\bdivx\b|\bvp9\b|\bav1\b"
-    r"|\b(?:e?ac3|ddp?|dts(?:\W?hd)?|aac|flac|truehd|opus)\W?\d(?:\W?\d)?\b"
+    r"|\b(?:e?ac3|ddp?|dts(?:\W?hd)?(?:\W?ma)?|aac|flac|truehd|opus)\W?\d(?:\W?\d)?\b"
     r"|\b\d{1,2}\W?bit\b"
     r"|\b(?:19|20)\d{2}\b"
     r"|\bmp3\b|\bmp4\b|\bx?\d{2,4}kbps\b"
@@ -445,7 +445,12 @@ class LegendasDivxProvider:
 
     def session_cookies(self):
         """Every cookie the current session holds, name to value."""
-        cookies = {}
+        # The FlareSolverr cache seeds the map and the live jars override it:
+        # a solve is also installed into the live jar, so anything only the
+        # cache still holds is a leftover (an anonymous login page solved
+        # before the real login POST succeeded) and must not veto the jar's
+        # authenticated values.
+        cookies = dict(self._flaresolverr_cookies)
         scraper = self._scraper
         if scraper is not None:
             try:
@@ -455,7 +460,6 @@ class LegendasDivxProvider:
         if self._cookie_jar is not None:
             for cookie in self._cookie_jar:
                 cookies[cookie.name] = cookie.value
-        cookies.update(self._flaresolverr_cookies)
         return cookies
 
     def _captcha_response(self, site_key, page_url, config):
@@ -1125,7 +1129,13 @@ def pick_archive_member(members, payload):
     def rank(name):
         score = 0
         if season is not None and re.search(
-            rf"\bs0*{season}\s*e0*{episode}" + _EPISODE_END, _member_text(name), re.I
+            # The same explicit spellings _EXPLICIT_EPISODE_RE and
+            # _EXPLICIT_XFORM_RE accept: dotted, hyphenated, underscored and
+            # 1x02 forms all earn the bonus, or release-token overlap can make
+            # a generic member outrank an explicitly numbered one.
+            rf"\b(?:s0*{season}\s*[._\- ]?\s*e0*{episode}|{season}x0*{episode})" + _EPISODE_END,
+            _member_text(name),
+            re.I,
         ):
             score += 120
         score += 4 * len(release_tokens & _release_tokens(name))
@@ -1233,7 +1243,10 @@ def _episode_readings(text):
             for divisor in (100, 1000):
                 if number >= divisor:
                     head, tail = divmod(number, divisor)
-                    if tail:
+                    # A compact season must not contradict the season the path
+                    # already states: "Season 2/105 - Pilot.srt" is not S01E05,
+                    # the same folder-conflict rule the explicit spellings get.
+                    if tail and (season_word is None or head == season_word):
                         compact.append((head, {tail}, set()))
         if compact:
             # It reads as season plus episode, so on its own the number can only
