@@ -1033,6 +1033,15 @@ class PrijevodiOnlineCloudflareTests(unittest.TestCase):
         self.assertEqual([c.value for c in clearances], ["fresh"])
         self.assertEqual(clearances[0].domain, ".prijevodi-online.org")
 
+    def test_the_waf_block_page_is_not_a_challenge(self):
+        # Error 1020 and friends title themselves "Attention Required!"; no
+        # solver clears an IP block, so it must surface as the 403 it is.
+        self.assertFalse(self.mod._is_cloudflare_challenge(
+            403,
+            {"Server": "cloudflare"},
+            b"<html><title>Attention Required! | Cloudflare</title></html>",
+        ))
+
     def test_manifest_declares_the_flaresolverr_capability(self):
         manifest = json.loads((PROVIDER_DIR / "provider.json").read_text("utf-8"))
         self.assertIs(manifest.get("flaresolverr"), True)

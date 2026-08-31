@@ -1318,7 +1318,7 @@
       "manifest": {
         "anti_captcha": true,
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "1da6f011bb58c2a63a5de4e17a282f9d4181fdbf6c324f70899cf43027490763",
+        "bundle_sha256": "e14357dc2e3aaf6f4c4163134cb1d3ac9343225a427b42c909fd46ca49ab22ed",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1673,7 +1673,7 @@
         "entry_class": "LegendasDivxProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "0f093f8fdf2d0b6e587d9ed6aea55eac22e07c76a62288597f380bd1fc77929a"
+          "provider.py": "4f321c64a08ba4fb482fb7122ec2782c50420af093a37011fe5e4dfc32e84565"
         },
         "flaresolverr": true,
         "languages": [
@@ -3330,7 +3330,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "540d81329bb126b1de126e48758ac8fc78dd20c046bb2bc83d784f005fdc821c",
+        "bundle_sha256": "d2569692e2b5c73d3467d7b96d11dd3e4df1a479e8a1bceb502637a0ad3e75aa",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -3366,7 +3366,7 @@
         "entry_class": "PrijevodiOnlineProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "95f1186ba78a8101d65271121a3da424ea7011ef15289bdef034632223fb372c"
+          "provider.py": "7d7e276db3ad0dbd31099a07775cb51b1ac73c80b5639bced285b2e3b59a8b15"
         },
         "flaresolverr": true,
         "languages": [

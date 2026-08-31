@@ -1383,6 +1383,15 @@ class ReviewFindingsOnTheMergedHead(unittest.TestCase):
             b"<html>cf-error-details: access denied</html>",
         ))
 
+    def test_the_waf_block_page_is_not_a_challenge(self):
+        # Error 1020 and friends title themselves "Attention Required!"; no
+        # solver clears an IP block, so it must keep its ordinary meaning.
+        self.assertFalse(self.mod._is_cloudflare_challenge(
+            403,
+            {"Server": "cloudflare"},
+            b"<html><title>Attention Required! | Cloudflare</title></html>",
+        ))
+
     def test_the_challenge_page_body_is_still_recognized(self):
         self.assertTrue(self.mod._is_cloudflare_challenge(
             403, {"Server": "cloudflare"}, b"<html><title>Just a moment...</title></html>"

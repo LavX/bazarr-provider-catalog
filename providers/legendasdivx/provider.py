@@ -63,8 +63,10 @@ CLOUDFLARE_STATUS_CODES = {403, 429, 503}
 # ordinary 403 access-denied or 503 outage page) contains cf-error-details
 # too, and misreading those as challenges swallows the site's real errors
 # behind a pointless solve.
+# "Attention Required! | Cloudflare" is deliberately absent: that is the WAF
+# block page (error 1020 and friends), which no solver clears; treating it as
+# a challenge turns an IP block into a misleading FlareSolverr error.
 CLOUDFLARE_BODY_MARKERS = (
-    "attention required! | cloudflare",
     "just a moment",
     "cf-challenge",
     "cf_chl_opt",
