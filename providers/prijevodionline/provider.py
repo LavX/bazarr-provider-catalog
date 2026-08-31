@@ -306,6 +306,20 @@ class PrijevodiOnlineProvider:
                     raise
                 _sleep_backoff(attempt, None)
 
+    def _pause(self, config):
+        """The politeness delay, clamped so it never sleeps into the deadline.
+
+        The worker being killed mid-sleep reports nothing; a delay that does
+        not fit the remaining budget is pure waste, since the transport would
+        reject the next request anyway.
+        """
+        delay_ms = (config or {}).get("request_delay_ms", 0) or 0
+        delay = min(int(delay_ms), 5000) / 1000.0 if delay_ms > 0 else 0.0
+        if self._deadline is not None:
+            delay = max(0.0, min(delay, self._deadline - time.monotonic() - 1.0))
+        if delay > 0:
+            time.sleep(delay)
+
     def _solve_challenge(self, request, timeout, deadline):
         """Clear the challenge, then replay the original request ourselves.
 
@@ -432,18 +446,18 @@ class PrijevodiOnlineProvider:
         self._deadline = time.monotonic() + WORKER_DEADLINE_SECONDS - DEADLINE_SAFETY_SECONDS
         titles = _series_titles(video)
         for series_title in titles:
-            _sleep(config)
+            self._pause(config)
             series = self._find_series(series_title)
             if not series:
                 continue
-            _sleep(config)
+            self._pause(config)
             series_body = self._http_get(series["url"], referer=_index_url(series_title))
             page = parse_series_page(series_body)
             episode_info = page["episodes"].get((season, episode))
             if not episode_info:
                 continue
             subtitles_url = f"{BASE_URL}/prijevod/get/{episode_info['episode_id']}"
-            _sleep(config)
+            self._pause(config)
             subtitle_rows = parse_subtitle_rows(
                 self._http_post(
                     subtitles_url,
@@ -908,12 +922,6 @@ def _is_verified_status(status):
 def _ascii_fold(value):
     normalized = unicodedata.normalize("NFKD", str(value or ""))
     return normalized.encode("ascii", "ignore").decode("ascii")
-
-
-def _sleep(config):
-    delay_ms = (config or {}).get("request_delay_ms", 0) or 0
-    if delay_ms > 0:
-        time.sleep(min(int(delay_ms), 5000) / 1000.0)
 
 
 def _is_retryable_status(code):

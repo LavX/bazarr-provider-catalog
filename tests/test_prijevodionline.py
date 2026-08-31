@@ -993,6 +993,22 @@ class PrijevodiOnlineCloudflareTests(unittest.TestCase):
             )
         self.assertIn("deadline", str(caught.exception))
 
+    def test_politeness_delays_never_sleep_into_the_deadline(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        slept = []
+        self.mod.time.sleep = lambda seconds: slept.append(seconds)
+        provider._deadline = self.mod.time.monotonic() + 2
+        provider._pause({"request_delay_ms": 5000})
+        self.assertTrue(all(seconds <= 1.0 for seconds in slept), slept)
+
+    def test_politeness_delays_run_in_full_with_budget_to_spare(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        slept = []
+        self.mod.time.sleep = lambda seconds: slept.append(seconds)
+        provider._deadline = self.mod.time.monotonic() + 20
+        provider._pause({"request_delay_ms": 3000})
+        self.assertEqual(slept, [3.0])
+
     def test_manifest_declares_the_flaresolverr_capability(self):
         manifest = json.loads((PROVIDER_DIR / "provider.json").read_text("utf-8"))
         self.assertIs(manifest.get("flaresolverr"), True)
