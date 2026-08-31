@@ -83,6 +83,9 @@ DEFAULT_FLARESOLVERR_TIMEOUT_MS = 25000
 WORKER_DEADLINE_SECONDS = 30
 DEADLINE_SAFETY_SECONDS = 2
 REPLAY_RESERVE_SECONDS = 5
+# The solver HTTP call is allowed maxTimeout plus this transport buffer, so
+# the buffer must come out of the solve window, not out of the replay reserve.
+SOLVER_TRANSPORT_BUFFER_SECONDS = 2
 MIN_SOLVE_WINDOW_MS = 5000
 
 
@@ -338,7 +341,15 @@ class PrijevodiOnlineProvider:
                 "prijevodi-online.org answered with a Cloudflare challenge; "
                 "configure a FlareSolverr URL in the provider settings to clear it"
             )
-        remaining_ms = int((deadline - time.monotonic() - REPLAY_RESERVE_SECONDS) * 1000)
+        remaining_ms = int(
+            (
+                deadline
+                - time.monotonic()
+                - REPLAY_RESERVE_SECONDS
+                - SOLVER_TRANSPORT_BUFFER_SECONDS
+            )
+            * 1000
+        )
         if remaining_ms < MIN_SOLVE_WINDOW_MS:
             raise CloudflareBlockedError(
                 "prijevodi-online.org needs a Cloudflare solve but the worker "
@@ -402,7 +413,9 @@ class PrijevodiOnlineProvider:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=timeout_ms / 1000 + 2) as response:
+            with urllib.request.urlopen(
+                request, timeout=timeout_ms / 1000 + SOLVER_TRANSPORT_BUFFER_SECONDS
+            ) as response:
                 raw = response.read()
         except Exception as error:
             raise CloudflareBlockedError(

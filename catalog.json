@@ -3330,7 +3330,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "4d91af89d3e91d5523c6ff128f7f2462aecfeab4a8c06ffd5d19bdc31fdf36f3",
+        "bundle_sha256": "ffa65f1f9367d96b6442b6abbfa1be7df2530188a18855504585f3703387e8fb",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -3366,7 +3366,7 @@
         "entry_class": "PrijevodiOnlineProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "fc66c7d7fdd20ea24ab6fb5185a4c1efe82f6f7d4a0fc649fbe0ea09d0eafe44"
+          "provider.py": "ce1a35a30d2318bcaa6a099cd7f143268440f77ac21072963e60d7ee1aee6acd"
         },
         "flaresolverr": true,
         "languages": [

@@ -930,11 +930,12 @@ class PrijevodiOnlineCloudflareTests(unittest.TestCase):
 
         request = _ur.Request("https://www.prijevodi-online.org/serije/index/s")
         provider._open_with_retry(
-            request, 10, deadline=self.mod.time.monotonic() + 12
+            request, 10, deadline=self.mod.time.monotonic() + 13
         )
-        # 12s budget minus the 5s replay reserve leaves ~7s for the solver,
-        # not the configured 25s.
-        self.assertLessEqual(self.solver_payloads[0]["maxTimeout"], 7000)
+        # 13s budget minus the 5s replay reserve and the 2s solver transport
+        # buffer leaves ~6s for the solver, not the configured 25s: even a
+        # solver that uses its whole window cannot eat the replay reserve.
+        self.assertLessEqual(self.solver_payloads[0]["maxTimeout"], 6000)
         self.assertGreaterEqual(self.solver_payloads[0]["maxTimeout"], 5000)
 
     def test_a_429_challenge_reaches_the_solver(self):
