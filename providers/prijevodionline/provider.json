@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "5f1df69ee7fe7e9d388e839af1c7ea9fbb07f49d9fba014c336cdbd54737500e",
+  "bundle_sha256": "06ca956a9879cd207c8a42219b52b24aa795f65851cf668f78a780415dc819e9",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -36,7 +36,7 @@
   "entry_class": "PrijevodiOnlineProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "e34df900f8b998fa62225c5187634f0137f04146794196bca26d5afb5037abb6"
+    "provider.py": "752991bb535441a6c331b9fd9f1a003a0aed23d96dd4b5d9d6a37e4ded3d810f"
   },
   "flaresolverr": true,
   "languages": [

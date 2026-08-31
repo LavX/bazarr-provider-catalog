@@ -56,6 +56,11 @@ COOKIE_DOMAIN = ".prijevodi-online.org"
 # cf-mitigated header or with the challenge page body; a plain 403/503 from
 # the site keeps its ordinary meaning.
 CLOUDFLARE_STATUS_CODES = {403, 503}
+# A rate-limit challenge arrives as 429 with cf-mitigated: challenge; the
+# header is definitive, so 429 must reach the detector. Body-marker detection
+# stays restricted to CLOUDFLARE_STATUS_CODES so an ordinary 429 keeps its
+# Retry-After retry semantics.
+CLOUDFLARE_CHECK_STATUSES = {403, 429, 503}
 # Challenge-specific markers only: Cloudflare's generic error template (an
 # ordinary 403 access-denied or 503 outage page) contains cf-error-details
 # too, and misreading those as challenges would replace the site's real
@@ -206,6 +211,7 @@ class PrijevodiOnlineProvider:
         self._cookie_jar = CookieJar()
         self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cookie_jar))
         self._config = {}
+        self._deadline = None
         # The Cloudflare clearance cookie is bound to the User-Agent that
         # earned it, so once FlareSolverr solves a challenge every request
         # must present the solved agent instead of the static default.
@@ -245,6 +251,10 @@ class PrijevodiOnlineProvider:
 
     def _open_with_retry(self, request, timeout, allow_solve=True, deadline=None):
         if deadline is None:
+            # search()/download() set the shared budget at entry; a direct call
+            # (tests, future callers) still gets a full fresh one.
+            deadline = self._deadline
+        if deadline is None:
             deadline = time.monotonic() + WORKER_DEADLINE_SECONDS - DEADLINE_SAFETY_SECONDS
         # Wrap ONLY the raw urllib transport in a bounded retry. Retries cover
         # transient failures (connection reset/DNS/refused, timeouts, HTTP 5xx
@@ -260,7 +270,7 @@ class PrijevodiOnlineProvider:
                 with self._opener.open(request, timeout=min(timeout, remaining)) as response:
                     return response.read()
             except urllib.error.HTTPError as error:
-                if error.code in CLOUDFLARE_STATUS_CODES:
+                if error.code in CLOUDFLARE_CHECK_STATUSES:
                     body = b""
                     try:
                         body = error.read()
@@ -416,6 +426,10 @@ class PrijevodiOnlineProvider:
 
         config = dict(config or {})
         self._config = config
+        # Every request this search makes (index walks, series page, subtitle
+        # POST, a solve and its replay, the politeness delays between them)
+        # shares one budget under the Provider Hub's worker deadline.
+        self._deadline = time.monotonic() + WORKER_DEADLINE_SECONDS - DEADLINE_SAFETY_SECONDS
         titles = _series_titles(video)
         for series_title in titles:
             _sleep(config)
@@ -534,6 +548,7 @@ class PrijevodiOnlineProvider:
     def download(self, provider_payload, language, config):
         del language
         self._config = dict(config or {})
+        self._deadline = time.monotonic() + WORKER_DEADLINE_SECONDS - DEADLINE_SAFETY_SECONDS
         payload = dict(provider_payload or {})
         url = payload.get("url")
         if not url:

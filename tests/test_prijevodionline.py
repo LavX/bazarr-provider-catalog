@@ -937,6 +937,62 @@ class PrijevodiOnlineCloudflareTests(unittest.TestCase):
         self.assertLessEqual(self.solver_payloads[0]["maxTimeout"], 7000)
         self.assertGreaterEqual(self.solver_payloads[0]["maxTimeout"], 5000)
 
+    def test_a_429_challenge_reaches_the_solver(self):
+        error = urllib.error.HTTPError(
+            "https://www.prijevodi-online.org/serije/index/s",
+            429,
+            "Too Many Requests",
+            {"Server": "cloudflare", "cf-mitigated": "challenge"},
+            io.BytesIO(b"<html><title>Just a moment...</title></html>"),
+        )
+        opener = _RecordingOpener([error, b"ok"])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution()],
+        )
+        body = provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+        self.assertEqual(body, b"ok")
+        self.assertEqual(len(self.solver_payloads), 1)
+
+    def test_a_plain_429_keeps_its_retry_semantics(self):
+        opener = _RecordingOpener([_http_error(429), b"ok"])
+        provider = self._provider(opener)
+        body = provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+        self.assertEqual(body, b"ok")
+        self.assertEqual(self.solver_payloads, [])
+
+    def test_search_arms_the_shared_deadline_before_its_first_request(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        provider._opener = _RecordingOpener(
+            [urllib.error.URLError("down")] * (self.mod.HTTP_RETRIES + 1)
+        )
+        with self.assertRaises(urllib.error.URLError):
+            provider.search(
+                {"kind": "episode", "series": "Show", "season": 1, "episode": 1},
+                [{"alpha3": "hrv"}],
+                {},
+            )
+        self.assertIsNotNone(provider._deadline)
+        remaining = provider._deadline - self.mod.time.monotonic()
+        self.assertLessEqual(remaining, self.mod.WORKER_DEADLINE_SECONDS)
+
+    def test_an_instance_deadline_is_picked_up_and_bounds_the_solve(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        provider._deadline = self.mod.time.monotonic() + 3
+        provider._opener = _RecordingOpener([_challenge_error()])
+        provider._config = {"flaresolverr_url": "http://fs:8191/v1"}
+        provider._flaresolverr_transport = lambda payload: (_ for _ in ()).throw(
+            AssertionError("solver must not run on an exhausted shared budget")
+        )
+        import urllib.request as _ur
+
+        with self.assertRaises(self.mod.CloudflareBlockedError) as caught:
+            provider._open_with_retry(
+                _ur.Request("https://www.prijevodi-online.org/serije/index/s"), 10
+            )
+        self.assertIn("deadline", str(caught.exception))
+
     def test_manifest_declares_the_flaresolverr_capability(self):
         manifest = json.loads((PROVIDER_DIR / "provider.json").read_text("utf-8"))
         self.assertIs(manifest.get("flaresolverr"), True)
