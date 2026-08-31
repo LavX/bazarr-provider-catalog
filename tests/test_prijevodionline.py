@@ -878,6 +878,65 @@ class PrijevodiOnlineCloudflareTests(unittest.TestCase):
             self.mod._flaresolverr_timeout_ms({"flaresolverr_timeout_ms": 30000}), 25000
         )
 
+    def test_the_replay_drops_the_stale_cookie_header(self):
+        # The opener's cookie processor stamps requests with the jar's (stale)
+        # clearance; a request that already carries a Cookie header is left
+        # alone by the processor, so the replay must shed it or the fresh
+        # clearance never gets sent.
+        opener = _RecordingOpener([_challenge_error(), b"ok"])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution(cookies=[("cf_clearance", "fresh")])],
+        )
+        import urllib.request as _ur
+
+        request = _ur.Request(
+            "https://www.prijevodi-online.org/serije/index/s",
+            headers={"User-Agent": "old", "Cookie": "cf_clearance=stale"},
+        )
+        body = provider._open_with_retry(request, 10)
+        self.assertEqual(body, b"ok")
+        replay = opener.requests[-1]
+        self.assertIsNone(replay.get_header("Cookie"))
+        self.assertEqual(replay.get_header("User-agent"), "FS UA")
+
+    def test_an_exhausted_deadline_refuses_to_solve(self):
+        opener = _RecordingOpener([_challenge_error()])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution()],
+        )
+        import urllib.request as _ur
+
+        request = _ur.Request("https://www.prijevodi-online.org/serije/index/s")
+        with self.assertRaises(self.mod.CloudflareBlockedError) as caught:
+            provider._open_with_retry(
+                request, 10, deadline=self.mod.time.monotonic() + 3
+            )
+        self.assertIn("deadline", str(caught.exception))
+        # No solver call was even attempted: the budget could not fit one.
+        self.assertEqual(self.solver_payloads, [])
+
+    def test_the_solve_window_shrinks_to_the_remaining_budget(self):
+        opener = _RecordingOpener([_challenge_error(), b"ok"])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1", "flaresolverr_timeout_ms": 25000},
+            solutions=[_solution()],
+        )
+        import urllib.request as _ur
+
+        request = _ur.Request("https://www.prijevodi-online.org/serije/index/s")
+        provider._open_with_retry(
+            request, 10, deadline=self.mod.time.monotonic() + 12
+        )
+        # 12s budget minus the 5s replay reserve leaves ~7s for the solver,
+        # not the configured 25s.
+        self.assertLessEqual(self.solver_payloads[0]["maxTimeout"], 7000)
+        self.assertGreaterEqual(self.solver_payloads[0]["maxTimeout"], 5000)
+
     def test_manifest_declares_the_flaresolverr_capability(self):
         manifest = json.loads((PROVIDER_DIR / "provider.json").read_text("utf-8"))
         self.assertIs(manifest.get("flaresolverr"), True)

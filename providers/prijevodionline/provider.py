@@ -69,6 +69,16 @@ CLOUDFLARE_BODY_MARKERS = (
     "checking your browser before accessing",
 )
 DEFAULT_FLARESOLVERR_TIMEOUT_MS = 25000
+# The Provider Hub kills a worker call at 30 seconds. Everything one request
+# does (the challenged attempt, the solve, the byte-preserving replay and its
+# retries) shares that budget, or the worker dies after a successful solve
+# with nothing to show for it. The reserve keeps enough of the budget back
+# for the replay to actually run; the safety margin is the time to hand the
+# result over.
+WORKER_DEADLINE_SECONDS = 30
+DEADLINE_SAFETY_SECONDS = 2
+REPLAY_RESERVE_SECONDS = 5
+MIN_SOLVE_WINDOW_MS = 5000
 
 
 class CloudflareBlockedError(RuntimeError):
@@ -233,14 +243,21 @@ class PrijevodiOnlineProvider:
         # safe to repeat, so the same bounded retry applies.
         return self._open_with_retry(request, timeout)
 
-    def _open_with_retry(self, request, timeout, allow_solve=True):
+    def _open_with_retry(self, request, timeout, allow_solve=True, deadline=None):
+        if deadline is None:
+            deadline = time.monotonic() + WORKER_DEADLINE_SECONDS - DEADLINE_SAFETY_SECONDS
         # Wrap ONLY the raw urllib transport in a bounded retry. Retries cover
         # transient failures (connection reset/DNS/refused, timeouts, HTTP 5xx
         # and 429) and nothing else: 4xx other than 429, parse errors, and any
         # non-network exception propagate unchanged on their first occurrence.
         for attempt in range(1, HTTP_RETRIES + 2):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    "prijevodi-online.org request ran out of its worker-deadline budget"
+                )
             try:
-                with self._opener.open(request, timeout=timeout) as response:
+                with self._opener.open(request, timeout=min(timeout, remaining)) as response:
                     return response.read()
             except urllib.error.HTTPError as error:
                 if error.code in CLOUDFLARE_STATUS_CODES:
@@ -257,12 +274,16 @@ class PrijevodiOnlineProvider:
                                 "prijevodi-online.org is still challenged after a "
                                 "FlareSolverr clearance"
                             )
-                        return self._solve_challenge(request, timeout)
+                        return self._solve_challenge(request, timeout, deadline)
                 if not _is_retryable_status(error.code) or attempt >= HTTP_RETRIES + 1:
+                    raise
+                if time.monotonic() + _backoff_seconds(attempt, _retry_after_seconds(error)) >= deadline:
                     raise
                 _sleep_backoff(attempt, _retry_after_seconds(error))
             except (socket.timeout, TimeoutError):
                 if attempt >= HTTP_RETRIES + 1:
+                    raise
+                if time.monotonic() + _backoff_seconds(attempt, None) >= deadline:
                     raise
                 _sleep_backoff(attempt, None)
             except urllib.error.URLError:
@@ -271,9 +292,11 @@ class PrijevodiOnlineProvider:
                 # genuine transport failure that is always transient here.
                 if attempt >= HTTP_RETRIES + 1:
                     raise
+                if time.monotonic() + _backoff_seconds(attempt, None) >= deadline:
+                    raise
                 _sleep_backoff(attempt, None)
 
-    def _solve_challenge(self, request, timeout):
+    def _solve_challenge(self, request, timeout, deadline):
         """Clear the challenge, then replay the original request ourselves.
 
         The solve is used only for what it earns: the clearance cookies and
@@ -291,7 +314,13 @@ class PrijevodiOnlineProvider:
                 "prijevodi-online.org answered with a Cloudflare challenge; "
                 "configure a FlareSolverr URL in the provider settings to clear it"
             )
-        timeout_ms = _flaresolverr_timeout_ms(self._config)
+        remaining_ms = int((deadline - time.monotonic() - REPLAY_RESERVE_SECONDS) * 1000)
+        if remaining_ms < MIN_SOLVE_WINDOW_MS:
+            raise CloudflareBlockedError(
+                "prijevodi-online.org needs a Cloudflare solve but the worker "
+                "deadline leaves no room for one; the next attempt starts fresh"
+            )
+        timeout_ms = min(_flaresolverr_timeout_ms(self._config), remaining_ms)
         payload = {"cmd": "request.get", "url": request.full_url, "maxTimeout": timeout_ms}
         if request.data:
             # Replaying the subtitle-list POST as a GET would drop the key the
@@ -321,11 +350,19 @@ class PrijevodiOnlineProvider:
         replay = urllib.request.Request(
             request.full_url,
             data=request.data,
-            headers={key: value for key, value in request.header_items()},
+            # The opener's cookie processor stamped the ORIGINAL request with a
+            # Cookie header (the stale clearance included), and a request that
+            # already carries one is left alone by the processor. Drop it so
+            # the replay is stamped fresh from the jar the solve just filled.
+            headers={
+                key: value
+                for key, value in request.header_items()
+                if key.lower() != "cookie"
+            },
             method=request.get_method(),
         )
         replay.add_header("User-Agent", self._user_agent)
-        return self._open_with_retry(replay, timeout, allow_solve=False)
+        return self._open_with_retry(replay, timeout, allow_solve=False, deadline=deadline)
 
     def _flaresolverr_transport(self, payload):
         """POST one command to FlareSolverr and return the parsed JSON.
@@ -333,7 +370,7 @@ class PrijevodiOnlineProvider:
         An instance attribute (like ``_opener``) so tests can script it.
         """
         endpoint = _flaresolverr_url(self._config)
-        timeout_ms = _flaresolverr_timeout_ms(self._config)
+        timeout_ms = _safe_int(payload.get("maxTimeout")) or _flaresolverr_timeout_ms(self._config)
         request = urllib.request.Request(
             endpoint,
             data=json.dumps(payload).encode("utf-8"),
@@ -885,14 +922,18 @@ def _retry_after_seconds(error):
     return seconds if seconds >= 0 else None
 
 
-def _sleep_backoff(attempt, retry_after):
+def _backoff_seconds(attempt, retry_after):
     # Exponential backoff with a small base, capped. A valid Retry-After wins.
     if retry_after is not None:
         delay = retry_after
     else:
         delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    return min(delay, RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _sleep_backoff(attempt, retry_after):
     # Call the module-level time.sleep so tests can monkeypatch it.
-    time.sleep(min(delay, RETRY_BACKOFF_CAP_SECONDS))
+    time.sleep(_backoff_seconds(attempt, retry_after))
 
 
 def _strip_tags(value):
