@@ -3362,7 +3362,7 @@
         "dependencies": {
           "requirements": []
         },
-        "description": "Scrapes Prijevodi-Online for Croatian, Serbian, Montenegrin, and Serbo-Croatian episode subtitles. ZIP and RAR downloads are supported.",
+        "description": "Scrapes Prijevodi-Online for Croatian, Serbian, Montenegrin, and Serbo-Croatian episode subtitles. ZIP and RAR downloads are supported. The site has been offline since August 2026, when its host suspended it over copyright complaints; the operators say the full site was backed up and are moving it to new hosting, so searches fail until it returns. When it is up it sits behind a Cloudflare managed challenge, which needs a FlareSolverr URL below.",
         "entry_class": "PrijevodiOnlineProvider",
         "entry_module": "provider",
         "files": {
@@ -3391,7 +3391,7 @@
         "supported_media": [
           "episode"
         ],
-        "version": "0.2.0"
+        "version": "0.2.1"
       }
     },
     {
