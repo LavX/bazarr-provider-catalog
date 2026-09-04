@@ -48,7 +48,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`soustitreseu`](providers/soustitreseu/) | 0.1.10 | Scrapes [Sous-Titres.eu](https://www.sous-titres.eu) for French and English movie and episode subtitles. No login or API key. |
 | [`subcentral`](providers/subcentral/) | 0.1.1 | Scrapes [SubCentral.de](https://www.subcentral.de) forum subtitle threads for German and English episode releases. No login or API key. |
 | [`subclub`](providers/subclub/) | 0.1.4 | Scrapes [Subclub.eu](https://www.subclub.eu) for Estonian movie and episode subtitles. No login or API key. |
-| [`subdl`](providers/subdl/) | 0.1.3 | Uses the official [SubDL](https://subdl.com) API for movie and episode subtitles, including optional anime pack handling. API key required. |
+| [`subdl`](providers/subdl/) | 0.1.4 | Uses the official [SubDL](https://subdl.com) API for movie and episode subtitles, including optional anime pack handling. API key required. |
 | [`subf2m`](providers/subf2m/) | 0.1.3 | Scrapes [SubF2M](https://subf2m.co) for movie and episode subtitle ZIP files in 30+ languages. Configurable User-Agent and SSL verification. |
 | [`subs4free`](providers/subs4free/) | 0.1.4 | Scrapes [Subs4Free](https://www.subs4free.info) for Greek and English movie subtitles. No login or API key. |
 | [`subs4series`](providers/subs4series/) | 0.1.7 | Scrapes [Subs4Series](https://www.subs4series.com) for Greek and English episode subtitles. Uses ai-cloudscraper with inline Anubis solving, optional FlareSolverr fallback, and optional captcha helper settings for download gates. |
