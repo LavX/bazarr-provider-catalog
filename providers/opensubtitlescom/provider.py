@@ -57,6 +57,7 @@ ALPHA3_TO_API = {
     "bul": "bg",
     "mya": "my",
     "cat": "ca",
+    "cnr": "me",
     "zho": "zh-CN",
     "ces": "cs",
     "cym": "cy",
@@ -135,7 +136,7 @@ ALPHA3_TO_API = {
     "ron": "ro",
 }
 API_TO_ALPHA3 = {value.lower(): key for key, value in ALPHA3_TO_API.items()}
-API_TO_ALPHA3.update({"ea": "spa", "me": "srp", "pt-br": "por", "pt-pt": "por", "zh-cn": "zho", "zh-tw": "zho", "ze": "zho"})
+API_TO_ALPHA3.update({"ea": "spa", "me": "cnr", "pt-br": "por", "pt-pt": "por", "zh-cn": "zho", "zh-tw": "zho", "ze": "zho"})
 NON_ALNUM_RE = re.compile(r"[\W_]+")
 # Search params that scope a /subtitles query to a specific title. Episode and
 # season numbers only narrow an already scoped parent, so they do not count.
@@ -202,24 +203,21 @@ def language_payload_from_api_code(api_code, hearing_impaired=False, forced=Fals
         "forced": bool(forced),
     }
     if lower == "ea":
-        payload["country"] = "MX"
+        payload["country_alpha2"] = "MX"
     elif lower == "pt-br":
-        payload["country"] = "BR"
-    elif lower == "me":
-        payload["country"] = "ME"
-    elif lower == "zh-cn":
-        payload["country"] = "CN"
+        payload["country_alpha2"] = "BR"
     elif lower == "zh-tw":
-        payload["country"] = "TW"
+        payload["country_alpha2"] = "TW"
+    # pt-PT and zh-CN match the host's unqualified base-language profiles.
     return payload
 
 
 # OpenSubtitles.com ships a few custom two-letter codes that are not valid
 # ISO-639-1 language codes (e.g. "ea" for Mexican Spanish, "me" for Montenegrin,
-# "ze" for bilingual Chinese). Map them back to their base language alpha2.
+# "ze" for bilingual Chinese). Montenegrin has no ISO-639-1 equivalent.
 CUSTOM_API_ALPHA2 = {
     "ea": "es",
-    "me": "sr",
+    "me": None,
     "ze": "zh",
 }
 
