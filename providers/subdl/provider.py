@@ -31,6 +31,49 @@ ARCHIVE_EXTENSIONS = (".zip",)
 HTTP_MAX_ATTEMPTS = 3
 RETRY_BACKOFF_SECONDS = 0.5
 RETRY_BACKOFF_CAP_SECONDS = 8.0
+_MAX_ERROR_BODY_BYTES = 64 * 1024
+
+
+class DownloadLimitExceeded(RuntimeError):
+    pass
+
+
+class TooManyRequests(RuntimeError):
+    pass
+
+
+class ServiceUnavailable(RuntimeError):
+    pass
+
+
+def _http_error_token(exc):
+    try:
+        body = exc.read(_MAX_ERROR_BODY_BYTES + 1)
+        if not isinstance(body, bytes) or len(body) > _MAX_ERROR_BODY_BYTES:
+            return None
+        payload = json.loads(body.decode("utf-8"))
+    except (OSError, UnicodeError, ValueError, TypeError, RecursionError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    token = payload.get("error")
+    return token if isinstance(token, str) else None
+
+
+def _raise_semantic_http_error(exc):
+    if exc.code != 429 and not 500 <= exc.code < 600:
+        return
+    try:
+        if 500 <= exc.code < 600:
+            raise ServiceUnavailable(f"SubDL service unavailable: HTTP {exc.code}") from exc
+        token = _http_error_token(exc)
+        if token in ("daily_limit", "api_download_limit_exceeded"):
+            raise DownloadLimitExceeded("SubDL download quota exceeded") from exc
+        if token == "service_busy":
+            raise ServiceUnavailable("SubDL service is busy") from exc
+        raise TooManyRequests("SubDL rate limit exceeded") from exc
+    finally:
+        exc.close()
 
 
 def _is_transient_http_error(exc):
@@ -713,13 +756,10 @@ class SubDLProvider:
         try:
             body = _urlopen_with_retry(request, HTTP_TIMEOUT_SECONDS)
         except urllib.error.HTTPError as exc:
+            _raise_semantic_http_error(exc)
             body = exc.read().decode("utf-8", errors="replace")
             if exc.code == 403:
                 raise ValueError("Invalid SubDL api_key") from exc
-            if exc.code == 429:
-                raise RuntimeError("SubDL rate limit exceeded") from exc
-            if 500 <= exc.code < 600:
-                raise RuntimeError(f"SubDL API unavailable: HTTP {exc.code}") from exc
             raise RuntimeError(f"SubDL API error {exc.code}: {body}") from exc
         return json.loads(body.decode("utf-8"))
 
@@ -731,10 +771,9 @@ class SubDLProvider:
         try:
             return _urlopen_with_retry(request, timeout)
         except urllib.error.HTTPError as exc:
+            _raise_semantic_http_error(exc)
             if exc.code == 403:
                 raise ValueError("Invalid SubDL api_key") from exc
-            if exc.code == 429 or exc.code == 500:
-                raise RuntimeError("SubDL download limit exceeded") from exc
             raise
 
     def _sleep(self, config):
