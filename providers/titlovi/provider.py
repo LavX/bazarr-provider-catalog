@@ -349,7 +349,7 @@ def derive_matches(video, title, alt_title, release, season=None, episode=None, 
         if _safe_int(video.get("season")) is not None and _safe_int(video.get("season")) == season:
             matches.append("season")
         wanted_episode = _safe_int(video.get("episode"))
-        if wanted_episode is not None and wanted_episode in {episode, 0}:
+        if wanted_episode is not None and wanted_episode > 0 and episode in {wanted_episode, 0}:
             matches.append("episode")
     else:
         wanted_title = _normalize(fix_inconsistent_naming(video.get("title")))
