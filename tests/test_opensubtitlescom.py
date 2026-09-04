@@ -10,6 +10,8 @@ import urllib.error
 import zipfile
 from pathlib import Path
 
+from sdk.cli import _language_matches_requested
+
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "opensubtitlescom"
 
@@ -236,6 +238,63 @@ class OpenSubtitlesComSearchTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
 
+    def test_montenegrin_search_preserves_requested_contract_identity(self):
+        cases = (
+            ([{"alpha3": "srp-ME"}], "srp"),
+            ([{"alpha3": "srp", "country_alpha2": "ME"}], "srp"),
+            ([{"alpha3": "srp", "country": "ME"}], "srp"),
+            ([{"alpha3": "cnr"}], "cnr"),
+            ([{"alpha3": "srp-ME"}, {"alpha3": "cnr"}], "cnr"),
+            ([{"alpha3": "cnr"}, {"alpha3": "srp", "country_alpha2": "ME"}], "cnr"),
+            ([{"alpha3": "srp"}, {"alpha3": "cnr"}], "cnr"),
+        )
+        for identities, expected_alpha3 in cases:
+            for hi, forced in ((False, False), (True, False), (False, True)):
+                with self.subTest(identities=identities, hi=hi, forced=forced):
+                    languages = [dict(identity, hi=hi, forced=forced) for identity in identities]
+                    provider = self.mod.OpenSubtitlesComProvider()
+                    provider._http_post_json = lambda *args, **kwargs: {
+                        "token": "test-token", "base_url": "api.opensubtitles.com", "status": 200,
+                    }
+
+                    def get_json(path, params, headers, timeout=30):
+                        self.assertIn("me", dict(params)["languages"].split(","))
+                        return {"data": [_subtitle_item(
+                            language="me", hearing_impaired=hi,
+                            foreign_parts_only=forced, feature_type="Movie",
+                        )]}
+
+                    provider._http_get_json = get_json
+                    results = provider.search(
+                        {"kind": "movie", "imdb_id": "tt1375666"}, languages,
+                        {"username": "user", "password": "pass", "use_hash": False},
+                    )
+                    self.assertEqual(len(results), 1)
+                    result = results[0]
+                    self.assertTrue(_language_matches_requested(result["language"], languages))
+                    expected = {"alpha3": expected_alpha3, "alpha2": "sr" if expected_alpha3 == "srp" else None,
+                                "hi": hi, "forced": forced}
+                    if expected_alpha3 == "srp":
+                        expected["country_alpha2"] = "ME"
+                    self.assertEqual(result["language"], expected)
+                    self.assertEqual(result["provider_payload"]["language"], expected)
+
+    def test_montenegrin_identity_uses_request_with_matching_flags(self):
+        languages = [{"alpha3": "cnr", "hi": False}, {"alpha3": "srp-ME", "hi": True}]
+        provider = self.mod.OpenSubtitlesComProvider()
+        results = provider._results_from_response(
+            {"kind": "movie"}, languages,
+            {"data": [
+                _subtitle_item(file_id=1, language="me", hearing_impaired=False, feature_type="Movie"),
+                _subtitle_item(file_id=2, language="me", hearing_impaired=True, feature_type="Movie"),
+            ]}, {},
+        )
+        self.assertEqual(len(results), 2)
+        for result in results:
+            language = result["language"]
+            self.assertEqual(language["alpha3"], "srp" if language["hi"] else "cnr")
+            self.assertTrue(_language_matches_requested(language, languages))
+
     def test_search_preserves_profile_language_variants_and_flags(self):
         cases = [
             ("pt-BR", "por", "pt", "BR"),
@@ -281,6 +340,7 @@ class OpenSubtitlesComSearchTests(unittest.TestCase):
                     self.assertEqual(len(results), 1)
                     self.assertEqual(results[0]["language"], expected)
                     self.assertEqual(results[0]["provider_payload"]["language"], expected)
+                    self.assertTrue(_language_matches_requested(results[0]["language"], [expected]))
 
     def test_portuguese_search_keeps_brazilian_and_portugal_results_separate(self):
         cases = [

@@ -192,7 +192,7 @@ def api_language_code(language):
     return ALPHA3_TO_API.get(alpha3)
 
 
-def language_payload_from_api_code(api_code, hearing_impaired=False, forced=False):
+def language_payload_from_api_code(api_code, hearing_impaired=False, forced=False, requested_languages=None):
     code = str(api_code or "").strip()
     lower = code.lower()
     alpha3 = API_TO_ALPHA3.get(lower, lower)
@@ -208,6 +208,17 @@ def language_payload_from_api_code(api_code, hearing_impaired=False, forced=Fals
         payload["country_alpha2"] = "BR"
     elif lower == "zh-tw":
         payload["country_alpha2"] = "TW"
+    elif lower == "me":
+        matching_requests = [
+            language for language in requested_languages or []
+            if isinstance(language, dict) and api_language_code(language) == "me"
+            and bool(language.get("hi")) == bool(hearing_impaired)
+            and bool(language.get("forced")) == bool(forced)
+        ]
+        requested_alpha3 = {str(language.get("alpha3") or "").strip().lower() for language in matching_requests}
+        # Keep accepted legacy requests contract-compatible without changing cnr profiles.
+        if "cnr" not in requested_alpha3 and requested_alpha3 & {"srp", "srp-me"}:
+            payload.update(alpha3="srp", alpha2="sr", country_alpha2="ME")
     # pt-PT and zh-CN match the host's unqualified base-language profiles.
     return payload
 
@@ -427,19 +438,20 @@ class OpenSubtitlesComProvider:
             files = attrs.get("files") or []
             if not files:
                 continue
-            result_item = self._result(video, item, attrs, files[0], forced)
+            result_item = self._result(video, item, attrs, files[0], forced, languages)
             if result_item["id"] in seen:
                 continue
             seen.add(result_item["id"])
             results.append(result_item)
         return sorted(results, key=lambda item: item["score"], reverse=True)
 
-    def _result(self, video, item, attrs, file_info, forced):
+    def _result(self, video, item, attrs, file_info, forced, languages=None):
         feature = attrs.get("feature_details") or {}
         language = language_payload_from_api_code(
             attrs.get("language"),
             hearing_impaired=attrs.get("hearing_impaired"),
             forced=forced,
+            requested_languages=languages,
         )
         release = attrs.get("release") or file_info.get("file_name") or feature.get("movie_name") or str(item.get("id"))
         matches = derive_matches(video, attrs, feature)
