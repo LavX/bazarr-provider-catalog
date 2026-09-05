@@ -2074,6 +2074,64 @@ class ReturnedIMDbScoringTests(unittest.TestCase):
         self.assertIn("imdb_id", results[0]["matches"])
         self.assertEqual(results[0]["score"], 80)
 
+    def _search_ambiguous_titles(self, requested_id, returned_id, first_id="tt2222222"):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        rows = []
+        for movie_id, imdb_id in ((100, first_id), (200, returned_id)):
+            imdb_link = f'<a href="https://www.imdb.com/title/{imdb_id}/">IMDb</a>' if imdb_id else ""
+            rows.append(f'<tr><td><a href="/en/search/sublanguageid-all/idmovie-{movie_id}">'
+                        f'"Game of Thrones" Winter Is Coming (2011)</a></td><td>{imdb_link}</td></tr>')
+        search_html = '<table id="search_results">' + "".join(rows) + "</table>"
+        calls = []
+
+        def get(url, config):
+            self.assertFalse(config.get("username") or config.get("password"))
+            calls.append(url)
+            if len(calls) == 1:
+                self.assertEqual(urlparse(url).path, "/en/search2")
+                query = parse_qs(urlparse(url).query)
+                self.assertEqual(query["Season"], ["1"])
+                self.assertEqual(query["Episode"], ["1"])
+                return FakeResponse(url, text=search_html)
+            subtitle_id = "1952619106" if "idmovie-200" in url else "1952619105"
+            return FakeResponse(url, text=SUBTITLES_HTML.replace("1952619105", subtitle_id))
+
+        provider._http_get = get
+        video = dict(EPISODE_VIDEO, imdb_id=requested_id, series_imdb_id=requested_id)
+        results = provider.search(video, LANGUAGES, {})
+        self.assertEqual(len(results), 1)
+        self.assertEqual(len(calls), 2)
+        return results[0], calls[-1]
+
+    def test_public_search_prefers_equivalent_imdb_over_first_identical_title(self):
+        for requested_id, returned_id in (("0944947", "tt0944947"), ("944947", "tt000944947"),
+                                          ("TT000944947", "tt0944947"), ("tt0944947", "tt0000944947"),
+                                          ("tt0944947", "tt0944947")):
+            with self.subTest(requested_id=requested_id, returned_id=returned_id):
+                candidate, url = self._search_ambiguous_titles(requested_id, returned_id)
+                self.assertTrue(url.endswith("/sublanguageid-eng/idmovie-200"))
+                self.assertEqual(candidate["provider_payload"]["subtitle_id"], "1952619106")
+                self.assertIn("imdb_id", candidate["matches"])
+                self.assertEqual(candidate["score"], 80)
+
+    def test_public_search_does_not_invent_an_imdb_preference(self):
+        for requested_id, returned_id, first_id in (("tt9999999", "tt0944947", "tt2222222"),
+                                                   ("-0944947", "tt0944947", "tt2222222"),
+                                                   (None, "tt0944947", None),
+                                                   ("tt0944947", None, None)):
+            with self.subTest(requested_id=requested_id, returned_id=returned_id, first_id=first_id):
+                candidate, url = self._search_ambiguous_titles(requested_id, returned_id, first_id)
+                self.assertTrue(url.endswith("/sublanguageid-eng/idmovie-100"))
+                self.assertEqual(candidate["provider_payload"]["subtitle_id"], "1952619105")
+                self.assertNotIn("imdb_id", candidate["matches"])
+                self.assertEqual(candidate["score"], 40)
+
+    def test_empty_normalized_ids_do_not_receive_result_selection_bonus(self):
+        for requested_id in (None, "", "tt", "0000", "tt0000"):
+            with self.subTest(requested_id=requested_id):
+                result = {"title": "Fixture", "year": 2011, "imdb_id": None}
+                self.assertEqual(self.mod._score_result(result, requested_id, "Fixture", 2011), 130)
+
     def test_direct_listing_identity_comes_from_returned_site_path(self):
         urls = (
             ("https://www.opensubtitles.org/en/search/sublanguageid-eng/imdbid-0944947", True),

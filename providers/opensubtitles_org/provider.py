@@ -1056,7 +1056,8 @@ def _parse_search_results(html_text, fallback_url, fallback_kind):
 
 
 def _score_result(result, imdb_id, query, year):
-    if imdb_id and result.get("imdb_id") == imdb_id:
+    normalized_imdb = _normalize_imdb(imdb_id)
+    if normalized_imdb and _normalize_imdb(result.get("imdb_id")) == normalized_imdb:
         return 10_000
     score = 0
     query_norm = _normalize(query)
