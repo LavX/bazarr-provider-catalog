@@ -868,6 +868,13 @@ def _response_text(response):
     return getattr(response, "text", "") or (getattr(response, "content", b"") or b"").decode("utf-8", "replace")
 
 
+def _listing_imdb_id(url):
+    if not _is_site_url(url):
+        return None
+    match = re.search(r"(?:^|/)imdbid-(\d+)(?:/|$)", urllib.parse.urlparse(url).path)
+    return f"tt{match.group(1)}" if match else None
+
+
 def _page_language_code(url):
     """The site language id a listing URL is restricted to, or "" when it is not.
 
@@ -1282,7 +1289,7 @@ class OpenSubtitlesOrgProvider:
             direct_result = {
                 "title": query,
                 "year": video.get("year"),
-                "imdb_id": context.imdb_id,
+                "imdb_id": _listing_imdb_id(getattr(search_response, "url", "")),
                 "kind": context.kind or "movie",
                 "url": filter_url or listing_url,
             }
@@ -1424,6 +1431,8 @@ class OpenSubtitlesOrgProvider:
             # can be redirected onto the canonical listing, and the row language
             # is read off whichever URL still carries the filter.
             landed_url = _landed_url(response, page_url)
+            returned_imdb_id = _listing_imdb_id(getattr(response, "url", ""))
+            page_result = dict(result, imdb_id=returned_imdb_id or result.get("imdb_id"))
             candidates.extend(
                 self._candidates_from_items(
                     _parse_subtitle_rows(
@@ -1431,7 +1440,7 @@ class OpenSubtitlesOrgProvider:
                         landed_url,
                         _language_source_url(landed_url, page_url),
                     ),
-                    result,
+                    page_result,
                     video,
                     languages,
                     context,
@@ -1479,7 +1488,7 @@ class OpenSubtitlesOrgProvider:
                     movie_name=result.get("title") or video.get("series") or video.get("title") or "",
                     release_name=item["release_name"],
                     movie_year=item["movie_year"] or result.get("year"),
-                    movie_imdb_id=result.get("imdb_id") or context.imdb_id,
+                    movie_imdb_id=result.get("imdb_id"),
                     season=context.season,
                     episode=context.episode,
                     filename=item["filename"],

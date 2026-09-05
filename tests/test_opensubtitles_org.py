@@ -2017,5 +2017,111 @@ class AnubisClearanceTests(unittest.TestCase):
                 self.assertIsNone(parsed)
 
 
+class ReturnedIMDbScoringTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def assert_episode_without_imdb(self, results):
+        self.assertEqual(len(results), 1)
+        self.assertNotIn("imdb_id", results[0]["matches"])
+        self.assertEqual(set(results[0]["matches"]), {"series", "season", "episode"})
+        self.assertEqual(results[0]["score"], 40)
+        self.assertEqual(results[0]["score_without_hash"], 40)
+
+    def test_title_episode_listing_does_not_claim_requested_series_imdb(self):
+        for imdb in (None, "tt0944947", "0944947"):
+            for fail_refetch in (False, True):
+                with self.subTest(imdb=imdb, fail_refetch=fail_refetch):
+                    provider = self.mod.OpenSubtitlesOrgProvider()
+                    calls = []
+
+                    def get(url, config):
+                        calls.append(url)
+                        self.assertEqual(urlparse(url).path, "/en/search2")
+                        if fail_refetch and len(calls) > 1:
+                            raise self.mod.RateLimited("fixture refetch limit")
+                        return FakeResponse(url, text=SUBTITLES_HTML)
+
+                    provider._http_get = get
+                    self.assert_episode_without_imdb(provider.search(dict(EPISODE_VIDEO, imdb_id=imdb), LANGUAGES, {}))
+                    self.assertEqual(len(calls), 2)
+
+    def test_tag_listing_does_not_claim_an_unqueried_imdb(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+
+        def get(url, config):
+            self.assertIn("/tag-", urlparse(url).path)
+            return FakeResponse(url, text=SUBTITLES_HTML)
+
+        provider._http_get = get
+        self.assert_episode_without_imdb(provider.search(EPISODE_VIDEO, LANGUAGES, {"use_tag_search": True}))
+
+    def test_parsed_result_without_imdb_does_not_fall_back_to_requested_id(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        search_html = SEARCH_HTML.replace("imdbid-1480055", "idmovie-77777").replace(
+            '<a href="https://www.imdb.com/title/tt1480055/">IMDb</a>', "")
+        provider._http_get = lambda url, config: FakeResponse(
+            url, text=search_html if "/search2?" in url else SUBTITLES_HTML)
+        self.assert_episode_without_imdb(provider.search(dict(EPISODE_VIDEO, imdb_id=None), LANGUAGES, {}))
+
+    def test_parsed_result_preserves_confirmed_series_imdb(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        search_html = SEARCH_HTML.replace("1480055", "0944947")
+        provider._http_get = lambda url, config: FakeResponse(
+            url, text=search_html if "/search2?" in url else SUBTITLES_HTML)
+        results = provider.search(dict(EPISODE_VIDEO, imdb_id=None), LANGUAGES, {})
+        self.assertEqual(len(results), 1)
+        self.assertIn("imdb_id", results[0]["matches"])
+        self.assertEqual(results[0]["score"], 80)
+
+    def test_direct_listing_identity_comes_from_returned_site_path(self):
+        urls = (
+            ("https://www.opensubtitles.org/en/search/sublanguageid-eng/imdbid-0944947", True),
+            ("https://www.opensubtitles.org/en/search/sublanguageid-eng/imdbid-2222222", False),
+            ("https://www.opensubtitles.org/en/search2?MovieName=/imdbid-0944947", False),
+            ("https://example.invalid/en/search/sublanguageid-eng/imdbid-0944947", False),
+            ("https://www.opensubtitles.org/en/search/sublanguageid-eng/imdbid-0944947suffix", False),
+        )
+        for returned_url, matched in urls:
+            with self.subTest(returned_url=returned_url):
+                provider = self.mod.OpenSubtitlesOrgProvider()
+                provider._http_get = lambda url, config: FakeResponse(returned_url, text=SUBTITLES_HTML)
+                results = provider.search(dict(EPISODE_VIDEO, imdb_id=None), LANGUAGES, {})
+                self.assertEqual(len(results), 1)
+                self.assertEqual("imdb_id" in results[0]["matches"], matched)
+                self.assertEqual(results[0]["score"], 80 if matched else 40)
+
+    def test_language_refetch_can_confirm_or_replace_returned_identity(self):
+        for initial_id, returned_id, matched in ((None, "0944947", True), ("0944947", "2222222", False)):
+            with self.subTest(initial_id=initial_id, returned_id=returned_id):
+                provider = self.mod.OpenSubtitlesOrgProvider()
+                calls = []
+
+                def get(url, config):
+                    calls.append(url)
+                    if len(calls) == 1:
+                        returned = (f"{self.mod.BASE_URL}/en/search/sublanguageid-all/imdbid-{initial_id}"
+                                    if initial_id else url)
+                    else:
+                        returned = f"{self.mod.BASE_URL}/en/search/sublanguageid-eng/imdbid-{returned_id}"
+                    return FakeResponse(returned, text=SUBTITLES_HTML)
+
+                provider._http_get = get
+                results = provider.search(dict(EPISODE_VIDEO, imdb_id=None), LANGUAGES, {})
+                self.assertEqual(len(results), 1)
+                self.assertEqual("imdb_id" in results[0]["matches"], matched)
+                self.assertEqual(len(calls), 2)
+
+    def test_true_episode_and_movie_imdb_listings_keep_confirmed_match(self):
+        videos = (EPISODE_VIDEO, {"kind": "movie", "title": "Fixture", "imdb_id": "tt1234567", "year": 2011})
+        for video in videos:
+            with self.subTest(kind=video["kind"]):
+                provider = self.mod.OpenSubtitlesOrgProvider()
+                provider._http_get = lambda url, config: FakeResponse(url, text=SUBTITLES_HTML)
+                results = provider.search(video, LANGUAGES, {})
+                self.assertEqual(len(results), 1)
+                self.assertIn("imdb_id", results[0]["matches"])
+
+
 if __name__ == "__main__":
     unittest.main()

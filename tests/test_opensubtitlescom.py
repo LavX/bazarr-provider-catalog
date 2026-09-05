@@ -10,6 +10,8 @@ import urllib.error
 import zipfile
 from pathlib import Path
 
+from sdk.cli import _language_matches_requested
+
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "opensubtitlescom"
 
@@ -98,10 +100,22 @@ class OpenSubtitlesComHelperTests(unittest.TestCase):
             "pt-BR",
         )
 
-    def test_api_language_code_accepts_catalog_regional_language_ids(self):
-        self.assertEqual(self.mod.api_language_code({"alpha3": "por-BR"}), "pt-BR")
-        self.assertEqual(self.mod.api_language_code({"alpha3": "spa-MX"}), "ea")
-        self.assertEqual(self.mod.api_language_code({"alpha3": "srp-ME"}), "me")
+    def test_api_language_code_accepts_legacy_regional_aliases(self):
+        cases = [
+            ("por", "BR", "pt-BR"),
+            ("spa", "MX", "ea"),
+            ("srp", "ME", "me"),
+            ("zho", "CN", "zh-CN"),
+            ("zho", "TW", "zh-TW"),
+        ]
+        for alpha3, country, api_code in cases:
+            for language in (
+                {"alpha3": f"{alpha3}-{country}"},
+                {"alpha3": alpha3, "country": country},
+                {"alpha3": alpha3, "country_alpha2": country},
+            ):
+                with self.subTest(language=language):
+                    self.assertEqual(self.mod.api_language_code(language), api_code)
 
     def test_api_language_code_matches_current_official_language_table(self):
         cases = {
@@ -110,6 +124,7 @@ class OpenSubtitlesComHelperTests(unittest.TestCase):
             "asm": "as",
             "aze": "az-az",
             "cym": "cy",
+            "cnr": "me",
             "gle": "ga",
             "gla": "gd",
             "ibo": "ig",
@@ -133,9 +148,23 @@ class OpenSubtitlesComHelperTests(unittest.TestCase):
                 self.assertEqual(self.mod.api_language_code({"alpha3": alpha3}), api_code)
 
     def test_language_payload_from_api_code_restores_custom_language(self):
-        self.assertEqual(self.mod.language_payload_from_api_code("ea")["country"], "MX")
-        self.assertEqual(self.mod.language_payload_from_api_code("pt-BR")["country"], "BR")
-        self.assertEqual(self.mod.language_payload_from_api_code("me")["country"], "ME")
+        cases = [
+            ("ea", "spa", "es", "MX"),
+            ("pt-BR", "por", "pt", "BR"),
+            ("zh-TW", "zho", "zh", "TW"),
+        ]
+        for api_code, alpha3, alpha2, country in cases:
+            with self.subTest(api_code=api_code):
+                self.assertEqual(
+                    self.mod.language_payload_from_api_code(api_code),
+                    {
+                        "alpha3": alpha3,
+                        "alpha2": alpha2,
+                        "country_alpha2": country,
+                        "hi": False,
+                        "forced": False,
+                    },
+                )
         self.assertEqual(self.mod.language_payload_from_api_code("en")["alpha3"], "eng")
         self.assertEqual(self.mod.language_payload_from_api_code("az-az")["alpha3"], "aze")
         self.assertEqual(self.mod.language_payload_from_api_code("tm-td")["alpha3"], "tet")
@@ -143,16 +172,20 @@ class OpenSubtitlesComHelperTests(unittest.TestCase):
     def test_manifest_languages_are_limited_to_api_supported_codes(self):
         manifest = json.loads((PROVIDER_DIR / "provider.json").read_text(encoding="utf-8"))
 
-        self.assertEqual(manifest["languages"], sorted(self.mod.ALPHA3_TO_API))
+        profile_variants = {"cnr", "por-BR", "spa-MX", "zho-TW"}
+        self.assertEqual(
+            manifest["languages"], sorted(set(self.mod.ALPHA3_TO_API) | profile_variants)
+        )
 
-    def test_custom_api_codes_map_alpha2_to_base_language(self):
+    def test_custom_api_codes_use_host_language_codes(self):
         mexican = self.mod.language_payload_from_api_code("ea")
         self.assertEqual(mexican["alpha3"], "spa")
         self.assertEqual(mexican["alpha2"], "es")
 
         montenegrin = self.mod.language_payload_from_api_code("me")
-        self.assertEqual(montenegrin["alpha3"], "srp")
-        self.assertEqual(montenegrin["alpha2"], "sr")
+        self.assertEqual(montenegrin, {
+            "alpha3": "cnr", "alpha2": None, "hi": False, "forced": False,
+        })
 
         bilingual_chinese = self.mod.language_payload_from_api_code("ze")
         self.assertEqual(bilingual_chinese["alpha3"], "zho")
@@ -204,6 +237,150 @@ class OpenSubtitlesComHelperTests(unittest.TestCase):
 class OpenSubtitlesComSearchTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
+
+    def test_montenegrin_search_preserves_requested_contract_identity(self):
+        cases = (
+            ([{"alpha3": "srp-ME"}], "srp"),
+            ([{"alpha3": "srp", "country_alpha2": "ME"}], "srp"),
+            ([{"alpha3": "srp", "country": "ME"}], "srp"),
+            ([{"alpha3": "cnr"}], "cnr"),
+            ([{"alpha3": "srp-ME"}, {"alpha3": "cnr"}], "cnr"),
+            ([{"alpha3": "cnr"}, {"alpha3": "srp", "country_alpha2": "ME"}], "cnr"),
+            ([{"alpha3": "srp"}, {"alpha3": "cnr"}], "cnr"),
+        )
+        for identities, expected_alpha3 in cases:
+            for hi, forced in ((False, False), (True, False), (False, True)):
+                with self.subTest(identities=identities, hi=hi, forced=forced):
+                    languages = [dict(identity, hi=hi, forced=forced) for identity in identities]
+                    provider = self.mod.OpenSubtitlesComProvider()
+                    provider._http_post_json = lambda *args, **kwargs: {
+                        "token": "test-token", "base_url": "api.opensubtitles.com", "status": 200,
+                    }
+
+                    def get_json(path, params, headers, timeout=30):
+                        self.assertIn("me", dict(params)["languages"].split(","))
+                        return {"data": [_subtitle_item(
+                            language="me", hearing_impaired=hi,
+                            foreign_parts_only=forced, feature_type="Movie",
+                        )]}
+
+                    provider._http_get_json = get_json
+                    results = provider.search(
+                        {"kind": "movie", "imdb_id": "tt1375666"}, languages,
+                        {"username": "user", "password": "pass", "use_hash": False},
+                    )
+                    self.assertEqual(len(results), 1)
+                    result = results[0]
+                    self.assertTrue(_language_matches_requested(result["language"], languages))
+                    expected = {"alpha3": expected_alpha3, "alpha2": "sr" if expected_alpha3 == "srp" else None,
+                                "hi": hi, "forced": forced}
+                    if expected_alpha3 == "srp":
+                        expected["country_alpha2"] = "ME"
+                    self.assertEqual(result["language"], expected)
+                    self.assertEqual(result["provider_payload"]["language"], expected)
+
+    def test_montenegrin_identity_uses_request_with_matching_flags(self):
+        languages = [{"alpha3": "cnr", "hi": False}, {"alpha3": "srp-ME", "hi": True}]
+        provider = self.mod.OpenSubtitlesComProvider()
+        results = provider._results_from_response(
+            {"kind": "movie"}, languages,
+            {"data": [
+                _subtitle_item(file_id=1, language="me", hearing_impaired=False, feature_type="Movie"),
+                _subtitle_item(file_id=2, language="me", hearing_impaired=True, feature_type="Movie"),
+            ]}, {},
+        )
+        self.assertEqual(len(results), 2)
+        for result in results:
+            language = result["language"]
+            self.assertEqual(language["alpha3"], "srp" if language["hi"] else "cnr")
+            self.assertTrue(_language_matches_requested(language, languages))
+
+    def test_search_preserves_profile_language_variants_and_flags(self):
+        cases = [
+            ("pt-BR", "por", "pt", "BR"),
+            ("ea", "spa", "es", "MX"),
+            ("me", "cnr", None, None),
+            ("zh-CN", "zho", "zh", None),
+            ("zh-TW", "zho", "zh", "TW"),
+        ]
+        for api_code, alpha3, alpha2, country in cases:
+            for hi, forced in ((False, False), (True, False), (False, True)):
+                with self.subTest(api_code=api_code, hi=hi, forced=forced):
+                    provider = self.mod.OpenSubtitlesComProvider()
+                    provider._http_post_json = lambda *args, **kwargs: {
+                        "token": "test-token",
+                        "base_url": "api.opensubtitles.com",
+                        "status": 200,
+                    }
+
+                    def get_json(path, params, headers, timeout=30):
+                        self.assertIn(("languages", api_code), params)
+                        return {"data": [_subtitle_item(
+                            language=api_code,
+                            hearing_impaired=hi,
+                            foreign_parts_only=forced,
+                            feature_type="Movie",
+                        )]}
+
+                    provider._http_get_json = get_json
+                    expected = {
+                        "alpha3": alpha3,
+                        "alpha2": alpha2,
+                        "hi": hi,
+                        "forced": forced,
+                    }
+                    if country:
+                        expected["country_alpha2"] = country
+                    results = provider.search(
+                        {"kind": "movie", "imdb_id": "tt1375666"},
+                        [expected],
+                        {"username": "user", "password": "pass", "use_hash": False},
+                    )
+
+                    self.assertEqual(len(results), 1)
+                    self.assertEqual(results[0]["language"], expected)
+                    self.assertEqual(results[0]["provider_payload"]["language"], expected)
+                    self.assertTrue(_language_matches_requested(results[0]["language"], [expected]))
+
+    def test_portuguese_search_keeps_brazilian_and_portugal_results_separate(self):
+        cases = [
+            (
+                {"alpha3": "por", "alpha2": "pt", "hi": False, "forced": False},
+                "pt-PT",
+                "portugal",
+            ),
+            (
+                {"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR", "hi": False, "forced": False},
+                "pt-BR",
+                "brazil",
+            ),
+        ]
+        for language, api_code, subtitle_id in cases:
+            with self.subTest(api_code=api_code):
+                provider = self.mod.OpenSubtitlesComProvider()
+                provider._http_post_json = lambda *args, **kwargs: {
+                    "token": "test-token",
+                    "base_url": "api.opensubtitles.com",
+                    "status": 200,
+                }
+
+                def get_json(path, params, headers, timeout=30):
+                    self.assertIn(("languages", api_code), params)
+                    return {"data": [
+                        _subtitle_item(subtitle_id="portugal", file_id=1, language="pt-PT", feature_type="Movie"),
+                        _subtitle_item(subtitle_id="brazil", file_id=2, language="pt-BR", feature_type="Movie"),
+                    ]}
+
+                provider._http_get_json = get_json
+                results = provider.search(
+                    {"kind": "movie", "imdb_id": "tt1375666"},
+                    [language],
+                    {"username": "user", "password": "pass", "use_hash": False},
+                )
+
+                self.assertEqual(len(results), 1)
+                self.assertEqual(results[0]["provider_payload"]["subtitle_id"], subtitle_id)
+                self.assertEqual(results[0]["language"], language)
 
     def test_search_requires_credentials(self):
         provider = self.mod.OpenSubtitlesComProvider()
@@ -442,7 +619,7 @@ class OpenSubtitlesComSearchTests(unittest.TestCase):
         self.assertEqual(calls[0][1], [("query", "inception")])
         self.assertIn(("id", 514811), calls[1][1])
         self.assertIn(("languages", "pt-BR"), calls[1][1])
-        self.assertEqual(results[0]["language"]["country"], "BR")
+        self.assertEqual(results[0]["language"].get("country_alpha2"), "BR")
 
     def test_feature_fallback_filters_to_requested_media_type(self):
         provider = self.mod.OpenSubtitlesComProvider()
