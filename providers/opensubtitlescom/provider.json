@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "1796ef151a5368ef89df7a1940241396e68b27fa76f6308f753ed8c84bc047d9",
+  "bundle_sha256": "1b67a60cfa92caa5d22d39d6b04b44b6aeb05312e73bab200af2576785702b2f",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -50,7 +50,7 @@
   "entry_class": "OpenSubtitlesComProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "39c94dd6b04cc807322d365761da37b44f2ba340558566b608b56743c61efe48"
+    "provider.py": "b9521f7696d76ed7fbfadf3d427c8d439ff598735e86d859e2441d911a81f3f1"
   },
   "languages": [
     "abk",
@@ -68,6 +68,7 @@
     "bul",
     "cat",
     "ces",
+    "cnr",
     "cym",
     "dan",
     "deu",
@@ -117,6 +118,7 @@
     "ori",
     "pol",
     "por",
+    "por-BR",
     "pus",
     "ron",
     "rus",
@@ -128,6 +130,7 @@
     "snd",
     "som",
     "spa",
+    "spa-MX",
     "sqi",
     "srp",
     "swa",
@@ -145,7 +148,8 @@
     "urd",
     "uzb",
     "vie",
-    "zho"
+    "zho",
+    "zho-TW"
   ],
   "name": "OpenSubtitles.com",
   "provider_id": "opensubtitlescom",
@@ -167,5 +171,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.7"
+  "version": "0.1.9"
 }
