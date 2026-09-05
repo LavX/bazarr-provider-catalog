@@ -6,6 +6,10 @@ import json
 import unittest
 import zipfile
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+from unittest.mock import patch
+
+from requests.cookies import RequestsCookieJar
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "opensubtitles_org"
@@ -1855,6 +1859,162 @@ class MontenegrinListingTests(unittest.TestCase):
         self.assertTrue(any("sublanguageid-mne" in url for url in calls), calls)
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["language"]["alpha3"], "srp")
+
+
+class AnonymousEpisodeRoutingTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_series_only_imdb_keeps_season_and_episode_in_search(self):
+        for episode_imdb in (None, EPISODE_VIDEO["series_imdb_id"], "0944947"):
+            with self.subTest(episode_imdb=episode_imdb):
+                video = dict(EPISODE_VIDEO, imdb_id=episode_imdb, episode=[2, 1])
+                context = self.mod.build_search_context(video, {})
+                url = self.mod.OpenSubtitlesOrgProvider()._build_search_url(video["series"], context)
+                self.assertEqual(urlparse(url).path, "/en/search2")
+                params = parse_qs(urlparse(url).query)
+                self.assertEqual(params["MovieName"], [video["series"]])
+                self.assertEqual(params["Season"], ["1"])
+                self.assertEqual(params["Episode"], ["1"])
+                self.assertEqual(params["SearchOnlyTVSeries"], ["on"])
+                self.assertEqual(context.imdb_id, episode_imdb or video["series_imdb_id"])
+
+    def test_movie_and_distinct_episode_imdb_keep_direct_lookup(self):
+        cases = (
+            (EPISODE_VIDEO, "1480055"),
+            ({"kind": "movie", "title": "Fixture", "imdb_id": "tt1234567"}, "1234567"),
+        )
+        for video, imdb in cases:
+            with self.subTest(kind=video["kind"]):
+                context = self.mod.build_search_context(video, {})
+                url = self.mod.OpenSubtitlesOrgProvider()._build_search_url("Fixture", context)
+                self.assertEqual(urlparse(url).path, f"/en/search/sublanguageid-all/imdbid-{imdb}")
+
+    def test_series_only_episode_search_and_download_need_no_credentials(self):
+        video = dict(EPISODE_VIDEO, imdb_id=None)
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        calls = []
+
+        def get(url, config):
+            self.assertEqual(config, {})
+            calls.append(url)
+            if "/download/sub/" in url:
+                return FakeResponse(url, content=SRT_BODY)
+            if "/search2?" not in url:
+                raise self.mod.ServiceUnavailable("Unqualified series listing receives Anubis challenge")
+            params = parse_qs(urlparse(url).query)
+            self.assertEqual(params["Season"], ["1"])
+            self.assertEqual(params["Episode"], ["1"])
+            return FakeResponse(url, text=SUBTITLES_HTML + WRONG_EPISODE_SUBTITLES_HTML)
+
+        with patch.object(provider, "_http_get", get):
+            try:
+                results = provider.search(video, LANGUAGES, {})
+            except self.mod.ServiceUnavailable:
+                self.fail("Series-only IMDb used the unqualified series route")
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["language"]["alpha3"], "eng")
+            self.assertIn("season", results[0]["matches"])
+            self.assertIn("episode", results[0]["matches"])
+            downloaded = provider.download(results[0]["provider_payload"], results[0]["language"], {})
+        self.assertEqual(base64.b64decode(downloaded["content_b64"]), SRT_BODY)
+        self.assertEqual(downloaded["content_sha256"], hashlib.sha256(SRT_BODY).hexdigest())
+        self.assertTrue(any("/download/sub/" in url for url in calls))
+
+
+class AnubisClearanceTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.original = "https://www.opensubtitles.org/en/search2?MovieName=Fixture&Season=1&Episode=2"
+        self.challenge_html = '<script id="anubis_challenge">' + json.dumps({"challenge": {
+            "id": "fixture", "randomData": "fixture", "difficulty": 0, "method": "fast",
+        }}) + "</script>"
+
+    def _response(self, status=302, cookie_name=None, value="issued", expired=False):
+        response = FakeResponse(self.original, status_code=status)
+        response.cookies = RequestsCookieJar()
+        response.history = []
+        if cookie_name:
+            response.cookies.set(cookie_name, value, domain="www.opensubtitles.org", path="/",
+                                 expires=1 if expired else None)
+        return response
+
+    def _session(self, passed, existing_cookie=None):
+        challenge = self._response(401)
+        challenge.text = self.challenge_html
+
+        class Session(FakeSession):
+            def get(self, url, **kwargs):
+                response = super().get(url, **kwargs)
+                for hop in [*response.history, response]:
+                    self.cookies.update(hop.cookies)
+                return response
+
+        session = Session([challenge, passed])
+        session.cookies = RequestsCookieJar()
+        if existing_cookie:
+            session.cookies.set(existing_cookie, "previous", domain="www.opensubtitles.org", path="/")
+        return session
+
+    def test_rejected_pass_never_counts_as_clearance(self):
+        for status in (401, 500):
+            for cookie in (None, "PHPSESSID", "techaro.lol-anubis-cookie-verification", "techaro.lol-anubis-auth"):
+                with self.subTest(status=status, existing_cookie=cookie):
+                    session = self._session(self._response(status), cookie)
+                    self.assertIsNone(self.mod.solve_anubis_challenge(session, self.original, self.original))
+
+    def test_accepted_status_without_new_auth_does_not_count_as_clearance(self):
+        for cookie in ("PHPSESSID", "techaro.lol-anubis-cookie-verification", "techaro.lol-anubis-auth"):
+            with self.subTest(cookie=cookie):
+                session = self._session(self._response(), cookie)
+                self.assertIsNone(self.mod.solve_anubis_challenge(session, self.original, self.original))
+
+    def test_new_auth_cookie_confirms_clearance_and_keeps_its_scope(self):
+        session = self._session(self._response(cookie_name="techaro.lol-anubis-auth"))
+        result = self.mod.solve_anubis_challenge(session, self.original, self.original)
+        self.assertEqual(result, {"techaro.lol-anubis-auth": "issued"})
+        cookie = next(iter(session.cookies))
+        self.assertEqual((cookie.domain, cookie.path), ("www.opensubtitles.org", "/"))
+
+    def test_verification_and_expired_auth_are_not_clearance(self):
+        cases = (("PHPSESSID", False), ("techaro.lol-anubis-cookie-verification", False),
+                 ("techaro.lol-anubis-auth", True))
+        for name, expired in cases:
+            with self.subTest(name=name, expired=expired):
+                session = self._session(self._response(cookie_name=name, expired=expired))
+                self.assertIsNone(self.mod.solve_anubis_challenge(session, self.original, self.original))
+
+    def test_metarefresh_auth_from_redirect_history_is_accepted(self):
+        response = self._response(200)
+        response.history = [self._response(cookie_name="techaro.lol-anubis-auth")]
+        self.challenge_html = '<meta http-equiv="refresh" content="0; url=/.within.website/continue">'
+        session = self._session(response)
+        with patch.object(self.mod.time, "sleep"):
+            result = self.mod.solve_anubis_challenge(session, self.original, self.original)
+        self.assertEqual(result, {"techaro.lol-anubis-auth": "issued"})
+
+    def test_in_place_challenge_retains_original_query(self):
+        session = self._session(self._response(cookie_name="techaro.lol-anubis-auth"))
+        self.mod.solve_anubis_challenge(session, self.original, self.original)
+        submitted = parse_qs(urlparse(session.calls[-1][1]).query)
+        self.assertEqual(submitted["redir"], ["/en/search2?MovieName=Fixture&Season=1&Episode=2"])
+
+    def test_explicit_challenge_redir_still_takes_precedence(self):
+        session = self._session(self._response(cookie_name="techaro.lol-anubis-auth"))
+        challenge_url = "https://www.opensubtitles.org/.within.website/?redir=%2Fen%2Fsearch%3FSeason%3D2"
+        self.mod.solve_anubis_challenge(session, challenge_url, self.original)
+        submitted = parse_qs(urlparse(session.calls[-1][1]).query)
+        self.assertEqual(submitted["redir"], ["/en/search?Season=2"])
+
+    def test_error_page_non_object_challenge_is_not_parsed(self):
+        for payload in (None, [], "failure", 42, {"challenge": "failure"}, {"challenge": ["id", "randomData"]}):
+            with self.subTest(payload=payload):
+                body = '<script id="anubis_challenge">' + json.dumps(payload) + "</script>"
+                try:
+                    parsed = self.mod._extract_anubis_challenge(body)
+                except (AttributeError, TypeError):
+                    self.fail("Anubis error page crashed challenge parsing")
+                self.assertIsNone(parsed)
 
 
 if __name__ == "__main__":

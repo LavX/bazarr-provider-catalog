@@ -257,6 +257,7 @@ class SearchContext:
     tag: str | None
     use_tag_search: bool = False
     hash: str | None = None
+    episode_imdb_id: str | None = None
 
 
 def _as_bool(value, default=False):
@@ -505,6 +506,7 @@ def build_search_context(video, config):
     query = []
     season = None
     episode = None
+    episode_imdb_id = None
     if kind == "episode":
         series = _clean_text(video.get("series"))
         if series:
@@ -515,7 +517,11 @@ def build_search_context(video, config):
             episode = min((_as_int(item) for item in episode_value if _as_int(item) is not None), default=None)
         else:
             episode = _as_int(episode_value)
-        imdb_id = _clean_text(video.get("imdb_id")) or _clean_text(video.get("series_imdb_id")) or None
+        episode_imdb_id = _clean_text(video.get("imdb_id")) or None
+        series_imdb_id = _clean_text(video.get("series_imdb_id")) or None
+        imdb_id = episode_imdb_id or series_imdb_id
+        if _normalize_imdb(episode_imdb_id) == _normalize_imdb(series_imdb_id):
+            episode_imdb_id = None
     elif kind == "movie":
         title = _clean_text(video.get("title"))
         if title:
@@ -537,6 +543,7 @@ def build_search_context(video, config):
         tag=_clean_text(video.get("original_name")) or None,
         use_tag_search=_as_bool((config or {}).get("use_tag_search")),
         hash=movie_hash,
+        episode_imdb_id=episode_imdb_id,
     )
 
 
@@ -692,8 +699,10 @@ def _extract_anubis_challenge(html_text):
         data = json.loads(match.group("json"))
     except json.JSONDecodeError:
         return None
-    challenge = data.get("challenge") or {}
-    if "randomData" not in challenge or "id" not in challenge:
+    if not isinstance(data, dict):
+        return None
+    challenge = data.get("challenge")
+    if not isinstance(challenge, dict) or "randomData" not in challenge or "id" not in challenge:
         return None
     return {
         "id": challenge["id"],
@@ -720,10 +729,11 @@ def _solve_preact(random_data, difficulty):
 
 
 def solve_anubis_challenge(session, challenge_url, original_url, timeout=DEFAULT_TIMEOUT_SECONDS):
-    del original_url
     parsed = urllib.parse.urlparse(challenge_url)
     query = urllib.parse.parse_qs(parsed.query)
-    redir = query.get("redir", [parsed.path])[0]
+    original = urllib.parse.urlparse(original_url)
+    original_target = urllib.parse.urlunparse(("", "", original.path, original.params, original.query, ""))
+    redir = query.get("redir", [original_target])[0]
     base = f"{parsed.scheme}://{parsed.netloc}"
     challenge_page_url = challenge_url if challenge_url.startswith("http") else base + challenge_url
     started = time.monotonic()
@@ -780,10 +790,20 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=DEFAULT
         if solved.cookies:
             session.cookies.update(solved.cookies)
 
-    cookies = {}
-    for cookie in session.cookies:
-        if "anubis" in cookie.name.lower() or cookie.name == "PHPSESSID":
-            cookies[cookie.name] = cookie.value
+    if not 200 <= solved.status_code < 400:
+        return None
+    issued_auth = {
+        (cookie.domain, cookie.path, cookie.name, cookie.value)
+        for response in [*getattr(solved, "history", []), solved]
+        for cookie in response.cookies
+        if cookie.name.endswith("-anubis-auth") and not cookie.is_expired()
+    }
+    cookies = {
+        cookie.name: cookie.value
+        for cookie in session.cookies
+        if (cookie.domain, cookie.path, cookie.name, cookie.value) in issued_auth
+        and not cookie.is_expired()
+    }
     return cookies or None
 
 
@@ -1358,8 +1378,9 @@ class OpenSubtitlesOrgProvider:
         if context.use_tag_search and context.tag:
             tag = urllib.parse.quote(context.tag, safe="")
             return f"{BASE_URL}/en/search/sublanguageid-all/tag-{tag}"
-        if context.imdb_id:
-            imdb_number = re.sub(r"\D", "", context.imdb_id)
+        lookup_imdb_id = context.episode_imdb_id if context.kind == "episode" else context.imdb_id
+        if lookup_imdb_id:
+            imdb_number = re.sub(r"\D", "", lookup_imdb_id)
             return f"{BASE_URL}/en/search/sublanguageid-all/imdbid-{imdb_number}"
         params = {"MovieName": query, "action": "search"}
         if context.kind == "episode":
