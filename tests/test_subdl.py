@@ -1,11 +1,13 @@
 import base64
 import hashlib
+import http.client
 import importlib.util
 import io
 import json
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import call, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -558,7 +560,9 @@ class SubDLTransportRetryTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
         self.sleeps = []
-        self.mod.time.sleep = lambda seconds: self.sleeps.append(seconds)
+        sleep_patch = patch.object(self.mod.time, "sleep", self.sleeps.append)
+        sleep_patch.start()
+        self.addCleanup(sleep_patch.stop)
 
     def _patch_urlopen(self, sequence):
         calls = {"count": 0}
@@ -572,7 +576,9 @@ class SubDLTransportRetryTests(unittest.TestCase):
                 raise outcome
             return _FakeResponse(outcome)
 
-        self.mod.urllib.request.urlopen = fake_urlopen
+        urlopen_patch = patch.object(self.mod.urllib.request, "urlopen", fake_urlopen)
+        urlopen_patch.start()
+        self.addCleanup(urlopen_patch.stop)
         return calls
 
     def test_json_helper_retries_on_url_error_then_succeeds(self):
@@ -666,6 +672,203 @@ class SubDLTransportRetryTests(unittest.TestCase):
 
         self.assertEqual(calls["count"], 1)
         self.assertEqual(self.sleeps, [])
+
+
+class SubDLSemanticHTTPErrorTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.provider = self.mod.SubDLProvider()
+
+    def _invoke(self, helper):
+        if helper == "json":
+            return self.provider._http_get_json({"api_key": "synthetic-private-key"})
+        return self.provider._http_get_bytes("https://dl.subdl.com/synthetic-private-url.srt")
+
+    def _errors(self, codes, bodies, headers=None):
+        errors = [_http_error(code, body, headers) for code, body in zip(codes, bodies)]
+        for error in errors:
+            self.addCleanup(error.close)
+        return errors
+
+    def _assert_failure(self, helper, code, body, expected):
+        errors = self._errors([code] * 3, [body] * 3)
+        with patch.object(self.mod.urllib.request, "urlopen", side_effect=errors) as request:
+            with patch.object(self.mod.time, "sleep") as sleep:
+                with self.assertRaises(Exception) as raised:
+                    self._invoke(helper)
+        self.assertEqual(type(raised.exception).__name__, expected)
+        self.assertIs(type(raised.exception), getattr(self.mod, expected))
+        self.assertIs(raised.exception.__cause__, errors[-1])
+        self.assertEqual(request.call_count, 3)
+        self.assertEqual(sleep.call_args_list, [call(0.5), call(1.0)])
+        for private_text in ("synthetic-private", "https://", "api_key", "diagnostic-marker"):
+            self.assertNotIn(private_text, str(raised.exception))
+
+    def test_known_429_tokens_keep_distinct_semantics(self):
+        for helper in ("json", "bytes"):
+            for token, expected in (
+                ("daily_limit", "DownloadLimitExceeded"),
+                ("api_download_limit_exceeded", "DownloadLimitExceeded"),
+                ("service_busy", "ServiceUnavailable"),
+                ("rate_limit", "TooManyRequests"),
+            ):
+                with self.subTest(helper=helper, token=token):
+                    body = json.dumps({"error": token, "message": "diagnostic-marker"}).encode()
+                    self._assert_failure(helper, 429, body, expected)
+
+    def test_unrecognized_429_bodies_remain_rate_limited(self):
+        bodies = (
+            b"", b"<html>daily_limit diagnostic-marker</html>", b"\xff",
+            b"{", b"null", b"42", b'"daily_limit"', b"[]", b"{}",
+            b'{"error":null}', b'{"error":["daily_limit"]}',
+            b'{"error":{"code":"daily_limit"}}', b'{"code":"daily_limit"}',
+            b'{"error":"unknown"}', b'{"error":"DAILY_LIMIT"}',
+            b'{"error":" daily_limit "}',
+            b'{"error":"daily_limit","padding":"' + b"x" * (64 * 1024) + b'"}',
+        )
+        for helper in ("json", "bytes"):
+            for index, body in enumerate(bodies):
+                with self.subTest(helper=helper, body_index=index):
+                    self._assert_failure(helper, 429, body, "TooManyRequests")
+
+    def test_all_server_errors_are_service_failures_even_with_quota_body(self):
+        for helper in ("json", "bytes"):
+            for code in (500, 502, 503, 599):
+                for body in (b"<html>diagnostic-marker</html>", b'{"error":"daily_limit"}'):
+                    with self.subTest(helper=helper, code=code, body=body):
+                        self._assert_failure(helper, code, body, "ServiceUnavailable")
+
+    def test_excessively_nested_429_json_remains_rate_limited(self):
+        body = b"[" * 30000 + b"0" + b"]" * 30000
+        for helper in ("json", "bytes"):
+            with self.subTest(helper=helper):
+                self._assert_failure(helper, 429, body, "TooManyRequests")
+
+    def test_error_body_read_is_bounded_and_only_final_response_is_read(self):
+        for helper in ("json", "bytes"):
+            with self.subTest(helper=helper):
+                errors = self._errors([429] * 3, [b"x" * (70 * 1024)] * 3)
+                with patch.object(errors[0], "read", wraps=errors[0].read) as first_read:
+                    with patch.object(errors[-1], "read", wraps=errors[-1].read) as final_read:
+                        with patch.object(self.mod.urllib.request, "urlopen", side_effect=errors):
+                            with patch.object(self.mod.time, "sleep"):
+                                with self.assertRaises(Exception) as raised:
+                                    self._invoke(helper)
+                self.assertEqual(type(raised.exception).__name__, "TooManyRequests")
+                first_read.assert_not_called()
+                final_read.assert_called_once_with(64 * 1024 + 1)
+
+    def test_exhausted_semantic_error_closes_final_http_response(self):
+        class FakeSocket:
+            def __init__(self, code, body):
+                self.stream = io.BytesIO(
+                    f"HTTP/1.1 {code} Error\r\nContent-Length: {len(body)}\r\n\r\n".encode() + body
+                )
+
+            def makefile(self, *args):
+                return self.stream
+
+        for helper in ("json", "bytes"):
+            for code, body in ((429, b'{"error":"daily_limit"}'), (429, b"x" * (70 * 1024)),
+                               (500, b"service unavailable"), (503, b"x" * (70 * 1024))):
+                with self.subTest(helper=helper, code=code, body_size=len(body)):
+                    responses = []
+                    errors = []
+                    for _ in range(3):
+                        response = http.client.HTTPResponse(FakeSocket(code, body))
+                        response.begin()
+                        error = self.mod.urllib.error.HTTPError(
+                            "https://fixture.invalid", code, "Error", response.headers, response
+                        )
+                        responses.append(response)
+                        errors.append(error)
+                        self.addCleanup(error.close)
+                    with patch.object(self.mod.urllib.request, "urlopen", side_effect=errors):
+                        with patch.object(self.mod.time, "sleep"):
+                            with self.assertRaises(RuntimeError) as raised:
+                                self._invoke(helper)
+                    self.assertIs(raised.exception.__cause__, errors[-1])
+                    self.assertTrue(responses[-1].isclosed())
+
+    def test_failed_error_body_read_remains_rate_limited(self):
+        for helper in ("json", "bytes"):
+            for read_failure in (OSError("diagnostic-marker"), ValueError("closed response")):
+                with self.subTest(helper=helper, read_failure=type(read_failure).__name__):
+                    errors = self._errors([429] * 3, [b""] * 3)
+                    with patch.object(errors[-1], "read", side_effect=read_failure):
+                        with patch.object(self.mod.urllib.request, "urlopen", side_effect=errors):
+                            with patch.object(self.mod.time, "sleep"):
+                                with self.assertRaises(Exception) as raised:
+                                    self._invoke(helper)
+                    self.assertEqual(type(raised.exception).__name__, "TooManyRequests")
+                    self.assertNotIn("diagnostic-marker", str(raised.exception))
+
+    def test_final_exhausted_response_determines_category(self):
+        for helper in ("json", "bytes"):
+            for bodies, expected in (
+                ([b'{"error":"daily_limit"}', b"", b'{"error":"rate_limit"}'], "TooManyRequests"),
+                ([b'{"error":"rate_limit"}', b"", b'{"error":"daily_limit"}'], "DownloadLimitExceeded"),
+            ):
+                with self.subTest(helper=helper, expected=expected):
+                    errors = self._errors([429] * 3, bodies)
+                    with patch.object(self.mod.urllib.request, "urlopen", side_effect=errors):
+                        with patch.object(self.mod.time, "sleep"):
+                            with self.assertRaises(Exception) as raised:
+                                self._invoke(helper)
+                    self.assertEqual(type(raised.exception).__name__, expected)
+                    self.assertIs(raised.exception.__cause__, errors[-1])
+
+    def test_transient_failures_can_recover_before_exhaustion(self):
+        for helper in ("json", "bytes"):
+            with self.subTest(helper=helper):
+                body = b'{"status":true,"subtitles":[]}' if helper == "json" else b"subtitle bytes"
+                errors = self._errors([429, 500], [b'{"error":"daily_limit"}', b""])
+                with patch.object(self.mod.urllib.request, "urlopen", side_effect=errors + [_FakeResponse(body)]):
+                    with patch.object(self.mod.time, "sleep") as sleep:
+                        result = self._invoke(helper)
+                self.assertEqual(result, json.loads(body) if helper == "json" else body)
+                self.assertEqual(sleep.call_args_list, [call(0.5), call(1.0)])
+
+    def test_retry_after_clamps_integer_and_preserves_invalid_backoff(self):
+        for helper in ("json", "bytes"):
+            for header, expected_delay in (("999", 8.0), ("-1", 0.5), ("later", 0.5),
+                                           ("Wed, 21 Oct 2015 07:28:00 GMT", 0.5), ("0", None)):
+                with self.subTest(helper=helper, header=header):
+                    error = self._errors([429], [b""], {"Retry-After": header})[0]
+                    body = b"{}" if helper == "json" else b"subtitle"
+                    with patch.object(self.mod.urllib.request, "urlopen", side_effect=[error, _FakeResponse(body)]):
+                        with patch.object(self.mod.time, "sleep") as sleep:
+                            self._invoke(helper)
+                    self.assertEqual(sleep.call_args_list, [] if expected_delay is None else [call(expected_delay)])
+
+    def test_permanent_statuses_keep_existing_behavior_and_single_attempt(self):
+        for helper in ("json", "bytes"):
+            for code in (403, 404):
+                with self.subTest(helper=helper, code=code):
+                    error = self._errors([code], [b"missing"])[0]
+                    expected = ValueError if code == 403 else (RuntimeError if helper == "json" else self.mod.urllib.error.HTTPError)
+                    with patch.object(self.mod.urllib.request, "urlopen", side_effect=error) as request:
+                        with patch.object(self.mod.time, "sleep") as sleep:
+                            with self.assertRaises(Exception) as raised:
+                                self._invoke(helper)
+                    self.assertIs(type(raised.exception), expected)
+                    self.assertEqual(request.call_count, 1)
+                    sleep.assert_not_called()
+
+    def test_quota_failure_does_not_start_movie_or_anime_fallback(self):
+        videos = (
+            {"kind": "movie", "title": "Example", "imdb_id": "tt1234567", "tmdb_id": 123},
+            {"kind": "episode", "series": "Example", "season": 2, "episode": 1, "absolute_episode": 13},
+        )
+        for video in videos:
+            with self.subTest(kind=video["kind"]):
+                errors = self._errors([429] * 3, [b'{"error":"daily_limit"}'] * 3)
+                with patch.object(self.mod.urllib.request, "urlopen", side_effect=errors) as request:
+                    with patch.object(self.mod.time, "sleep"):
+                        with self.assertRaises(Exception) as raised:
+                            self.provider.search(video, [{"alpha3": "eng"}], {"api_key": "synthetic-key", "anime_mode": True})
+                self.assertEqual(type(raised.exception).__name__, "DownloadLimitExceeded")
+                self.assertEqual(request.call_count, 3)
 
 
 if __name__ == "__main__":

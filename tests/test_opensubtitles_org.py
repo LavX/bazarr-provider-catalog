@@ -6,6 +6,10 @@ import json
 import unittest
 import zipfile
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+from unittest.mock import patch
+
+from requests.cookies import RequestsCookieJar
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "opensubtitles_org"
@@ -1855,6 +1859,326 @@ class MontenegrinListingTests(unittest.TestCase):
         self.assertTrue(any("sublanguageid-mne" in url for url in calls), calls)
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["language"]["alpha3"], "srp")
+
+
+class AnonymousEpisodeRoutingTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_series_only_imdb_keeps_season_and_episode_in_search(self):
+        for episode_imdb in (None, EPISODE_VIDEO["series_imdb_id"], "0944947"):
+            with self.subTest(episode_imdb=episode_imdb):
+                video = dict(EPISODE_VIDEO, imdb_id=episode_imdb, episode=[2, 1])
+                context = self.mod.build_search_context(video, {})
+                url = self.mod.OpenSubtitlesOrgProvider()._build_search_url(video["series"], context)
+                self.assertEqual(urlparse(url).path, "/en/search2")
+                params = parse_qs(urlparse(url).query)
+                self.assertEqual(params["MovieName"], [video["series"]])
+                self.assertEqual(params["Season"], ["1"])
+                self.assertEqual(params["Episode"], ["1"])
+                self.assertEqual(params["SearchOnlyTVSeries"], ["on"])
+                self.assertEqual(context.imdb_id, episode_imdb or video["series_imdb_id"])
+
+    def test_movie_and_distinct_episode_imdb_keep_direct_lookup(self):
+        cases = (
+            (EPISODE_VIDEO, "1480055"),
+            ({"kind": "movie", "title": "Fixture", "imdb_id": "tt1234567"}, "1234567"),
+        )
+        for video, imdb in cases:
+            with self.subTest(kind=video["kind"]):
+                context = self.mod.build_search_context(video, {})
+                url = self.mod.OpenSubtitlesOrgProvider()._build_search_url("Fixture", context)
+                self.assertEqual(urlparse(url).path, f"/en/search/sublanguageid-all/imdbid-{imdb}")
+
+    def test_series_only_episode_search_and_download_need_no_credentials(self):
+        video = dict(EPISODE_VIDEO, imdb_id=None)
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        calls = []
+
+        def get(url, config):
+            self.assertEqual(config, {})
+            calls.append(url)
+            if "/download/sub/" in url:
+                return FakeResponse(url, content=SRT_BODY)
+            if "/search2?" not in url:
+                raise self.mod.ServiceUnavailable("Unqualified series listing receives Anubis challenge")
+            params = parse_qs(urlparse(url).query)
+            self.assertEqual(params["Season"], ["1"])
+            self.assertEqual(params["Episode"], ["1"])
+            return FakeResponse(url, text=SUBTITLES_HTML + WRONG_EPISODE_SUBTITLES_HTML)
+
+        with patch.object(provider, "_http_get", get):
+            try:
+                results = provider.search(video, LANGUAGES, {})
+            except self.mod.ServiceUnavailable:
+                self.fail("Series-only IMDb used the unqualified series route")
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["language"]["alpha3"], "eng")
+            self.assertIn("season", results[0]["matches"])
+            self.assertIn("episode", results[0]["matches"])
+            downloaded = provider.download(results[0]["provider_payload"], results[0]["language"], {})
+        self.assertEqual(base64.b64decode(downloaded["content_b64"]), SRT_BODY)
+        self.assertEqual(downloaded["content_sha256"], hashlib.sha256(SRT_BODY).hexdigest())
+        self.assertTrue(any("/download/sub/" in url for url in calls))
+
+
+class AnubisClearanceTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.original = "https://www.opensubtitles.org/en/search2?MovieName=Fixture&Season=1&Episode=2"
+        self.challenge_html = '<script id="anubis_challenge">' + json.dumps({"challenge": {
+            "id": "fixture", "randomData": "fixture", "difficulty": 0, "method": "fast",
+        }}) + "</script>"
+
+    def _response(self, status=302, cookie_name=None, value="issued", expired=False):
+        response = FakeResponse(self.original, status_code=status)
+        response.cookies = RequestsCookieJar()
+        response.history = []
+        if cookie_name:
+            response.cookies.set(cookie_name, value, domain="www.opensubtitles.org", path="/",
+                                 expires=1 if expired else None)
+        return response
+
+    def _session(self, passed, existing_cookie=None):
+        challenge = self._response(401)
+        challenge.text = self.challenge_html
+
+        class Session(FakeSession):
+            def get(self, url, **kwargs):
+                response = super().get(url, **kwargs)
+                for hop in [*response.history, response]:
+                    self.cookies.update(hop.cookies)
+                return response
+
+        session = Session([challenge, passed])
+        session.cookies = RequestsCookieJar()
+        if existing_cookie:
+            session.cookies.set(existing_cookie, "previous", domain="www.opensubtitles.org", path="/")
+        return session
+
+    def test_rejected_pass_never_counts_as_clearance(self):
+        for status in (401, 500):
+            for cookie in (None, "PHPSESSID", "techaro.lol-anubis-cookie-verification", "techaro.lol-anubis-auth"):
+                with self.subTest(status=status, existing_cookie=cookie):
+                    session = self._session(self._response(status), cookie)
+                    self.assertIsNone(self.mod.solve_anubis_challenge(session, self.original, self.original))
+
+    def test_accepted_status_without_new_auth_does_not_count_as_clearance(self):
+        for cookie in ("PHPSESSID", "techaro.lol-anubis-cookie-verification", "techaro.lol-anubis-auth"):
+            with self.subTest(cookie=cookie):
+                session = self._session(self._response(), cookie)
+                self.assertIsNone(self.mod.solve_anubis_challenge(session, self.original, self.original))
+
+    def test_new_auth_cookie_confirms_clearance_and_keeps_its_scope(self):
+        session = self._session(self._response(cookie_name="techaro.lol-anubis-auth"))
+        result = self.mod.solve_anubis_challenge(session, self.original, self.original)
+        self.assertEqual(result, {"techaro.lol-anubis-auth": "issued"})
+        cookie = next(iter(session.cookies))
+        self.assertEqual((cookie.domain, cookie.path), ("www.opensubtitles.org", "/"))
+
+    def test_verification_and_expired_auth_are_not_clearance(self):
+        cases = (("PHPSESSID", False), ("techaro.lol-anubis-cookie-verification", False),
+                 ("techaro.lol-anubis-auth", True))
+        for name, expired in cases:
+            with self.subTest(name=name, expired=expired):
+                session = self._session(self._response(cookie_name=name, expired=expired))
+                self.assertIsNone(self.mod.solve_anubis_challenge(session, self.original, self.original))
+
+    def test_metarefresh_auth_from_redirect_history_is_accepted(self):
+        response = self._response(200)
+        response.history = [self._response(cookie_name="techaro.lol-anubis-auth")]
+        self.challenge_html = '<meta http-equiv="refresh" content="0; url=/.within.website/continue">'
+        session = self._session(response)
+        with patch.object(self.mod.time, "sleep"):
+            result = self.mod.solve_anubis_challenge(session, self.original, self.original)
+        self.assertEqual(result, {"techaro.lol-anubis-auth": "issued"})
+
+    def test_in_place_challenge_retains_original_query(self):
+        session = self._session(self._response(cookie_name="techaro.lol-anubis-auth"))
+        self.mod.solve_anubis_challenge(session, self.original, self.original)
+        submitted = parse_qs(urlparse(session.calls[-1][1]).query)
+        self.assertEqual(submitted["redir"], ["/en/search2?MovieName=Fixture&Season=1&Episode=2"])
+
+    def test_explicit_challenge_redir_still_takes_precedence(self):
+        session = self._session(self._response(cookie_name="techaro.lol-anubis-auth"))
+        challenge_url = "https://www.opensubtitles.org/.within.website/?redir=%2Fen%2Fsearch%3FSeason%3D2"
+        self.mod.solve_anubis_challenge(session, challenge_url, self.original)
+        submitted = parse_qs(urlparse(session.calls[-1][1]).query)
+        self.assertEqual(submitted["redir"], ["/en/search?Season=2"])
+
+    def test_error_page_non_object_challenge_is_not_parsed(self):
+        for payload in (None, [], "failure", 42, {"challenge": "failure"}, {"challenge": ["id", "randomData"]}):
+            with self.subTest(payload=payload):
+                body = '<script id="anubis_challenge">' + json.dumps(payload) + "</script>"
+                try:
+                    parsed = self.mod._extract_anubis_challenge(body)
+                except (AttributeError, TypeError):
+                    self.fail("Anubis error page crashed challenge parsing")
+                self.assertIsNone(parsed)
+
+
+class ReturnedIMDbScoringTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def assert_episode_without_imdb(self, results):
+        self.assertEqual(len(results), 1)
+        self.assertNotIn("imdb_id", results[0]["matches"])
+        self.assertEqual(set(results[0]["matches"]), {"series", "season", "episode"})
+        self.assertEqual(results[0]["score"], 40)
+        self.assertEqual(results[0]["score_without_hash"], 40)
+
+    def test_title_episode_listing_does_not_claim_requested_series_imdb(self):
+        for imdb in (None, "tt0944947", "0944947"):
+            for fail_refetch in (False, True):
+                with self.subTest(imdb=imdb, fail_refetch=fail_refetch):
+                    provider = self.mod.OpenSubtitlesOrgProvider()
+                    calls = []
+
+                    def get(url, config):
+                        calls.append(url)
+                        self.assertEqual(urlparse(url).path, "/en/search2")
+                        if fail_refetch and len(calls) > 1:
+                            raise self.mod.RateLimited("fixture refetch limit")
+                        return FakeResponse(url, text=SUBTITLES_HTML)
+
+                    provider._http_get = get
+                    self.assert_episode_without_imdb(provider.search(dict(EPISODE_VIDEO, imdb_id=imdb), LANGUAGES, {}))
+                    self.assertEqual(len(calls), 2)
+
+    def test_tag_listing_does_not_claim_an_unqueried_imdb(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+
+        def get(url, config):
+            self.assertIn("/tag-", urlparse(url).path)
+            return FakeResponse(url, text=SUBTITLES_HTML)
+
+        provider._http_get = get
+        self.assert_episode_without_imdb(provider.search(EPISODE_VIDEO, LANGUAGES, {"use_tag_search": True}))
+
+    def test_parsed_result_without_imdb_does_not_fall_back_to_requested_id(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        search_html = SEARCH_HTML.replace("imdbid-1480055", "idmovie-77777").replace(
+            '<a href="https://www.imdb.com/title/tt1480055/">IMDb</a>', "")
+        provider._http_get = lambda url, config: FakeResponse(
+            url, text=search_html if "/search2?" in url else SUBTITLES_HTML)
+        self.assert_episode_without_imdb(provider.search(dict(EPISODE_VIDEO, imdb_id=None), LANGUAGES, {}))
+
+    def test_parsed_result_preserves_confirmed_series_imdb(self):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        search_html = SEARCH_HTML.replace("1480055", "0944947")
+        provider._http_get = lambda url, config: FakeResponse(
+            url, text=search_html if "/search2?" in url else SUBTITLES_HTML)
+        results = provider.search(dict(EPISODE_VIDEO, imdb_id=None), LANGUAGES, {})
+        self.assertEqual(len(results), 1)
+        self.assertIn("imdb_id", results[0]["matches"])
+        self.assertEqual(results[0]["score"], 80)
+
+    def _search_ambiguous_titles(self, requested_id, returned_id, first_id="tt2222222"):
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        rows = []
+        for movie_id, imdb_id in ((100, first_id), (200, returned_id)):
+            imdb_link = f'<a href="https://www.imdb.com/title/{imdb_id}/">IMDb</a>' if imdb_id else ""
+            rows.append(f'<tr><td><a href="/en/search/sublanguageid-all/idmovie-{movie_id}">'
+                        f'"Game of Thrones" Winter Is Coming (2011)</a></td><td>{imdb_link}</td></tr>')
+        search_html = '<table id="search_results">' + "".join(rows) + "</table>"
+        calls = []
+
+        def get(url, config):
+            self.assertFalse(config.get("username") or config.get("password"))
+            calls.append(url)
+            if len(calls) == 1:
+                self.assertEqual(urlparse(url).path, "/en/search2")
+                query = parse_qs(urlparse(url).query)
+                self.assertEqual(query["Season"], ["1"])
+                self.assertEqual(query["Episode"], ["1"])
+                return FakeResponse(url, text=search_html)
+            subtitle_id = "1952619106" if "idmovie-200" in url else "1952619105"
+            return FakeResponse(url, text=SUBTITLES_HTML.replace("1952619105", subtitle_id))
+
+        provider._http_get = get
+        video = dict(EPISODE_VIDEO, imdb_id=requested_id, series_imdb_id=requested_id)
+        results = provider.search(video, LANGUAGES, {})
+        self.assertEqual(len(results), 1)
+        self.assertEqual(len(calls), 2)
+        return results[0], calls[-1]
+
+    def test_public_search_prefers_equivalent_imdb_over_first_identical_title(self):
+        for requested_id, returned_id in (("0944947", "tt0944947"), ("944947", "tt000944947"),
+                                          ("TT000944947", "tt0944947"), ("tt0944947", "tt0000944947"),
+                                          ("tt0944947", "tt0944947")):
+            with self.subTest(requested_id=requested_id, returned_id=returned_id):
+                candidate, url = self._search_ambiguous_titles(requested_id, returned_id)
+                self.assertTrue(url.endswith("/sublanguageid-eng/idmovie-200"))
+                self.assertEqual(candidate["provider_payload"]["subtitle_id"], "1952619106")
+                self.assertIn("imdb_id", candidate["matches"])
+                self.assertEqual(candidate["score"], 80)
+
+    def test_public_search_does_not_invent_an_imdb_preference(self):
+        for requested_id, returned_id, first_id in (("tt9999999", "tt0944947", "tt2222222"),
+                                                   ("-0944947", "tt0944947", "tt2222222"),
+                                                   (None, "tt0944947", None),
+                                                   ("tt0944947", None, None)):
+            with self.subTest(requested_id=requested_id, returned_id=returned_id, first_id=first_id):
+                candidate, url = self._search_ambiguous_titles(requested_id, returned_id, first_id)
+                self.assertTrue(url.endswith("/sublanguageid-eng/idmovie-100"))
+                self.assertEqual(candidate["provider_payload"]["subtitle_id"], "1952619105")
+                self.assertNotIn("imdb_id", candidate["matches"])
+                self.assertEqual(candidate["score"], 40)
+
+    def test_empty_normalized_ids_do_not_receive_result_selection_bonus(self):
+        for requested_id in (None, "", "tt", "0000", "tt0000"):
+            with self.subTest(requested_id=requested_id):
+                result = {"title": "Fixture", "year": 2011, "imdb_id": None}
+                self.assertEqual(self.mod._score_result(result, requested_id, "Fixture", 2011), 130)
+
+    def test_direct_listing_identity_comes_from_returned_site_path(self):
+        urls = (
+            ("https://www.opensubtitles.org/en/search/sublanguageid-eng/imdbid-0944947", True),
+            ("https://www.opensubtitles.org/en/search/sublanguageid-eng/imdbid-2222222", False),
+            ("https://www.opensubtitles.org/en/search2?MovieName=/imdbid-0944947", False),
+            ("https://example.invalid/en/search/sublanguageid-eng/imdbid-0944947", False),
+            ("https://www.opensubtitles.org/en/search/sublanguageid-eng/imdbid-0944947suffix", False),
+        )
+        for returned_url, matched in urls:
+            with self.subTest(returned_url=returned_url):
+                provider = self.mod.OpenSubtitlesOrgProvider()
+                provider._http_get = lambda url, config: FakeResponse(returned_url, text=SUBTITLES_HTML)
+                results = provider.search(dict(EPISODE_VIDEO, imdb_id=None), LANGUAGES, {})
+                self.assertEqual(len(results), 1)
+                self.assertEqual("imdb_id" in results[0]["matches"], matched)
+                self.assertEqual(results[0]["score"], 80 if matched else 40)
+
+    def test_language_refetch_can_confirm_or_replace_returned_identity(self):
+        for initial_id, returned_id, matched in ((None, "0944947", True), ("0944947", "2222222", False)):
+            with self.subTest(initial_id=initial_id, returned_id=returned_id):
+                provider = self.mod.OpenSubtitlesOrgProvider()
+                calls = []
+
+                def get(url, config):
+                    calls.append(url)
+                    if len(calls) == 1:
+                        returned = (f"{self.mod.BASE_URL}/en/search/sublanguageid-all/imdbid-{initial_id}"
+                                    if initial_id else url)
+                    else:
+                        returned = f"{self.mod.BASE_URL}/en/search/sublanguageid-eng/imdbid-{returned_id}"
+                    return FakeResponse(returned, text=SUBTITLES_HTML)
+
+                provider._http_get = get
+                results = provider.search(dict(EPISODE_VIDEO, imdb_id=None), LANGUAGES, {})
+                self.assertEqual(len(results), 1)
+                self.assertEqual("imdb_id" in results[0]["matches"], matched)
+                self.assertEqual(len(calls), 2)
+
+    def test_true_episode_and_movie_imdb_listings_keep_confirmed_match(self):
+        videos = (EPISODE_VIDEO, {"kind": "movie", "title": "Fixture", "imdb_id": "tt1234567", "year": 2011})
+        for video in videos:
+            with self.subTest(kind=video["kind"]):
+                provider = self.mod.OpenSubtitlesOrgProvider()
+                provider._http_get = lambda url, config: FakeResponse(url, text=SUBTITLES_HTML)
+                results = provider.search(video, LANGUAGES, {})
+                self.assertEqual(len(results), 1)
+                self.assertIn("imdb_id", results[0]["matches"])
 
 
 if __name__ == "__main__":

@@ -140,6 +140,42 @@ class TitloviProviderTests(unittest.TestCase):
         self.assertIn("series", results[0]["matches"])
         self.assertIn("season", results[0]["matches"])
         self.assertIn("episode", results[0]["matches"])
+        self.assertIn("series", results[1]["matches"])
+        self.assertIn("season", results[1]["matches"])
+        self.assertIn("episode", results[1]["matches"])
+        self.assertEqual(results[1]["provider_payload"]["episode"], 1)
+
+    def test_episode_match_requires_a_known_positive_requested_episode(self):
+        cases = [
+            (1, 1, True),
+            (1, 0, True),
+            ("1", 0, True),
+            (1, 2, False),
+            (1, None, False),
+            (None, 0, False),
+            (None, None, False),
+            ("", 0, False),
+            ("unknown", 0, False),
+            (0, 0, False),
+            (0, 1, False),
+            (-1, 0, False),
+            (-1, -1, False),
+        ]
+        for requested, candidate, expected in cases:
+            with self.subTest(requested=requested, candidate=candidate):
+                matches = self.mod.derive_matches(
+                    {"kind": "episode", "episode": requested},
+                    "", "", "", episode=candidate,
+                )
+                self.assertEqual("episode" in matches, expected)
+
+    def test_episode_results_reject_wrong_or_missing_season_and_episode(self):
+        video = _video("titlovi_video_chernobyl_s01e01.json")
+        pack = json.loads(_fixture("titlovi_search_chernobyl_s01.json"))["SubtitleResults"][1]
+        for season, episode in ((2, 0), (None, 0), (1, 2), (1, None)):
+            with self.subTest(season=season, episode=episode):
+                candidate = dict(pack, Season=season, Episode=episode)
+                self.assertEqual(self.mod._results_from_api(video, [candidate]), [])
 
     def test_download_returns_raw_zip_archive_with_episode(self):
         provider = self.mod.TitloviProvider()
