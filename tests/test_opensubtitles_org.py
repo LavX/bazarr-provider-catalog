@@ -2017,6 +2017,179 @@ class AnubisClearanceTests(unittest.TestCase):
                 self.assertIsNone(parsed)
 
 
+class AnubisRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.url = "https://www.opensubtitles.org/en/search2?MovieName=private-title"
+        self.secret = "private-challenge-and-cookie"
+        self.challenge = '<script id="anubis_challenge">' + json.dumps({"challenge": {
+            "id": self.secret, "randomData": self.secret, "difficulty": 0, "method": "fast",
+        }}) + "</script>"
+
+    def _response(self, text="", status=200, url=None, auth=False):
+        response = FakeResponse(url or self.url, status_code=status, text=text)
+        response.cookies = RequestsCookieJar()
+        response.history = []
+        if auth:
+            response.cookies.set("techaro.lol-anubis-auth", self.secret,
+                                 domain="www.opensubtitles.org", path="/")
+        return response
+
+    def _provider(self, responses):
+        class Session(FakeSession):
+            def get(self, url, **kwargs):
+                response = super().get(url, **kwargs)
+                if isinstance(response, Exception):
+                    raise response
+                for hop in [*response.history, response]:
+                    self.cookies.update(hop.cookies)
+                return response
+
+        session = Session(responses)
+        session.cookies = RequestsCookieJar()
+        session.cookies.set("PHPSESSID", "keep", domain="www.opensubtitles.org", path="/")
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        provider._session = session
+        return provider, session
+
+    def test_failed_pass_recovers_with_fresh_challenge_and_preserves_unrelated_cookies(self):
+        provider, session = self._provider([
+            self._response(self.challenge, 401), self._response(self.challenge, 401),
+            self._response(status=401),
+            self._response(self.challenge, 401), self._response(self.challenge, 401),
+            self._response(status=302, auth=True), self._response(SUBTITLES_HTML),
+        ])
+        with patch.object(self.mod.time, "sleep") as sleep:
+            response = provider._http_get(self.url, {})
+        self.assertEqual(response.text, SUBTITLES_HTML)
+        self.assertEqual(len(session.calls), 7)
+        self.assertEqual(sleep.call_count, 1)
+        self.assertEqual(session.cookies.get("PHPSESSID"), "keep")
+        self.assertEqual(session.cookies.get("techaro.lol-anubis-auth"), self.secret)
+
+    def test_malformed_challenges_stop_after_three_attempts_with_safe_diagnostics(self):
+        malformed = '<script id="anubis_challenge">{"private":"' + self.secret + '"}</script>'
+        provider, session = self._provider([self._response(malformed, 401) for _ in range(6)])
+        with patch.object(self.mod.time, "sleep") as sleep, self.assertLogs(self.mod.__name__, "WARNING") as logs:
+            with self.assertRaisesRegex(self.mod.ServiceUnavailable, "after 3 attempts"):
+                provider._http_get(self.url, {})
+        self.assertEqual(len(session.calls), 6)
+        self.assertEqual(sleep.call_count, 2)
+        diagnostic = " ".join(logs.output)
+        self.assertIn("stage=challenge_parse", diagnostic)
+        self.assertIn("attempt=3/3", diagnostic)
+        self.assertNotIn(self.secret, diagnostic)
+        self.assertNotIn("private-title", diagnostic)
+        self.assertNotIn(self.url, diagnostic)
+
+    def test_solver_refetch_that_already_cleared_returns_the_available_page(self):
+        provider, session = self._provider([
+            self._response(self.challenge, 401), self._response(SUBTITLES_HTML),
+        ])
+        response = provider._http_get(self.url, {})
+        self.assertEqual(response.text, SUBTITLES_HTML)
+        self.assertEqual(len(session.calls), 2)
+        self.assertIsNone(session.cookies.get("techaro.lol-anubis-auth"))
+
+    def test_solver_does_not_accept_error_offsite_or_challenge_page_as_cleared_refetch(self):
+        for rejected in (
+            self._response("ordinary error", 500),
+            self._response(SUBTITLES_HTML, url="https://example.invalid/en/search"),
+            self._response(SUBTITLES_HTML, url="https://www.opensubtitles.org/.within.website/"),
+            self._response('<script id="anubis_challenge">{}</script>'),
+            self._response('<script type="application/json" id="anubis_challenge">'),
+            self._response("<title>Just a moment...</title>"),
+        ):
+            with self.subTest(url=rejected.url, status=rejected.status_code, body=rejected.text):
+                provider, session = self._provider([
+                    self._response(self.challenge, 401), rejected,
+                    self._response(self.challenge, 401), rejected,
+                    self._response(self.challenge, 401), rejected,
+                ])
+                with patch.object(self.mod.time, "sleep"):
+                    with self.assertRaises(self.mod.ServiceUnavailable):
+                        provider._http_get(self.url, {})
+                self.assertEqual(len(session.calls), 6)
+
+    def test_persistent_http_200_challenge_never_becomes_search_content(self):
+        responses = []
+        for _ in range(3):
+            responses.append(self._response(self.challenge))
+            for _ in range(3):
+                responses.extend([
+                    self._response(self.challenge), self._response(status=302, auth=True),
+                    self._response(self.challenge),
+                ])
+        provider, session = self._provider(responses)
+        with patch.object(self.mod.time, "sleep") as sleep:
+            with self.assertRaises(self.mod.ServiceUnavailable):
+                provider._http_get(self.url, {})
+        self.assertEqual(len(session.calls), 30)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_missing_fresh_auth_is_diagnosed_and_retried(self):
+        responses = []
+        for _ in range(3):
+            responses.extend([
+                self._response(self.challenge, 401), self._response(self.challenge, 401),
+                self._response(status=302),
+            ])
+        provider, session = self._provider(responses)
+        session.cookies.set("techaro.lol-anubis-auth", self.secret,
+                            domain="www.opensubtitles.org", path="/")
+        with patch.object(self.mod.time, "sleep"), self.assertLogs(self.mod.__name__, "WARNING") as logs:
+            with self.assertRaises(self.mod.ServiceUnavailable):
+                provider._http_get(self.url, {})
+        self.assertEqual(len(session.calls), 9)
+        self.assertIn("stage=auth_cookie", " ".join(logs.output))
+        self.assertNotIn(self.secret, " ".join(logs.output))
+
+    def test_submission_transport_failure_recovers_without_logging_exception_payload(self):
+        provider, session = self._provider([
+            self._response(self.challenge, 401), self._response(self.challenge, 401),
+            TimeoutError(self.url + " " + self.secret),
+            self._response(SUBTITLES_HTML),
+        ])
+        with patch.object(self.mod.time, "sleep"), self.assertLogs(self.mod.__name__, "WARNING") as logs:
+            response = provider._http_get(self.url, {})
+        self.assertEqual(response.text, SUBTITLES_HTML)
+        self.assertEqual(len(session.calls), 4)
+        diagnostic = " ".join(logs.output)
+        self.assertIn("stage=pass_submit", diagnostic)
+        self.assertNotIn(self.secret, diagnostic)
+        self.assertNotIn(self.url, diagnostic)
+
+    def test_anubis_rate_limit_is_not_retried_as_a_failed_solve(self):
+        for responses in (
+            [self._response(self.challenge, 429)],
+            [self._response(self.challenge, 401), self._response(status=429)],
+            [self._response(self.challenge, 401), self._response(self.challenge, 401),
+             self._response(status=429)],
+        ):
+            with self.subTest(requests=len(responses)):
+                provider, session = self._provider(responses)
+                with patch.object(self.mod.time, "sleep") as sleep:
+                    with self.assertRaises(self.mod.RateLimited):
+                        provider._http_get(self.url, {})
+                self.assertEqual(len(session.calls), len(responses))
+                sleep.assert_not_called()
+
+    def test_invalid_challenge_fields_fail_as_bounded_provider_errors(self):
+        for fields in (
+            {"difficulty": None}, {"difficulty": "invalid"}, {"difficulty": []},
+            {"difficulty": -1}, {"randomData": None}, {"id": None},
+        ):
+            payload = {"id": self.secret, "randomData": self.secret, "difficulty": 0, "method": "fast"}
+            payload.update(fields)
+            malformed = '<script id="anubis_challenge">' + json.dumps({"challenge": payload}) + "</script>"
+            with self.subTest(fields=fields):
+                provider, session = self._provider([self._response(malformed) for _ in range(6)])
+                with patch.object(self.mod.time, "sleep"):
+                    with self.assertRaises(self.mod.ServiceUnavailable):
+                        provider._http_get(self.url, {})
+                self.assertEqual(len(session.calls), 6)
+
+
 class ReturnedIMDbScoringTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()

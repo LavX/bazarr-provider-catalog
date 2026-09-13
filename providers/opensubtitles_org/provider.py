@@ -5,6 +5,7 @@ import hashlib
 import html
 import io
 import json
+import logging
 import os
 import re
 import socket
@@ -19,6 +20,8 @@ try:
     import cloudscraper
 except ImportError:  # pragma: no cover, dependency is declared in provider.json
     cloudscraper = None
+
+logger = logging.getLogger(__name__)
 
 PROVIDER_ID = "opensubtitles"
 BASE_URL = "https://www.opensubtitles.org"
@@ -42,10 +45,9 @@ RETRY_MAX_ATTEMPTS = 3
 RETRY_BACKOFF_SECONDS = 0.5
 RETRY_BACKOFF_CAP_SECONDS = 8.0
 
-# Re-solve a fresh anti-bot challenge on a transient 401/403 (Anubis / Cloudflare rate
-# limit) before failing the search. opensubtitles.org issues a new Anubis challenge per
-# request and rate-limits bursts; the embedded proof-of-work solves reliably, so a brief
-# re-solve recovers the block instead of losing the whole search on the first 401.
+# Re-solve fresh challenges after a failed Anubis solve or transient 401/403.
+# Failed solves share this budget with HTTP blocks, including gates served as 200.
+# Respect explicit 429 rate limits and pause before obtaining a fresh challenge.
 CHALLENGE_RETRY_ATTEMPTS = 3
 # opensubtitles.org stacks Cloudflare in FRONT of Anubis, so a single fetch can surface a
 # CF gate, then an Anubis gate once CF clears. Resolve whichever gate is present and
@@ -76,6 +78,9 @@ _DOWNLOAD_LINK_RE = re.compile(
 _META_REFRESH_RE = re.compile(
     r"""<meta\s+http-equiv=["']refresh["']\s+content=["'](?P<delay>\d+);\s*url=(?P<url>[^"']+)["']""",
     re.I,
+)
+_ANUBIS_CHALLENGE_MARKER_RE = re.compile(
+    r"""<script\b[^>]*\bid\s*=\s*["']anubis_challenge["']""", re.I
 )
 _ANUBIS_CHALLENGE_RE = re.compile(
     r"""<script\s+id=["']anubis_challenge["'][^>]*>\s*(?P<json>.*?)\s*</script>""",
@@ -704,10 +709,18 @@ def _extract_anubis_challenge(html_text):
     challenge = data.get("challenge")
     if not isinstance(challenge, dict) or "randomData" not in challenge or "id" not in challenge:
         return None
+    if any(not isinstance(challenge[key], str) or not challenge[key] for key in ("id", "randomData")):
+        return None
+    try:
+        difficulty = int(challenge.get("difficulty", 4))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if difficulty < 0:
+        return None
     return {
         "id": challenge["id"],
         "randomData": challenge["randomData"],
-        "difficulty": int(challenge.get("difficulty", 4)),
+        "difficulty": difficulty,
         "method": challenge.get("method", "fast"),
     }
 
@@ -728,6 +741,38 @@ def _solve_preact(random_data, difficulty):
     return hashlib.sha256(random_data.encode("utf-8")).hexdigest(), difficulty * 0.125
 
 
+@dataclass(frozen=True)
+class _AnubisPage:
+    # The resource became available during the solver's refetch. This is not a
+    # claim that the pass endpoint issued a new clearance cookie.
+    response: object
+
+
+def _is_anubis_response(response):
+    text = _response_text(response)
+    return bool(
+        is_anubis_challenge(getattr(response, "url", ""), getattr(response, "status_code", 0))
+        or _ANUBIS_CHALLENGE_MARKER_RE.search(text)
+        or _extract_anubis_challenge(text)
+    )
+
+
+def _anubis_get(session, url, timeout, stage, allow_redirects=True):
+    # The caller owns recovery. Never nest transport retries inside its gate
+    # budget, or include request URLs, cookies or exception payloads in logs.
+    try:
+        response = session.get(url, timeout=timeout, allow_redirects=allow_redirects)
+    except Exception as exc:
+        logger.warning("OpenSubtitles.org Anubis stage=%s request_failed", stage)
+        if _is_retryable_transport_error(exc):
+            return None
+        raise ServiceUnavailable("OpenSubtitles.org Anubis request failed") from None
+    if response.status_code == 429:
+        logger.warning("OpenSubtitles.org Anubis stage=%s status=429", stage)
+        raise RateLimited("OpenSubtitles.org rate limited the Anubis request")
+    return response
+
+
 def solve_anubis_challenge(session, challenge_url, original_url, timeout=DEFAULT_TIMEOUT_SECONDS):
     parsed = urllib.parse.urlparse(challenge_url)
     query = urllib.parse.parse_qs(parsed.query)
@@ -739,9 +784,20 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=DEFAULT
     started = time.monotonic()
     deadline = started + max(float(timeout or DEFAULT_TIMEOUT_SECONDS), 0.1)
 
-    response = session.get(challenge_page_url, timeout=(10, timeout), allow_redirects=True)
-    challenge = _extract_anubis_challenge(response.text)
+    response = _anubis_get(session, challenge_page_url, (10, timeout), "challenge_fetch")
+    if response is None:
+        return None
+    challenge = _extract_anubis_challenge(_response_text(response))
     if not challenge:
+        if (
+            200 <= response.status_code < 300
+            and _is_site_url(getattr(response, "url", ""))
+            and not _is_anubis_response(response)
+            and not _is_cloudflare_challenge(response)
+        ):
+            logger.debug("OpenSubtitles.org Anubis stage=challenge_fetch page_available")
+            return _AnubisPage(response)
+        logger.warning("OpenSubtitles.org Anubis stage=challenge_parse status=%s", response.status_code)
         return None
 
     method = challenge["method"]
@@ -750,9 +806,7 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=DEFAULT
         if not redirect_url.startswith("http"):
             redirect_url = base + redirect_url
         time.sleep(challenge.get("delay", 1))
-        solved = session.get(redirect_url, timeout=(10, timeout), allow_redirects=True)
-        if solved.cookies:
-            session.cookies.update(solved.cookies)
+        solved = _anubis_get(session, redirect_url, (10, timeout), "pass_submit")
     elif method == "preact":
         result, delay = _solve_preact(challenge["randomData"], challenge["difficulty"])
         remaining = deadline - time.monotonic()
@@ -766,13 +820,13 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=DEFAULT
             "redir": redir,
             "elapsedTime": str(int((time.monotonic() - started) * 1000)),
         }
-        solved = session.get(
+        solved = _anubis_get(
+            session,
             f"{base}/.within.website/x/cmd/anubis/api/pass-challenge?{urllib.parse.urlencode(params)}",
-            timeout=(10, timeout),
+            (10, timeout),
+            "pass_submit",
             allow_redirects=False,
         )
-        if solved.cookies:
-            session.cookies.update(solved.cookies)
     else:
         nonce, digest = _solve_pow(challenge["randomData"], challenge["difficulty"], deadline=deadline)
         params = {
@@ -782,15 +836,20 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=DEFAULT
             "redir": redir,
             "elapsedTime": str(int((time.monotonic() - started) * 1000)),
         }
-        solved = session.get(
+        solved = _anubis_get(
+            session,
             f"{base}/.within.website/x/cmd/anubis/api/pass-challenge?{urllib.parse.urlencode(params)}",
-            timeout=(10, timeout),
+            (10, timeout),
+            "pass_submit",
             allow_redirects=False,
         )
-        if solved.cookies:
-            session.cookies.update(solved.cookies)
 
+    if solved is None:
+        return None
+    if solved.cookies:
+        session.cookies.update(solved.cookies)
     if not 200 <= solved.status_code < 400:
+        logger.warning("OpenSubtitles.org Anubis stage=pass_status status=%s", solved.status_code)
         return None
     issued_auth = {
         (cookie.domain, cookie.path, cookie.name, cookie.value)
@@ -804,6 +863,8 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=DEFAULT
         if (cookie.domain, cookie.path, cookie.name, cookie.value) in issued_auth
         and not cookie.is_expired()
     }
+    if not cookies:
+        logger.warning("OpenSubtitles.org Anubis stage=auth_cookie status=%s", solved.status_code)
     return cookies or None
 
 
@@ -1520,15 +1581,24 @@ class OpenSubtitlesOrgProvider:
             # Resolve layered anti-bot gates (Cloudflare in front of Anubis): solve whichever
             # gate the current response shows and re-fetch, a few rounds, so a CF->Anubis
             # chain clears in this pass rather than waiting for the next retry attempt.
+            anubis_failed = False
             for _ in range(CHALLENGE_GATE_ROUNDS):
+                if getattr(response, "status_code", 200) == 429:
+                    raise RateLimited("OpenSubtitles.org rate limited the request")
                 challenge_url = getattr(response, "url", "") or url
-                if is_anubis_challenge(challenge_url, getattr(response, "status_code", 0)) or _extract_anubis_challenge(
-                    _response_text(response)
-                ):
+                if _is_anubis_response(response):
                     solved = solve_anubis_challenge(session, challenge_url, url, timeout=timeout)
                     if not solved:
-                        raise ServiceUnavailable("OpenSubtitles.org Anubis challenge could not be solved")
-                    response = session.get(url, timeout=timeout, allow_redirects=True)
+                        anubis_failed = True
+                        break
+                    if isinstance(solved, _AnubisPage):
+                        response = solved.response
+                    else:
+                        refreshed = _anubis_get(session, url, timeout, "resource_refetch")
+                        if refreshed is None:
+                            anubis_failed = True
+                            break
+                        response = refreshed
                     continue
                 if _is_cloudflare_challenge(response):
                     self._fallback_to_flaresolverr(url, config)
@@ -1540,6 +1610,18 @@ class OpenSubtitlesOrgProvider:
             status = getattr(response, "status_code", 200)
             if status == 429:
                 raise RateLimited("OpenSubtitles.org rate limited the request")
+            if anubis_failed or _is_anubis_response(response):
+                logger.warning(
+                    "OpenSubtitles.org Anubis stage=recovery attempt=%s/%s status=%s",
+                    attempt, CHALLENGE_RETRY_ATTEMPTS, status,
+                )
+                if attempt < CHALLENGE_RETRY_ATTEMPTS:
+                    self._reset_anubis_cookies(session)
+                    time.sleep(_backoff_delay(attempt))
+                    continue
+                raise ServiceUnavailable(
+                    f"OpenSubtitles.org Anubis challenge could not be solved after {attempt} attempts"
+                )
             if status >= 400:
                 last_status = status
                 # A 401/403 after challenge handling is a transient anti-bot block: the
@@ -1593,10 +1675,7 @@ class OpenSubtitlesOrgProvider:
             return False
         if _is_cloudflare_challenge(response):
             return False
-        challenge_url = getattr(response, "url", "") or ""
-        if is_anubis_challenge(challenge_url, status):
-            return False
-        if _extract_anubis_challenge(_response_text(response)):
+        if _is_anubis_response(response):
             return False
         return True
 
