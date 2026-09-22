@@ -1,12 +1,12 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "90d98a43795dbd60bc0bd77324058226badf2fcb6778c0ca2b317754614112da",
+  "bundle_sha256": "06d26e8f3cacec666d3622290f438f2f74b5d3425a34065a2f3d8a0199aa4f0c",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
       "anime_mode": {
         "default": false,
-        "description": "Enable extra absolute-episode, season-only, title-only, and pack matching searches for anime libraries.",
+        "description": "Enable extra absolute-episode, season-only, and title-only searches for anime libraries.",
         "title": "Anime mode",
         "type": "boolean"
       },
@@ -33,11 +33,11 @@
   "dependencies": {
     "requirements": []
   },
-  "description": "Uses the official SubDL API for movie and episode subtitles, including optional anime pack handling.",
+  "description": "Uses the official SubDL API for movie and episode subtitles, including season packs and optional anime search fallbacks.",
   "entry_class": "SubDLProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "77b972fddb348f5e570da317d532c38def63c8fa86e67202ed6ce7d7ff78bfbc"
+    "provider.py": "e9e67200acd1ca8e4576507e8c7df9d5c5ec048bddae52030bf7657ae916f8d9"
   },
   "languages": [
     "ara",
@@ -54,25 +54,35 @@
     "eng",
     "epo",
     "est",
+    "eus",
     "fas",
     "fin",
     "fra",
+    "gle",
+    "glg",
     "heb",
     "hin",
     "hrv",
     "hun",
+    "hye",
     "ind",
     "isl",
     "ita",
+    "jav",
     "jpn",
     "kal",
+    "kan",
     "kat",
+    "kaz",
+    "khm",
+    "kir",
     "kor",
     "kur",
     "lav",
     "lit",
     "mal",
     "mkd",
+    "mon",
     "msa",
     "mya",
     "nld",
@@ -87,6 +97,7 @@
     "spa",
     "sqi",
     "srp",
+    "sun",
     "swe",
     "tam",
     "tel",
@@ -117,5 +128,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.4"
+  "version": "0.1.5"
 }
