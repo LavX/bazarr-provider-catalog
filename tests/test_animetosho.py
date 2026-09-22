@@ -304,6 +304,60 @@ class AnimeToshoProviderSearchTests(unittest.TestCase):
         self.assertIn("episode", first["matches"])
         self.assertEqual(first["score"], 96)
 
+    def test_search_keeps_shared_attachment_for_each_release_association(self):
+        provider = self.mod.AnimeToshoProvider()
+        entries = json.dumps(
+            [
+                {
+                    "id": 616869,
+                    "status": "complete",
+                    "timestamp": 20,
+                    "title": "[ToonsHub] Solo Leveling S01E12",
+                },
+                {
+                    "id": 616870,
+                    "status": "complete",
+                    "timestamp": 10,
+                    "title": "[OtherGroup] Solo Leveling S01E12",
+                },
+            ]
+        ).encode("utf-8")
+        detail = _torrent_body(
+            [
+                {
+                    "id": 1979653,
+                    "type": "subtitle",
+                    "info": {"lang": "eng", "name": "English", "codec": "ASS"},
+                }
+            ]
+        )
+
+        def get_json(url, timeout=15):
+            del timeout
+            if url == "https://feed.animetosho.org/json?eid=277518":
+                return entries
+            if url in {
+                "https://feed.animetosho.org/json?show=torrent&id=616869",
+                "https://feed.animetosho.org/json?show=torrent&id=616870",
+            }:
+                return detail
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = get_json
+        results = provider.search(
+            VIDEO,
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"search_threshold": 2, "request_delay_ms": 0},
+        )
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual(
+            {result["provider_payload"]["entry_id"] for result in results},
+            {616869, 616870},
+        )
+        self.assertEqual(len({result["id"] for result in results}), 2)
+        self.assertEqual(len({result["page_link"] for result in results}), 1)
+
     def test_search_skips_non_episode_and_missing_anidb_episode_id(self):
         provider = self.mod.AnimeToshoProvider()
 
