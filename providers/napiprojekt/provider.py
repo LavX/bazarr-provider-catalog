@@ -262,10 +262,13 @@ class NapiProjektProvider:
         video = video or {}
         config = dict(config or {})
         results = []
-        if not (config.get("only_authors") or config.get("only_real_names")):
+        hash_only = bool(config.get("hash_only"))
+        if hash_only or not (config.get("only_authors") or config.get("only_real_names")):
             hash_result = self._hash_search(video, config)
             if hash_result:
                 results.append(hash_result)
+        if hash_only:
+            return _dedupe_results(results)
         try:
             results.extend(self._catalog_search(video, config))
         except CloudflareBlockedError:
