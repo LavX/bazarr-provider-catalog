@@ -26,7 +26,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`bsplayer`](providers/bsplayer/) | 0.1.1 | Uses the BSPlayer subtitles SOAP API for hash and size based movie and episode subtitle lookup. No login or API key. |
 | [`embeddedsubtitles`](providers/embeddedsubtitles/) | 0.1.3 | Extracts subtitle streams embedded in local movie and episode media files with ffprobe and ffmpeg. No login or API key. |
 | [`fansubs`](providers/fansubs/) | 0.1.6 | Scrapes [fansubs.ru](http://fansubs.ru) for Russian anime and Asian cinema subtitles. No login or API key. |
-| [`gestdown`](providers/gestdown/) | 0.1.3 | Uses the public Gestdown API for episode subtitles by TVDB show id, season, episode, and language. No login or API key. |
+| [`gestdown`](providers/gestdown/) | 0.1.4 | Uses the public Gestdown API for episode subtitles by TVDB show id, season, episode, and language. No login or API key. |
 | [`greeksubs`](providers/greeksubs/) | 0.1.1 | Scrapes [GreekSubs](https://greeksubs.net) for Greek movie and episode subtitles by IMDb id. No login or API key. |
 | [`greeksubtitles`](providers/greeksubtitles/) | 0.1.3 | Scrapes [GreekSubtitles](https://gr.greek-subtitles.com) for Greek and English movie and episode subtitles. ZIP and RAR downloads are supported. |
 | [`isubtitles`](providers/isubtitles/) | 0.1.4 | Scrapes [iSubtitles.org](https://isubtitles.org) for movie and episode subtitles in broad multilingual coverage. No login or API key. |
