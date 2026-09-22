@@ -54,7 +54,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`subs4series`](providers/subs4series/) | 0.1.7 | Scrapes [Subs4Series](https://www.subs4series.com) for Greek and English episode subtitles. Uses ai-cloudscraper with inline Anubis solving, optional FlareSolverr fallback, and optional captcha helper settings for download gates. |
 | [`subhd`](providers/subhd/) | 0.1.4 | Scrapes [SubHD.tv](https://subhd.tv) for Chinese-first movie and episode subtitles with multilingual releases. No login or API key. |
 | [`subsarr`](providers/subsarr/) | 0.1.2 | Connects to a self-hosted [Subsarr](https://github.com/slimcdk/subsarr) API for Subscene-style movie and episode subtitles. Requires a Base URL. |
-| [`subsource`](providers/subsource/) | 0.1.4 | Uses the official [SubSource](https://subsource.net) API for movie and episode subtitles. API key required. |
+| [`subsource`](providers/subsource/) | 0.1.5 | Uses the official [SubSource](https://subsource.net) API for movie and episode subtitles, with bounded retries for short rate-limit resets. API key required. |
 | [`subsynchro`](providers/subsynchro/) | 0.1.4 | Scrapes [SubSynchro](https://www.subsynchro.com) for French movie release subtitle ZIP files. No login or API key. |
 | [`subtis`](providers/subtis/) | 0.1.0 | Queries [api.subt.is](https://api.subt.is) for Spanish movie subtitles using hash, size, filename, and alternative lookups. No login or API key. |
 | [`subtitrarinoi`](providers/subtitrarinoi/) | 0.1.5 | Scrapes [subtitrari-noi.ro](https://www.subtitrari-noi.ro) for Romanian movie and episode subtitles. No login or API key. |
