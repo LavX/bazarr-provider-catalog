@@ -73,6 +73,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`titlovi`](providers/titlovi/) | 0.1.8 | Uses the [Titlovi](https://kodi.titlovi.com/api/subtitles) Kodi API for movie and episode subtitles. Login required. |
 | [`turkcealtyaziorg`](providers/turkcealtyaziorg/) | 0.1.7 | Scrapes [TurkceAltyazi.org](https://turkcealtyazi.org) by IMDb id for Turkish and English movie and episode subtitles. Uses ai-cloudscraper by default with inline Anubis solving and optional FlareSolverr fallback for Cloudflare challenges. |
 | [`tvsubtitles`](providers/tvsubtitles/) | 0.1.3 | Scrapes [tvsubtitles.net](https://www.tvsubtitles.net) for episode subtitles in broad multilingual coverage. No login or API key. |
+| [`tsukihime`](providers/tsukihime/) | 0.1.0 | Uses the [TsukiHime](https://tsukihime.org) API with AniList movie ids and AniDB series and episode ids. XZ downloads are size-bounded. |
 | [`wizdom`](providers/wizdom/) | 0.1.4 | Uses [wizdom.xyz](https://wizdom.xyz) for Hebrew movie and episode subtitles, with TMDB lookup when an IMDb id is not supplied. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback for Cloudflare browser challenges. |
 | [`whisperai`](providers/whisperai/) | 0.1.2 | Generates subtitles through a user-supplied Whisper web service by extracting local audio with ffmpeg. Requires endpoint configuration. |
 | [`yifysubtitles`](providers/yifysubtitles/) | 0.1.3 | Scrapes [YIFYSubtitles](https://yifysubtitles.ch) for movie subtitles in broad multilingual coverage. No login or API key. |
@@ -154,6 +155,7 @@ Every provider here ships independently of Bazarr+ releases. [Contribute](#contr
 - `providers/titlovi/`: uses the Titlovi Kodi API for authenticated movie and episode subtitle search and downloads.
 - `providers/turkcealtyaziorg/`: scrapes TurkceAltyazi.org movie and episode subtitle listings by IMDb id.
 - `providers/tvsubtitles/`: scrapes tvsubtitles.net episode subtitle listings and ZIP downloads.
+- `providers/tsukihime/`: uses the TsukiHime API for movies by AniList id and episodes by AniDB series and episode ids, with bounded XZ downloads.
 - `providers/wizdom/`: uses wizdom.xyz for Hebrew movie and episode subtitles, with TMDB lookup when an IMDb id is missing. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback for Cloudflare browser challenges.
 - `providers/whisperai/`: generates subtitles through a configured Whisper web service after extracting local audio with ffmpeg.
 - `providers/yifysubtitles/`: scrapes YIFYSubtitles movie subtitle pages and ZIP downloads.
