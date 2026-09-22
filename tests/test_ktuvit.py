@@ -196,6 +196,74 @@ class KtuvitSearchTests(unittest.TestCase):
         self.assertTrue(any("search/movie" in url for url in tmdb_urls))
         self.assertTrue(any("movie/438631" in url for url in tmdb_urls))
 
+    def test_year_query_with_wrong_or_missing_imdb_retries_once_without_year_and_deduplicates(self):
+        provider = self.mod.KtuvitProvider()
+        provider._authenticated = True
+        provider._cookies = {"Login": "login-token"}
+        years = []
+
+        def post_response(url, json_data, headers, cookies, timeout=30):
+            del headers, cookies, timeout
+            if url != self.mod.SEARCH_URL:
+                raise AssertionError(url)
+            year = json_data["request"]["Year"]
+            years.append(year)
+            if year:
+                films = [
+                    {"IMDB_Link": "https://www.imdb.com/title/tt9999999/", "ID": "WRONG"},
+                    {"IMDB_Link": None, "ID": "MISSING"},
+                ]
+            else:
+                film = {"IMDB_Link": "https://www.imdb.com/title/tt1160419/", "ID": "MOV1"}
+                films = [film, dict(film)]
+            return self.mod.HttpResponse(200, _json_d({"Films": films}), {})
+
+        provider._http_post = post_response
+        provider._http_get = lambda url, headers, cookies, timeout=30: self.mod.HttpResponse(
+            200, _movie_page(), {}
+        )
+
+        results = provider.search(
+            {"kind": "movie", "title": "Dune", "year": 2021, "imdb_id": "tt1160419"},
+            [{"alpha3": "heb"}],
+            {"email": "user@example.com", "hashed_password": "hash"},
+        )
+
+        self.assertEqual(years, [2021, ""])
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["provider_payload"]["ktuvit_id"], "MOV1")
+
+    def test_yearless_retry_stops_after_one_attempt_when_imdb_never_matches(self):
+        provider = self.mod.KtuvitProvider()
+        provider._authenticated = True
+        provider._cookies = {"Login": "login-token"}
+        years = []
+
+        def post_response(url, json_data, headers, cookies, timeout=30):
+            del headers, cookies, timeout
+            if url != self.mod.SEARCH_URL:
+                raise AssertionError(url)
+            years.append(json_data["request"]["Year"])
+            return self.mod.HttpResponse(
+                200,
+                _json_d({"Films": [{"IMDB_Link": "https://www.imdb.com/title/tt9999999/", "ID": "WRONG"}]}),
+                {},
+            )
+
+        provider._http_post = post_response
+        provider._http_get = lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("wrong IMDb film must not fetch subtitles")
+        )
+
+        results = provider.search(
+            {"kind": "movie", "title": "Dune", "year": 2021, "imdb_id": "tt1160419"},
+            [{"alpha3": "heb"}],
+            {"email": "user@example.com", "hashed_password": "hash"},
+        )
+
+        self.assertEqual(results, [])
+        self.assertEqual(years, [2021, ""])
+
 
 class KtuvitDownloadTests(unittest.TestCase):
     def setUp(self):
