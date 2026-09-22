@@ -194,6 +194,99 @@ class SubsSabBzProviderTests(unittest.TestCase):
         self.assertIn("release_group", results[0]["matches"])
         self.assertEqual(results[0]["provider_payload"]["download_url"], "http://subs.sab.bz/index.php?act=download&attach_id=51168")
 
+    def test_search_rejects_movie_row_with_conflicting_imdb_id(self):
+        provider = self.mod.SubsSabBzProvider()
+        mismatched = SEARCH_INCEPTION_EN_HTML.replace(b"tt1375666", b"tt9999999")
+        archive = _zip_body({"Inception.srt": "subtitle"})
+        downloads = []
+        provider._http_post = lambda url, data, timeout=30, referer=None: mismatched
+
+        def get_archive(url, timeout=30, referer=None):
+            del timeout, referer
+            downloads.append(url)
+            return archive
+
+        provider._http_get = get_archive
+        results = provider.search(
+            {
+                "kind": "movie",
+                "title": "Inception",
+                "year": 2010,
+                "imdb_id": "tt1375666",
+            },
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {},
+        )
+
+        self.assertEqual(results, [])
+        self.assertEqual(downloads, [])
+
+    def test_search_rejects_episode_row_with_conflicting_series_imdb_id(self):
+        provider = self.mod.SubsSabBzProvider()
+        mismatched = DAREDEVIL_EN_HTML.replace(b"tt3322312", b"tt9999999")
+        archive = _zip_body({"Daredevil.S01E01.WEB-DL.srt": "subtitle"})
+        downloads = []
+        provider._http_post = lambda url, data, timeout=30, referer=None: mismatched
+
+        def get_archive(url, timeout=30, referer=None):
+            del timeout, referer
+            downloads.append(url)
+            return archive
+
+        provider._http_get = get_archive
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "Daredevil",
+                "season": 1,
+                "episode": 1,
+                "series_imdb_id": "tt3322312",
+            },
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {},
+        )
+
+        self.assertEqual(results, [])
+        self.assertEqual(downloads, [])
+
+    def test_search_keeps_a_missing_imdb_id_without_awarding_an_id_match(self):
+        provider = self.mod.SubsSabBzProvider()
+        missing_id = SEARCH_INCEPTION_EN_HTML.replace(
+            b'<td><a href="http://www.imdb.com/title/tt1375666/">URL</a></td>',
+            b"<td>Unknown IMDb</td>",
+        )
+        archive = _zip_body({"Inception.srt": "subtitle"})
+        provider._http_post = lambda url, data, timeout=30, referer=None: missing_id
+        provider._http_get = lambda url, timeout=30, referer=None: archive
+
+        results = provider.search(
+            {"kind": "movie", "title": "Inception", "year": 2010, "imdb_id": "tt1375666"},
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertNotIn("imdb_id", results[0]["matches"])
+
+    def test_search_preserves_cyrillic_title_query(self):
+        provider = self.mod.SubsSabBzProvider()
+        queries = []
+
+        def post_stub(url, data, timeout=30, referer=None):
+            del url, timeout, referer
+            queries.append(data["movie"])
+            return b""
+
+        provider._http_post = post_stub
+        results = provider.search(
+            {"kind": "movie", "title": "Черната чанта"},
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {},
+        )
+
+        self.assertEqual(results, [])
+        self.assertEqual(queries, ["Черната чанта"])
+
     def test_search_episode_filters_archive_members_by_episode(self):
         provider = self.mod.SubsSabBzProvider()
         archive = _zip_body(
