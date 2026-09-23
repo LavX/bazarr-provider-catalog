@@ -24,6 +24,10 @@ Clean-room target for `karagarga`.
 - Search rows must match the requested movie year and English language, and must point to an approved forum item.
 - Live verification on 2026-05-31 found the homepage reachable, `pots.php` redirecting to login without credentials, and the forum serving its sign-in page.
 
+## Review follow-up
+
+Tracker and forum sessions use separate cookie scopes. Requests and redirects enforce the appropriate Karagarga HTTPS origin. Supported archive attachments are passed to the host for extraction rather than returned as SRT content; unsupported content is rejected.
+
 ## License notes
 
 Implementation is a clean-room Provider Hub plugin under this repository's MIT license. Behavior notes above describe public request and markup contracts only.
