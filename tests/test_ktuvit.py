@@ -399,5 +399,164 @@ class KtuvitDownloadIdentifierTests(unittest.TestCase):
         self.assertEqual(get_calls, [])
 
 
+class KtuvitTransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.sleeps = []
+        self.mod.time.sleep = lambda seconds: self.sleeps.append(seconds)
+
+    def _install_urlopen(self, outcomes):
+        calls = {"count": 0}
+
+        class _Resp:
+            def __init__(self, status, body):
+                self.status = status
+                self._body = body
+                self.headers = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return self._body
+
+        def fake_urlopen(request, timeout=None):
+            del request, timeout
+            index = calls["count"]
+            calls["count"] += 1
+            outcome = outcomes[index]
+            if isinstance(outcome, Exception):
+                raise outcome
+            return _Resp(outcome[0], outcome[1])
+
+        self.mod.urllib.request.urlopen = fake_urlopen
+        return calls
+
+    def test_url_error_is_retried_then_succeeds(self):
+        import urllib.error
+
+        calls = self._install_urlopen(
+            [
+                urllib.error.URLError("connection refused"),
+                (200, b"ok"),
+            ]
+        )
+
+        response = self.mod._http_request("GET", "https://example.test/", {}, {})
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.body, b"ok")
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_timeout_is_retried_twice_then_succeeds(self):
+        calls = self._install_urlopen(
+            [
+                TimeoutError("read timed out"),
+                socket_timeout_error(),
+                (200, b"recovered"),
+            ]
+        )
+
+        response = self.mod._http_request("GET", "https://example.test/", {}, {})
+
+        self.assertEqual(response.body, b"recovered")
+        self.assertEqual(calls["count"], 3)
+        self.assertEqual(len(self.sleeps), 2)
+
+    def test_http_503_is_retried_then_succeeds(self):
+        import urllib.error
+
+        calls = self._install_urlopen(
+            [
+                urllib.error.HTTPError("https://example.test/", 503, "Service Unavailable", {}, None),
+                (200, b"after-503"),
+            ]
+        )
+
+        response = self.mod._http_request("GET", "https://example.test/", {}, {})
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.body, b"after-503")
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_http_429_honors_retry_after_header(self):
+        import io
+        import urllib.error
+
+        error = urllib.error.HTTPError(
+            "https://example.test/",
+            429,
+            "Too Many Requests",
+            {"Retry-After": "3"},
+            io.BytesIO(b""),
+        )
+        self._install_urlopen([error, (200, b"after-429")])
+
+        response = self.mod._http_request("GET", "https://example.test/", {}, {})
+
+        self.assertEqual(response.body, b"after-429")
+        self.assertEqual(self.sleeps, [3.0])
+
+    def test_http_404_is_not_retried(self):
+        import urllib.error
+
+        calls = self._install_urlopen(
+            [
+                urllib.error.HTTPError("https://example.test/", 404, "Not Found", {}, None),
+                (200, b"should-not-reach"),
+            ]
+        )
+
+        response = self.mod._http_request("GET", "https://example.test/", {}, {})
+
+        self.assertEqual(response.status, 404)
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(self.sleeps, [])
+
+    def test_persistent_url_error_propagates_after_max_attempts(self):
+        import urllib.error
+
+        calls = self._install_urlopen(
+            [
+                urllib.error.URLError("connection refused"),
+                urllib.error.URLError("connection refused"),
+                urllib.error.URLError("connection refused"),
+            ]
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Ktuvit request failed"):
+            self.mod._http_request("GET", "https://example.test/", {}, {})
+
+        self.assertEqual(calls["count"], self.mod.RETRY_MAX_ATTEMPTS)
+        self.assertEqual(len(self.sleeps), self.mod.RETRY_MAX_ATTEMPTS - 1)
+
+    def test_persistent_503_returns_response_after_max_attempts(self):
+        import urllib.error
+
+        def make_503():
+            return urllib.error.HTTPError(
+                "https://example.test/", 503, "Service Unavailable", {}, None
+            )
+
+        calls = self._install_urlopen([make_503(), make_503(), make_503()])
+
+        response = self.mod._http_request("GET", "https://example.test/", {}, {})
+
+        self.assertEqual(response.status, 503)
+        self.assertEqual(calls["count"], self.mod.RETRY_MAX_ATTEMPTS)
+        self.assertEqual(len(self.sleeps), self.mod.RETRY_MAX_ATTEMPTS - 1)
+
+
+def socket_timeout_error():
+    import socket
+
+    return socket.timeout("timed out")
+
+
 if __name__ == "__main__":
     unittest.main()

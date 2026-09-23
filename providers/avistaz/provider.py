@@ -6,20 +6,12 @@ import html
 import io
 import os
 import re
-import shutil
-import subprocess
-import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
 from html.parser import HTMLParser
 from http.cookies import SimpleCookie
-
-try:
-    import py7zz
-except ImportError:
-    py7zz = None
 
 PROVIDER_ID = "avistaz"
 BASE_URL = "https://avistaz.to/"
@@ -277,8 +269,12 @@ class AvistazProvider:
         _raise_for_status(response, "AvistaZ subtitle download")
         if _looks_like_html(response):
             raise PermissionError("AvistaZ subtitle download returned a login page")
+        body = response.body or b""
+        if not body:
+            raise ValueError("avistaz downloaded empty subtitle")
+        if _is_archive_body(body):
+            return _archive_payload(body, payload)
         filename = _response_filename(response) or payload.get("filename") or download_url
-        body, filename = extract_download(response.body, filename, payload)
         body = _normalize_line_endings(body)
         return _content_payload(body, _format_from_filename(filename))
 
@@ -685,52 +681,18 @@ def _parse_html(body):
     return parser.root
 
 
-def extract_download(body, filename, payload=None):
-    payload = payload or {}
-    stream = io.BytesIO(body or b"")
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            names = [name for name in archive.namelist() if _subtitle_extension(name)]
-            if not names:
-                raise ValueError("avistaz archive contains no supported subtitle files")
-            name = _best_archive_member(names, payload)
-            return archive.read(name), name
-    if _looks_like_rar(body, filename):
-        files = _extract_rar_files(body)
-        if not files:
-            raise ValueError("avistaz RAR archive contains no supported subtitle files")
-        name = _best_archive_member([name for name, _content in files], payload)
-        for file_name, content in files:
-            if file_name == name:
-                return content, file_name
-    if not body:
-        raise ValueError("avistaz downloaded empty subtitle")
-    return body, filename
+def _is_archive_body(body):
+    body = body or b""
+    return zipfile.is_zipfile(io.BytesIO(body)) or body.startswith(b"Rar!\x1a\x07")
 
 
-def _best_archive_member(names, payload):
-    episode = _int_or_none(payload.get("episode"))
-    if episode is not None:
-        season = _int_or_none(payload.get("season"))
-        saw_episode_marker = False
-        for name in names:
-            match = _SXXEXX_RE.search(name)
-            if not match:
-                continue
-            saw_episode_marker = True
-            if int(match.group("episode")) != episode:
-                continue
-            if season is not None and int(match.group("season")) != season:
-                continue
-            return name
-        if saw_episode_marker:
-            raise ValueError("avistaz archive does not contain the requested episode")
-        episode_token = f"e{episode:02d}"
-        for name in names:
-            if episode_token in name.lower():
-                return name
-    names.sort(key=lambda name: (not name.lower().endswith(".srt"), len(name), name.lower()))
-    return names[0]
+def _archive_payload(body, provider_payload):
+    return {
+        "archive_b64": base64.b64encode(body).decode("ascii"),
+        "archive_sha256": hashlib.sha256(body).hexdigest(),
+        "season": _int_or_none(provider_payload.get("season")),
+        "episode": _int_or_none(provider_payload.get("episode")),
+    }
 
 
 def _int_or_none(value):
@@ -786,88 +748,6 @@ def _subtitle_extension(name):
     return None
 
 
-def _looks_like_rar(body, filename):
-    lower = str(filename or "").lower()
-    return lower.endswith(".rar") or (body or b"").startswith(b"Rar!\x1a\x07")
-
-
-def _extract_rar_files(body):
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception:
-            pass
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception:
-            pass
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception:
-            pass
-    raise RuntimeError("AvistaZ RAR extraction requires py7zz, unar, or 7z")
-
-
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("AvistaZ bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "avistaz.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_unar(body):
-    unar = shutil.which("unar")
-    if not unar:
-        raise RuntimeError("AvistaZ RAR fallback requires unar")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "avistaz.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run([unar, "-quiet", "-o", output_dir, archive_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if result.returncode:
-            raise RuntimeError("unar failed to extract AvistaZ RAR")
-        return _collect_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("AvistaZ RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "avistaz.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run([sevenzip, "x", f"-o{output_dir}", "-y", archive_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if result.returncode:
-            raise RuntimeError("7z failed to extract AvistaZ RAR")
-        return _collect_subtitle_files(output_dir)
-
-
-def _collect_subtitle_files(directory):
-    files = []
-    for root, _dirs, names in os.walk(directory):
-        for name in names:
-            if not _subtitle_extension(name):
-                continue
-            path = os.path.join(root, name)
-            rel = os.path.relpath(path, directory)
-            with open(path, "rb") as handle:
-                files.append((rel, handle.read()))
-    return files
-
-
 def _format_from_filename(filename):
     return _subtitle_extension(urllib.parse.urlparse(str(filename)).path) or "srt"
 
@@ -879,17 +759,11 @@ def _normalize_line_endings(body):
 def _content_payload(body, fmt):
     if not body:
         raise ValueError("avistaz downloaded empty subtitle")
-    try:
-        body.decode("utf-8")
-        encoding = "utf-8"
-    except UnicodeDecodeError:
-        encoding = "latin-1"
     return {
         "content_b64": base64.b64encode(body).decode("ascii"),
         "content_sha256": hashlib.sha256(body).hexdigest(),
         "content_type": _content_type(fmt),
         "format": fmt,
-        "encoding": encoding,
         "empty": False,
     }
 

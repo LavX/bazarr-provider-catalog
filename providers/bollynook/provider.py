@@ -275,15 +275,41 @@ class BollyNookProvider:
         return extract_download(body, payload)
 
 
+def _is_rar_or_7z(body):
+    head = body[:8] if body else b""
+    return head.startswith((b"Rar!\x1a\x07", b"7z\xbc\xaf\x27\x1c"))
+
+
 def extract_download(body, payload=None):
     payload = payload or {}
-    if not body:
-        return _content_payload(b"", "srt", empty=True)
-    stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
+    # Reject broken responses up front: an empty stream or an HTML/error page would
+    # otherwise be handed back as a bogus "subtitle".
+    if not body or not body.strip():
+        raise ValueError("bollynook empty download")
+    if _is_html_body(body):
+        raise ValueError("bollynook returned an HTML/error page")
+    if zipfile.is_zipfile(io.BytesIO(body)):
+        # Host-side extraction (Provider Hub v1.1+): the worker still lists the zip
+        # cheaply with stdlib to pick the right-language member, then hands the raw
+        # archive bytes and the chosen member name back to the host, which extracts
+        # it and detects the encoding via Subtitle.normalize().
+        with zipfile.ZipFile(io.BytesIO(body)) as archive:
             selected = select_subtitle_file(archive.namelist(), payload)
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
+        return {
+            "archive_b64": _base64.b64encode(body).decode("ascii"),
+            "archive_sha256": _hashlib.sha256(body).hexdigest(),
+            "member": selected,
+        }
+    if _is_rar_or_7z(body):
+        # RAR/7z: the stdlib-only worker can't list members, so hand the raw archive
+        # to the host (rarfile/py7zr), which extracts it and picks by episode. Without
+        # this branch a rar/7z body falls through and is mis-served as raw subtitle text.
+        return {
+            "archive_b64": _base64.b64encode(body).decode("ascii"),
+            "archive_sha256": _hashlib.sha256(body).hexdigest(),
+            "episode": payload.get("episode"),
+        }
+    # Direct, non-archive subtitle body.
     return _content_payload(body, _subtitle_extension(payload.get("filename", "")) or "srt")
 
 
@@ -378,29 +404,31 @@ def _subtitle_extension(name):
     return None
 
 
-def _content_payload(content, subtitle_format, empty=False):
-    if empty:
-        return {
-            "content_b64": "",
-            "content_sha256": "",
-            "content_type": _content_type(subtitle_format),
-            "format": subtitle_format,
-            "encoding": "utf-8",
-            "empty": True,
-        }
-    encoding = "utf-8"
-    try:
-        content.decode("utf-8")
-    except UnicodeDecodeError:
-        encoding = "latin-1"
+def _content_payload(content, subtitle_format):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     return {
         "content_b64": _base64.b64encode(content).decode("ascii"),
         "content_sha256": _hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
+
+
+def _is_html_body(body):
+    if not body:
+        return False
+    head = body[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or head.startswith(b"<!--")
+        or b"<body" in head
+        or b"<head" in head
+    )
 
 
 def _content_type(subtitle_format):

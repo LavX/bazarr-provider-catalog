@@ -30,6 +30,42 @@ Clean-room target for `prijevodionline`.
 - `Game of Thrones` S01E01 maps to episode id `33945`.
 - The live subtitle list returned Croatian and Serbian RAR download rows for S01E01.
 
+## Origin status: offline since August 2026
+
+The site is down and the cause is not technical on our side. The operators announced on
+2026-08-21 that their host suspended the site after repeated copyright complaints about
+translations hosted there. Their follow-up says the complete site was backed up with no
+translations lost, and that they are looking for new hosting less likely to hit the same
+problem. No replacement address and no timeline have been announced.
+
+Sources, both from the operators' own page:
+
+- <https://www.facebook.com/prijevodi.online/posts/pfbid02pAELJ6mT71mmvbCp67CBZ1d1MPVgH7dgScqiXYnC7gzuE5FJX69pNjyi3ncivLA7l>
+- <https://www.facebook.com/prijevodi.online/posts/pfbid02m5ZabJP4TJ9tFrTyTJKpmsnWTnVCsohvHJ8BkArQo86DcyPM3oKC3wzRho1LFArql>
+
+Measured on 2026-08-31:
+
+- `https://prijevodi-online.org/` returns `301` to `https://www.prijevodi-online.org/`.
+- `https://www.prijevodi-online.org/` returns `401` with the origin's own page,
+  "Proper authorization is required to access this resource!", to a plain client and to a
+  real Chrome User-Agent alike.
+- `https://www.prijevodi-online.org/serije/index/A`, the first URL any search reads,
+  returns `500` with the origin's own page, "An internal server error has occured.",
+  confirmed through a real Chrome via FlareSolverr.
+- FlareSolverr reports `Challenge not detected!` and is issued zero clearance cookies, so
+  no Cloudflare challenge is in play. Cloudflare is passing origin errors straight through.
+
+Consequences for this plugin:
+
+- The v0.2.0 Cloudflare challenge handling cannot be exercised against the live site until
+  the site returns. Do not require live smoke or a production-channel e2e until then.
+- Behavior against the dead origin was checked and is correct: `500` is retryable but
+  bounded (3 attempts, 0.5s then 1.0s backoff), so a search fails honestly in about three
+  seconds and never consumes the worker-deadline budget.
+- `BASE_URL` is fixed to `https://www.prijevodi-online.org`. If the site returns on a new
+  domain, the plugin needs a URL change on top of the challenge handling. If it returns on
+  the same domain behind Cloudflare, v0.2.0 is what is needed and no change is due.
+
 ## License notes
 
 Implementation is a clean-room Provider Hub plugin under this repository's MIT license. Behavior notes above describe public request and markup contracts only.

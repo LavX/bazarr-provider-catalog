@@ -4,21 +4,12 @@ import base64
 import hashlib
 import io
 import json
-import os
 import re
-import shutil
-import subprocess
-import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-
-try:
-    import py7zz
-except ImportError:
-    py7zz = None
 
 PROVIDER_ID = "subsro"
 BASE_API_URL = "https://api.subs.ro/v1.0"
@@ -312,8 +303,7 @@ class SubsRoProvider:
             raise ValueError("subsro download requires download_url or subtitle_id")
         body = self._request_bytes(download_url, dict(config or {}))
         filename = payload.get("filename") or urllib.parse.urlparse(download_url).path.rsplit("/", 1)[-1]
-        content, fmt = extract_download(body, filename, payload)
-        return _content_payload(content, fmt)
+        return _download_payload(body, filename, payload)
 
     def _request_json(self, url, params, config):
         api_keys = self._require_api_keys(config)
@@ -401,145 +391,116 @@ def _error_message(body):
     return data.get("message") if isinstance(data, dict) else None
 
 
-def extract_download(body, filename="", payload=None):
+def _download_payload(body, filename, payload):
     payload = payload or {}
-    if not body:
+    # Reject broken responses up front: a 200 can still carry an empty stream or an
+    # HTML/error page that would otherwise look like a successful download.
+    if not body or not body.strip():
         raise ValueError("subsro downloaded empty subtitle")
-    if _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        selected = select_subtitle_file([name for name, _data in files], payload)
-        return dict(files)[selected], _subtitle_extension(selected) or "srt"
-    stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist(), payload)
-            return archive.read(selected), _subtitle_extension(selected) or "srt"
-    return body, _format_from_filename(filename)
+    if _is_html_body(body):
+        raise ValueError(f"subsro returned an HTML/error page for subtitle {payload.get('subtitle_id')}")
+    if _is_archive_body(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
+        # the host, which lists it and detects encoding. A Subs.ro season pack can hold
+        # several episode members, and a multi-season pack repeats episode numbers across
+        # seasons (S01E05 vs S02E05), which the host's episode-only pick cannot tell apart.
+        # When we can list a zip, pin the member matching the scored season+episode on a
+        # unique match; otherwise (rar, single member, or no clear winner) defer to the
+        # host's episode selection, which fails loudly on a true no-match.
+        archive = {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+        }
+        member = _select_zip_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = payload.get("episode")
+        return archive
+    # Direct, non-archive subtitle body.
+    return _content_payload(body, _format_from_filename(filename))
 
 
-def select_subtitle_file(names, payload):
-    candidates = [name for name in names if _subtitle_extension(name)]
-    if not candidates:
-        raise ValueError("subsro archive contains no supported subtitle files")
-    episode = _int_or_none((payload or {}).get("episode"))
+def _is_archive_body(body):
+    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
+
+
+def _select_zip_member(body, payload):
+    # Pin the zip member matching the scored season+episode. Listing only, no extraction or
+    # decoding: the host reads the named member and runs chardet. Returns None for rar (not
+    # stdlib-listable), a single member (nothing to disambiguate), a missing episode, or any
+    # ambiguity, so the caller falls back to host-side episode selection.
+    payload = payload or {}
+    if _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body)):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        members = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/")
+            and _subtitle_extension(name)
+            and not name.rsplit("/", 1)[-1].startswith(".")
+        ]
+    if len(members) < 2:
+        return None  # a lone member: the host's episode pick already lands here
+    season = _int_or_none(payload.get("season"))
+    episode = _int_or_none(payload.get("episode"))
     if episode is None:
-        return sorted(candidates, key=_archive_preference_key)[0]
-    return max(candidates, key=lambda name: (_episode_file_score(name, episode), -_archive_preference_key(name)[0], -len(name)))
+        return None  # nothing to narrow on; let the host pick (e.g. movie pack)
+    # Narrow by season+episode when the season is known (Subs.ro packs are per-season, so a
+    # multi-season pack repeats episode numbers). Never fall back to episode-only here: with
+    # a known season, matching the episode in another season would silently deliver the wrong
+    # subtitle, so defer to the host instead. Episode-only matching is for unknown seasons.
+    if season is not None:
+        pool = [name for name in members if _member_has_season_episode(name, season, episode)]
+    else:
+        pool = [name for name in members if _member_has_episode(name, episode)]
+    if not pool:
+        # Requested season+episode (or episode) absent from every member: pinning another
+        # member would hard-fail the host download, so defer to host episode selection.
+        return None
+    if len(pool) != 1:
+        return None  # ambiguous: more than one member matches; let the host pick by episode
+    return pool[0]
 
 
-def _archive_preference_key(name):
-    extension = _subtitle_extension(name) or ""
-    return (0 if extension == "srt" else 1, len(name), name.lower())
+def _member_has_season_episode(name, season, episode):
+    # Tolerate separated SxxExx tokens (S01.E02, S01 E02, S01-E02) as well as contiguous
+    # S01E02 and NxNN (1x02), keeping the (?!\d) guard so "e02" never matches "e020".
+    text = name.lower()
+    return bool(
+        re.search(rf"(?<![a-z0-9])s0*{season}[\s._-]*e0*{episode}(?!\d)", text)
+        or re.search(rf"(?<![a-z0-9]){season}x0*{episode}(?!\d)", text)
+    )
 
 
-def _episode_file_score(name, episode):
-    normalized = NON_ALNUM_RE.sub(" ", os.path.basename(name).lower())
-    if re.search(rf"\bs\d+e0*{episode}\b", normalized):
-        return 100
-    if re.search(rf"\be0*{episode}\b", normalized):
-        return 90
-    if re.search(rf"(^|[^0-9])0*{episode}([^0-9]|$)", normalized):
-        return 80
-    return 0
-
-
-def _extract_rar_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"Subs.ro RAR extraction failed: {details}") from errors[-1]
-    raise RuntimeError("Subs.ro RAR extraction requires bundled py7zz")
-
-
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("Subs.ro bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subsro.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_unar(body):
-    unar = shutil.which("unar")
-    if not unar:
-        raise RuntimeError("Subs.ro RAR fallback requires unar")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subsro.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [unar, "-quiet", "-o", output_dir, archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"unar failed to extract Subs.ro RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("Subs.ro RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subsro.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [sevenzip, "x", "-y", f"-o{output_dir}", archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract Subs.ro RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if not _subtitle_extension(rel):
-                continue
-            with open(path, "rb") as handle:
-                files.append((rel, handle.read()))
-    if not files:
-        raise ValueError("subsro archive contains no supported subtitle files")
-    return files
+def _member_has_episode(name, episode):
+    # Episode-only fallback when the pack's season is unknown. Match a delimited SxxExx or
+    # bare ExNN token; never let "e02" match "e020" or a 3-digit code match a substring.
+    text = name.lower()
+    return bool(
+        re.search(rf"(?<![a-z0-9])s\d{{1,2}}[\s._-]*e0*{episode}(?!\d)", text)
+        or re.search(rf"(?<![a-z0-9])\d{{1,2}}x0*{episode}(?!\d)", text)
+        or re.search(rf"(?<![a-z\d])e0*{episode}(?!\d)", text)
+    )
 
 
 def _is_rar_archive(body):
     return (body or b"").startswith((b"Rar!\x1a\x07\x00", b"Rar!\x1a\x07\x01\x00"))
+
+
+def _is_html_body(body):
+    if not body:
+        return False
+    head = body[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or head.startswith(b"<!--")
+        or b"<body" in head
+        or b"<head" in head
+    )
 
 
 def _subtitle_extension(name):
@@ -565,17 +526,13 @@ def _format_from_url(url, fallback=None):
 def _content_payload(body, fmt):
     if not body:
         raise ValueError("subsro downloaded empty subtitle")
-    try:
-        body.decode("utf-8")
-        encoding = "utf-8"
-    except UnicodeDecodeError:
-        encoding = "latin-1"
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially latin-1, which never fails to decode) only reintroduces mojibake.
     return {
         "content_b64": base64.b64encode(body).decode("ascii"),
         "content_sha256": hashlib.sha256(body).hexdigest(),
         "content_type": _content_type(fmt),
         "format": fmt,
-        "encoding": encoding,
         "empty": False,
     }
 

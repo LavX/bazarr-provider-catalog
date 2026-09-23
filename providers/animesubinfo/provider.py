@@ -21,6 +21,9 @@ SEARCH_URL = f"{BASE_URL}/szukaj.php"
 DOWNLOAD_URL = f"{BASE_URL}/sciagnij.php"
 HTTP_TIMEOUT_SECONDS = 15
 HTTP_RETRIES = 2
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8.0
+RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 SUPPORTED_LANGUAGES = {"pol": "pl"}
 ALPHA2_TO_ALPHA3 = {value: key for key, value in SUPPORTED_LANGUAGES.items()}
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub")
@@ -146,33 +149,35 @@ class AnimeSubInfoProvider:
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         request = urllib.request.Request(url, headers=_headers(referer=referer))
-        for attempt in range(HTTP_RETRIES + 1):
-            try:
-                with self._opener.open(request, timeout=timeout) as response:
-                    return response.read()
-            except urllib.error.HTTPError:
-                raise
-            except (TimeoutError, socket.timeout, urllib.error.URLError):
-                if attempt >= HTTP_RETRIES:
-                    raise
-                time.sleep(0.25 * (attempt + 1))
-        raise RuntimeError("unreachable animesubinfo retry state")
+        return self._open_with_retry(request, timeout)
 
     def _http_post(self, url, data, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         encoded = urllib.parse.urlencode(data).encode("iso-8859-2", errors="replace")
         headers = _headers(referer=referer)
         headers["Content-Type"] = "application/x-www-form-urlencoded"
         request = urllib.request.Request(url, data=encoded, headers=headers)
-        for attempt in range(HTTP_RETRIES + 1):
+        return self._open_with_retry(request, timeout)
+
+    def _open_with_retry(self, request, timeout):
+        # Bounded transport retry around the raw urllib call only. Retries transient
+        # failures (connection errors, timeouts, HTTP 5xx and 429) so a single network
+        # blip does not abort a search or download. Non-transient errors (HTTP 4xx other
+        # than 429, parse errors, etc.) propagate unchanged on the first occurrence.
+        for attempt in range(1, HTTP_RETRIES + 2):
             try:
                 with self._opener.open(request, timeout=timeout) as response:
                     return response.read()
-            except urllib.error.HTTPError:
-                raise
-            except (TimeoutError, socket.timeout, urllib.error.URLError):
-                if attempt >= HTTP_RETRIES:
+            except urllib.error.HTTPError as error:
+                if error.code not in RETRY_STATUS_CODES or attempt > HTTP_RETRIES:
                     raise
-                time.sleep(0.25 * (attempt + 1))
+                delay = _retry_after_delay(error) if error.code == 429 else None
+                if delay is None:
+                    delay = _backoff_delay(attempt)
+                time.sleep(delay)
+            except (TimeoutError, socket.timeout, urllib.error.URLError):
+                if attempt > HTTP_RETRIES:
+                    raise
+                time.sleep(_backoff_delay(attempt))
         raise RuntimeError("unreachable animesubinfo retry state")
 
     def search(self, video, languages, config):
@@ -272,8 +277,7 @@ class AnimeSubInfoProvider:
             payload = refreshed
         if _looks_like_security_error(body):
             raise RuntimeError("AnimeSub.info download token was rejected")
-        body, subtitle_format = extract_download(body, payload)
-        return _content_payload(body, subtitle_format)
+        return _download_payload(body, payload)
 
     def _download_once(self, payload):
         url = payload.get("download_url") or DOWNLOAD_URL
@@ -303,15 +307,33 @@ class AnimeSubInfoProvider:
         raise RuntimeError("AnimeSub.info download token expired and subtitle was not found during refresh")
 
 
-def extract_download(body, payload=None):
+def _download_payload(body, payload=None):
     payload = payload or {}
-    stream = io.BytesIO(body or b"")
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist(), payload)
-            return _normalize_line_endings(archive.read(selected)), _subtitle_extension(selected) or "srt"
+    if not body or not body.strip():
+        raise ValueError(f"animesubinfo empty download for subtitle {payload.get('subtitle_id')}")
+    if zipfile.is_zipfile(io.BytesIO(body)):
+        # Host-side extraction (Provider Hub v1.1+): list the zip cheaply with stdlib to
+        # pick the member, then hand the raw archive bytes back. The host extracts the
+        # member and detects encoding via Subtitle.normalize().
+        with zipfile.ZipFile(io.BytesIO(body)) as archive:
+            member = select_subtitle_file(archive.namelist(), payload)
+        return {
+            "archive_b64": _base64.b64encode(body).decode("ascii"),
+            "archive_sha256": _hashlib.sha256(body).hexdigest(),
+            "member": member,
+        }
+    if _is_rar_archive(body) or _is_7z_archive(body):
+        # rar/7z cannot be listed with stdlib; let the host pick the member by episode.
+        return {
+            "archive_b64": _base64.b64encode(body).decode("ascii"),
+            "archive_sha256": _hashlib.sha256(body).hexdigest(),
+            "episode": payload.get("episode"),
+        }
+    # Direct, non-archive subtitle body.
+    if _looks_like_html(body):
+        raise ValueError(f"animesubinfo returned an HTML/error page for subtitle {payload.get('subtitle_id')}")
     subtitle_format = _subtitle_format_from_body(body) or _format_from_filename(payload.get("filename"))
-    return _normalize_line_endings(body or b""), subtitle_format
+    return _content_payload(_normalize_line_endings(body), subtitle_format)
 
 
 def select_subtitle_file(names, payload):
@@ -574,6 +596,24 @@ def _sleep(config):
         time.sleep(min(delay_ms, 5000) / 1000.0)
 
 
+def _backoff_delay(attempt):
+    return min(RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1)), RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _retry_after_delay(error):
+    # Honor a Retry-After header on 429 when it is a small, parseable number of seconds.
+    try:
+        header = error.headers.get("Retry-After")
+    except AttributeError:
+        header = None
+    if not header:
+        return None
+    value = str(header).strip()
+    if not value.isdigit():
+        return None
+    return min(float(value), RETRY_BACKOFF_CAP_SECONDS)
+
+
 def _absolute_url(value):
     joined = urllib.parse.urljoin(f"{BASE_URL}/", html.unescape(str(value or "")))
     parts = urllib.parse.urlsplit(joined)
@@ -664,27 +704,15 @@ def _extension_rank(name):
 
 
 def _content_payload(body, subtitle_format):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     subtitle_format = subtitle_format or "srt"
-    if not body:
-        return {
-            "content_b64": "",
-            "content_sha256": "",
-            "content_type": _content_type(subtitle_format),
-            "format": subtitle_format,
-            "encoding": "utf-8",
-            "empty": True,
-        }
-    encoding = "utf-8"
-    try:
-        body.decode("utf-8")
-    except UnicodeDecodeError:
-        encoding = "iso-8859-2"
     return {
         "content_b64": _base64.b64encode(body).decode("ascii"),
         "content_sha256": _hashlib.sha256(body).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 
@@ -695,6 +723,21 @@ def _content_type(subtitle_format):
     if subtitle_format == "sub":
         return "text/plain"
     return "application/x-subrip"
+
+
+def _is_rar_archive(body):
+    return bool(body) and (body.startswith(b"Rar!\x1a\x07\x00") or body.startswith(b"Rar!\x1a\x07\x01\x00"))
+
+
+def _is_7z_archive(body):
+    return bool(body) and body.startswith(b"7z\xbc\xaf\x27\x1c")
+
+
+def _looks_like_html(body):
+    if not body:
+        return False
+    head = body[:1024].lstrip().lower()
+    return head.startswith(b"<!doctype html") or head.startswith(b"<html") or b"<html" in head[:200]
 
 
 def _normalize_line_endings(body):

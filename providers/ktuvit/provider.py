@@ -5,6 +5,8 @@ import hashlib
 import html
 import json
 import re
+import socket
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -22,6 +24,10 @@ DOWNLOAD_URL = f"{BASE_URL}/Services/DownloadFile.ashx?DownloadIdentifier="
 TMDB_API_KEY = "a51ee051bcd762543373903de296e0a3"
 DEFAULT_USER_AGENT = "BazarrProviderHub/1.0"
 HTTP_TIMEOUT_SECONDS = 30
+RETRY_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8.0
+RETRY_STATUS_CODES = (429, 500, 502, 503, 504)
 NO_SUBTITLE_TEXT = "\u05d0\u05d9\u05df \u05db\u05ea\u05d5\u05d1\u05d9\u05d5\u05ea"
 
 
@@ -241,13 +247,54 @@ def _http_request(method, url, headers, cookies, json_data=None, timeout=HTTP_TI
         body = json.dumps(json_data).encode("utf-8")
         request_headers["Content-Type"] = "application/json"
     request = urllib.request.Request(url, data=body, headers=request_headers, method=method)
+    # Bounded retry for raw transport blips only: transient connection errors,
+    # timeouts, and HTTP 5xx/429 are retried with exponential backoff. Every
+    # other outcome (4xx, parse errors, anything else) keeps the existing
+    # single-attempt behavior and propagates on first occurrence.
+    for attempt in range(1, RETRY_MAX_ATTEMPTS + 1):
+        last_attempt = attempt == RETRY_MAX_ATTEMPTS
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return HttpResponse(response.status, response.read(), response.headers)
+        except urllib.error.HTTPError as exc:
+            if exc.code in RETRY_STATUS_CODES and not last_attempt:
+                retry_after = _header(exc.headers, "Retry-After")
+                exc.close()
+                _sleep_before_retry(attempt, retry_after=retry_after)
+                continue
+            # 4xx (other than 429) and the final 5xx/429 attempt keep the
+            # existing error-to-response conversion unchanged.
+            error_response = HttpResponse(exc.code, exc.read(), exc.headers)
+            exc.close()
+            return error_response
+        except (socket.timeout, TimeoutError) as exc:
+            if last_attempt:
+                raise RuntimeError(f"Ktuvit request failed: {exc}") from exc
+            _sleep_before_retry(attempt)
+        except urllib.error.URLError as exc:
+            if last_attempt:
+                raise RuntimeError(f"Ktuvit request failed: {exc.reason}") from exc
+            _sleep_before_retry(attempt)
+    # Unreachable: the loop either returns or raises on the final attempt.
+    raise RuntimeError("Ktuvit request failed: retry loop exhausted")
+
+
+def _sleep_before_retry(attempt, retry_after=None):
+    delay = min(RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1)), RETRY_BACKOFF_CAP_SECONDS)
+    parsed = _parse_retry_after(retry_after)
+    if parsed is not None:
+        delay = min(parsed, RETRY_BACKOFF_CAP_SECONDS)
+    time.sleep(delay)
+
+
+def _parse_retry_after(value):
+    if not value:
+        return None
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return HttpResponse(response.status, response.read(), response.headers)
-    except urllib.error.HTTPError as exc:
-        return HttpResponse(exc.code, exc.read(), exc.headers)
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Ktuvit request failed: {exc.reason}") from exc
+        seconds = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds >= 0 else None
 
 
 def _raise_for_status(response, context):

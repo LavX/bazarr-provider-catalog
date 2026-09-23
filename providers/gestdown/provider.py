@@ -194,6 +194,137 @@ def _clean_releases(version):
     return [item.strip() for item in str(version or "").split(",") if item.strip()]
 
 
+def _series_already_named(series, lowered):
+    """True when the tag already carries the series title.
+
+    Compared token-wise, not as a raw substring. A show named "V" would
+    otherwise consider "DVDRip" to already carry its title and never get
+    formatted. Separators are treated as interchangeable so both "Breaking Bad"
+    and "Breaking.Bad" are recognised.
+    """
+    tokens = [t for t in re.split(r"[^a-z0-9]+", str(series).lower()) if t]
+    if not tokens:
+        return False
+    pattern = r"[^a-z0-9]+".join(re.escape(t) for t in tokens)
+    return re.search(rf"(?<![a-z0-9]){pattern}(?![a-z0-9])", lowered) is not None
+
+
+# What turns a season into a whole season. "complete" and "pack" say it on their
+# own; "full" does not, because "Full HD" is a resolution, so it counts only in
+# the phrase "full season". "season" is deliberately absent: it is the token that
+# names the season in the first place, so accepting it here would classify an
+# ordinary "Season 1 WEB-DL" as a pack and defeat the formatter for the most
+# common tag shape there is.
+_PACK_QUALIFIER = re.compile(
+    r"(?<![a-z0-9])(?:complete|pack)(?![a-z0-9])"
+    r"|(?<![a-z0-9])full[^a-z0-9]+season(?![a-z0-9])"
+)
+
+
+def _season_pack_for(lowered, season_num):
+    """True when the tag names the whole of the requested season.
+
+    A pack covers the episode being asked for without naming it, so prefixing
+    "Show.SxxEyy." would leave two conflicting season markers in one name and
+    give guessit less to work with than the proper pack name it already had.
+
+    Only the requested season counts: "S03.COMPLETE" says nothing about a
+    season 1 episode and still deserves the marker. Both spellings of the number
+    are accepted, since Gestdown returns "S01", "Season 1" and "Season 01".
+    """
+    if _SERIES_PACK.search(lowered):
+        return True
+    if not _names_season(lowered, season_num):
+        return False
+    return _PACK_QUALIFIER.search(lowered) is not None
+
+
+# "s01-s03", "s01-03", "seasons 1-3", "season 1-season 3". The endpoints are
+# captured so the caller can ask whether the requested season falls between them.
+_SEASON_RANGE = re.compile(
+    r"(?<![a-z0-9])s(\d{1,4})[^a-z0-9]*(?:-|to)[^a-z0-9]*s?(\d{1,4})(?![a-z0-9])"
+    r"|(?<![a-z0-9])seasons?[^a-z0-9]*(\d{1,4})[^a-z0-9]*(?:-|to)[^a-z0-9]*"
+    r"(?:seasons?[^a-z0-9]*)?(\d{1,4})(?![0-9])"
+)
+
+# A pack of the whole show. It covers the requested season whatever that season
+# is, so unlike every other pack shape it needs no number. Both words are
+# required: "complete" alone says nothing about scope, and "series" alone is an
+# ordinary word in a release name ("Series.Finale").
+# "tv" is allowed between the two words because "Complete TV Series" is as
+# ordinary a spelling as "Complete Series". Nothing else is: an arbitrary word
+# in between would start matching release names that only happen to contain both.
+_SERIES_PACK = re.compile(
+    r"(?<![a-z0-9])(?:complete|full)[^a-z0-9]+(?:tv[^a-z0-9]+)?"
+    r"(?:series|show|collection)(?![a-z0-9])"
+    r"|(?<![a-z0-9])(?:series|show|collection)[^a-z0-9]+(?:complete|pack)(?![a-z0-9])"
+)
+
+
+def _names_season(lowered, season_num):
+    """Whether the tag names the requested season, singly or inside a range.
+
+    A multi-season pack covers the requested episode exactly as a single-season
+    one does, so "S01-S03.COMPLETE" has to count for a season 2 episode.
+    """
+    singles = (
+        rf"(?<![a-z0-9])s0*{season_num}(?![a-z0-9])",
+        rf"(?<![a-z0-9])seasons?[^a-z0-9]*0*{season_num}(?![0-9])",
+    )
+    if any(re.search(pattern, lowered) for pattern in singles):
+        return True
+
+    for match in _SEASON_RANGE.finditer(lowered):
+        first, last = (match.group(1), match.group(2)) if match.group(1) else (
+            match.group(3), match.group(4))
+        if int(first) <= season_num <= int(last):
+            return True
+    return False
+
+
+def _episode_already_marked(lowered, season_num, episode_num):
+    """True when the tag already identifies the episode, in either notation.
+
+    Both checks are anchored at token boundaries. Bare substring tests produce
+    false negatives that silently skip the formatting: a group name like
+    "2HDS014U" contains "s01", a codec like "MAX1x264" contains "1x", and a
+    resolution like "1280x720" contains "0x".
+    """
+    if re.search(rf"(?<![a-z0-9])s{season_num:02d}[ex]\d", lowered):
+        return True
+    return re.search(rf"(?<![a-z0-9]){season_num}x\d{{1,3}}(?![a-z0-9])", lowered) is not None
+
+
+def _format_release(version_item, series, season, episode):
+    """Give a bare Addic7ed version tag a scene-style name.
+
+    The API returns tags like "LOL" or "DVDRip ORPHEUS" with no series title and
+    no season/episode marker. guessit extracts nothing useful from those, so the
+    host cannot derive source, resolution or release group when it re-parses
+    release_info, and candidates tie on identifiers alone.
+
+    A tag that already identifies the episode, or already carries the series
+    name, is returned unchanged.
+    """
+    season_num = _int_or_none(season)
+    episode_num = _int_or_none(episode)
+    if season_num is None or episode_num is None:
+        return version_item
+
+    lowered = version_item.lower()
+    if _episode_already_marked(lowered, season_num, episode_num):
+        return version_item
+    if _season_pack_for(lowered, season_num):
+        return version_item
+    if series and _series_already_named(series, lowered):
+        return version_item
+
+    marker = f"S{season_num:02d}E{episode_num:02d}"
+    tag = version_item.replace(" ", ".")
+    show = str(series).strip().replace(" ", ".") if series else ""
+    return f"{show}.{marker}.{tag}" if show else f"{marker}.{tag}"
+
+
 def _absolute_url(uri):
     return urllib.parse.urljoin(BASE_URL, str(uri or ""))
 
@@ -244,8 +375,14 @@ def parse_show_lookup(body):
     return shows
 
 
-def parse_subtitle_results(body):
+def parse_subtitle_results(body, series=None, season=None, episode=None):
     payload = _json_loads(body)
+    # The response carries its own episode object; prefer it over whatever the
+    # search was issued with, since it describes the episode actually returned.
+    episode_info = payload.get("episode") or {}
+    series = episode_info.get("show") or series
+    season = episode_info.get("season") if episode_info.get("season") is not None else season
+    episode = episode_info.get("number") if episode_info.get("number") is not None else episode
     entries = []
     for item in payload.get("matchingSubtitles") or []:
         if not item.get("completed"):
@@ -254,8 +391,14 @@ def parse_subtitle_results(body):
         download_uri = item.get("downloadUri")
         if not subtitle_id or not download_uri:
             continue
+        # `releases` stays RAW. derive_matches searches it for the video's
+        # release group, and injecting the series title there would let a group
+        # name occurring in the show's own title score a false match.
         releases = _clean_releases(item.get("version"))
-        release_info = "\n".join(releases) if releases else str(subtitle_id)
+        formatted = [
+            _format_release(release, series, season, episode) for release in releases
+        ]
+        release_info = "\n".join(formatted) if formatted else str(subtitle_id)
         entries.append(
             {
                 "subtitle_id": str(subtitle_id),
@@ -296,6 +439,10 @@ def subtitles_url(show_id, season, episode, language_name):
 def derive_matches(video, entry):
     video = video or {}
     matches = {"series", "season", "episode", "tvdb_id", "title"}
+    requested_tvdb_id = _video_series_tvdb_id(video)
+    returned_tvdb_id = _int_or_none(entry.get("show_tvdb_id"))
+    if requested_tvdb_id is not None and returned_tvdb_id == requested_tvdb_id:
+        matches.add("year")
     release_group = _normalise_match_text(video.get("release_group"))
     if release_group:
         for release in entry.get("releases") or []:
@@ -311,6 +458,8 @@ def derive_matches(video, entry):
 def compute_score(video, entry):
     score = 75
     matches = set(derive_matches(video, entry))
+    if "year" in matches:
+        score += 10
     if "release_group" in matches:
         score += 10
     if "resolution" in matches:
@@ -388,7 +537,13 @@ class GestdownProvider:
                     if exc.code == 404:
                         continue
                     raise
-                for entry in parse_subtitle_results(body):
+                for entry in parse_subtitle_results(
+                    body,
+                    series=show.get("name") or video.get("series"),
+                    season=season,
+                    episode=episode,
+                ):
+                    entry["show_tvdb_id"] = show.get("tvdb_id")
                     key = (entry["subtitle_id"],) + _language_key(language_payload)
                     if key in seen:
                         continue

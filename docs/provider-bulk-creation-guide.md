@@ -97,22 +97,38 @@ Recommended result payload rules:
 - Include release metadata that helps display and scoring.
 - Keep payloads small because Bazarr persists and passes them through worker boundaries.
 
-## Archive extraction
+## Archive extraction (host-side, Provider Hub v1.1+)
 
-Fansubs.ru exposed the most important archive lesson: do not rely on the host image having the right extraction tools.
+Provider workers do not extract archives themselves. A worker that downloads a zip or
+rar hands the raw archive bytes back to the Bazarr+ host, which extracts the member
+with its own `rarfile`/`zipfile` stack (the same one native subliminal providers use,
+via `get_archive_from_bytes`/`get_subtitle_from_archive`) and detects the encoding with
+`Subtitle.normalize()`. This removes the bundled `py7zz` binary (which has no Linux
+aarch64 wheel) and the per-provider extraction, member-selection, and encoding code that
+was duplicated across dozens of providers.
 
-Provider bundles include declared `.py` files. Provider runtime environments can install hash-locked PyPI wheels declared in `provider.json`. Bundles cannot include raw native binaries, vendored dependency folders, symlinks, sdists, or app-environment installs. If a provider needs extraction support, declare a wheel that ships what it needs.
+`download()` returns one of:
 
-For Fansubs, RAR extraction had to use bundled `py7zz` first. System `7z` failed on older RAR methods, while the bundled dependency succeeded inside the provider environment.
+```python
+# Archive mode: the host lists the archive and picks the member by episode via guessit
+{"archive_b64": base64(archive_bytes), "archive_sha256": sha256_hex, "episode": season_episode_or_None}
 
-Use this ordering for archive work:
+# Archive mode, provider already knows the exact member (e.g. a zip it listed cheaply)
+{"archive_b64": ..., "member": "Show.S01E01.srt"}
 
-1. Detect archive type by bytes, not only by file extension.
-2. Use bundled Python dependencies first.
-3. Fall back to optional system tools only after the bundled path fails.
-4. Pick the best subtitle member by requested language, extension, filename, and size.
-5. Reject empty extraction results.
-6. Test without system extractors in `PATH`.
+# Content mode (unchanged): providers that already hold the final subtitle bytes
+{"content_b64": ..., "format": "srt"}
+```
+
+Rules:
+
+1. Detect zip/rar by bytes and return the raw archive. Do not import an extraction library and do not declare `py7zz`.
+2. Store `episode` (and `season`) in `provider_payload` during search so `download()` can pass `episode` for host-side member selection.
+3. Do NOT set `encoding`. The host runs chardet via `Subtitle.normalize()`. A worker guess, especially `latin-1` (which never fails to decode), only reintroduces mojibake.
+4. Still reject non-archive error bodies (empty or HTML) before returning.
+5. A provider that genuinely serves `.7z` needs the host 7z path (tracked separately), not `py7zz`.
+
+This pairs with the bazarr `provider_hub` host-side extraction patch and ships in 2.4.0-beta; both sides must be deployed together.
 
 Treat a `200` response with an empty stream as broken. The user sees no usable subtitle even though the HTTP status looks successful.
 

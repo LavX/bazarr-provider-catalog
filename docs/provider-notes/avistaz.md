@@ -14,9 +14,8 @@
 - Validates cookies against `/rules` without following redirects before parsing a release page.
 - Parses the release title and nested subtitles table.
 - Filters results by requested language and preserves the broad AvistaZ language list used by Bazarr.
-- Treats each release-page subtitle as a hash-quality match because the subtitle is attached to the exact grabbed release page.
-- Downloads direct subtitle files and ZIP archives.
-- Supports RAR downloads through bundled `py7zz`, with `unar` or `7z` as runtime fallbacks.
+- Scores title, year, and episode metadata from the release title, without claiming a verified file hash.
+- Downloads direct subtitle files and returns ZIP/RAR archives with season and episode context for host-side extraction.
 
 ## Live Checks
 

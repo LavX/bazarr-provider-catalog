@@ -5,7 +5,6 @@ import io
 import json
 import unittest
 import zipfile
-from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -153,19 +152,18 @@ def _zip_body(name="Decision.to.Leave.2022.English.srt"):
     return stream.getvalue()
 
 
-class AvistazManifestTests(unittest.TestCase):
-    def test_manifest_pins_all_py7zz_platform_wheels(self):
-        manifest = json.loads((PROVIDER_DIR / "provider.json").read_text(encoding="utf-8"))
-        py7zz = next(item for item in manifest["dependencies"]["requirements"] if item["name"] == "py7zz")
+def _rar_body():
+    return (ROOT / "tests" / "fixtures" / "subcentral_blue_lights_ion10.rar").read_bytes()
 
-        self.assertEqual(
-            set(py7zz["hashes"]),
-            {
-                "sha256:e6394b5ba89d61ceca780e6d67b89896fd58f0606c9b07227446496b52e8d0ae",
-                "sha256:cd3d911976c184e61c641baf4e26a80f4ac474c830bf12cc8e541490c229bfd6",
-                "sha256:6ae5d0516a1a1d43d905e40799ff75aedbbac431374dff740481f548a51d538f",
-            },
-        )
+
+class AvistazManifestTests(unittest.TestCase):
+    def test_manifest_does_not_bundle_an_archive_extractor(self):
+        manifest = json.loads((PROVIDER_DIR / "provider.json").read_text(encoding="utf-8"))
+        requirements = manifest["dependencies"]["requirements"]
+        names = {item["name"].lower() for item in requirements}
+
+        self.assertEqual(manifest["version"], "0.1.3")
+        self.assertTrue(names.isdisjoint({"py7zz", "py7zr", "rarfile"}))
 
 
 class AvistazSearchTests(unittest.TestCase):
@@ -211,6 +209,7 @@ class AvistazSearchTests(unittest.TestCase):
                 "kind": "movie",
                 "title": "Decision to Leave",
                 "year": 2022,
+                "release_group": "GROUP",
                 "info_url": "https://avistaz.to/torrent/123-decision-to-leave",
             },
             [{"alpha3": "eng"}, {"alpha3": "kor"}],
@@ -228,6 +227,7 @@ class AvistazSearchTests(unittest.TestCase):
         self.assertEqual(results[0]["provider_payload"]["download_url"], "https://avistaz.to/subtitles/12345/download")
         self.assertEqual(results[1]["provider_payload"]["download_url"], "https://avistaz.to/subtitles/23456/download")
         self.assertEqual(results[0]["display"]["uploader"], "alice")
+        self.assertEqual(results[0]["matches"], ["title", "year", "release_group"])
         self.assertNotIn("hash", results[0]["matches"])
         self.assertFalse(results[0]["hash_verifiable"])
         self.assertFalse(results[0]["hearing_impaired_verifiable"])
@@ -355,6 +355,7 @@ class AvistazDownloadTests(unittest.TestCase):
         self.assertEqual(payload, b"1\n00:00:01,000 --> 00:00:02,000\nHello\n")
         self.assertEqual(result["content_sha256"], hashlib.sha256(payload).hexdigest())
         self.assertEqual(result["format"], "srt")
+        self.assertNotIn("encoding", result)
         self.assertEqual(calls[0][0], "https://avistaz.to/subtitles/23456/download")
         self.assertFalse(calls[0][3])
 
@@ -419,10 +420,11 @@ class AvistazDownloadTests(unittest.TestCase):
         self.assertEqual(result["format"], "ass")
         self.assertEqual(result["content_type"], "text/x-ssa")
 
-    def test_download_extracts_subtitle_from_zip_archive(self):
+    def test_download_returns_zip_archive_for_host_extraction(self):
         provider = self.mod.AvistazProvider()
+        archive = _zip_body()
         provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True: self.mod.HttpResponse(
-            200, _zip_body(), {"content-type": "application/zip"}
+            200, archive, {"content-type": "application/zip"}
         )
 
         result = provider.download(
@@ -430,60 +432,60 @@ class AvistazDownloadTests(unittest.TestCase):
                 "download_url": "https://avistaz.to/subtitles/12345/download",
                 "filename": "decision-to-leave.en.zip",
                 "release_info": "Decision to Leave 2022",
+                "season": 2,
+                "episode": 5,
             },
             {"alpha3": "eng"},
             {"cookies": "avistazx_session=valid"},
         )
 
-        payload = base64.b64decode(result["content_b64"])
-        self.assertIn(b"Hello\n", payload)
-        self.assertEqual(result["format"], "srt")
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["season"], 2)
+        self.assertEqual(result["episode"], 5)
+        self.assertNotIn("encoding", result)
 
-    def test_download_extracts_subtitle_from_rar_archive(self):
+    def test_download_returns_rar_archive_for_host_extraction(self):
         provider = self.mod.AvistazProvider()
+        archive = _rar_body()
         provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True: self.mod.HttpResponse(
-            200, b"Rar!\x1a\x07\x00rar-body", {"content-type": "application/vnd.rar"}
-        )
-
-        with mock.patch.object(self.mod, "_extract_rar_files", return_value=[("episode.srt", b"RAR subtitle")]):
-            result = provider.download(
-                {
-                    "download_url": "https://avistaz.to/subtitles/12345/download",
-                    "filename": "decision-to-leave.en.rar",
-                    "release_info": "Decision to Leave 2022",
-                },
-                {"alpha3": "eng"},
-                {"cookies": "avistazx_session=valid"},
-            )
-
-        payload = base64.b64decode(result["content_b64"])
-        self.assertEqual(payload, b"RAR subtitle")
-        self.assertEqual(result["format"], "srt")
-
-    def test_download_selects_archive_member_by_season_and_episode(self):
-        provider = self.mod.AvistazProvider()
-        body = _zip_body("Show.S01E02.srt")
-        stream = io.BytesIO(body)
-        with zipfile.ZipFile(stream, "a", zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr("Show.S02E02.srt", "correct")
-
-        provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True: self.mod.HttpResponse(
-            200, stream.getvalue(), {"content-type": "application/zip"}
+            200, archive, {"content-type": "application/vnd.rar"}
         )
 
         result = provider.download(
             {
                 "download_url": "https://avistaz.to/subtitles/12345/download",
-                "filename": "show.en.zip",
-                "kind": "episode",
-                "season": 2,
-                "episode": 2,
+                "filename": "decision-to-leave.en.rar",
+                "release_info": "Decision to Leave 2022",
             },
             {"alpha3": "eng"},
             {"cookies": "avistazx_session=valid"},
         )
 
-        self.assertEqual(base64.b64decode(result["content_b64"]), b"correct")
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertIsNone(result["season"])
+        self.assertIsNone(result["episode"])
+
+    def test_archive_detection_uses_bytes_instead_of_filename(self):
+        provider = self.mod.AvistazProvider()
+        body = b"1\r\n00:00:01,000 --> 00:00:02,000\r\nSubtitle\r\n"
+
+        provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True: self.mod.HttpResponse(
+            200, body, {"content-type": "application/octet-stream"}
+        )
+
+        result = provider.download(
+            {
+                "download_url": "https://avistaz.to/subtitles/12345/download",
+                "filename": "subtitle.rar",
+            },
+            {"alpha3": "eng"},
+            {"cookies": "avistazx_session=valid"},
+        )
+
+        self.assertEqual(base64.b64decode(result["content_b64"]), body.replace(b"\r\n", b"\n"))
+        self.assertNotIn("archive_b64", result)
 
 
 if __name__ == "__main__":
