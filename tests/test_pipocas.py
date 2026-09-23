@@ -3,8 +3,6 @@ import hashlib
 import importlib.util
 import io
 import json
-import os
-import tempfile
 import unittest
 import urllib.parse
 import urllib.request
@@ -120,6 +118,31 @@ class PipocasProviderTests(unittest.TestCase):
         self.assertEqual(language["alpha3"], "por")
         self.assertEqual(language["country_alpha2"], "BR")
 
+    def test_search_links_accept_class_and_attribute_order(self):
+        body = (
+            b'<a href="/legendas/info/501" class="no-decoration text-dark">One</a>'
+            b'<a class="text-dark other no-decoration" title="two" href="/legendas/info/502">Two</a>'
+        )
+        self.assertEqual(
+            self.mod.parse_search_results(body),
+            ["https://pipocas.tv/legendas/info/501", "https://pipocas.tv/legendas/info/502"],
+        )
+
+    def test_login_accepts_csrf_meta_attributes_in_any_order(self):
+        provider = self.mod.PipocasProvider()
+        provider._http_get = lambda url, headers=None, timeout=10, params=None: self.mod.HttpResponse(
+            200, b'<meta content="fresh-token" data-page="login" name="csrf-token">', {}
+        )
+        posted = []
+
+        def post(url, data, headers=None, timeout=10):
+            posted.append(data)
+            return self.mod.HttpResponse(200, b"<html>profile</html>", {})
+
+        provider._http_post = post
+        provider._ensure_authenticated({"username": "user", "password": "pass"})
+        self.assertEqual(posted[0]["_token"], "fresh-token")
+
     def test_search_applies_delay_before_each_detail_fetch(self):
         provider = self.mod.PipocasProvider()
         provider._ensure_authenticated = lambda config: None
@@ -209,7 +232,7 @@ class PipocasProviderTests(unittest.TestCase):
                 {"username": "bad", "password": "bad"},
             )
 
-    def test_download_extracts_matching_episode_file_from_zip(self):
+    def test_download_hands_zip_to_host_with_episode_context(self):
         provider = self.mod.PipocasProvider()
         archive_body = _zip_body(
             {
@@ -233,10 +256,16 @@ class PipocasProviderTests(unittest.TestCase):
             {"username": "user", "password": "pass"},
         )
 
-        decoded = base64.b64decode(result["content_b64"])
-        self.assertEqual(decoded, b"1\n00:00:01,000 --> 00:00:02,000\nEpisode one\n")
-        self.assertEqual(result["format"], "srt")
-        self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive_body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive_body).hexdigest())
+        self.assertEqual((result["season"], result["episode"]), (1, 1))
+        self.assertNotIn("content_b64", result)
+
+    def test_rar_hands_raw_archive_to_host(self):
+        body = b"Rar!\x1a\x07\x01\x00" + b"archive fixture"
+        result = self.mod.extract_download(body, {"season": 2, "episode": 3})
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual((result["season"], result["episode"]), (2, 3))
 
     def test_download_accepts_direct_subtitle_content(self):
         provider = self.mod.PipocasProvider()
@@ -281,27 +310,9 @@ class PipocasProviderTests(unittest.TestCase):
         self.assertIn(b"Direct line", decoded)
         self.assertEqual(result["format"], "srt")
 
-    def test_collect_extracted_files_rejects_symlinks(self):
-        with tempfile.TemporaryDirectory() as output_dir:
-            real_sub = os.path.join(output_dir, "movie.srt")
-            with open(real_sub, "wb") as handle:
-                handle.write(b"1\n00:00:01,000 --> 00:00:02,000\nReal subtitle\n")
-
-            secret = os.path.join(output_dir, "secret.txt")
-            with open(secret, "wb") as handle:
-                handle.write(b"top secret host file")
-            evil_link = os.path.join(output_dir, "evil.srt")
-            os.symlink(secret, evil_link)
-
-            files = dict(self.mod._collect_extracted_subtitle_files(output_dir))
-
-        self.assertIn("movie.srt", files)
-        self.assertNotIn("evil.srt", files)
-        self.assertNotIn(b"top secret host file", files["movie.srt"])
-
-    def test_redirect_handler_captures_cookies_before_following(self):
+    def test_redirect_handler_forwards_new_cookie_only_to_same_origin(self):
         provider = self.mod.PipocasProvider()
-        handler = self.mod._CookieCapturingRedirectHandler(provider._store_cookies)
+        handler = self.mod._CookieCapturingRedirectHandler(provider._store_cookies, provider._cookie_header)
 
         request = urllib.request.Request("https://pipocas.tv/login")
         redirect_headers = _FakeHeaders([("Set-Cookie", "session=secret; Path=/; HttpOnly")])
@@ -319,6 +330,17 @@ class PipocasProviderTests(unittest.TestCase):
         self.assertEqual(provider._cookies.get("session"), "secret")
         self.assertIsNotNone(new_request)
         self.assertEqual(new_request.get_full_url(), "https://pipocas.tv/perfil")
+        self.assertEqual(new_request.get_header("Cookie"), "session=secret")
+
+        external = handler.redirect_request(
+            new_request,
+            io.BytesIO(b""),
+            302,
+            "Found",
+            _FakeHeaders([]),
+            "https://example.org/perfil",
+        )
+        self.assertIsNone(external.get_header("Cookie"))
 
 
 class _FakeHeaders:

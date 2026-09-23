@@ -23,7 +23,7 @@ Clean-room target for `pipocas`.
 - Credentials are required. Pages containing `Cria uma conta` indicate an auth failure.
 - Movie searches use the title. Episode searches use `Series SxxEyy` when season and episode are present.
 - Result scoring combines release matches, site rating, and hit count.
-- RAR extraction uses bundled `py7zz` first, with `unar` or `7z` as local fallbacks.
+- ZIP and RAR downloads are passed to the Bazarr+ host for safe extraction and episode selection.
 
 ## License notes
 

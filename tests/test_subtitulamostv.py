@@ -2,7 +2,9 @@ import base64
 import hashlib
 import importlib.util
 import json
+import socket
 import unittest
+import urllib.error
 import urllib.parse
 from pathlib import Path
 
@@ -340,6 +342,133 @@ class UrlEncodingTests(unittest.TestCase):
         self.assertEqual(parsed.netloc, "www.subtitulamos.tv")
         self.assertEqual(parsed.path, "/search/query")
         self.assertEqual(urllib.parse.parse_qs(parsed.query), {"q": ["The Last of Us (2023)"]})
+
+
+class _FakeResponse:
+    def __init__(self, body):
+        self._body = body
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _http_error(code):
+    return urllib.error.HTTPError(
+        url="https://www.subtitulamos.tv/x",
+        code=code,
+        msg=f"status {code}",
+        hdrs=None,
+        fp=None,
+    )
+
+
+def _http_error_with_retry_after(code, retry_after):
+    import email.message
+
+    headers = email.message.Message()
+    headers["Retry-After"] = str(retry_after)
+    return urllib.error.HTTPError(
+        url="https://www.subtitulamos.tv/x",
+        code=code,
+        msg=f"status {code}",
+        hdrs=headers,
+        fp=None,
+    )
+
+
+class TransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.sleeps = []
+        self._http_errors = []
+        self._orig_sleep = self.mod.time.sleep
+        self._orig_urlopen = self.mod.urllib.request.urlopen
+        self.mod.time.sleep = self.sleeps.append
+
+    def tearDown(self):
+        self.mod.time.sleep = self._orig_sleep
+        self.mod.urllib.request.urlopen = self._orig_urlopen
+        # urllib.error.HTTPError opens an internal buffer; close ours so the
+        # interpreter does not emit a ResourceWarning during GC.
+        for error in self._http_errors:
+            error.close()
+
+    def _patch_urlopen(self, sequence):
+        calls = {"count": 0}
+        for item in sequence:
+            if isinstance(item, urllib.error.HTTPError):
+                self._http_errors.append(item)
+
+        def fake_urlopen(request, timeout=None):
+            del request, timeout
+            calls["count"] += 1
+            item = sequence[calls["count"] - 1]
+            if isinstance(item, Exception):
+                raise item
+            return _FakeResponse(item)
+
+        self.mod.urllib.request.urlopen = fake_urlopen
+        return calls
+
+    def test_retries_url_error_then_succeeds(self):
+        calls = self._patch_urlopen(
+            [urllib.error.URLError("connection refused"), b"ok-body"]
+        )
+        result = self.mod._http_get("https://www.subtitulamos.tv/search/query")
+        self.assertEqual(result, b"ok-body")
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_retries_503_then_succeeds(self):
+        calls = self._patch_urlopen(
+            [_http_error(503), _http_error(503), b"ok-body"]
+        )
+        result = self.mod._http_get("https://www.subtitulamos.tv/search/query")
+        self.assertEqual(result, b"ok-body")
+        self.assertEqual(calls["count"], 3)
+        self.assertEqual(len(self.sleeps), 2)
+
+    def test_timeout_is_retried(self):
+        calls = self._patch_urlopen([socket.timeout("read timed out"), b"ok-body"])
+        result = self.mod._http_get("https://www.subtitulamos.tv/search/query")
+        self.assertEqual(result, b"ok-body")
+        self.assertEqual(calls["count"], 2)
+
+    def test_404_is_not_retried(self):
+        calls = self._patch_urlopen([_http_error(404), b"ok-body"])
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self.mod._http_get("https://www.subtitulamos.tv/search/query")
+        self.assertEqual(ctx.exception.code, 404)
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(self.sleeps, [])
+
+    def test_429_honors_retry_after_header(self):
+        calls = self._patch_urlopen(
+            [_http_error_with_retry_after(429, 3), b"ok-body"]
+        )
+        result = self.mod._http_get("https://www.subtitulamos.tv/search/query")
+        self.assertEqual(result, b"ok-body")
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(self.sleeps, [3])
+
+    def test_persistent_transient_error_propagates_after_max_attempts(self):
+        calls = self._patch_urlopen(
+            [
+                urllib.error.URLError("reset"),
+                urllib.error.URLError("reset"),
+                urllib.error.URLError("reset"),
+            ]
+        )
+        with self.assertRaises(urllib.error.URLError):
+            self.mod._http_get("https://www.subtitulamos.tv/search/query")
+        self.assertEqual(calls["count"], 3)
+        self.assertEqual(len(self.sleeps), 2)
 
 
 if __name__ == "__main__":

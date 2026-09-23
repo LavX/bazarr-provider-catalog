@@ -293,7 +293,7 @@ class SubsynchroProviderTests(unittest.TestCase):
             [],
         )
 
-    def test_download_extracts_first_visible_subtitle_file_from_zip(self):
+    def test_download_returns_raw_zip_and_selected_member_for_host_extraction(self):
         provider = self.mod.SubsynchroProvider()
         body = _zip_files(
             {
@@ -317,10 +317,30 @@ class SubsynchroProviderTests(unittest.TestCase):
             {},
         )
 
+        # Archive mode: hand the raw zip bytes plus the member we selected (skipping the
+        # dotfile and the non-subtitle entries) to the host, which extracts and decodes.
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["member"], "The.Plastic.Detox.2026.1080p.WEB.h264-EDITH.srt")
+
+    def test_download_returns_content_mode_for_direct_subtitle_body(self):
+        result = self.mod.extract_download(
+            b"1\r\n00:00:01,000 --> 00:00:02,000\r\nBonjour\r\n",
+            {"filename": "The.Plastic.Detox.2026.1080p.WEB.h264-EDITH.srt"},
+        )
+
         decoded = base64.b64decode(result["content_b64"])
         self.assertEqual(decoded, b"1\n00:00:01,000 --> 00:00:02,000\nBonjour\n")
         self.assertEqual(result["format"], "srt")
         self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
+        self.assertNotIn("encoding", result)
+
+    def test_download_rejects_empty_body(self):
+        result = self.mod.extract_download(b"", {"filename": "subtitle.zip"})
+        self.assertTrue(result["empty"])
+        self.assertNotIn("encoding", result)
 
     def test_download_rejects_html_body_when_not_zip(self):
         with self.assertRaises(ValueError):

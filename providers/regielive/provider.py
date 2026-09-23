@@ -266,10 +266,7 @@ class RegieLiveProvider:
         archive_body = self._http_get(download_url, referer=DOWNLOAD_ORIGIN)
         if archive_body.strip() == b"500":
             raise ValueError("regielive returned server error 500")
-
-        content, filename = extract_subtitle_from_zip(archive_body)
-        fmt = _subtitle_format(filename)
-        return _content_payload(_normalize_line_endings(content), fmt)
+        return _download_payload(archive_body)
 
     def _result(self, video, row):
         matches = derive_matches(video, row["title"])
@@ -334,7 +331,7 @@ def derive_matches(video, release_info):
     return matches
 
 
-def extract_subtitle_from_zip(body):
+def select_zip_member(body):
     try:
         archive = zipfile.ZipFile(io.BytesIO(body or b""))
     except zipfile.BadZipFile as exc:
@@ -352,11 +349,7 @@ def extract_subtitle_from_zip(body):
     if not candidates:
         raise ValueError("regielive archive contained no subtitle files")
     candidates.sort(key=lambda name: (not name.lower().endswith(".srt"), len(name), name.lower()))
-    filename = candidates[0]
-    content = archive.read(filename)
-    if not content:
-        raise ValueError("regielive downloaded empty subtitle")
-    return content, filename
+    return candidates[0]
 
 
 def _requests_romanian(languages):
@@ -478,42 +471,49 @@ def _decode(body):
     return (body or b"").decode("utf-8", errors="replace")
 
 
-def _normalize_line_endings(content):
-    return (content or b"").replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-
-
-def _subtitle_format(filename):
-    lowered = (filename or "").lower()
-    for extension in SUBTITLE_EXTENSIONS:
-        if lowered.endswith(extension):
-            return extension[1:]
-    return "srt"
-
-
-def _content_payload(body, fmt):
-    if not body:
+def _download_payload(body):
+    # Reject broken responses up front: the download endpoint can answer with an empty
+    # stream or an HTML/error page that would otherwise look like a successful download.
+    if not body or not body.strip():
         raise ValueError("regielive downloaded empty subtitle")
-    try:
-        body.decode("utf-8")
-        encoding = "utf-8"
-    except UnicodeDecodeError:
-        encoding = "latin-1"
-    return {
-        "content_b64": _base64.b64encode(body).decode("ascii"),
-        "content_sha256": _hashlib.sha256(body).hexdigest(),
-        "content_type": _content_type(fmt),
-        "format": fmt,
-        "encoding": encoding,
-        "empty": False,
-    }
+    if _is_html_body(body):
+        raise ValueError("regielive returned an HTML/error page")
+    if _is_archive_body(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
+        # the host, which extracts the selected member and detects encoding. The worker
+        # still lists the zip cheaply to pick the member it selected before.
+        payload = {
+            "archive_b64": _base64.b64encode(body).decode("ascii"),
+            "archive_sha256": _hashlib.sha256(body).hexdigest(),
+        }
+        if zipfile.is_zipfile(io.BytesIO(body)):
+            payload["member"] = select_zip_member(body)
+        return payload
+    raise ValueError("regielive download is not a ZIP archive")
 
 
-def _content_type(fmt):
-    if fmt in {"ass", "ssa"}:
-        return "text/x-ssa"
-    if fmt == "vtt":
-        return "text/vtt"
-    return "application/x-subrip"
+def _is_archive_body(body):
+    if not body:
+        return False
+    return (
+        zipfile.is_zipfile(io.BytesIO(body))
+        or body.startswith(b"Rar!")
+        or body.startswith(b"7z\xbc\xaf\x27\x1c")
+    )
+
+
+def _is_html_body(body):
+    if not body:
+        return False
+    head = body[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or head.startswith(b"<!--")
+        or b"<body" in head
+        or b"<head" in head
+    )
 
 
 def _sleep(config):

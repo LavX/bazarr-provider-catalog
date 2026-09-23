@@ -6,20 +6,13 @@ import html
 import io
 import os
 import re
-import shutil
-import subprocess
-import tempfile
 import time
 import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-
-try:
-    import py7zz
-except ImportError:
-    py7zz = None
+from html.parser import HTMLParser
 
 PROVIDER_ID = "pipocas"
 BASE_URL = "https://pipocas.tv"
@@ -40,12 +33,6 @@ LANGUAGES = {
     "spa": {"alpha3": "spa", "alpha2": "es", "site": "espanhol"},
 }
 
-_TOKEN_RE = re.compile(rb'<meta\s+name=["\']csrf-token["\']\s+content=["\']([^"\']+)["\']', re.I)
-_SEARCH_LINK_RE = re.compile(
-    rb'<a\b(?=[^>]*class=["\'][^"\']*\btext-dark\b[^"\']*\bno-decoration\b[^"\']*["\'])'
-    rb'[^>]*href=["\'](?P<href>[^"\']*/legendas/info/[^"\']+)["\']',
-    re.I | re.S,
-)
 _TITLE_RE = re.compile(
     rb'<h3\b[^>]*class=["\'][^"\']*\btitle\b[^"\']*["\'][^>]*>.*?'
     rb'<span\b[^>]*class=["\'][^"\']*\bfont-normal\b[^"\']*["\'][^>]*>(?P<value>.*?)</span>',
@@ -79,6 +66,29 @@ class HttpResponse:
         self.headers = headers or {}
 
 
+class _PageAttributes(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.csrf_token = None
+        self.detail_urls = []
+
+    def handle_starttag(self, tag, attrs):
+        values = dict(attrs)
+        if tag == "meta" and (values.get("name") or "").lower() == "csrf-token":
+            self.csrf_token = values.get("content") or self.csrf_token
+        if tag == "a":
+            classes = set((values.get("class") or "").split())
+            href = values.get("href") or ""
+            if {"text-dark", "no-decoration"} <= classes and "/legendas/info/" in href:
+                self.detail_urls.append(href)
+
+
+def _page_attributes(body):
+    parser = _PageAttributes()
+    parser.feed(_decode(body or b""))
+    return parser
+
+
 class _CookieCapturingRedirectHandler(urllib.request.HTTPRedirectHandler):
     """Capture Set-Cookie headers from intermediate redirect responses.
 
@@ -87,12 +97,20 @@ class _CookieCapturingRedirectHandler(urllib.request.HTTPRedirectHandler):
     response headers.
     """
 
-    def __init__(self, store_cookies):
+    def __init__(self, store_cookies, cookie_header):
         self._store_cookies = store_cookies
+        self._cookie_header = cookie_header
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         self._store_cookies(headers)
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is not None:
+            redirected.remove_header("Cookie")
+            if _same_origin(newurl):
+                cookie = self._cookie_header()
+                if cookie:
+                    redirected.add_header("Cookie", cookie)
+        return redirected
 
 
 class PipocasProvider:
@@ -100,7 +118,7 @@ class PipocasProvider:
         self._authenticated = False
         self._cookies = {}
         self._opener = urllib.request.build_opener(
-            _CookieCapturingRedirectHandler(self._store_cookies)
+            _CookieCapturingRedirectHandler(self._store_cookies, self._cookie_header)
         )
 
     def search(self, video, languages, config):
@@ -211,10 +229,9 @@ class PipocasProvider:
             return
         login_page = self._http_get(LOGIN_URL)
         _raise_for_status(login_page, LOGIN_URL)
-        token_match = _TOKEN_RE.search(login_page.body)
-        if not token_match:
+        token = _page_attributes(login_page.body).csrf_token
+        if not token:
             raise RuntimeError("Pipocas login page did not expose a CSRF token")
-        token = _decode(token_match.group(1))
         response = self._http_post(
             LOGIN_URL,
             {
@@ -233,7 +250,7 @@ class PipocasProvider:
             query = urllib.parse.urlencode(params)
             separator = "&" if urllib.parse.urlparse(url).query else "?"
             url = f"{url}{separator}{query}"
-        request = urllib.request.Request(url, headers=self._headers(headers))
+        request = urllib.request.Request(url, headers=self._headers(headers, url))
         with self._opener.open(request, timeout=timeout) as response:
             body = response.read()
             result = HttpResponse(response.getcode(), body, response.headers)
@@ -244,14 +261,14 @@ class PipocasProvider:
         encoded = urllib.parse.urlencode(data).encode("utf-8")
         merged_headers = {"Content-Type": "application/x-www-form-urlencoded"}
         merged_headers.update(headers or {})
-        request = urllib.request.Request(url, data=encoded, headers=self._headers(merged_headers))
+        request = urllib.request.Request(url, data=encoded, headers=self._headers(merged_headers, url))
         with self._opener.open(request, timeout=timeout) as response:
             body = response.read()
             result = HttpResponse(response.getcode(), body, response.headers)
             self._store_cookies(result.headers)
             return result
 
-    def _headers(self, extra=None):
+    def _headers(self, extra=None, url=None):
         headers = {
             "User-Agent": USER_AGENT,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -259,10 +276,15 @@ class PipocasProvider:
             "Origin": BASE_URL,
             "Referer": BASE_URL,
         }
-        if self._cookies:
-            headers["Cookie"] = "; ".join(f"{name}={value}" for name, value in sorted(self._cookies.items()))
+        if _same_origin(url):
+            cookie = self._cookie_header()
+            if cookie:
+                headers["Cookie"] = cookie
         headers.update(extra or {})
         return headers
+
+    def _cookie_header(self):
+        return "; ".join(f"{name}={value}" for name, value in sorted(self._cookies.items()))
 
     def _store_cookies(self, headers):
         for value in _header_values(headers, "set-cookie"):
@@ -292,8 +314,8 @@ def build_search_query(video):
 def parse_search_results(body):
     urls = []
     seen = set()
-    for match in _SEARCH_LINK_RE.finditer(body or b""):
-        url = _absolute_url(html.unescape(_decode(match.group("href"))))
+    for href in _page_attributes(body).detail_urls:
+        url = _absolute_url(href)
         if url in seen:
             continue
         seen.add(url)
@@ -359,15 +381,13 @@ def derive_matches(video, release):
 
 def extract_download(body, payload=None, response_filename=None):
     payload = payload or {}
-    if _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        selected = select_subtitle_file([name for name, _data in files], payload)
-        return _content_payload(dict(files)[selected], _subtitle_extension(selected) or "srt")
-    stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist(), payload)
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
+    if _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body)):
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "season": _safe_int(payload.get("season")),
+            "episode": _safe_int(payload.get("episode")),
+        }
     subtitle_format = (
         _subtitle_extension(response_filename)
         or _subtitle_extension(payload.get("filename", ""))
@@ -375,136 +395,6 @@ def extract_download(body, payload=None, response_filename=None):
     if not subtitle_format or _looks_like_html(body):
         raise ValueError("pipocas download did not return a supported subtitle file")
     return _content_payload(body, subtitle_format)
-
-
-def select_subtitle_file(names, payload):
-    candidates = [name for name in names if _subtitle_extension(name)]
-    if not candidates:
-        raise ValueError("pipocas archive contains no supported subtitle files")
-    season = _safe_int((payload or {}).get("season"))
-    episode = _safe_int((payload or {}).get("episode"))
-    release_tokens = set(_tokens((payload or {}).get("release_info")))
-
-    def score(name):
-        normalized_name = _normalize(os.path.basename(name))
-        name_tokens = set(_tokens(name))
-        value = 0
-        if season is not None and re.search(rf"\bs0*{season}\b", normalized_name):
-            value += 30
-        if episode is not None:
-            if re.search(rf"\bs\d*e0*{episode}\b", normalized_name):
-                value += 80
-            elif re.search(rf"\be0*{episode}\b", normalized_name):
-                value += 60
-            elif re.search(rf"(^|[^0-9])0*{episode}([^0-9]|$)", normalized_name):
-                value += 40
-        value += len(release_tokens.intersection(name_tokens))
-        if "hi" in name_tokens or "sdh" in name_tokens:
-            value -= 5
-        return value
-
-    return max(candidates, key=score)
-
-
-def _extract_rar_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"Pipocas RAR extraction failed: {details}") from errors[-1]
-    raise RuntimeError("Pipocas RAR extraction requires bundled py7zz")
-
-
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("Pipocas bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "pipocas.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_unar(body):
-    unar = shutil.which("unar")
-    if not unar:
-        raise RuntimeError("Pipocas RAR fallback requires unar")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "pipocas.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [unar, "-quiet", "-o", output_dir, archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"unar failed to extract Pipocas RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("Pipocas RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "pipocas.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [sevenzip, "x", "-y", f"-o{output_dir}", archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract Pipocas RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    base = os.path.realpath(output_dir)
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if not _subtitle_extension(rel):
-                continue
-            if os.path.islink(path) or not os.path.isfile(path):
-                continue
-            real_path = os.path.realpath(path)
-            if real_path != base and not real_path.startswith(base + os.sep):
-                continue
-            with open(path, "rb") as handle:
-                files.append((rel, handle.read()))
-    if not files:
-        raise ValueError("pipocas archive contains no supported subtitle files")
-    return files
 
 
 def _language_for_request(language):
@@ -631,17 +521,11 @@ def _subtitle_extension(name):
 
 def _content_payload(content, subtitle_format):
     content = _fix_line_endings(content)
-    encoding = "utf-8"
-    try:
-        content.decode("utf-8")
-    except UnicodeDecodeError:
-        encoding = "latin-1"
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 
@@ -680,6 +564,12 @@ def _match_text(pattern, body):
 
 def _absolute_url(value):
     return urllib.parse.urljoin(BASE_URL + "/", value or "")
+
+
+def _same_origin(url):
+    target = urllib.parse.urlsplit(url or "")
+    origin = urllib.parse.urlsplit(BASE_URL)
+    return target.scheme == origin.scheme and target.netloc == origin.netloc
 
 
 def _strip_tags(value):
