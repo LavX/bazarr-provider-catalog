@@ -234,6 +234,51 @@ class GestdownProviderSearchTests(unittest.TestCase):
             "https://api.gestdown.info/subtitles/download/69cf7d79-052c-4f12-a57d-995d77de43ad",
         )
 
+    def test_year_match_requires_the_returned_show_tvdb_id_to_match(self):
+        def first_result(returned_tvdb_id):
+            show_lookup = json.loads(SHOW_LOOKUP)
+            if returned_tvdb_id is None:
+                show_lookup["shows"][0].pop("tvDbId", None)
+            else:
+                show_lookup["shows"][0]["tvDbId"] = returned_tvdb_id
+            show_body = json.dumps(show_lookup).encode("utf-8")
+            provider = self.mod.GestdownProvider()
+
+            def get_json(url, timeout=30):
+                del timeout
+                if url == "https://api.gestdown.info/shows/external/tvdb/81189":
+                    return show_body
+                if url.startswith("https://api.gestdown.info/subtitles/get/"):
+                    return SUBTITLES_ENGLISH
+                raise AssertionError(f"unexpected URL: {url}")
+
+            provider._http_get = get_json
+            results = provider.search(
+                {
+                    "kind": "episode",
+                    "series": "Breaking Bad",
+                    "series_tvdb_id": 81189,
+                    "year": 2008,
+                    "season": 1,
+                    "episode": 1,
+                    "release_group": "0TV",
+                },
+                [{"alpha3": "eng", "alpha2": "en"}],
+                {"locked_retry_delay_ms": 0},
+            )
+            self.assertTrue(results)
+            return results[0]
+
+        exact = first_result(81189)
+        wrong = first_result(81190)
+        missing = first_result(None)
+
+        self.assertIn("year", exact["matches"])
+        self.assertNotIn("year", wrong["matches"])
+        self.assertNotIn("year", missing["matches"])
+        self.assertEqual(exact["score"], wrong["score"] + 10)
+        self.assertEqual(exact["score"], missing["score"] + 10)
+
     def test_search_skips_movies_and_missing_tvdb_id(self):
         provider = self.mod.GestdownProvider()
 

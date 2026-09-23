@@ -75,6 +75,28 @@ class SubDLLanguageTests(unittest.TestCase):
 
         self.assertEqual(codes, ["BR_PT"])
 
+    def test_new_subdl_language_codes_are_searchable(self):
+        languages = [
+            {"alpha3": code}
+            for code in ("hye", "kaz", "kir", "khm", "kan", "mon", "eus", "glg", "gle", "jav", "sun")
+        ]
+
+        self.assertEqual(
+            self.mod.language_codes(languages),
+            ["EU", "GA", "GL", "HY", "JV", "KK", "KM", "KN", "KY", "MN", "SU"],
+        )
+
+    def test_traditional_chinese_country_and_script_aliases_use_big5_code(self):
+        self.assertEqual(
+            self.mod.language_codes(
+                [
+                    {"alpha3": "zho", "country_alpha2": "TW"},
+                    {"alpha3": "zho", "script": "Hant"},
+                ]
+            ),
+            ["ZH_BG"],
+        )
+
 
 class SubDLQueryTests(unittest.TestCase):
     def setUp(self):
@@ -196,7 +218,7 @@ class SubDLProviderSearchTests(unittest.TestCase):
         self.assertIn("imdb_id", first["matches"])
         self.assertIn("title", first["matches"])
 
-    def test_episode_search_skips_packs_outside_anime_mode(self):
+    def test_episode_search_accepts_packs_outside_anime_mode(self):
         provider = self.mod.SubDLProvider()
         pack_item = {
             "language": "EN",
@@ -225,7 +247,189 @@ class SubDLProviderSearchTests(unittest.TestCase):
             {"api_key": "test-key", "anime_mode": False},
         )
 
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["provider_payload"]["episode"], 5)
+        self.assertTrue(results[0]["provider_payload"]["is_pack"])
+
+    def test_episode_search_rejects_pack_from_another_season(self):
+        provider = self.mod.SubDLProvider()
+        pack_item = {
+            "language": "EN",
+            "name": "show.s02.pack.zip",
+            "url": "/subtitle/pack.zip",
+            "release_name": "Show S02 Pack",
+            "season": 2,
+            "episode_from": 1,
+            "episode_end": 10,
+            "hi": False,
+        }
+        provider._http_get_json = lambda params: _subdl_response(pack_item)
+
+        results = provider.search(
+            {"kind": "episode", "series": "Show", "season": 1, "episode": 5},
+            [{"alpha3": "eng"}],
+            {"api_key": "test-key"},
+        )
+
         self.assertEqual(results, [])
+
+    def test_full_season_pack_requires_matching_child_when_unpack_files_are_listed(self):
+        provider = self.mod.SubDLProvider()
+        pack_item = {
+            "language": "EN",
+            "name": "show.s01.full.season.zip",
+            "url": "/subtitle/season-pack.zip",
+            "release_name": "Show S01 Full Season",
+            "season": 1,
+            "full_season": True,
+            "unpack_files": [
+                {
+                    "file_n_id": "episode-2",
+                    "name": "Show.S01E02.srt",
+                    "season": 1,
+                    "episode": 2,
+                    "language": "EN",
+                    "hi": False,
+                    "url": "/subtitle/episode-2.srt",
+                }
+            ],
+            "hi": False,
+        }
+        provider._http_get_json = lambda params: _subdl_response(pack_item)
+
+        results = provider.search(
+            {"kind": "episode", "series": "Show", "season": 1, "episode": 5},
+            [{"alpha3": "eng"}],
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(results, [])
+
+    def test_pack_child_from_another_season_does_not_match_same_episode_number(self):
+        provider = self.mod.SubDLProvider()
+        pack_item = {
+            "language": "EN",
+            "name": "show.s02.full.season.zip",
+            "url": "/subtitle/season-2-pack.zip",
+            "release_name": "Show S02 Full Season",
+            "season": 2,
+            "full_season": True,
+            "unpack_files": [
+                {
+                    "file_n_id": "season-2-episode-5",
+                    "name": "Show.S02E05.srt",
+                    "season": 2,
+                    "episode": 5,
+                    "language": "EN",
+                    "hi": False,
+                    "url": "/subtitle/season-2-episode-5.srt",
+                }
+            ],
+            "hi": False,
+        }
+        provider._http_get_json = lambda params: _subdl_response(pack_item)
+
+        results = provider.search(
+            {"kind": "episode", "series": "Show", "season": 1, "episode": 5},
+            [{"alpha3": "eng"}],
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(results, [])
+
+    def test_stylized_sdh_marker_marks_result_hearing_impaired(self):
+        item = {
+            "language": "EN",
+            "name": "movie-en.zip",
+            "release_name": "Movie.2026.1080p.𝓢𝓓𝓗",
+        }
+
+        self.assertTrue(self.mod.is_hearing_impaired(item))
+
+    def test_subdl_runtime_policy_bounds_pagination_and_controls_unpack(self):
+        provider = self.mod.SubDLProvider()
+        calls = []
+        full_page = [
+            {"name": f"unsupported-{index}", "language": "unsupported", "url": f"/subtitle/{index}.zip"}
+            for index in range(30)
+        ]
+
+        def get_json(params):
+            calls.append(dict(params))
+            if params.get("page", 1) == 1:
+                return {
+                    "status": True,
+                    "subtitles": full_page,
+                    "bazarr_policy": {"max_pages": 99, "unpack_enabled": False},
+                }
+            return {"status": True, "subtitles": full_page}
+
+        provider._http_get_json = get_json
+        provider.search(
+            {"kind": "movie", "title": "Movie", "imdb_id": "tt1234567"},
+            [{"alpha3": "eng"}],
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1]["page"], 2)
+        self.assertNotIn("unpack", calls[1])
+
+    def test_subdl_runtime_policy_can_disable_the_provider(self):
+        provider = self.mod.SubDLProvider()
+        item = {"name": "movie-en.zip", "language": "EN", "url": "/movie.zip"}
+        calls = []
+
+        def get_json(params):
+            calls.append(dict(params))
+            return {
+                "status": True,
+                "subtitles": [item],
+                "bazarr_policy": {"enabled": False},
+            }
+
+        provider._http_get_json = get_json
+        results = provider.search(
+            {"kind": "movie", "title": "Movie", "imdb_id": "tt1234567"},
+            [{"alpha3": "eng"}],
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(results, [])
+        self.assertEqual(len(calls), 1)
+
+    def test_subdl_runtime_policy_can_disable_season_and_title_fallbacks(self):
+        provider = self.mod.SubDLProvider()
+        calls = []
+
+        def get_json(params):
+            calls.append(dict(params))
+            if len(calls) == 1:
+                return {
+                    "status": True,
+                    "subtitles": [],
+                    "bazarr_policy": {
+                        "season_fallback_enabled": False,
+                        "title_fallback_enabled": False,
+                    },
+                }
+            return {"status": True, "subtitles": []}
+
+        provider._http_get_json = get_json
+        provider.search(
+            {
+                "kind": "episode",
+                "series": "Show",
+                "season": 2,
+                "episode": 3,
+                "absolute_episode": 40,
+                "series_imdb_id": "tt1234567",
+            },
+            [{"alpha3": "eng"}],
+            {"api_key": "test-key", "anime_mode": True},
+        )
+
+        self.assertEqual([call.get("episode_number") for call in calls], [3, 40])
 
     def test_anime_mode_accepts_matching_pack_unpack_file(self):
         provider = self.mod.SubDLProvider()
