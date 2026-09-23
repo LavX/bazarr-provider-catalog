@@ -134,6 +134,41 @@ class NapiProjektProviderSearchTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
 
+    def test_hash_only_setting_is_disabled_by_default(self):
+        manifest = json.loads((PROVIDER_DIR / "provider.json").read_text())
+
+        self.assertFalse(manifest["config_schema"]["properties"]["hash_only"]["default"])
+
+    def test_hash_only_search_ignores_author_filters_and_skips_catalog(self):
+        provider = self.mod.NapiProjektProvider()
+        hash_calls = []
+
+        def hash_search(video, config):
+            hash_calls.append((video, dict(config)))
+            return self.mod._candidate(
+                self.mod._payload_for_hash("444563eef63f83d47cabb888f7a45113", "hash"),
+                release_info="hash match",
+                matches=["hash"],
+                score=100,
+            )
+
+        provider._hash_search = hash_search
+        provider._catalog_search = lambda video, config: self.fail("hash-only mode must skip catalog search")
+
+        results = provider.search(
+            SHREK_VIDEO,
+            [{"alpha3": "pol", "alpha2": "pl"}],
+            {
+                "hash_only": True,
+                "only_authors": True,
+                "only_real_names": True,
+            },
+        )
+
+        self.assertEqual(len(hash_calls), 1)
+        self.assertTrue(hash_calls[0][1]["only_authors"])
+        self.assertEqual([item["provider_payload"]["source"] for item in results], ["hash"])
+
     def test_search_returns_hash_and_catalog_results(self):
         provider = self.mod.NapiProjektProvider()
         called = []
