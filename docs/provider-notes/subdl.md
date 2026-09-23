@@ -17,10 +17,11 @@ Clean-room target for `subdl`.
 
 - Movie search prefers IMDb id when available. If the API reports an empty result and TMDB id exists, the provider retries with TMDB id only.
 - Episode search prefers series IMDb id when available, otherwise series title.
-- Anime mode adds absolute-episode search, season-only search, title-only fallback, and pack-range matching.
-- Non-anime mode preserves legacy behavior by skipping multi-episode packs.
+- Anime mode adds absolute-episode search, season-only search, and title-only fallback.
+- Matching season packs are considered for all episode searches. Pack season and episode ranges are checked before results are returned.
 - Pack downloads choose the subtitle member matching the requested season and episode, then absolute episode.
-- Hearing-impaired and forced flags are inferred from API fields, comments, archive names, and release names.
+- The bounded `bazarr_policy` fields returned by the API can cap primary search pagination at two pages and control season/title fallbacks and unpack requests. Paid translation submission remains unsupported.
+- Hearing-impaired and forced flags are inferred from API fields, comments, archive names, and release names, including stylized SDH markers.
 - Live no-key probe on 2026-05-29 returned HTTP 422 with a schema error body, confirming that real search proof requires a user SubDL API key.
 
 ## License notes
