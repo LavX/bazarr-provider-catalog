@@ -431,6 +431,41 @@ class HDBitsDownloadTests(unittest.TestCase):
 
         self.assertEqual(result, {"decision": "reject"})
 
+    def test_archive_selector_rejects_only_explicit_other_languages(self):
+        provider = self.mod.HDBitsProvider()
+        for payload, members in (
+            ({"season": 1, "episode": 1}, ["Show.S01E01.en.srt", "Show.S01E01.gr.srt"]),
+            ({}, ["Movie.en.srt", "Movie.gr.srt"]),
+        ):
+            with self.subTest(payload=payload):
+                result = provider.select_archive_member(payload, {"alpha3": "fra"}, members, {})
+                self.assertEqual(result, {"decision": "reject"})
+
+    def test_archive_selector_allows_unlabelled_without_pinning_other_language(self):
+        provider = self.mod.HDBitsProvider()
+        result = provider.select_archive_member(
+            {"season": 1, "episode": 1}, {"alpha3": "fra"},
+            ["Show.S01E01.en.srt", "Show.S01E01.srt"], {},
+        )
+        self.assertEqual(result, {"decision": "pin", "member": "Show.S01E01.srt"})
+
+    def test_archive_selector_does_not_treat_title_words_as_language_tags(self):
+        provider = self.mod.HDBitsProvider()
+        name = "How.to.Train.Your.Dragon.S01E01.srt"
+        result = provider.select_archive_member(
+            {"season": 1, "episode": 1}, {"alpha3": "fra"}, [name], {},
+        )
+        self.assertEqual(result, {"decision": "pin", "member": name})
+
+    def test_archive_selector_distinguishes_hindi_from_english_hi_suffix(self):
+        provider = self.mod.HDBitsProvider()
+        payload = {"season": 1, "episode": 1}
+        for name in ("Show.S01E01.en.HI.srt", "Show.S01E01.en.SDH.HI.srt"):
+            with self.subTest(name=name):
+                self.assertEqual(provider.select_archive_member(payload, {"alpha3": "hin"}, [name], {}), {"decision": "reject"})
+        name = "Show.S01E01.hi.srt"
+        self.assertEqual(provider.select_archive_member(payload, {"alpha3": "hin"}, [name], {}), {"decision": "pin", "member": name})
+
     def test_download_rejects_empty_response(self):
         provider = self.mod.HDBitsProvider()
         provider._http_get = lambda url, timeout=15: b""

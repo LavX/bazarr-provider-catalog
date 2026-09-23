@@ -386,6 +386,238 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "cf0e35697e80cc522f73f306163be111a992da1cc4c0c2438a61ae861a805612",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "cookies": {
+              "description": "AvistaZ session cookies, for example avistazx_session and XSRF-TOKEN.",
+              "minLength": 1,
+              "secret": true,
+              "title": "Cookies",
+              "type": "string"
+            },
+            "user_agent": {
+              "default": "",
+              "description": "Optional browser User-Agent paired with the supplied cookies.",
+              "title": "User-Agent",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cookies"
+          ],
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Uses AvistaZ release pages refined from Sonarr or Radarr history to download attached subtitles. Requires AvistaZ session cookies.",
+        "entry_class": "AvistazProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "f5e804141dcc7feffd19efdc9458cb1ca691a6270d634590aa94d06a0330768d"
+        },
+        "languages": [
+          "aar",
+          "abk",
+          "afr",
+          "aka",
+          "amh",
+          "ara",
+          "arg",
+          "asm",
+          "ava",
+          "ave",
+          "aym",
+          "aze",
+          "bak",
+          "bam",
+          "bel",
+          "ben",
+          "bis",
+          "bod",
+          "bos",
+          "bre",
+          "bul",
+          "cat",
+          "ces",
+          "cha",
+          "che",
+          "chu",
+          "chv",
+          "cor",
+          "cos",
+          "cre",
+          "cym",
+          "dan",
+          "deu",
+          "dzo",
+          "eng",
+          "epo",
+          "est",
+          "eus",
+          "ewe",
+          "fao",
+          "fas",
+          "fij",
+          "fil",
+          "fin",
+          "fra",
+          "fry",
+          "ful",
+          "gle",
+          "glg",
+          "glv",
+          "grn",
+          "guj",
+          "hat",
+          "hau",
+          "heb",
+          "her",
+          "hin",
+          "hmo",
+          "hrv",
+          "hun",
+          "hye",
+          "ibo",
+          "ido",
+          "iii",
+          "iku",
+          "ile",
+          "ind",
+          "ipk",
+          "isl",
+          "ita",
+          "jav",
+          "jpn",
+          "kal",
+          "kan",
+          "kas",
+          "kat",
+          "kau",
+          "kaz",
+          "kik",
+          "kin",
+          "kir",
+          "kom",
+          "kon",
+          "kor",
+          "kua",
+          "kur",
+          "lao",
+          "lat",
+          "lav",
+          "lim",
+          "lin",
+          "lit",
+          "ltz",
+          "lub",
+          "lug",
+          "mah",
+          "mal",
+          "mar",
+          "mkd",
+          "mlg",
+          "mlt",
+          "mon",
+          "mri",
+          "mya",
+          "nau",
+          "nav",
+          "nbl",
+          "nde",
+          "ndo",
+          "nld",
+          "nno",
+          "nor",
+          "nya",
+          "oci",
+          "oji",
+          "orm",
+          "oss",
+          "pan",
+          "pli",
+          "pol",
+          "por",
+          "pus",
+          "que",
+          "roh",
+          "ron",
+          "run",
+          "rus",
+          "sag",
+          "san",
+          "sin",
+          "slk",
+          "slv",
+          "sme",
+          "smo",
+          "sna",
+          "snd",
+          "som",
+          "sot",
+          "spa",
+          "sqi",
+          "srd",
+          "srp",
+          "ssw",
+          "sun",
+          "swe",
+          "tah",
+          "tam",
+          "tat",
+          "tel",
+          "tgk",
+          "tgl",
+          "tha",
+          "tir",
+          "tsn",
+          "tso",
+          "tuk",
+          "tur",
+          "twi",
+          "uig",
+          "ukr",
+          "urd",
+          "uzb",
+          "ven",
+          "vie",
+          "vol",
+          "wln",
+          "wol",
+          "xho",
+          "yid",
+          "yor",
+          "zha",
+          "zho",
+          "zul"
+        ],
+        "name": "AvistaZ",
+        "provider_id": "avistaz",
+        "schema_version": 1,
+        "secret_fields": [
+          "cookies"
+        ],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/avistaz",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.3"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "3aa969bf55c6afa67deaf36acbbf62b99c64c0ac538e774e67910c3a76774258",
         "config_schema": {
           "additionalProperties": false,
@@ -612,6 +844,238 @@
           "episode"
         ],
         "version": "0.1.1"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "8645402a0fcee507c85427b9bcf8051d9bb4836377eb1e7bcfb785be85f36a03",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "cookies": {
+              "description": "CinemaZ session cookies, for example cinemazx_session and XSRF-TOKEN.",
+              "minLength": 1,
+              "secret": true,
+              "title": "Cookies",
+              "type": "string"
+            },
+            "user_agent": {
+              "default": "",
+              "description": "Optional browser User-Agent paired with the supplied cookies.",
+              "title": "User-Agent",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cookies"
+          ],
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Uses CinemaZ release pages refined from Sonarr or Radarr history to download attached subtitles. Requires CinemaZ session cookies.",
+        "entry_class": "CinemaZProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "3c0d5dbb65a7ea6d7064887b3a198bfbd256dc551479ea1a5e8293d85d27a1be"
+        },
+        "languages": [
+          "aar",
+          "abk",
+          "afr",
+          "aka",
+          "amh",
+          "ara",
+          "arg",
+          "asm",
+          "ava",
+          "ave",
+          "aym",
+          "aze",
+          "bak",
+          "bam",
+          "bel",
+          "ben",
+          "bis",
+          "bod",
+          "bos",
+          "bre",
+          "bul",
+          "cat",
+          "ces",
+          "cha",
+          "che",
+          "chu",
+          "chv",
+          "cor",
+          "cos",
+          "cre",
+          "cym",
+          "dan",
+          "deu",
+          "dzo",
+          "eng",
+          "epo",
+          "est",
+          "eus",
+          "ewe",
+          "fao",
+          "fas",
+          "fij",
+          "fil",
+          "fin",
+          "fra",
+          "fry",
+          "ful",
+          "gle",
+          "glg",
+          "glv",
+          "grn",
+          "guj",
+          "hat",
+          "hau",
+          "heb",
+          "her",
+          "hin",
+          "hmo",
+          "hrv",
+          "hun",
+          "hye",
+          "ibo",
+          "ido",
+          "iii",
+          "iku",
+          "ile",
+          "ind",
+          "ipk",
+          "isl",
+          "ita",
+          "jav",
+          "jpn",
+          "kal",
+          "kan",
+          "kas",
+          "kat",
+          "kau",
+          "kaz",
+          "kik",
+          "kin",
+          "kir",
+          "kom",
+          "kon",
+          "kor",
+          "kua",
+          "kur",
+          "lao",
+          "lat",
+          "lav",
+          "lim",
+          "lin",
+          "lit",
+          "ltz",
+          "lub",
+          "lug",
+          "mah",
+          "mal",
+          "mar",
+          "mkd",
+          "mlg",
+          "mlt",
+          "mon",
+          "mri",
+          "mya",
+          "nau",
+          "nav",
+          "nbl",
+          "nde",
+          "ndo",
+          "nld",
+          "nno",
+          "nor",
+          "nya",
+          "oci",
+          "oji",
+          "orm",
+          "oss",
+          "pan",
+          "pli",
+          "pol",
+          "por",
+          "pus",
+          "que",
+          "roh",
+          "ron",
+          "run",
+          "rus",
+          "sag",
+          "san",
+          "sin",
+          "slk",
+          "slv",
+          "sme",
+          "smo",
+          "sna",
+          "snd",
+          "som",
+          "sot",
+          "spa",
+          "sqi",
+          "srd",
+          "srp",
+          "ssw",
+          "sun",
+          "swe",
+          "tah",
+          "tam",
+          "tat",
+          "tel",
+          "tgk",
+          "tgl",
+          "tha",
+          "tir",
+          "tsn",
+          "tso",
+          "tuk",
+          "tur",
+          "twi",
+          "uig",
+          "ukr",
+          "urd",
+          "uzb",
+          "ven",
+          "vie",
+          "vol",
+          "wln",
+          "wol",
+          "xho",
+          "yid",
+          "yor",
+          "zha",
+          "zho",
+          "zul"
+        ],
+        "name": "CinemaZ",
+        "provider_id": "cinemaz",
+        "schema_version": 1,
+        "secret_fields": [
+          "cookies"
+        ],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/cinemaz",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.3"
       }
     },
     {
@@ -1054,7 +1518,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "47c929c10de166f7a63f42cc7bd30becca89add949ea55fab402a36b91e72825",
+        "bundle_sha256": "d1ef4ca18c86288ec9796c4718cd9efdc85537d95285c0afce7f09db9b81fc3d",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1092,7 +1556,7 @@
         "entry_class": "HDBitsProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "11bc27f6d86f2acb78c097bc3b3a044b600d7654bfdaaa902a2f94e31d5e37d1"
+          "provider.py": "bc5c1b7a824c1200cacd3836f279f1b7a59f7a0e57aaabf9ad39bf7b218514ae"
         },
         "languages": [
           "aar",
@@ -1534,6 +1998,82 @@
           "episode"
         ],
         "version": "0.1.4"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "902b4bda5a946d134bae7156285b524692c9dab2d18b906be4097e0c53d8aac8",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "f_password": {
+              "default": "",
+              "description": "Optional Karagarga forum password. Defaults to the main password when empty.",
+              "secret": true,
+              "title": "Forum password",
+              "type": "string"
+            },
+            "f_username": {
+              "default": "",
+              "description": "Optional Karagarga forum username. Defaults to the main username when empty.",
+              "title": "Forum username",
+              "type": "string"
+            },
+            "password": {
+              "description": "Karagarga tracker password.",
+              "minLength": 1,
+              "secret": true,
+              "title": "Password",
+              "type": "string"
+            },
+            "username": {
+              "description": "Karagarga tracker username.",
+              "minLength": 1,
+              "secret": true,
+              "title": "Username",
+              "type": "string"
+            }
+          },
+          "required": [
+            "username",
+            "password"
+          ],
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Uses Karagarga tracker search plus forum attachments for English movie subtitles. Requires Karagarga tracker and forum credentials.",
+        "entry_class": "KaragargaProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "a5fa52e9d94180236980769261cf2946098247a73ea5148b1e13f6999383b448"
+        },
+        "languages": [
+          "eng"
+        ],
+        "name": "Karagarga",
+        "provider_id": "karagarga",
+        "schema_version": 1,
+        "secret_fields": [
+          "username",
+          "password",
+          "f_password"
+        ],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/karagarga",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie"
+        ],
+        "version": "0.1.3"
       }
     },
     {
@@ -3671,6 +4211,76 @@
           "episode"
         ],
         "version": "0.1.10"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "332b7fdce3eab1a897f74146f92deca19afe40e2825c436a8ef5fb2663a2f3a9",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "password": {
+              "description": "Pipocas.tv password.",
+              "title": "Password",
+              "type": "string"
+            },
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between HTTP calls to pipocas.tv.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            },
+            "username": {
+              "description": "Pipocas.tv username.",
+              "title": "Username",
+              "type": "string"
+            }
+          },
+          "required": [
+            "username",
+            "password"
+          ],
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Scrapes Pipocas.tv for movie and episode subtitles in Portuguese, Brazilian Portuguese, English, and Spanish. Login is required. ZIP and RAR downloads are supported.",
+        "entry_class": "PipocasProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "ca8c9260a8ab1788fd3ea8977d0d8392f16efd65d8d2d85cfae17a93922c7576"
+        },
+        "languages": [
+          "eng",
+          "por",
+          "por-BR",
+          "spa"
+        ],
+        "name": "Pipocas.tv",
+        "provider_id": "pipocas",
+        "schema_version": 1,
+        "secret_fields": [
+          "username",
+          "password"
+        ],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/pipocas",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.3"
       }
     },
     {

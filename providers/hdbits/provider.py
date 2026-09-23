@@ -723,17 +723,47 @@ def select_subtitle_file(names, payload):
             f"hdbits archive does not contain the requested episode {episode}"
         )
 
-    return max(matching, key=score)
+    return max(_language_candidates(matching, payload), key=score)
 
 
 def _best_language_candidate(candidates, payload):
+    return _language_candidates(candidates, payload)[0]
+
+
+def _language_candidates(candidates, payload):
     hints = _language_hints((payload or {}).get("language"))
     if not hints:
-        return candidates[0]
-    for candidate in candidates:
-        if hints & set(_tokens(candidate)):
-            return candidate
-    return candidates[0]
+        return candidates
+    matching = [name for name in candidates if hints & _filename_language_codes(name)]
+    if matching:
+        return matching
+    unlabelled = [name for name in candidates if not _filename_language_codes(name)]
+    if unlabelled:
+        return unlabelled
+    raise ValueError("hdbits archive does not contain the requested language")
+
+
+def _filename_language_codes(name):
+    # Treat trailing language tags as labels, not short words in the title.
+    tokens = _tokens(os.path.splitext(os.path.basename(name))[0])
+    if len(tokens) < 2:
+        return set()
+    known = set(ALPHA2_TO_ALPHA3) | set(ALPHA3_TO_ALPHA2) | set(SPECIAL_HDBITS_LANGUAGE)
+    labels = set()
+    for index in range(len(tokens) - 1, 0, -1):
+        token = tokens[index]
+        if token in {"forced", "sdh", "cc"}:
+            continue
+        if token == "hi":
+            previous = index - 1
+            while previous > 0 and tokens[previous] in {"forced", "sdh", "cc"}:
+                previous -= 1
+            if previous > 0 and tokens[previous] in known and tokens[previous] != "hi":
+                continue
+        if token not in known:
+            break
+        labels.add(token)
+    return labels
 
 
 def _language_hints(language):

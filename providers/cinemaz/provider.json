@@ -1,44 +1,36 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "d1ef4ca18c86288ec9796c4718cd9efdc85537d95285c0afce7f09db9b81fc3d",
+  "bundle_sha256": "8645402a0fcee507c85427b9bcf8051d9bb4836377eb1e7bcfb785be85f36a03",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
-      "passkey": {
+      "cookies": {
+        "description": "CinemaZ session cookies, for example cinemazx_session and XSRF-TOKEN.",
         "minLength": 1,
         "secret": true,
-        "title": "Passkey",
+        "title": "Cookies",
         "type": "string"
       },
-      "request_delay_ms": {
-        "default": 500,
-        "description": "Optional delay between HDBits subtitle API calls.",
-        "maximum": 5000,
-        "minimum": 0,
-        "title": "Delay between requests (ms)",
-        "type": "integer"
-      },
-      "username": {
-        "minLength": 1,
-        "secret": true,
-        "title": "Username",
+      "user_agent": {
+        "default": "",
+        "description": "Optional browser User-Agent paired with the supplied cookies.",
+        "title": "User-Agent",
         "type": "string"
       }
     },
     "required": [
-      "username",
-      "passkey"
+      "cookies"
     ],
     "type": "object"
   },
   "dependencies": {
     "requirements": []
   },
-  "description": "Uses HDBits authenticated JSON APIs for movie and episode subtitles. Direct subtitle files, ZIP archives, and RAR archives are supported.",
-  "entry_class": "HDBitsProvider",
+  "description": "Uses CinemaZ release pages refined from Sonarr or Radarr history to download attached subtitles. Requires CinemaZ session cookies.",
+  "entry_class": "CinemaZProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "bc5c1b7a824c1200cacd3836f279f1b7a59f7a0e57aaabf9ad39bf7b218514ae"
+    "provider.py": "3c0d5dbb65a7ea6d7064887b3a198bfbd256dc551479ea1a5e8293d85d27a1be"
   },
   "languages": [
     "aar",
@@ -57,10 +49,10 @@
     "bam",
     "bel",
     "ben",
-    "bih",
     "bis",
     "bod",
     "bos",
+    "bre",
     "bul",
     "cat",
     "ces",
@@ -74,9 +66,7 @@
     "cym",
     "dan",
     "deu",
-    "div",
     "dzo",
-    "ell",
     "eng",
     "epo",
     "est",
@@ -90,7 +80,6 @@
     "fra",
     "fry",
     "ful",
-    "gla",
     "gle",
     "glg",
     "glv",
@@ -110,7 +99,6 @@
     "iii",
     "iku",
     "ile",
-    "ina",
     "ind",
     "ipk",
     "isl",
@@ -123,7 +111,6 @@
     "kat",
     "kau",
     "kaz",
-    "khm",
     "kik",
     "kin",
     "kir",
@@ -149,22 +136,18 @@
     "mlt",
     "mon",
     "mri",
-    "msa",
     "mya",
     "nau",
     "nav",
     "nbl",
     "nde",
     "ndo",
-    "nep",
     "nld",
     "nno",
-    "nob",
     "nor",
     "nya",
     "oci",
     "oji",
-    "ori",
     "orm",
     "oss",
     "pan",
@@ -194,16 +177,15 @@
     "srp",
     "ssw",
     "sun",
-    "swa",
     "swe",
     "tah",
     "tam",
     "tat",
     "tel",
     "tgk",
+    "tgl",
     "tha",
     "tir",
-    "ton",
     "tsn",
     "tso",
     "tuk",
@@ -225,17 +207,16 @@
     "zho",
     "zul"
   ],
-  "name": "HDBits",
-  "provider_id": "hdbits",
+  "name": "CinemaZ",
+  "provider_id": "cinemaz",
   "schema_version": 1,
   "secret_fields": [
-    "username",
-    "passkey"
+    "cookies"
   ],
   "source": {
     "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
     "commit": "0000000000000000000000000000000000000000",
-    "path": "providers/hdbits",
+    "path": "providers/cinemaz",
     "ref": "main",
     "repo": "LavX/bazarr-provider-catalog",
     "trusted": true,
