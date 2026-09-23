@@ -568,6 +568,10 @@ def _title_and_episode_from_match(title_match):
 
 
 def _row_matches_video(row, video, media_type):
+    video_imdb_id = video.get("imdb_id") if media_type == "movie" else video.get("series_imdb_id")
+    row_imdb_id = row.get("imdb_id")
+    if video_imdb_id and row_imdb_id and video_imdb_id != row_imdb_id:
+        return False
     if media_type == "movie":
         if not _title_matches(video.get("title"), row.get("title")):
             return False
