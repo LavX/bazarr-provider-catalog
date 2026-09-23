@@ -33,6 +33,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`gestdown`](providers/gestdown/) | 0.1.4 | Uses the public Gestdown API for episode subtitles by TVDB show id, season, episode, and language. No login or API key. |
 | [`greeksubs`](providers/greeksubs/) | 0.1.2 | Scrapes [GreekSubs](https://greeksubs.net) for Greek movie and episode subtitles by IMDb id. No login or API key. |
 | [`greeksubtitles`](providers/greeksubtitles/) | 0.1.3 | Scrapes [GreekSubtitles](https://gr.greek-subtitles.com) for Greek and English movie and episode subtitles. ZIP and RAR downloads are supported. |
+| [`hdbits`](providers/hdbits/) | 0.1.3 | Uses authenticated [HDBits](https://hdbits.org) JSON APIs for movie and episode subtitles. Requires username and passkey. |
 | [`isubtitles`](providers/isubtitles/) | 0.1.4 | Scrapes [iSubtitles.org](https://isubtitles.org) for movie and episode subtitles in broad multilingual coverage. No login or API key. |
 | [`jimaku`](providers/jimaku/) | 0.1.4 | Uses the [Jimaku](https://jimaku.cc) API for Japanese movie and episode subtitles. Requires API key. |
 | [`karagarga`](providers/karagarga/) | 0.1.3 | Uses [Karagarga](https://karagarga.in) tracker search and forum attachments for English movie subtitles. Requires tracker and forum credentials. |
