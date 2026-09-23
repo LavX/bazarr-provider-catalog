@@ -20,13 +20,13 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`addic7ed`](providers/addic7ed/) | 0.1.3 | Uses [Addic7ed](https://www.addic7ed.com) for movie and episode subtitles. Requires username and password or valid cookies. |
 | [`animekalesi`](providers/animekalesi/) | 0.1.4 | Scrapes [AnimeKalesi](https://www.animekalesi.com) for Turkish anime episode subtitles. Direct subtitle files and ZIP packages are supported. |
 | [`animesubinfo`](providers/animesubinfo/) | 0.1.3 | Scrapes [AnimeSub.info](http://animesub.info) for Polish anime movie and episode subtitles. Direct subtitle files and ZIP packages are supported. |
-| [`animetosho`](providers/animetosho/) | 0.1.4 | Archive-only provider using [AnimeTosho](https://animetosho.org) JSON feeds to find embedded subtitle attachments for older anime episodes by AniDB episode id. New torrent ingestion stopped on May 9, 2026. No login or API key. |
+| [`animetosho`](providers/animetosho/) | 0.1.5 | Archive-only provider using [AnimeTosho](https://animetosho.org) JSON feeds to find embedded subtitle attachments for older anime episodes by AniDB episode id. New torrent ingestion stopped on May 9, 2026. No login or API key. |
 | [`betaseries`](providers/betaseries/) | 0.1.6 | Searches the [BetaSeries](https://www.betaseries.com) API for French and English episode subtitles. Requires an API key. |
 | [`bollynook`](providers/bollynook/) | 0.1.3 | Scrapes [BollyNook](https://www.bollynook.com) for movie subtitles across Indian and international languages. No login or API key. |
 | [`bsplayer`](providers/bsplayer/) | 0.1.1 | Uses the BSPlayer subtitles SOAP API for hash and size based movie and episode subtitle lookup. No login or API key. |
 | [`embeddedsubtitles`](providers/embeddedsubtitles/) | 0.1.4 | Extracts subtitle streams embedded in local movie and episode media files with ffprobe and ffmpeg, suppressing duplicate unknown-language fallbacks by language and disposition. No login or API key. |
 | [`fansubs`](providers/fansubs/) | 0.1.6 | Scrapes [fansubs.ru](http://fansubs.ru) for Russian anime and Asian cinema subtitles. No login or API key. |
-| [`gestdown`](providers/gestdown/) | 0.1.3 | Uses the public Gestdown API for episode subtitles by TVDB show id, season, episode, and language. No login or API key. |
+| [`gestdown`](providers/gestdown/) | 0.1.4 | Uses the public Gestdown API for episode subtitles by TVDB show id, season, episode, and language. No login or API key. |
 | [`greeksubs`](providers/greeksubs/) | 0.1.1 | Scrapes [GreekSubs](https://greeksubs.net) for Greek movie and episode subtitles by IMDb id. No login or API key. |
 | [`greeksubtitles`](providers/greeksubtitles/) | 0.1.3 | Scrapes [GreekSubtitles](https://gr.greek-subtitles.com) for Greek and English movie and episode subtitles. ZIP and RAR downloads are supported. |
 | [`isubtitles`](providers/isubtitles/) | 0.1.4 | Scrapes [iSubtitles.org](https://isubtitles.org) for movie and episode subtitles in broad multilingual coverage. No login or API key. |
@@ -38,7 +38,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`moviesubtitles`](providers/moviesubtitles/) | 0.1.2 | Scrapes [Moviesubtitles.org](https://www.moviesubtitles.org) for movie subtitles, including multipart archives. No login or API key. |
 | [`napisy24`](providers/napisy24/) | 0.1.3 | Uses the [Napisy24](https://napisy24.pl) hash API for Polish movie and episode subtitles. Optional username and password. |
 | [`my_subs`](providers/my_subs/) | 0.1.3 | Scrapes [My-Subs.co](https://my-subs.co) for movie and episode subtitles in many languages. No login or API key. |
-| [`napiprojekt`](providers/napiprojekt/) | 0.1.6 | Searches [NapiProjekt](https://www.napiprojekt.pl) for Polish subtitles using hash lookup and catalog scraping with optional author filters. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback. |
+| [`napiprojekt`](providers/napiprojekt/) | 0.1.7 | Searches [NapiProjekt](https://www.napiprojekt.pl) for Polish subtitles using hash lookup and catalog scraping with optional author filters or opt-in hash-only mode. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback. |
 | [`nekur`](providers/nekur/) | 0.1.4 | Scrapes [Nekur](https://subtitri.nekur.net) for Latvian movie subtitles. No login or API key. |
 | [`opensubtitles`](providers/opensubtitles_org/) | 0.1.13 | Scrapes OpenSubtitles.org natively with ai-cloudscraper, inline Anubis solving, and optional FlareSolverr fallback for Cloudflare challenges. |
 | [`opensubtitlescom`](providers/opensubtitlescom/) | 0.1.9 | Uses the official [OpenSubtitles.com](https://www.opensubtitles.com) API for movie and episode subtitles. Requires username, password, and API key. |
@@ -48,7 +48,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`soustitreseu`](providers/soustitreseu/) | 0.1.10 | Scrapes [Sous-Titres.eu](https://www.sous-titres.eu) for French and English movie and episode subtitles. No login or API key. |
 | [`subcentral`](providers/subcentral/) | 0.1.1 | Scrapes [SubCentral.de](https://www.subcentral.de) forum subtitle threads for German and English episode releases. No login or API key. |
 | [`subclub`](providers/subclub/) | 0.1.4 | Scrapes [Subclub.eu](https://www.subclub.eu) for Estonian movie and episode subtitles. No login or API key. |
-| [`subdl`](providers/subdl/) | 0.1.4 | Uses the official [SubDL](https://subdl.com) API for movie and episode subtitles, including optional anime pack handling. API key required. |
+| [`subdl`](providers/subdl/) | 0.1.5 | Uses the official [SubDL](https://subdl.com) API for movie and episode subtitles, including season packs and optional anime search fallbacks. API key required. |
 | [`subf2m`](providers/subf2m/) | 0.1.3 | Scrapes [SubF2M](https://subf2m.co) for movie and episode subtitle ZIP files in 30+ languages. Configurable User-Agent and SSL verification. |
 | [`subs4free`](providers/subs4free/) | 0.1.4 | Scrapes [Subs4Free](https://www.subs4free.info) for Greek and English movie subtitles. No login or API key. |
 | [`subs4series`](providers/subs4series/) | 0.1.7 | Scrapes [Subs4Series](https://www.subs4series.com) for Greek and English episode subtitles. Uses ai-cloudscraper with inline Anubis solving, optional FlareSolverr fallback, and optional captcha helper settings for download gates. |
@@ -63,7 +63,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`subtitulamostv`](providers/subtitulamostv/) | 0.1.2 | Scrapes [subtitulamos.tv](https://www.subtitulamos.tv) for episode subtitles in Spanish variants, English, Catalan, Galician, and Portuguese. No login or API key. |
 | [`sub_scene`](providers/sub_scene/) | 0.1.17 | Scrapes [sub-scene.com](https://sub-scene.com) (Subscene clone) for movie and episode subtitles in 35+ languages including Vietnamese, Arabic, Bengali, Danish, Dutch. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback. |
 | [`subsro`](providers/subsro/) | 0.1.4 | Uses the [Subs.ro](https://subs.ro/api) API for Romanian and English movie and episode subtitles. Requires an API key. ZIP and RAR downloads are supported. |
-| [`subssabbz`](providers/subssabbz/) | 0.1.5 | Scrapes [subs.sab.bz](http://subs.sab.bz) for Bulgarian and English movie and episode subtitles. ZIP and RAR downloads are supported. |
+| [`subssabbz`](providers/subssabbz/) | 0.1.6 | Scrapes [subs.sab.bz](http://subs.sab.bz) for Bulgarian and English movie and episode subtitles. ZIP and RAR downloads are supported. |
 | [`subsunacs`](providers/subsunacs/) | 0.1.5 | Scrapes [subsunacs.net](https://subsunacs.net) for Bulgarian and English movie and episode subtitles. Direct entry pages plus ZIP, RAR, and 7Z downloads are supported. |
 | [`subx`](providers/subx/) | 0.1.2 | Uses the [SubX](https://subx-api.duckdns.org/docs/getting-started/quickstart/) API for Spanish movie and episode subtitles. Requires an API key. ZIP and RAR downloads are supported. |
 | [`subtitlecat`](providers/subtitlecat/) | 0.1.5 | Scrapes [subtitlecat.com](https://www.subtitlecat.com) (no login, no API key). Worked example for the [scraper authoring guide](docs/writing-a-scraper-provider.md). |
