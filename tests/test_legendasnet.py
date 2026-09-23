@@ -73,7 +73,6 @@ class LegendasNetSearchTests(unittest.TestCase):
                 self.assertEqual(
                     json_body,
                     {
-                        "name": "Dune: Part One",
                         "page": 1,
                         "per_page": 25,
                         "imdb_id": "tt1160419",
@@ -124,6 +123,8 @@ class LegendasNetSearchTests(unittest.TestCase):
     def test_movie_search_falls_back_to_alternative_title_when_primary_is_empty(self):
         provider = self.mod.LegendasNetProvider()
         searched_names = []
+        video = _json_fixture("legendasnet_video_dune_2021.json")
+        video.pop("imdb_id")
 
         def request(method, url, headers=None, json_body=None, timeout=30):
             del method, headers, timeout
@@ -139,7 +140,7 @@ class LegendasNetSearchTests(unittest.TestCase):
 
         provider._http_json = request
         results = provider.search(
-            _json_fixture("legendasnet_video_dune_2021.json"),
+            video,
             [{"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR"}],
             {"username": "user", "password": "pass"},
         )
@@ -159,7 +160,6 @@ class LegendasNetSearchTests(unittest.TestCase):
                 self.assertEqual(
                     json_body,
                     {
-                        "name": "Chernobyl",
                         "page": 1,
                         "per_page": 25,
                         "tv_episode": 1,
@@ -187,6 +187,171 @@ class LegendasNetSearchTests(unittest.TestCase):
         self.assertIn("season", results[0]["matches"])
         self.assertIn("episode", results[0]["matches"])
 
+    def test_episode_search_uses_series_name_when_imdb_id_is_missing(self):
+        provider = self.mod.LegendasNetProvider()
+        video = _json_fixture("legendasnet_video_chernobyl_s01e01.json")
+        video.pop("series_imdb_id")
+        search_bodies = []
+
+        def request(method, url, headers=None, json_body=None, timeout=30):
+            del method, headers, timeout
+            if url.endswith("/login"):
+                return self.mod.HttpResponse(200, _fixture("legendasnet_login.json"), {})
+            if url.endswith("/search/tv"):
+                search_bodies.append(dict(json_body or {}))
+                return self.mod.HttpResponse(200, _fixture("legendasnet_search_chernobyl.json"), {})
+            raise AssertionError(url)
+
+        provider._http_json = request
+        results = provider.search(
+            video,
+            [{"alpha3": "por-BR"}],
+            {"username": "user", "password": "pass"},
+        )
+
+        self.assertEqual(
+            search_bodies,
+            [{"name": "Chernobyl", "page": 1, "per_page": 25, "tv_episode": 1, "tv_season": 1}],
+        )
+        self.assertEqual([item["provider_payload"]["file_id"] for item in results], [201])
+
+    def test_search_uses_only_imdb_id_when_movie_id_is_available(self):
+        provider = self.mod.LegendasNetProvider()
+        search_bodies = []
+
+        def request(method, url, headers=None, json_body=None, timeout=30):
+            del method, headers, timeout
+            if url.endswith("/login"):
+                return self.mod.HttpResponse(200, _fixture("legendasnet_login.json"), {})
+            if url.endswith("/search/movie"):
+                search_bodies.append(dict(json_body or {}))
+                return self.mod.HttpResponse(200, _fixture("legendasnet_search_dune.json"), {})
+            raise AssertionError(url)
+
+        provider._http_json = request
+        provider.search(
+            _json_fixture("legendasnet_video_dune_2021.json"),
+            [{"alpha3": "por-BR"}],
+            {"username": "user", "password": "pass"},
+        )
+
+        self.assertEqual(search_bodies, [{"page": 1, "per_page": 25, "imdb_id": "tt1160419"}])
+
+    def test_search_uses_only_series_imdb_id_when_episode_id_is_available(self):
+        provider = self.mod.LegendasNetProvider()
+        search_bodies = []
+
+        def request(method, url, headers=None, json_body=None, timeout=30):
+            del method, headers, timeout
+            if url.endswith("/login"):
+                return self.mod.HttpResponse(200, _fixture("legendasnet_login.json"), {})
+            if url.endswith("/search/tv"):
+                search_bodies.append(dict(json_body or {}))
+                return self.mod.HttpResponse(200, _fixture("legendasnet_search_chernobyl.json"), {})
+            raise AssertionError(url)
+
+        provider._http_json = request
+        provider.search(
+            _json_fixture("legendasnet_video_chernobyl_s01e01.json"),
+            [{"alpha3": "por-BR"}],
+            {"username": "user", "password": "pass"},
+        )
+
+        self.assertEqual(
+            search_bodies,
+            [{"page": 1, "per_page": 25, "tv_episode": 1, "tv_season": 1, "imdb_id": "tt7366338"}],
+        )
+
+    def test_search_reauthenticates_once_after_expired_access_token(self):
+        provider = self.mod.LegendasNetProvider()
+        login_tokens = ["old-token", "new-token"]
+        login_calls = []
+        search_authorizations = []
+
+        def request(method, url, headers=None, json_body=None, timeout=30):
+            del method, timeout
+            if url.endswith("/login"):
+                login_calls.append(1)
+                token = login_tokens[len(login_calls) - 1]
+                return self.mod.HttpResponse(200, json.dumps({"access_token": token}).encode(), {})
+            if url.endswith("/search/movie"):
+                authorization = (headers or {}).get("Authorization")
+                search_authorizations.append(authorization)
+                if authorization == "Bearer old-token":
+                    return self.mod.HttpResponse(401, b"expired", {})
+                return self.mod.HttpResponse(200, _fixture("legendasnet_search_dune.json"), {})
+            raise AssertionError(url)
+
+        provider._http_json = request
+        results = provider.search(
+            _json_fixture("legendasnet_video_dune_2021.json"),
+            [{"alpha3": "por-BR"}],
+            {"username": "user", "password": "pass"},
+        )
+
+        self.assertTrue(results)
+        self.assertEqual(len(login_calls), 2)
+        self.assertEqual(search_authorizations, ["Bearer old-token", "Bearer new-token"])
+
+    def test_search_raises_after_one_reauthentication_if_token_stays_invalid(self):
+        provider = self.mod.LegendasNetProvider()
+        login_calls = []
+        search_calls = []
+
+        def request(method, url, headers=None, json_body=None, timeout=30):
+            del method, headers, timeout
+            if url.endswith("/login"):
+                login_calls.append(1)
+                return self.mod.HttpResponse(
+                    200,
+                    json.dumps({"access_token": f"token-{len(login_calls)}"}).encode(),
+                    {},
+                )
+            if url.endswith("/search/movie"):
+                search_calls.append(1)
+                status = 401 if len(search_calls) == 1 else 403
+                return self.mod.HttpResponse(status, b"invalid token", {})
+            raise AssertionError(url)
+
+        provider._http_json = request
+        with self.assertRaisesRegex(PermissionError, "token"):
+            provider.search(
+                _json_fixture("legendasnet_video_dune_2021.json"),
+                [{"alpha3": "por-BR"}],
+                {"username": "user", "password": "pass"},
+            )
+
+        self.assertEqual(len(login_calls), 2)
+        self.assertEqual(len(search_calls), 2)
+
+    def test_search_does_not_repeat_login_when_reauthentication_credentials_are_rejected(self):
+        provider = self.mod.LegendasNetProvider()
+        login_calls = []
+        search_calls = []
+
+        def request(method, url, headers=None, json_body=None, timeout=30):
+            del method, headers, timeout
+            if url.endswith("/login"):
+                login_calls.append(1)
+                status = 200 if len(login_calls) == 1 else 401
+                body = json.dumps({"access_token": "old-token"}).encode() if status == 200 else b"invalid credentials"
+                return self.mod.HttpResponse(status, body, {})
+            if url.endswith("/search/movie"):
+                search_calls.append(1)
+                return self.mod.HttpResponse(401, b"expired", {})
+            raise AssertionError(url)
+
+        provider._http_json = request
+        with self.assertRaisesRegex(PermissionError, "username or password"):
+            provider.search(
+                _json_fixture("legendasnet_video_dune_2021.json"),
+                [{"alpha3": "por-BR"}],
+                {"username": "user", "password": "pass"},
+            )
+
+        self.assertEqual(len(login_calls), 2)
+        self.assertEqual(len(search_calls), 1)
+
     def test_unsuccessful_api_payload_returns_no_results(self):
         provider = self.mod.LegendasNetProvider()
         provider._http_json = lambda method, url, headers=None, json_body=None, timeout=30: (
@@ -207,6 +372,53 @@ class LegendasNetSearchTests(unittest.TestCase):
 class LegendasNetDownloadTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
+
+    def test_download_reauthenticates_once_and_preserves_archive_handoff(self):
+        provider = self.mod.LegendasNetProvider()
+        archive_body = _zip_body(
+            {"episode.srt": b"1\r\n00:00:01,000 --> 00:00:02,000\r\nLine\r\n"}
+        )
+        login_calls = []
+        download_authorizations = []
+
+        def request(method, url, headers=None, json_body=None, timeout=30):
+            del method, headers, timeout
+            if url.endswith("/login"):
+                login_calls.append(1)
+                return self.mod.HttpResponse(
+                    200,
+                    json.dumps({"access_token": f"token-{len(login_calls)}"}).encode(),
+                    {},
+                )
+            raise AssertionError(url)
+
+        def get(url, headers=None, timeout=30):
+            del timeout
+            self.assertEqual(url, "https://legendas.net/download/tv/201")
+            authorization = (headers or {}).get("Authorization")
+            download_authorizations.append(authorization)
+            if authorization == "Bearer token-1":
+                return self.mod.HttpResponse(401, b"expired", {})
+            return self.mod.HttpResponse(200, archive_body, {"content-type": "application/zip"})
+
+        provider._http_json = request
+        provider._http_get = get
+        result = provider.download(
+            {
+                "provider": "legendasnet",
+                "schema": 1,
+                "download_link": "/download/tv/201",
+                "filename": "legendasnet.201.zip",
+                "episode": 1,
+            },
+            {"alpha3": "por-BR"},
+            {"username": "user", "password": "pass"},
+        )
+
+        self.assertEqual(len(login_calls), 2)
+        self.assertEqual(download_authorizations, ["Bearer token-1", "Bearer token-2"])
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive_body)
+        self.assertEqual(result["member"], "episode.srt")
 
     def test_download_zip_archive_returns_raw_archive_for_host(self):
         provider = self.mod.LegendasNetProvider()

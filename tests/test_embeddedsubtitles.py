@@ -171,6 +171,54 @@ class EmbeddedSubtitlesParserTests(unittest.TestCase):
         self.assertEqual(streams[0]["language"]["alpha3"], "eng")
         self.assertEqual(streams[0]["display_language"], "und -> eng")
 
+    def test_unknown_fallback_is_suppressed_only_for_same_language_and_disposition(self):
+        payload = {
+            "streams": [
+                {
+                    "index": 2,
+                    "codec_name": "subrip",
+                    "tags": {"language": "und", "title": "Unknown generic"},
+                    "disposition": {"forced": 0, "hearing_impaired": 0},
+                },
+                {
+                    "index": 3,
+                    "codec_name": "subrip",
+                    "tags": {"language": "eng", "title": "English generic"},
+                    "disposition": {"forced": 0, "hearing_impaired": 0},
+                },
+                {
+                    "index": 4,
+                    "codec_name": "subrip",
+                    "tags": {"language": "und", "title": "Unknown forced"},
+                    "disposition": {"forced": 1, "hearing_impaired": 0},
+                },
+                {
+                    "index": 5,
+                    "codec_name": "subrip",
+                    "tags": {"language": "und", "title": "Unknown SDH"},
+                    "disposition": {"forced": 0, "hearing_impaired": 1},
+                },
+            ]
+        }
+        provider = self.mod.EmbeddedSubtitlesProvider(
+            probe_runner=FakeProbeRunner(payload),
+            path_exists=lambda path: True,
+        )
+
+        results = provider.search(
+            VIDEO,
+            [
+                {"alpha3": "eng", "hi": False, "forced": False},
+                {"alpha3": "eng", "hi": False, "forced": True},
+                {"alpha3": "eng", "hi": True, "forced": False},
+            ],
+            {"unknown_as_fallback": True, "fallback_lang": "eng"},
+        )
+
+        self.assertEqual(
+            [item["provider_payload"]["stream_index"] for item in results], [3, 4, 5]
+        )
+
     def test_probe_media_wraps_missing_ffprobe_as_embedded_error(self):
         with self.assertRaises(self.mod.EmbeddedSubtitleError):
             self.mod.probe_media(

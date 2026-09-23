@@ -286,7 +286,19 @@ class GreekSubsProvider:
             raise ValueError("greeksubs download requires download_url")
         page_url = payload.get("page_url") or BASE_URL + "/"
         gate_body = self._http_request(download_url, referer=page_url)
-        form = extract_download_form(gate_body)
+        try:
+            form = extract_download_form(gate_body)
+        except ValueError as initial_error:
+            download_url = self._refresh_download_url(payload, page_url, download_url)
+            if not download_url:
+                raise initial_error
+            gate_body = self._http_request(download_url, referer=page_url)
+            try:
+                form = extract_download_form(gate_body)
+            except ValueError as error:
+                raise ValueError(
+                    "greeksubs download gate remained invalid after token refresh"
+                ) from error
         post_body = urllib.parse.urlencode(form).encode("ascii")
         subtitle_body = self._http_request(download_url, data=post_body, referer=download_url)
         normalized = _normalize_line_endings(subtitle_body)
@@ -294,6 +306,33 @@ class GreekSubsProvider:
             raise ValueError("greeksubs download returned an empty subtitle")
         subtitle_format = _subtitle_format(form.get("output") or payload.get("filename") or "")
         return _content_payload(normalized, subtitle_format)
+
+    def _refresh_download_url(self, payload, page_url, stale_download_url):
+        subtitle_id = str(payload.get("subtitle_id") or "").strip()
+        if not subtitle_id:
+            raise ValueError("greeksubs expired download requires a subtitle id for refresh")
+
+        parsed_page = urllib.parse.urlsplit(str(page_url))
+        base = urllib.parse.urlsplit(BASE_URL)
+        if (
+            parsed_page.scheme != base.scheme
+            or parsed_page.netloc != base.netloc
+            or not parsed_page.path.startswith("/en/view/")
+        ):
+            raise ValueError("greeksubs expired download requires its GreekSubs detail page")
+
+        expected_prefix = f"{BASE_URL}/dll/{urllib.parse.quote(subtitle_id, safe='')}/0/"
+        if not str(stale_download_url).startswith(expected_prefix):
+            raise ValueError("greeksubs download URL does not match the subtitle id")
+
+        detail_body = self._http_request(page_url)
+        page = parse_subtitle_page(detail_body, page_url)
+        if not page.get("sec_code") or not any(
+            row.get("subtitle_id") == subtitle_id for row in page.get("rows", [])
+        ):
+            raise ValueError("greeksubs subtitle id was not found on its detail page")
+
+        return f"{expected_prefix}{urllib.parse.quote(page['sec_code'], safe='')}"
 
 
 def _result(video, page, row, language):

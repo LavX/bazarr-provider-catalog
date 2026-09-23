@@ -638,6 +638,7 @@ class OpenSubtitlesComProvider:
 def derive_matches(video, attrs, feature):
     video = video or {}
     matches = []
+    imdb_match = False
 
     def add(value):
         if value not in matches:
@@ -652,16 +653,20 @@ def derive_matches(video, attrs, feature):
         series_imdb_id = _imdb_id(video.get("series_imdb_id"))
         if series_imdb_id and series_imdb_id == _int_or_none(feature.get("parent_imdb_id")):
             add("series_imdb_id")
+            imdb_match = True
         episode_imdb_id = _imdb_id(video.get("imdb_id"))
         if episode_imdb_id and episode_imdb_id == _imdb_id(feature.get("imdb_id")):
             add("imdb_id")
+            imdb_match = True
     else:
         add("title")
-        if _imdb_id(video.get("imdb_id")) and _imdb_id(video.get("imdb_id")) == _int_or_none(feature.get("imdb_id")):
+        movie_imdb_id = _imdb_id(video.get("imdb_id"))
+        if movie_imdb_id and movie_imdb_id == _int_or_none(feature.get("imdb_id")):
             add("imdb_id")
+            imdb_match = True
     video_year = _int_or_none(video.get("year"))
     feature_year = _int_or_none(feature.get("year"))
-    if video_year is not None and video_year == feature_year:
+    if imdb_match or (video_year is not None and video_year == feature_year):
         add("year")
     if attrs.get("moviehash_match"):
         add("hash")

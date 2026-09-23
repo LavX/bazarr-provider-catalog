@@ -212,6 +212,73 @@ class OpenSubtitlesComHelperTests(unittest.TestCase):
         )
         self.assertIn("year", matched)
 
+    def test_year_is_awarded_for_a_genuine_returned_imdb_match(self):
+        movie_matches = self.mod.derive_matches(
+            {"kind": "movie", "title": "Inception", "imdb_id": "tt1375666", "year": 2000},
+            {},
+            {"imdb_id": 1375666, "year": 2010},
+        )
+        series_matches = self.mod.derive_matches(
+            {
+                "kind": "episode",
+                "series": "Breaking Bad",
+                "series_imdb_id": "tt0903747",
+                "year": 2000,
+                "season": 3,
+                "episode": 13,
+            },
+            {},
+            {"parent_imdb_id": 903747, "year": 2010},
+        )
+        episode_matches = self.mod.derive_matches(
+            {
+                "kind": "episode",
+                "series": "Breaking Bad",
+                "imdb_id": "tt1628687",
+                "year": 2000,
+                "season": 3,
+                "episode": 13,
+            },
+            {},
+            {"imdb_id": 1628687, "year": 2010},
+        )
+
+        self.assertIn("year", movie_matches)
+        self.assertIn("year", series_matches)
+        self.assertIn("year", episode_matches)
+
+    def test_missing_or_conflicting_imdb_ids_do_not_create_year_credit(self):
+        cases = [
+            (
+                {"kind": "movie", "title": "Inception", "imdb_id": "tt1375666", "year": 2000},
+                {"imdb_id": None, "year": 2010},
+            ),
+            (
+                {"kind": "movie", "title": "Inception", "imdb_id": "tt1375666", "year": 2000},
+                {"imdb_id": 9999999, "year": 2010},
+            ),
+            (
+                {"kind": "movie", "title": "Inception"},
+                {"movie_name": "Inception"},
+            ),
+            (
+                {
+                    "kind": "episode",
+                    "series": "Breaking Bad",
+                    "series_imdb_id": "tt0903747",
+                    "year": 2000,
+                    "season": 3,
+                    "episode": 13,
+                },
+                {"parent_imdb_id": None, "year": 2010},
+            ),
+        ]
+
+        for video, feature in cases:
+            with self.subTest(video=video, feature=feature):
+                matches = self.mod.derive_matches(video, {}, feature)
+                self.assertNotIn("year", matches)
+
     def test_episode_imdb_id_match_is_scored(self):
         video = {
             "kind": "episode",
