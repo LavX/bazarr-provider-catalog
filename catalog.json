@@ -1288,6 +1288,82 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "902b4bda5a946d134bae7156285b524692c9dab2d18b906be4097e0c53d8aac8",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "f_password": {
+              "default": "",
+              "description": "Optional Karagarga forum password. Defaults to the main password when empty.",
+              "secret": true,
+              "title": "Forum password",
+              "type": "string"
+            },
+            "f_username": {
+              "default": "",
+              "description": "Optional Karagarga forum username. Defaults to the main username when empty.",
+              "title": "Forum username",
+              "type": "string"
+            },
+            "password": {
+              "description": "Karagarga tracker password.",
+              "minLength": 1,
+              "secret": true,
+              "title": "Password",
+              "type": "string"
+            },
+            "username": {
+              "description": "Karagarga tracker username.",
+              "minLength": 1,
+              "secret": true,
+              "title": "Username",
+              "type": "string"
+            }
+          },
+          "required": [
+            "username",
+            "password"
+          ],
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Uses Karagarga tracker search plus forum attachments for English movie subtitles. Requires Karagarga tracker and forum credentials.",
+        "entry_class": "KaragargaProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "a5fa52e9d94180236980769261cf2946098247a73ea5148b1e13f6999383b448"
+        },
+        "languages": [
+          "eng"
+        ],
+        "name": "Karagarga",
+        "provider_id": "karagarga",
+        "schema_version": 1,
+        "secret_fields": [
+          "username",
+          "password",
+          "f_password"
+        ],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/karagarga",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie"
+        ],
+        "version": "0.1.3"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "975544a8cec37a7432996b9d9dc8ce05d631c8c28115cea9646b6a88931adaac",
         "config_schema": {
           "additionalProperties": false,
