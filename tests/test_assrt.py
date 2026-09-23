@@ -415,6 +415,22 @@ class AssrtProviderTests(unittest.TestCase):
 
         self.assertEqual(selected_urls, ["https://assrt.test/download/penguin-s01e01-eng.srt"])
 
+    def test_download_rejects_standalone_wrong_episode_tags(self):
+        for name in ("Show.E03.eng.srt", "Show.Episode3.eng.srt", "Show_Ep03_eng.srt", "Show.S02.E02.eng.srt"):
+            with self.subTest(name=name):
+                detail = {"sub": {"subs": [{"filelist": [{"f": name, "url": "https://assrt.test/sub"}]}]}}
+                self.assertIsNone(self.mod.select_download_file(detail, {"season": 6, "episode": 2, "language_code": "eng"}))
+        detail = {"sub": {"subs": [{"filelist": [{"f": "Show.E02.eng.srt", "url": "https://assrt.test/sub"}]}]}}
+        self.assertEqual(self.mod.select_download_file(detail, {"episode": 2, "language_code": "eng"})["f"], "Show.E02.eng.srt")
+
+    def test_download_rejects_explicit_other_language_and_allows_unlabelled(self):
+        files = [{"f": "Show.S01E01.chs.srt", "url": "https://assrt.test/chinese"}]
+        detail = {"sub": {"subs": [{"filelist": files}]}}
+        payload = {"season": 1, "episode": 1, "language_code": "eng"}
+        self.assertIsNone(self.mod.select_download_file(detail, payload))
+        files.append({"f": "Show.S01E01.srt", "url": "https://assrt.test/unlabelled"})
+        self.assertEqual(self.mod.select_download_file(detail, payload)["url"], "https://assrt.test/unlabelled")
+
     def test_search_accepts_declared_chinese_variant_codes(self):
         provider = self.mod.AssrtProvider()
         provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_RICK

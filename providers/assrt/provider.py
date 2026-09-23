@@ -47,6 +47,7 @@ for _key, _meta in LANGUAGE_CODES.items():
 
 _LANGLIST_RE = re.compile(r"^lang(?P<code>\w+)$")
 _SXXEYY_RE = re.compile(r"\bs0*(?P<season>\d{1,2})\s*e0*(?P<episode>\d{1,3})\b", re.I)
+_EPISODE_RE = re.compile(r"(?<![a-z0-9])(?:episode|ep|e)[\W_]*0*(?P<episode>\d{1,3})(?![a-z0-9])", re.I)
 _SEASON_RE = re.compile(r"\bs0*(?P<season>\d{1,2})\b|\bseason[\W_]+0*(?P<season_word>\d{1,2})\b", re.I)
 _WS_RE = re.compile(r"\s+")
 _NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
@@ -276,9 +277,18 @@ def select_download_file(detail, payload):
         return None
     language_code = str((payload or {}).get("language_code") or "").lower()
     if language_code:
+        requested = ASSRT_TO_LANGUAGE.get(language_code, {}).get("assrt", language_code)
+        unlabelled = []
         for item in files:
-            if language_code in _tokens(item.get("f")):
+            tags = {
+                ASSRT_TO_LANGUAGE[token]["assrt"]
+                for token in _tokens(item.get("f")) if token in ASSRT_TO_LANGUAGE
+            }
+            if requested in tags:
                 return item
+            if not tags:
+                unlabelled.append(item)
+        return unlabelled[0] if unlabelled else None
     return files[0]
 
 
@@ -297,8 +307,12 @@ def _filter_download_files_by_episode(files, payload):
             if episode == target_episode:
                 if target_season is None or season == target_season:
                     episode_files.append(item)
-        elif _file_episode(item.get("f")) == target_episode:
-            episode_files.append(item)
+        else:
+            episode = _file_episode(item.get("f"))
+            if episode is not None:
+                has_structured_episodes = True
+                if episode == target_episode:
+                    episode_files.append(item)
     if episode_files:
         return episode_files
     if has_structured_episodes:
@@ -425,17 +439,23 @@ def _any_episode(text):
 
 
 def _file_episode(filename):
-    match = _SXXEYY_RE.search(_normalize(filename))
+    name = _normalize(filename).replace("_", " ")
+    match = _SXXEYY_RE.search(name) or _EPISODE_RE.search(name)
     if not match:
         return None
     return _safe_int(match.group("episode"))
 
 
 def _file_season_episode(filename):
-    match = _SXXEYY_RE.search(_normalize(filename))
-    if not match:
-        return None
-    return _safe_int(match.group("season")), _safe_int(match.group("episode"))
+    name = _normalize(filename).replace("_", " ")
+    match = _SXXEYY_RE.search(name)
+    if match:
+        return _safe_int(match.group("season")), _safe_int(match.group("episode"))
+    season = _SEASON_RE.search(name)
+    episode = _file_episode(filename)
+    if season and episode is not None:
+        return _safe_int(season.group("season") or season.group("season_word")), episode
+    return None
 
 
 def _normalize_line_endings(body):
