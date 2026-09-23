@@ -8,8 +8,8 @@ Clean-room target for `legendasnet`.
 - API base: `https://legendas.net/api/v1/`
 - Login endpoint: `POST /login` with JSON `email` and `password`.
 - Search endpoints:
-  - `GET /search/movie` with JSON body containing `name`, `page`, `per_page`, and `imdb_id`.
-  - `GET /search/tv` with JSON body containing `name`, `page`, `per_page`, `tv_season`, `tv_episode`, and `imdb_id`.
+  - `GET /search/movie` with JSON body containing `page` and `per_page`, plus `imdb_id` when available or `name` otherwise.
+  - `GET /search/tv` with JSON body containing `page`, `per_page`, `tv_season`, and `tv_episode`, plus `imdb_id` when available or `name` otherwise.
 - Supported media: movies and episodes.
 - Supported language: `por-BR`.
 - Requires username and password.
@@ -20,6 +20,7 @@ Clean-room target for `legendasnet`.
 
 - API 429 means throttling or daily download limit, depending on the operation.
 - API 401 and 403 mean invalid credentials or token.
+- If a cached access token receives 401 or 403, the provider clears it, logs in once, and retries that request once. A rejected login or second rejected request ends the operation.
 - Search payloads can return either `success: false` or `status: false`; both mean no usable results.
 - ZIP download handling follows the legacy provider behavior by using the first subtitle file in the archive.
 

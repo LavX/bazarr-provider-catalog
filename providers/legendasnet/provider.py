@@ -138,7 +138,11 @@ class LegendasNetProvider:
         self._ensure_authenticated(config)
         url = urllib.parse.urljoin(BASE_URL + "/", str(download_link).lstrip("/"))
         _sleep(config)
-        response = self._http_get(url, headers=self._headers(config), timeout=HTTP_TIMEOUT_SECONDS)
+        response = self._authenticated_request(
+            lambda: self._http_get(url, headers=self._headers(config), timeout=HTTP_TIMEOUT_SECONDS),
+            config,
+            "Invalid Legendas.net access token",
+        )
         if response.status == 429:
             raise RuntimeError("Daily download limit exceeded")
         if response.status in {401, 403}:
@@ -155,34 +159,53 @@ class LegendasNetProvider:
         if video.get("kind") == "episode":
             url = f"{API_URL}/search/tv"
             body = {
-                "name": _text(video.get("series")),
                 "page": 1,
                 "per_page": 25,
                 "tv_episode": _int_or_none(video.get("episode")),
                 "tv_season": _int_or_none(video.get("season")),
-                "imdb_id": _text(video.get("series_imdb_id")),
             }
+            imdb_id = _text(video.get("series_imdb_id"))
+            if imdb_id:
+                body["imdb_id"] = imdb_id
+            else:
+                body["name"] = _text(video.get("series"))
             return self._api_search_response(url, body, config)
         name = next(iter(_movie_search_names(video)), _text(video.get("title")))
         return self._movie_search_response(video, config, name)
 
     def _movie_search_responses(self, video, config):
+        if _text(video.get("imdb_id")):
+            yield self._movie_search_response(video, config, None)
+            return
         for name in _movie_search_names(video):
             yield self._movie_search_response(video, config, name)
 
     def _movie_search_response(self, video, config, name):
         url = f"{API_URL}/search/movie"
         body = {
-            "name": name,
             "page": 1,
             "per_page": 25,
-            "imdb_id": _text(video.get("imdb_id")),
         }
+        imdb_id = _text(video.get("imdb_id"))
+        if imdb_id:
+            body["imdb_id"] = imdb_id
+        elif name:
+            body["name"] = name
         return self._api_search_response(url, body, config)
 
     def _api_search_response(self, url, body, config):
         _sleep(config)
-        response = self._http_json("GET", url, headers=self._headers(config), json_body=body, timeout=HTTP_TIMEOUT_SECONDS)
+        response = self._authenticated_request(
+            lambda: self._http_json(
+                "GET",
+                url,
+                headers=self._headers(config),
+                json_body=body,
+                timeout=HTTP_TIMEOUT_SECONDS,
+            ),
+            config,
+            "Invalid Legendas.net access token",
+        )
         if response.status == 429:
             raise RuntimeError("Legendas.net API throttled")
         if response.status in {401, 403}:
@@ -190,6 +213,19 @@ class LegendasNetProvider:
         if response.status == 404:
             raise RuntimeError("Legendas.net endpoint not found")
         _raise_for_status(response, "Legendas.net search")
+        return response
+
+    def _authenticated_request(self, request, config, failure_message):
+        response = request()
+        if response.status not in {401, 403}:
+            return response
+
+        self._access_token = None
+        self._ensure_authenticated(config)
+        response = request()
+        if response.status in {401, 403}:
+            self._access_token = None
+            raise PermissionError(failure_message)
         return response
 
     def _ensure_authenticated(self, config):
