@@ -1,4 +1,5 @@
 import base64
+import datetime
 import hashlib
 import importlib.util
 import io
@@ -865,6 +866,78 @@ class SubSourceTransportRetryTests(unittest.TestCase):
         self.assertEqual(result, {"data": []})
         self.assertEqual(len(calls), 2)
         self.assertEqual(self.sleeps, [2.0])
+
+    def test_429_prefers_short_rate_limit_reset_and_retries_once(self):
+        provider = self.mod.SubSourceProvider()
+        reset_at = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=12))
+        reset_value = reset_at.isoformat().replace("+00:00", "Z")
+        success = json.dumps({"data": []}).encode("utf-8")
+        calls = self._install_urlopen(
+            [_http_error(429, headers={"X-RateLimit-Reset": reset_value}), success]
+        )
+
+        result = provider._http_get_json("subtitles", {"movieId": 1}, {"api_key": "k"})
+
+        self.assertEqual(result, {"data": []})
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(self.sleeps), 1)
+        self.assertGreater(self.sleeps[0], 1)
+        self.assertLessEqual(self.sleeps[0], 12)
+
+    def test_429_reads_short_retry_after_from_response_body(self):
+        provider = self.mod.SubSourceProvider()
+        success = json.dumps({"data": []}).encode("utf-8")
+        calls = self._install_urlopen(
+            [_http_error(429, b'{"retryAfter": 7}'), success]
+        )
+
+        result = provider._http_get_json("subtitles", {"movieId": 1}, {"api_key": "k"})
+
+        self.assertEqual(result, {"data": []})
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(self.sleeps, [7])
+
+    def test_429_with_long_reset_is_not_retried_or_shortened(self):
+        provider = self.mod.SubSourceProvider()
+        reset_at = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=20))
+        reset_value = reset_at.isoformat().replace("+00:00", "Z")
+        calls = self._install_urlopen(
+            [_http_error(429, headers={"X-RateLimit-Reset": reset_value})]
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "rate limit exceeded") as ctx:
+            provider._http_get_json("subtitles", {"movieId": 1}, {"api_key": "k"})
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.sleeps, [])
+        ctx.exception.__cause__.close()
+
+    def test_429_retries_only_once_when_server_keeps_throttling(self):
+        provider = self.mod.SubSourceProvider()
+        calls = self._install_urlopen(
+            [
+                _http_error(429, headers={"Retry-After": "2"}),
+                _http_error(429, headers={"Retry-After": "2"}),
+            ]
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "rate limit exceeded") as ctx:
+            provider._http_get_json("subtitles", {"movieId": 1}, {"api_key": "k"})
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(self.sleeps, [2.0])
+        ctx.exception.__cause__.close()
+
+    def test_401_is_not_retried(self):
+        provider = self.mod.SubSourceProvider()
+        calls = self._install_urlopen([_http_error(401, b"invalid key")])
+
+        with self.assertRaisesRegex(ValueError, "api_key is invalid") as ctx:
+            provider._http_get_json("subtitles", {"movieId": 1}, {"api_key": "k"})
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.sleeps, [])
+        ctx.exception.__cause__.close()
 
 
 if __name__ == "__main__":

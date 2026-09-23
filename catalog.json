@@ -301,6 +301,91 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "e1933251eee82678885dbf37fb041f48f7fdb562762177ef4fbb02cadf50fb1c",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional delay between AnimeTosho.xyz torrent detail requests.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            },
+            "search_threshold": {
+              "default": 5,
+              "description": "Maximum number of completed AnimeTosho.xyz feed entries to inspect for one episode.",
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Search threshold",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Searches the separate AnimeTosho.xyz JSON feeds for embedded anime episode subtitle attachments by AniDB episode id. No login or API key required.",
+        "entry_class": "AnimeToshoXYZProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "44b5105d0be10ba2cc1e7aa21a4599085c4e5b061963ee2cbb25e1d351efca79"
+        },
+        "languages": [
+          "ara",
+          "ces",
+          "cym",
+          "deu",
+          "ell",
+          "eng",
+          "fin",
+          "fra",
+          "heb",
+          "ind",
+          "ita",
+          "jpn",
+          "nld",
+          "pol",
+          "por",
+          "por-BR",
+          "por-PT",
+          "ron",
+          "rus",
+          "spa",
+          "spa-ES",
+          "spa-MX",
+          "sqi",
+          "slk",
+          "swe",
+          "tha",
+          "tur",
+          "vie",
+          "zho"
+        ],
+        "name": "AnimeTosho.xyz",
+        "provider_id": "animetosho_xyz",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/animetosho_xyz",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "episode"
+        ],
+        "version": "0.1.0"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "3aa969bf55c6afa67deaf36acbbf62b99c64c0ac538e774e67910c3a76774258",
         "config_schema": {
           "additionalProperties": false,
@@ -532,7 +617,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "a77f86646c296d0bd2bd64e119817e9d78222eab47ffd715ca02287d59f505e9",
+        "bundle_sha256": "55884265db6cb23fe67b1ff3435d2363d17628d3e6cc453d2514968c64f6efb6",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -590,7 +675,7 @@
         "entry_class": "EmbeddedSubtitlesProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "3e90da42ab21816c0d003214da75396cc057c2a7e3d58433ba089ff8f8e6a73a"
+          "provider.py": "6acd29d7ccabce6da716713076fb44e296830b73627318908ceedd7a0313777c"
         },
         "languages": [
           "afr",
@@ -710,7 +795,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.3"
+        "version": "0.1.4"
       }
     },
     {
@@ -868,7 +953,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "c842a084aa25a8fb2603ad1c24173a3aa44c832f1bf7e08665fe1e32e475cfcf",
+        "bundle_sha256": "9234c2f9212227ed24736d1395cfe5dabc8f595bc7b9c9ee93b02ccd6e9ddde0",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -890,7 +975,7 @@
         "entry_class": "GreekSubsProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "8f4f8f4e7aeab7557ad4f0566aa7bee43a52dc452a76dc6b099f117ed2eb44d3"
+          "provider.py": "1c908ce5c036c7d8f6d1942ca4602106f3bcc0c52d9e1775743f21c21301b8e5"
         },
         "languages": [
           "ell"
@@ -912,7 +997,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.1"
+        "version": "0.1.2"
       }
     },
     {
@@ -1505,7 +1590,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "e58196c81b25e5d451278139b01aee018a504862c08533d858ffffadbe335759",
+        "bundle_sha256": "4e139f8c339f9fb0778b474c936aec8888cec219d886d1e3ff7f9dfa1c6c7004",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1537,7 +1622,7 @@
         "entry_class": "KtuvitProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "17077515ac16b2064c495276d68f2c2065ce71517062daa2eb0ef692659643c9"
+          "provider.py": "6eb0973e83e5deaeac0821ae31afadcf6e9c9889f91ed8da758e1051b6830531"
         },
         "languages": [
           "heb"
@@ -1562,7 +1647,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.3"
+        "version": "0.1.4"
       }
     },
     {
@@ -1959,7 +2044,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "826efb8b4e61b1244d9d98d107e000873603587729057f0b2cb5a0c53d8ac757",
+        "bundle_sha256": "ee53740493d568ca76514bf226d42876f54f5df318b77d3f9890eeaeb8dbc0af",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1996,7 +2081,7 @@
         "entry_class": "LegendasNetProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "f6cb281048dbd9561176b9af192ccc009ad5690f903853f62db4ece13d37b9d4"
+          "provider.py": "4450241072a39439ded0004768ef1db7d141a4c31faf5ec18327cf4428770ebb"
         },
         "languages": [
           "por-BR"
@@ -2021,7 +2106,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.3"
+        "version": "0.1.4"
       }
     },
     {
@@ -3414,7 +3499,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "1b67a60cfa92caa5d22d39d6b04b44b6aeb05312e73bab200af2576785702b2f",
+        "bundle_sha256": "20e8c8a40e16c83d6c6a14959b0f06fe1361d74a268fea31ff29934951fb1c72",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -3464,7 +3549,7 @@
         "entry_class": "OpenSubtitlesComProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "b9521f7696d76ed7fbfadf3d427c8d439ff598735e86d859e2441d911a81f3f1"
+          "provider.py": "b724873a7a32064d5171f76904862f87a1d3e91c71d7fd9d3d3b8037b2eed497"
         },
         "languages": [
           "abk",
@@ -3585,7 +3670,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.9"
+        "version": "0.1.10"
       }
     },
     {
@@ -4474,7 +4559,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "8ab61606819c504827ec332d1d66e821e83486ac0cdac1fd6f644aa230c94ae8",
+        "bundle_sha256": "f14e15f7740ec962ab10aac15e35ae4bf9696554ee2cbfb41abea87d5a5d8b60",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -4508,7 +4593,7 @@
         "entry_class": "SubF2MProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "df5381693291add85c59b653e55079d5447a267641069bf98244c47df9cbbad7"
+          "provider.py": "961b8f9d82ca8211f424c96c7257b50a0ea822fbcee65fd76e229ae2df13f5ac"
         },
         "languages": [
           "ara",
@@ -4561,7 +4646,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.3"
+        "version": "0.1.4"
       }
     },
     {
@@ -5196,7 +5281,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "dc22d32a40d3aaa9f0696d8f69eb03af2435829e58cab83f0d788fc89d715764",
+        "bundle_sha256": "d2c06e4b7ebf956d437954fe28ee1f192795afe2e4832bef5ca611cafb457d7e",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -5227,7 +5312,7 @@
         "entry_class": "SubSourceProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "f6741b1a24ccb56cc38c810bda00b37f506c8d0bf21904677304de5d0a1091ed"
+          "provider.py": "23eb3d471c3e17167d2a7df36108346143336c8eca8e154b343bb55d32ad36b7"
         },
         "languages": [
           "abk",
@@ -5336,7 +5421,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.4"
+        "version": "0.1.5"
       }
     },
     {
@@ -6270,6 +6355,111 @@
           "episode"
         ],
         "version": "0.1.6"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "e9fb793c2b12e788069aee7e7457b73918cb1d917c458bd8267599a9f55cf9e4",
+        "config_schema": {
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Uses the TsukiHime API for anime movie and episode subtitles. Movie lookup uses AniList ids; episode lookup uses AniDB series and episode ids. XZ downloads are size-bounded.",
+        "entry_class": "TsukiHimeProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "332c87b1814999959a330a653a5e8bcb3e359aa048138ea171b8f02ac39fd28a"
+        },
+        "languages": [
+          "afr",
+          "amh",
+          "ara",
+          "aze",
+          "bel",
+          "ben",
+          "bod",
+          "bos",
+          "bul",
+          "cat",
+          "ces",
+          "cym",
+          "dan",
+          "deu",
+          "ell",
+          "eng",
+          "epo",
+          "est",
+          "eus",
+          "fas",
+          "fin",
+          "fra",
+          "glg",
+          "heb",
+          "hin",
+          "hrv",
+          "hun",
+          "hye",
+          "ind",
+          "isl",
+          "ita",
+          "jpn",
+          "kat",
+          "kaz",
+          "kor",
+          "lav",
+          "lit",
+          "mkd",
+          "mri",
+          "msa",
+          "mya",
+          "nld",
+          "nor",
+          "pol",
+          "por",
+          "por-BR",
+          "por-PT",
+          "ron",
+          "rus",
+          "slk",
+          "slv",
+          "spa",
+          "spa-ES",
+          "spa-MX",
+          "sqi",
+          "srp",
+          "swe",
+          "tha",
+          "tur",
+          "ukr",
+          "urd",
+          "uzb",
+          "vie",
+          "zho",
+          "zho-CN",
+          "zho-TW"
+        ],
+        "name": "TsukiHime",
+        "provider_id": "tsukihime",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/tsukihime",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "episode",
+          "movie"
+        ],
+        "version": "0.1.0"
       }
     },
     {
