@@ -205,6 +205,145 @@ class SubF2MProviderTests(unittest.TestCase):
         self.assertIn("imdb_id", results[0]["matches"])
         self.assertEqual(results[0]["provider_payload"]["subtitle_id"], "3331049")
 
+    def test_search_movie_tries_imdb_only_after_all_title_queries_fail(self):
+        provider = self.mod.SubF2MProvider()
+        search_queries = []
+        imdb_result = (
+            b'<div class="title"><a href="/subtitles/dune-2021">'
+            b'Dune: Part One (2021)</a></div>'
+        )
+
+        def stub(url, timeout=15, referer=None, config=None):
+            del timeout, referer, config
+            parsed = urllib.parse.urlsplit(url)
+            if parsed.path.endswith("/searchbytitle"):
+                query = urllib.parse.parse_qs(parsed.query)["query"][0]
+                search_queries.append(query)
+                return imdb_result if query == "tt1160419" else b""
+            if url == "https://subf2m.co/subtitles/dune-2021/english":
+                return DETAIL_DUNE_EN
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        results = provider.search(
+            {"kind": "movie", "title": "Dune: Part One", "year": 2021, "imdb_id": "tt1160419"},
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(search_queries, ["Dune: Part One", "Dune", "tt1160419"])
+        self.assertTrue(results)
+        self.assertTrue(all("imdb_id" in item["matches"] for item in results))
+
+    def test_imdb_fallback_keeps_localized_title_result_until_detail_verification(self):
+        provider = self.mod.SubF2MProvider()
+        search_queries = []
+        imdb_result = (
+            b'<div class="title"><a href="/subtitles/life-is-beautiful">'
+            b'Life Is Beautiful</a></div>'
+        )
+        detail = DETAIL_DUNE_EN.replace(b"tt1160419", b"tt0118799")
+
+        def stub(url, timeout=15, referer=None, config=None):
+            del timeout, referer, config
+            parsed = urllib.parse.urlsplit(url)
+            if parsed.path.endswith("/searchbytitle"):
+                query = urllib.parse.parse_qs(parsed.query)["query"][0]
+                search_queries.append(query)
+                return imdb_result if query == "tt0118799" else b""
+            if url == "https://subf2m.co/subtitles/life-is-beautiful/english":
+                return detail
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        results = provider.search(
+            {"kind": "movie", "title": "La Vita e Bella", "year": 1997, "imdb_id": "tt0118799"},
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(search_queries, ["La Vita e Bella", "tt0118799"])
+        self.assertTrue(results)
+        self.assertTrue(all("imdb_id" in item["matches"] for item in results))
+        self.assertEqual(results[0]["display"]["title"], "Life Is Beautiful")
+
+    def test_imdb_fallback_rejects_detail_page_with_wrong_imdb_id(self):
+        provider = self.mod.SubF2MProvider()
+        imdb_result = (
+            b'<div class="title"><a href="/subtitles/life-is-beautiful">'
+            b'La Vita e Bella</a></div>'
+        )
+
+        def stub(url, timeout=15, referer=None, config=None):
+            del timeout, referer, config
+            parsed = urllib.parse.urlsplit(url)
+            if parsed.path.endswith("/searchbytitle"):
+                query = urllib.parse.parse_qs(parsed.query)["query"][0]
+                return imdb_result if query == "tt0118799" else b""
+            if url == "https://subf2m.co/subtitles/life-is-beautiful/english":
+                return DETAIL_DUNE_EN.replace(b"tt1160419", b"tt2543164")
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        results = provider.search(
+            {"kind": "movie", "title": "La Vita e Bella", "year": 1997, "imdb_id": "tt0118799"},
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(results, [])
+
+    def test_imdb_fallback_rejects_detail_page_without_imdb_id(self):
+        provider = self.mod.SubF2MProvider()
+        imdb_result = (
+            b'<div class="title"><a href="/subtitles/life-is-beautiful">'
+            b'La Vita e Bella</a></div>'
+        )
+
+        def stub(url, timeout=15, referer=None, config=None):
+            del timeout, referer, config
+            parsed = urllib.parse.urlsplit(url)
+            if parsed.path.endswith("/searchbytitle"):
+                query = urllib.parse.parse_qs(parsed.query)["query"][0]
+                return imdb_result if query == "tt0118799" else b""
+            if url == "https://subf2m.co/subtitles/life-is-beautiful/english":
+                return DETAIL_DUNE_EN.replace(b"imdb.com/title/tt1160419", b"example.com/no-imdb")
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        results = provider.search(
+            {"kind": "movie", "title": "La Vita e Bella", "year": 1997, "imdb_id": "tt0118799"},
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(results, [])
+
+    def test_search_movie_without_imdb_keeps_title_query(self):
+        provider = self.mod.SubF2MProvider()
+        search_queries = []
+
+        def stub(url, timeout=15, referer=None, config=None):
+            del timeout, referer, config
+            parsed = urllib.parse.urlsplit(url)
+            if parsed.path.endswith("/searchbytitle"):
+                query = urllib.parse.parse_qs(parsed.query)["query"][0]
+                search_queries.append(query)
+                return SEARCH_DUNE
+            if url == "https://subf2m.co/subtitles/dune-2021/english":
+                return DETAIL_DUNE_EN
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        results = provider.search(
+            {"kind": "movie", "title": "Dune: Part One", "year": 2021},
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(search_queries, ["Dune: Part One"])
+        self.assertTrue(results)
+
     def test_search_filters_rows_by_requested_forced_flag(self):
         provider = self.mod.SubF2MProvider()
         responses = {
@@ -226,6 +365,7 @@ class SubF2MProviderTests(unittest.TestCase):
         responses = {
             "https://subf2m.co/subtitles/searchbytitle?query=Dune%3A%20Part%20One&l=": SEARCH_DUNE,
             "https://subf2m.co/subtitles/searchbytitle?query=Dune&l=": SEARCH_DUNE,
+            "https://subf2m.co/subtitles/searchbytitle?query=tt1160419&l=": b"",
             "https://subf2m.co/subtitles/dune-2021/english": DETAIL_DUNE_EN,
         }
 
