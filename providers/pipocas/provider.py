@@ -102,14 +102,14 @@ class _CookieCapturingRedirectHandler(urllib.request.HTTPRedirectHandler):
         self._cookie_header = cookie_header
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _require_pipocas_url(newurl)
         self._store_cookies(headers)
         redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
         if redirected is not None:
             redirected.remove_header("Cookie")
-            if _same_origin(newurl):
-                cookie = self._cookie_header()
-                if cookie:
-                    redirected.add_header("Cookie", cookie)
+            cookie = self._cookie_header()
+            if cookie:
+                redirected.add_header("Cookie", cookie)
         return redirected
 
 
@@ -136,8 +136,9 @@ class PipocasProvider:
             return []
         for language in requested:
             _sleep(config)
-            response = self._http_get(
+            response = self._authenticated_get(
                 SEARCH_URL,
+                config,
                 params={"t": "rel", "l": language["site"], "page": 1, "s": query},
             )
             _raise_for_status(response, SEARCH_URL)
@@ -145,7 +146,7 @@ class PipocasProvider:
                 raise PermissionError("Pipocas login is required for search")
             for detail_url in parse_search_results(response.body):
                 _sleep(config)
-                detail = self._parse_detail_page(video, detail_url, language)
+                detail = self._parse_detail_page(video, detail_url, language, config)
                 if not detail:
                     continue
                 key = (
@@ -167,21 +168,26 @@ class PipocasProvider:
             url = DOWNLOAD_URL.format(id=payload["sub_id"])
         if not url:
             raise ValueError("pipocas download requires download_url or sub_id")
+        url = _require_pipocas_url(url)
         _require_credentials(config)
         self._ensure_authenticated(config)
-        response = self._http_get(url)
+        response = self._authenticated_get(url, config)
         _raise_for_status(response, url)
         if _requires_account(response.body):
             raise PermissionError("Pipocas login is required for download")
         if not response.body:
             raise RuntimeError("Pipocas download returned an empty response")
         response_filename = _response_filename(response.headers)
-        return extract_download(response.body, payload, response_filename)
+        content_type = next(iter(_header_values(response.headers, "content-type")), None)
+        return extract_download(response.body, payload, response_filename, content_type)
 
-    def _parse_detail_page(self, video, url, language):
-        response = self._http_get(_absolute_url(url))
+    def _parse_detail_page(self, video, url, language, config):
+        url = _absolute_url(url)
+        response = self._authenticated_get(url, config)
         _raise_for_status(response, url)
-        item = parse_detail_page(response.body, _absolute_url(url))
+        if _requires_account(response.body):
+            raise PermissionError("Pipocas login is required for details")
+        item = parse_detail_page(response.body, url)
         if not item:
             return None
         matches = derive_matches(video, item["release_info"])
@@ -245,7 +251,17 @@ class PipocasProvider:
             raise PermissionError("Pipocas login failed, check username and password")
         self._authenticated = True
 
+    def _authenticated_get(self, url, config, params=None):
+        response = self._http_get(url, params=params)
+        if response.status_code == 429 or not _requires_account(response.body):
+            return response
+        self._authenticated = False
+        self._cookies.clear()
+        self._ensure_authenticated(config)
+        return self._http_get(url, params=params)
+
     def _http_get(self, url, headers=None, timeout=HTTP_TIMEOUT_SECONDS, params=None):
+        _require_pipocas_url(url)
         if params:
             query = urllib.parse.urlencode(params)
             separator = "&" if urllib.parse.urlparse(url).query else "?"
@@ -258,6 +274,7 @@ class PipocasProvider:
             return result
 
     def _http_post(self, url, data, headers=None, timeout=HTTP_TIMEOUT_SECONDS):
+        _require_pipocas_url(url)
         encoded = urllib.parse.urlencode(data).encode("utf-8")
         merged_headers = {"Content-Type": "application/x-www-form-urlencoded"}
         merged_headers.update(headers or {})
@@ -315,7 +332,10 @@ def parse_search_results(body):
     urls = []
     seen = set()
     for href in _page_attributes(body).detail_urls:
-        url = _absolute_url(href)
+        try:
+            url = _absolute_url(href)
+        except ValueError:
+            continue
         if url in seen:
             continue
         seen.add(url)
@@ -373,13 +393,13 @@ def derive_matches(video, release):
     source_tokens = _tokens(video.get("source"))
     if source_tokens and all(token in release_tokens for token in source_tokens):
         matches.append("source")
-    release_group = _coerce_text(video.get("release_group"))
-    if release_group and _normalize(release_group) in release_tokens:
+    release_group_tokens = _tokens(video.get("release_group"))
+    if release_group_tokens and all(token in release_tokens for token in release_group_tokens):
         matches.append("release_group")
     return matches
 
 
-def extract_download(body, payload=None, response_filename=None):
+def extract_download(body, payload=None, response_filename=None, response_content_type=None):
     payload = payload or {}
     if _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body)):
         return {
@@ -388,13 +408,51 @@ def extract_download(body, payload=None, response_filename=None):
             "season": _safe_int(payload.get("season")),
             "episode": _safe_int(payload.get("episode")),
         }
+    if _looks_like_html(body):
+        raise ValueError("pipocas download did not return a supported subtitle file")
     subtitle_format = (
         _subtitle_extension(response_filename)
         or _subtitle_extension(payload.get("filename", ""))
+        or _format_from_content_type(response_content_type)
+        or _format_from_content(body)
     )
-    if not subtitle_format or _looks_like_html(body):
+    if not subtitle_format:
         raise ValueError("pipocas download did not return a supported subtitle file")
     return _content_payload(body, subtitle_format)
+
+
+def _format_from_content_type(value):
+    mime = str(value or "").split(";", 1)[0].strip().lower()
+    return {
+        "application/x-subrip": "srt",
+        "text/x-subrip": "srt",
+        "application/x-srt": "srt",
+        "text/srt": "srt",
+        "text/vtt": "vtt",
+        "text/x-vtt": "vtt",
+        "text/x-ass": "ass",
+        "application/x-ass": "ass",
+        "text/x-ssa": "ssa",
+        "application/x-ssa": "ssa",
+        "text/x-microdvd": "sub",
+        "application/x-microdvd": "sub",
+    }.get(mime)
+
+
+def _format_from_content(body):
+    sample = (body or b"")[:4096].lstrip(b"\xef\xbb\xbf \t\r\n")
+    if re.match(rb"(?i)^WEBVTT(?:\s|$)", sample):
+        return "vtt"
+    if re.match(rb"(?i)^\[Script Info\]", sample):
+        return "ass"
+    if re.match(rb"^\{\d+\}\{\d+\}", sample):
+        return "sub"
+    if re.search(
+        rb"(?m)^(?:\d+\s*[\r\n]+)?\d{1,2}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*\d{1,2}:\d{2}:\d{2}[,.]\d{3}",
+        sample,
+    ):
+        return "srt"
+    return None
 
 
 def _language_for_request(language):
@@ -520,7 +578,6 @@ def _subtitle_extension(name):
 
 
 def _content_payload(content, subtitle_format):
-    content = _fix_line_endings(content)
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
@@ -535,15 +592,13 @@ def _content_type(subtitle_format):
         return "text/x-ssa"
     if subtitle_format == "vtt":
         return "text/vtt"
+    if subtitle_format == "sub":
+        return "text/x-microdvd"
     return "application/x-subrip"
 
 
-def _fix_line_endings(content):
-    return (content or b"").replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-
-
 def _looks_like_html(body):
-    sample = (body or b"")[:512].lstrip().lower()
+    sample = (body or b"")[:512].lstrip(b"\xef\xbb\xbf \t\r\n").lower()
     return sample.startswith(b"<!doctype html") or sample.startswith(b"<html") or b"<body" in sample
 
 
@@ -563,13 +618,27 @@ def _match_text(pattern, body):
 
 
 def _absolute_url(value):
-    return urllib.parse.urljoin(BASE_URL + "/", value or "")
+    return _require_pipocas_url(urllib.parse.urljoin(BASE_URL + "/", value or ""))
 
 
 def _same_origin(url):
-    target = urllib.parse.urlsplit(url or "")
-    origin = urllib.parse.urlsplit(BASE_URL)
-    return target.scheme == origin.scheme and target.netloc == origin.netloc
+    try:
+        target = urllib.parse.urlsplit(url)
+        return (
+            target.scheme.lower() == "https"
+            and target.hostname == "pipocas.tv"
+            and target.port in (None, 443)
+            and target.username is None
+            and target.password is None
+        )
+    except (TypeError, ValueError):
+        return False
+
+
+def _require_pipocas_url(url):
+    if not _same_origin(url):
+        raise ValueError("Pipocas URL must use https://pipocas.tv")
+    return url
 
 
 def _strip_tags(value):
