@@ -420,6 +420,106 @@ class HDBitsDownloadTests(unittest.TestCase):
 
         self.assertEqual(result, {"decision": "pin", "member": "Chernobyl.S01E01.gr.srt"})
 
+    def test_archive_selector_prefers_explicit_portuguese_region_independent_of_member_order(self):
+        provider = self.mod.HDBitsProvider()
+        portuguese = {"alpha3": "por", "alpha2": "pt"}
+        brazilian_portuguese = {
+            "alpha3": "por",
+            "alpha2": "pt",
+            "country_alpha2": "BR",
+        }
+        members = ["Show.S01E01.pt.srt", "Show.S01E01.br.srt"]
+
+        for language, expected in (
+            (portuguese, "Show.S01E01.pt.srt"),
+            (brazilian_portuguese, "Show.S01E01.br.srt"),
+        ):
+            for ordered_members in (members, list(reversed(members))):
+                with self.subTest(language=language, members=ordered_members):
+                    result = provider.select_archive_member(
+                        {"season": 1, "episode": 1}, language, ordered_members, {}
+                    )
+                    self.assertEqual(result, {"decision": "pin", "member": expected})
+
+    def test_archive_selector_rejects_explicit_brazilian_member_for_generic_portuguese(self):
+        provider = self.mod.HDBitsProvider()
+        for member in ("Show.S01E01.br.srt", "Show.S01E01.pt-BR.srt"):
+            with self.subTest(member=member):
+                result = provider.select_archive_member(
+                    {"season": 1, "episode": 1},
+                    {"alpha3": "por", "alpha2": "pt"},
+                    [member],
+                    {},
+                )
+                self.assertEqual(result, {"decision": "reject"})
+
+    def test_archive_selector_uses_provider_country_when_host_language_has_no_region(self):
+        provider = self.mod.HDBitsProvider()
+        result = provider.select_archive_member(
+            {"season": 1, "episode": 1, "country_alpha2": "BR"},
+            {"alpha3": "por", "alpha2": "pt"},
+            ["Show.S01E01.pt.srt", "Show.S01E01.br.srt"],
+            {},
+        )
+
+        self.assertEqual(result, {"decision": "pin", "member": "Show.S01E01.br.srt"})
+
+    def test_archive_selector_host_brazilian_language_overrides_stale_provider_country(self):
+        provider = self.mod.HDBitsProvider()
+        result = provider.select_archive_member(
+            {
+                "season": 1,
+                "episode": 1,
+                "language": "por",
+                "country_alpha2": "PT",
+            },
+            {"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR"},
+            ["Show.S01E01.pt.srt", "Show.S01E01.br.srt"],
+            {},
+        )
+
+        self.assertEqual(result, {"decision": "pin", "member": "Show.S01E01.br.srt"})
+
+    def test_archive_selector_accepts_explicit_portuguese_region_for_plain_portuguese(self):
+        provider = self.mod.HDBitsProvider()
+        result = provider.select_archive_member(
+            {},
+            {"alpha3": "por", "alpha2": "pt"},
+            ["Film.pt-PT.srt"],
+            {},
+        )
+
+        self.assertEqual(result, {"decision": "pin", "member": "Film.pt-PT.srt"})
+
+    def test_archive_selector_rejects_explicit_other_portuguese_region(self):
+        provider = self.mod.HDBitsProvider()
+        cases = (
+            (
+                {"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR"},
+                ["Film.pt-PT.srt"],
+            ),
+            (
+                {"alpha3": "por", "alpha2": "pt", "country_alpha2": "PT"},
+                ["Film.pt-BR.srt"],
+            ),
+        )
+
+        for language, members in cases:
+            with self.subTest(language=language, members=members):
+                result = provider.select_archive_member({}, language, members, {})
+                self.assertEqual(result, {"decision": "reject"})
+
+    def test_archive_selector_preserves_provider_language_for_empty_host_language(self):
+        provider = self.mod.HDBitsProvider()
+        result = provider.select_archive_member(
+            {"language": "por", "country_alpha2": "BR"},
+            {},
+            ["Film.pt-PT.srt", "Film.pt-BR.srt"],
+            {},
+        )
+
+        self.assertEqual(result, {"decision": "pin", "member": "Film.pt-BR.srt"})
+
     def test_archive_selector_rejects_archive_missing_requested_episode(self):
         provider = self.mod.HDBitsProvider()
         result = provider.select_archive_member(

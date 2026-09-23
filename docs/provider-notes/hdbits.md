@@ -31,6 +31,10 @@ Clean-room target for `hdbits`.
 - Rows containing `extra`, `commentary`, `lyrics`, or `forced` in the title or filename are ignored.
 - Credentials stay in provider config. Search results do not include the passkey in `provider_payload`.
 
+## Review follow-up
+
+Archive selection preserves the requested language country. Explicit Portuguese regional filename tags distinguish Brazilian and European Portuguese when an archive contains both variants.
+
 ## License notes
 
 Implementation is a clean-room Provider Hub plugin under this repository's MIT license. Behavior notes above describe public request and response contracts only.

@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "d1ef4ca18c86288ec9796c4718cd9efdc85537d95285c0afce7f09db9b81fc3d",
+  "bundle_sha256": "b6130556b6b37347816738030b0de8baa79dde372b5508f2834890b5cc604617",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -38,7 +38,7 @@
   "entry_class": "HDBitsProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "bc5c1b7a824c1200cacd3836f279f1b7a59f7a0e57aaabf9ad39bf7b218514ae"
+    "provider.py": "9d3ec3fa3f68c70575ec0921b8775545c82ef7efc9483f06b19eadcf61a9c4f4"
   },
   "languages": [
     "aar",
@@ -245,5 +245,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.3"
+  "version": "0.1.4"
 }
