@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import unittest
+from unittest import mock
 import urllib.parse
 import urllib.request
 import zipfile
@@ -332,15 +333,175 @@ class PipocasProviderTests(unittest.TestCase):
         self.assertEqual(new_request.get_full_url(), "https://pipocas.tv/perfil")
         self.assertEqual(new_request.get_header("Cookie"), "session=secret")
 
-        external = handler.redirect_request(
-            new_request,
-            io.BytesIO(b""),
-            302,
-            "Found",
-            _FakeHeaders([]),
-            "https://example.org/perfil",
+        with self.assertRaises((ValueError, PermissionError)):
+            handler.redirect_request(
+                new_request, io.BytesIO(b""), 302, "Found",
+                _FakeHeaders([]), "https://example.org/perfil",
+            )
+
+
+    def test_expired_search_session_reauthenticates_once(self):
+        provider = self.mod.PipocasProvider()
+        provider._authenticated = True
+        provider._cookies = {"session": "stale"}
+        searches, logins = [], []
+
+        def get(url, headers=None, timeout=15, params=None):
+            if url == self.mod.LOGIN_URL:
+                self.assertFalse(provider._authenticated)
+                self.assertNotIn("stale", provider._cookies.values())
+                return self.mod.HttpResponse(200, _fixture("pipocas_login.html"))
+            searches.append(url)
+            return self.mod.HttpResponse(200, b"Cria uma conta" if len(searches) == 1 else b"<html>no results</html>")
+
+        def post(url, data, **kwargs):
+            logins.append(url)
+            return self.mod.HttpResponse(200, b"<html>profile</html>")
+
+        provider._http_get, provider._http_post = get, post
+        result = provider.search({"kind": "movie", "title": "Dune"}, [{"alpha3": "por"}], {"username": "user", "password": "pass"})
+        self.assertEqual(result, [])
+        self.assertEqual(len(searches), 2)
+        self.assertEqual(len(logins), 1)
+
+    def test_expired_download_session_reauthenticates_once(self):
+        provider = self.mod.PipocasProvider()
+        provider._authenticated = True
+        downloads, logins = [], []
+        subtitle = b"1\n00:00:01,000 --> 00:00:02,000\nText\n"
+
+        def get(url, headers=None, timeout=15, params=None):
+            if url == self.mod.LOGIN_URL:
+                return self.mod.HttpResponse(200, _fixture("pipocas_login.html"))
+            downloads.append(url)
+            return self.mod.HttpResponse(200, b"Cria uma conta" if len(downloads) == 1 else subtitle)
+
+        def post(url, data, **kwargs):
+            logins.append(url)
+            return self.mod.HttpResponse(200, b"<html>profile</html>")
+
+        provider._http_get, provider._http_post = get, post
+        result = provider.download({"download_url": self.mod.DOWNLOAD_URL.format(id=501), "filename": "pipocas.dune.pt"}, {"alpha3": "por"}, {"username": "user", "password": "pass"})
+        self.assertEqual(base64.b64decode(result["content_b64"]), subtitle)
+        self.assertEqual((len(downloads), len(logins)), (2, 1))
+
+    def test_expired_detail_session_reauthenticates_once(self):
+        provider = self.mod.PipocasProvider()
+        provider._authenticated = True
+        provider._cookies = {"session": "stale"}
+        search_page = b'<a class="text-dark no-decoration" href="/legendas/info/501">Dune</a>'
+        detail_url = "https://pipocas.tv/legendas/info/501"
+        details, logins = [], []
+
+        def get(url, headers=None, timeout=15, params=None):
+            if url == self.mod.LOGIN_URL:
+                self.assertFalse(provider._authenticated)
+                self.assertNotIn("stale", provider._cookies.values())
+                return self.mod.HttpResponse(200, _fixture("pipocas_login.html"))
+            if url == self.mod.SEARCH_URL:
+                return self.mod.HttpResponse(200, search_page)
+            self.assertEqual(url, detail_url)
+            details.append(url)
+            return self.mod.HttpResponse(
+                200,
+                b"Cria uma conta" if len(details) == 1 else _fixture("pipocas_detail_dune.html"),
+            )
+
+        def post(url, data, **kwargs):
+            logins.append(url)
+            return self.mod.HttpResponse(200, b"<html>profile</html>")
+
+        provider._http_get, provider._http_post = get, post
+        results = provider.search(
+            {"kind": "movie", "title": "Dune"},
+            [{"alpha3": "por"}],
+            {"username": "user", "password": "pass"},
         )
-        self.assertIsNone(external.get_header("Cookie"))
+        self.assertEqual([item["provider_payload"]["sub_id"] for item in results], ["501"])
+        self.assertEqual((len(details), len(logins)), (2, 1))
+
+    def test_repeated_account_page_stops_after_one_login_retry(self):
+        provider = self.mod.PipocasProvider()
+        provider._authenticated = True
+        searches = []
+
+        def get(url, headers=None, timeout=15, params=None):
+            if url == self.mod.LOGIN_URL:
+                return self.mod.HttpResponse(200, _fixture("pipocas_login.html"))
+            searches.append(url)
+            return self.mod.HttpResponse(200, b"Cria uma conta")
+
+        provider._http_get = get
+        provider._http_post = mock.Mock(return_value=self.mod.HttpResponse(200, b"<html>profile</html>"))
+        with self.assertRaises(PermissionError):
+            provider.search({"kind": "movie", "title": "Dune"}, [{"alpha3": "por"}], {"username": "user", "password": "pass"})
+        self.assertEqual(len(searches), 2)
+        self.assertEqual(provider._http_post.call_count, 1)
+
+    def test_rate_limit_does_not_trigger_login_retry(self):
+        provider = self.mod.PipocasProvider()
+        provider._authenticated = True
+        provider._http_get = mock.Mock(return_value=self.mod.HttpResponse(429, b"Cria uma conta"))
+        provider._http_post = mock.Mock()
+        with self.assertRaisesRegex(urllib.error.HTTPError, "429"):
+            provider.search({"kind": "movie", "title": "Dune"}, [{"alpha3": "por"}], {"username": "user", "password": "pass"})
+        self.assertEqual(provider._http_get.call_count, 1)
+        provider._http_post.assert_not_called()
+
+    def test_detail_links_are_restricted_to_pipocas_origin(self):
+        urls = ["http://127.0.0.1:8080/legendas/info/1", "https://foreign.test/legendas/info/2", "https://pipocas.tv@foreign.test/legendas/info/3", "https://pipocas.tv:444/legendas/info/4", "/legendas/info/5", "https://pipocas.tv:443/legendas/info/6"]
+        page = "".join(f'<a class="text-dark no-decoration" href="{url}">x</a>' for url in urls).encode()
+        self.assertEqual(self.mod.parse_search_results(page), ["https://pipocas.tv/legendas/info/5", "https://pipocas.tv:443/legendas/info/6"])
+
+    def test_detail_page_rejects_off_origin_download_link(self):
+        body = _fixture("pipocas_detail_dune.html").replace(
+            b'"/legendas/download/501"',
+            b'"http://127.0.0.1:8080/legendas/download/501"',
+        )
+        with self.assertRaises(ValueError):
+            self.mod.parse_detail_page(body, "https://pipocas.tv/legendas/info/501")
+
+    def test_http_methods_reject_off_origin_before_network_io(self):
+        provider = self.mod.PipocasProvider()
+        provider._opener = mock.Mock()
+        for url in ("http://127.0.0.1:8080/legendas/info/1", "https://pipocas.tv:444/legendas/info/1", "https://user@pipocas.tv/legendas/info/1"):
+            with self.subTest(url=url):
+                with self.assertRaises((ValueError, PermissionError)):
+                    provider._http_get(url)
+                with self.assertRaises((ValueError, PermissionError)):
+                    provider._http_post(url, {"password": "test-only"})
+        provider._opener.open.assert_not_called()
+
+    def test_direct_subtitle_format_without_disposition_filename(self):
+        cases = [
+            (b"1\r\n00:00:01,000 --> 00:00:02,000\r\nText\r\n", {}, "srt"),
+            (b"WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nText\n", {"Content-Type": "text/vtt; charset=utf-8"}, "vtt"),
+            (b"[Script Info]\nScriptType: v4.00+\n[Events]\n", {"Content-Type": "application/octet-stream"}, "ass"),
+            (b"{25}{50}Text", {}, "sub"),
+        ]
+        for body, headers, fmt in cases:
+            with self.subTest(fmt=fmt):
+                provider = self.mod.PipocasProvider()
+                provider._authenticated = True
+                provider._http_get = mock.Mock(return_value=self.mod.HttpResponse(200, body, headers))
+                result = provider.download({"download_url": self.mod.DOWNLOAD_URL.format(id=501), "filename": "pipocas.dune.pt"}, {"alpha3": "por"}, {"username": "user", "password": "pass"})
+                self.assertEqual(result["format"], fmt)
+                self.assertEqual(base64.b64decode(result["content_b64"]), body)
+                self.assertEqual(result["content_sha256"], hashlib.sha256(body).hexdigest())
+                self.assertNotIn("encoding", result)
+
+    def test_direct_format_fallback_rejects_html_and_unknown_text(self):
+        for body in (b"<html><body>Error</body></html>", b"Unknown response"):
+            provider = self.mod.PipocasProvider()
+            provider._authenticated = True
+            provider._http_get = mock.Mock(return_value=self.mod.HttpResponse(200, body, {"Content-Type": "text/plain"}))
+            with self.assertRaises(ValueError):
+                provider.download({"download_url": self.mod.DOWNLOAD_URL.format(id=501), "filename": "pipocas.dune.pt"}, {"alpha3": "por"}, {"username": "user", "password": "pass"})
+
+    def test_multiword_release_group_requires_every_token(self):
+        video = {"kind": "episode", "series": "Show", "season": 1, "episode": 1, "release_group": "Horrible Subs"}
+        self.assertIn("release_group", self.mod.derive_matches(video, "Show.S01E01.Horrible-Subs"))
+        self.assertNotIn("release_group", self.mod.derive_matches(video, "Show.S01E01.Horrible"))
 
 
 class _FakeHeaders:

@@ -20,7 +20,9 @@ Clean-room target for `pipocas`.
 
 ## Compatibility quirks
 
-- Credentials are required. Pages containing `Cria uma conta` indicate an auth failure.
+- Credentials are required. Pages containing `Cria uma conta` trigger one login refresh and one retry per request. HTTP 429 never triggers a retry.
+- Requests and redirects must remain on `https://pipocas.tv` at port 443. Off-origin search links are skipped.
+- Direct subtitles without filename extensions use a recognized content type or subtitle signature. Subtitle bytes are preserved for host decoding.
 - Movie searches use the title. Episode searches use `Series SxxEyy` when season and episode are present.
 - Result scoring combines release matches, site rating, and hit count.
 - ZIP and RAR downloads are passed to the Bazarr+ host for safe extraction and episode selection.
