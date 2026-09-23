@@ -286,7 +286,7 @@ class ISubtitlesProviderTests(unittest.TestCase):
         self.assertIn("episode", results[0]["matches"])
         self.assertEqual(results[0]["provider_payload"]["subtitle_id"], "1415636")
 
-    def test_download_extracts_matching_subtitle_from_zip(self):
+    def test_download_returns_raw_zip_with_selected_member(self):
         provider = self.mod.ISubtitlesProvider()
         body = _zip_body(
             {
@@ -311,10 +311,14 @@ class ISubtitlesProviderTests(unittest.TestCase):
             {},
         )
 
-        decoded = base64.b64decode(result["content_b64"])
-        self.assertIn(b"Episode one", decoded)
-        self.assertEqual(result["format"], "srt")
-        self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
+        # Archive mode: the worker still picks the member but hands the raw zip bytes
+        # back to the host, which extracts the member and detects the encoding.
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["member"], "Chernobyl.S01E01.WEBRip.x264-ION10.srt")
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("episode", result)
+        self.assertNotIn("encoding", result)
 
     def test_download_selects_1x_episode_file_from_zip(self):
         body = _zip_body(
@@ -326,8 +330,8 @@ class ISubtitlesProviderTests(unittest.TestCase):
 
         result = self.mod.extract_download(body, {"season": 1, "episode": 1})
 
-        decoded = base64.b64decode(result["content_b64"])
-        self.assertIn(b"Episode one", decoded)
+        self.assertEqual(result["member"], "Chernobyl.1x01.WEBRip.x264-ION10.srt")
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
 
     def test_download_rejects_single_file_archive_with_wrong_episode(self):
         body = _zip_body(
@@ -349,9 +353,7 @@ class ISubtitlesProviderTests(unittest.TestCase):
 
         result = self.mod.extract_download(body, {"season": 1, "episode": 1})
 
-        decoded = base64.b64decode(result["content_b64"])
-        self.assertIn(b"Season one", decoded)
-        self.assertNotIn(b"Season two", decoded)
+        self.assertEqual(result["member"], "Chernobyl.S01.E01.WEBRip.x264-ION10.srt")
 
     def test_download_selects_numeric_episode_file_from_season_pack(self):
         body = _zip_body(
@@ -363,9 +365,7 @@ class ISubtitlesProviderTests(unittest.TestCase):
 
         result = self.mod.extract_download(body, {"season": 1, "episode": 1})
 
-        decoded = base64.b64decode(result["content_b64"])
-        self.assertIn(b"Episode one", decoded)
-        self.assertNotIn(b"Episode two", decoded)
+        self.assertEqual(result["member"], "01.srt")
 
     def test_download_scores_season_folder_paths(self):
         body = _zip_body(
@@ -377,9 +377,7 @@ class ISubtitlesProviderTests(unittest.TestCase):
 
         result = self.mod.extract_download(body, {"season": 1, "episode": 1})
 
-        decoded = base64.b64decode(result["content_b64"])
-        self.assertIn(b"Season one", decoded)
-        self.assertNotIn(b"Season two", decoded)
+        self.assertEqual(result["member"], "Season 1/01.srt")
 
     def test_download_rejects_html_body_when_not_zip_or_subtitle(self):
         with self.assertRaises(ValueError):
@@ -387,6 +385,22 @@ class ISubtitlesProviderTests(unittest.TestCase):
                 b"<html><title>challenge</title></html>",
                 {"filename": "isubtitles.bad.zip"},
             )
+
+    def test_download_rejects_empty_body(self):
+        with self.assertRaises(ValueError):
+            self.mod.extract_download(b"", {"filename": "isubtitles.bad.zip"})
+
+    def test_download_returns_direct_subtitle_body_as_content(self):
+        body = b"1\n00:00:01,000 --> 00:00:02,000\nDirect subtitle\n"
+
+        result = self.mod.extract_download(body, {"filename": "isubtitles.direct.srt"})
+
+        # Genuine non-archive subtitle bodies stay in content mode, with no worker encoding.
+        self.assertEqual(base64.b64decode(result["content_b64"]), body)
+        self.assertEqual(result["content_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["format"], "srt")
+        self.assertNotIn("archive_b64", result)
+        self.assertNotIn("encoding", result)
 
     def test_search_fetches_brazillian_portuguese_page_for_br_request(self):
         provider = self.mod.ISubtitlesProvider()

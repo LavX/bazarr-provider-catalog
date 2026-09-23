@@ -66,6 +66,9 @@ CURRENT_DETAIL_HTML = b"""
 </a>
 """
 SRT_BODY = b"1\n00:00:01,000 --> 00:00:02,000\nYavkaNet subtitle.\n"
+# RAR4 signature followed by arbitrary bytes. Host-side extraction only needs the
+# magic to route the body to archive mode; the host owns the real rar/zip stack.
+RAR_BODY = b"Rar!\x1a\x07\x00" + SRT_BODY
 CLOUDFLARE_BODY = b"<html><title>Just a moment...</title><script src='/cdn-cgi/challenge-platform/x'></script></html>"
 
 
@@ -347,6 +350,183 @@ class YavkaNetCloudflareTests(unittest.TestCase):
                 self.mod.http_get("https://yavka.net/imdb/tt1160419", state={})
 
 
+class YavkaNetRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def _scraper(self):
+        return mock.MagicMock()
+
+    def test_http_get_retries_transient_url_error_then_succeeds(self):
+        # A single connection blip (URLError) must not abort the request: the
+        # helper retries and ultimately returns the success body.
+        import urllib.error
+
+        scraper = self._scraper()
+        scraper.get.side_effect = [
+            urllib.error.URLError("connection reset by peer"),
+            FakeResponse(b"<html>ok</html>"),
+        ]
+
+        with mock.patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), mock.patch.object(
+            self.mod.time, "sleep"
+        ) as sleep:
+            body = self.mod.http_get("https://yavka.net/imdb/tt1160419", state={})
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(scraper.get.call_count, 2)
+        sleep.assert_called_once()
+        self.assertGreater(sleep.call_args.args[0], 0)
+
+    def test_http_get_retries_two_transient_errors_then_succeeds(self):
+        # Two failures (a connection error then a read timeout) still recover
+        # within the 3-attempt budget.
+        import urllib.error
+
+        scraper = self._scraper()
+        scraper.get.side_effect = [
+            urllib.error.URLError("name resolution failed"),
+            TimeoutError("read timed out"),
+            FakeResponse(b"<html>ok</html>"),
+        ]
+
+        with mock.patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), mock.patch.object(
+            self.mod.time, "sleep"
+        ) as sleep:
+            body = self.mod.http_get("https://yavka.net/imdb/tt1160419", state={})
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(scraper.get.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_http_get_retries_transient_503_then_succeeds(self):
+        # A transient 503 (no Cloudflare markers) is retried, then the success
+        # body is returned. The 503 must not be mapped to an HTTPError.
+        scraper = self._scraper()
+        scraper.get.side_effect = [
+            FakeResponse(b"upstream down", status=503),
+            FakeResponse(b"<html>ok</html>"),
+        ]
+
+        with mock.patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), mock.patch.object(
+            self.mod.time, "sleep"
+        ) as sleep:
+            body = self.mod.http_get("https://yavka.net/imdb/tt1160419", state={})
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(scraper.get.call_count, 2)
+        sleep.assert_called_once()
+
+    def test_http_get_honors_retry_after_on_429(self):
+        # A 429 with a Retry-After is retried and the header drives the backoff,
+        # capped to the bounded ceiling.
+        scraper = self._scraper()
+        scraper.get.side_effect = [
+            FakeResponse(b"slow down", status=429, headers={"Retry-After": "2"}),
+            FakeResponse(b"<html>ok</html>"),
+        ]
+
+        with mock.patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), mock.patch.object(
+            self.mod.time, "sleep"
+        ) as sleep:
+            body = self.mod.http_get("https://yavka.net/imdb/tt1160419", state={})
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(scraper.get.call_count, 2)
+        self.assertGreaterEqual(sleep.call_args.args[0], 2)
+        self.assertLessEqual(sleep.call_args.args[0], self.mod.RETRY_BACKOFF_CAP_SECONDS)
+
+    def test_http_get_exhausts_retries_and_maps_final_503_to_error(self):
+        # After the attempt budget is spent the last transient response is still
+        # handled by the existing status mapping (503 -> HTTPError), not swallowed.
+        import urllib.error
+
+        scraper = self._scraper()
+        scraper.get.return_value = FakeResponse(b"upstream down", status=503)
+
+        with mock.patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), mock.patch.object(
+            self.mod.time, "sleep"
+        ):
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                self.mod.http_get("https://yavka.net/imdb/tt1160419", state={})
+
+        self.assertEqual(ctx.exception.code, 503)
+        self.assertEqual(scraper.get.call_count, self.mod.HTTP_MAX_ATTEMPTS)
+        ctx.exception.close()
+
+    def test_http_get_does_not_retry_404(self):
+        # A 4xx other than 429 is not transient: it must propagate on the first
+        # attempt with no retry and no sleep.
+        import urllib.error
+
+        scraper = self._scraper()
+        scraper.get.return_value = FakeResponse(b"not found", status=404)
+
+        with mock.patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), mock.patch.object(
+            self.mod.time, "sleep"
+        ) as sleep:
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                self.mod.http_get("https://yavka.net/imdb/tt1160419", state={})
+
+        self.assertEqual(ctx.exception.code, 404)
+        self.assertEqual(scraper.get.call_count, 1)
+        sleep.assert_not_called()
+        ctx.exception.close()
+
+    def test_http_get_does_not_retry_non_transient_exception(self):
+        # A non-network exception (e.g. a parse/value error raised by the
+        # transport layer) propagates immediately without retry.
+        scraper = self._scraper()
+        scraper.get.side_effect = ValueError("boom")
+
+        with mock.patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), mock.patch.object(
+            self.mod.time, "sleep"
+        ) as sleep:
+            with self.assertRaises(ValueError):
+                self.mod.http_get("https://yavka.net/imdb/tt1160419", state={})
+
+        self.assertEqual(scraper.get.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_http_get_does_not_retry_cloudflare_challenge_response(self):
+        # A 503 that is actually a Cloudflare challenge is left to the existing
+        # challenge handling, not retried as a transient transport error.
+        scraper = self._scraper()
+        scraper.get.return_value = FakeResponse(CLOUDFLARE_BODY, status=503)
+
+        with mock.patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), mock.patch.object(
+            self.mod.time, "sleep"
+        ) as sleep:
+            with self.assertRaises(self.mod.CloudflareBlockedError):
+                self.mod.http_get("https://yavka.net/imdb/tt1160419", state={})
+
+        self.assertEqual(scraper.get.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_http_post_retries_transient_error_then_succeeds(self):
+        # The search/login POST path is safe to repeat, so it is retried too.
+        import urllib.error
+
+        scraper = self._scraper()
+        scraper.post.side_effect = [
+            urllib.error.URLError("connection refused"),
+            FakeResponse(b"subtitle-body"),
+        ]
+
+        with mock.patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), mock.patch.object(
+            self.mod.time, "sleep"
+        ) as sleep:
+            body = self.mod.http_post(
+                "https://yavka.net/subtitle/dune-2021/",
+                data={"subtitle_id": "123"},
+                state={},
+            )
+
+        self.assertEqual(body, b"subtitle-body")
+        self.assertEqual(scraper.post.call_count, 2)
+        sleep.assert_called_once()
+
+
 class YavkaNetProviderTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
@@ -468,6 +648,47 @@ class YavkaNetProviderTests(unittest.TestCase):
 
         self.assertEqual(len(results), 1)
 
+    def test_episode_search_stores_season_and_episode_in_payload(self):
+        imdb_html = b"""
+        <table>
+          <tr>
+            <td>
+              <a class="balon" href="/subtitle/example-s01e02" content="Example.S01E02.1080p.WEB-DL">
+                Example.S01E02.1080p.WEB-DL
+              </a>
+            </td>
+          </tr>
+        </table>
+        """
+        provider = self.mod.YavkaNetProvider()
+
+        def stub(url, timeout=15, config=None, state=None, referer=None):
+            del timeout, config, state, referer
+            if url == "https://yavka.net/imdb/tt1160419":
+                return imdb_html
+            if url == "https://yavka.net/subtitle/example-s01e02/":
+                return CURRENT_DETAIL_HTML
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "Example",
+                "season": 1,
+                "episode": 2,
+                "series_imdb_id": "tt1160419",
+            },
+            [{"alpha3": "bul", "alpha2": "bg"}],
+            {"request_delay_ms": 0},
+        )
+
+        self.assertEqual(len(results), 1)
+        payload = results[0]["provider_payload"]
+        # download() reads episode (and season) from the payload for host-side member selection.
+        self.assertEqual(payload["season"], 1)
+        self.assertEqual(payload["episode"], 2)
+
     def test_search_skips_unsupported_language_without_network(self):
         provider = self.mod.YavkaNetProvider()
         provider._http_get = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unexpected network"))
@@ -480,7 +701,7 @@ class YavkaNetProviderTests(unittest.TestCase):
 
         self.assertEqual(results, [])
 
-    def test_download_posts_form_and_extracts_zip_subtitle(self):
+    def test_download_posts_form_and_returns_zip_archive(self):
         body = _zip_with(
             {
                 "Dune.2021.720p.WEB-DL.srt": b"wrong",
@@ -496,23 +717,19 @@ class YavkaNetProviderTests(unittest.TestCase):
                 "form_data": {"subtitle_id": "123", "token": "abc"},
                 "filename": "Dune.2021.1080p.WEB-DL-FLUX.zip",
                 "release": "Dune.2021.1080p.WEB-DL-FLUX",
-                "video": {
-                    "kind": "movie",
-                    "title": "Dune",
-                    "year": 2021,
-                    "release_group": "FLUX",
-                    "resolution": "1080p",
-                    "source": "Web",
-                },
+                "episode": None,
             },
             {"alpha3": "bul"},
             {},
         )
 
-        data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
-        self.assertEqual(data, SRT_BODY)
-        self.assertEqual(result["content_sha256"], hashlib.sha256(SRT_BODY).hexdigest())
-        self.assertEqual(result["format"], "srt")
+        # Host-side extraction: the worker returns the raw archive bytes untouched.
+        self.assertNotIn("content_b64", result)
+        raw = base64.b64decode(result["archive_b64"].encode("ascii"), validate=True)
+        self.assertEqual(raw, body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertIsNone(result["episode"])
+        self.assertNotIn("encoding", result)
 
     def test_download_uses_get_for_direct_download_links(self):
         body = _zip_with({"Dune.2021.WEB.srt": SRT_BODY})
@@ -527,65 +744,170 @@ class YavkaNetProviderTests(unittest.TestCase):
                 "form_data": {},
                 "filename": "Dune.2021.WEB.zip",
                 "release": "Dune.2021.WEB",
-                "video": {"kind": "movie", "title": "Dune", "year": 2021, "source": "Web"},
+                "episode": None,
             },
             {"alpha3": "bul"},
             {},
         )
 
-        data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
-        self.assertEqual(data, SRT_BODY)
+        raw = base64.b64decode(result["archive_b64"].encode("ascii"), validate=True)
+        self.assertEqual(raw, body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
 
-    def test_download_rejects_episode_archive_without_requested_member(self):
-        body = _zip_with({"Example.S01E03.srt": b"wrong episode"})
+    def test_extract_download_returns_zip_archive_for_movies(self):
+        body = _zip_with({"Dune.2021.WEB.srt": SRT_BODY})
 
-        with self.assertRaisesRegex(ValueError, "requested episode"):
+        result = self.mod.extract_download(body, {"filename": "Dune.2021.WEB.zip"})
+
+        raw = base64.b64decode(result["archive_b64"].encode("ascii"), validate=True)
+        self.assertEqual(raw, body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        # Movies carry no episode for host-side member selection.
+        self.assertIsNone(result["episode"])
+        self.assertNotIn("encoding", result)
+
+    def test_extract_download_carries_episode_for_rar_archive(self):
+        body = RAR_BODY
+
+        result = self.mod.extract_download(body, {"filename": "Example.S01.rar", "episode": 2})
+
+        raw = base64.b64decode(result["archive_b64"].encode("ascii"), validate=True)
+        self.assertEqual(raw, body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["episode"], 2)
+        self.assertNotIn("encoding", result)
+
+    def test_extract_download_pins_member_by_release_group(self):
+        # Two members for the same episode differ only by release group; the host's
+        # episode-only pick cannot tell them apart, so the worker pins the scored one.
+        body = _zip_with(
+            {
+                "Example.S01E02.720p.WEB.NTb.srt": b"wrong group",
+                "Example.S01E02.1080p.WEB.FLUX.srt": SRT_BODY,
+            }
+        )
+
+        result = self.mod.extract_download(
+            body,
+            {
+                "filename": "Example.S01E02.zip",
+                "season": 1,
+                "episode": 2,
+                "video": {"release_group": "FLUX", "resolution": "1080p", "source": "Web"},
+            },
+        )
+
+        self.assertEqual(result["member"], "Example.S01E02.1080p.WEB.FLUX.srt")
+        self.assertNotIn("episode", result)
+        self.assertNotIn("content_b64", result)
+
+    def test_extract_download_pins_member_for_requested_episode_in_pack(self):
+        # A season pack with several release groups per episode: resolve episode and
+        # release group together so the pinned member matches the scored candidate.
+        body = _zip_with(
+            {
+                "Example.S01E01.1080p.WEB.FLUX.srt": b"e1 flux",
+                "Example.S01E02.720p.WEB.NTb.srt": b"e2 ntb",
+                "Example.S01E02.1080p.WEB.FLUX.srt": SRT_BODY,
+            }
+        )
+
+        result = self.mod.extract_download(
+            body,
+            {
+                "filename": "Example.S01.zip",
+                "season": 1,
+                "episode": 2,
+                "video": {"release_group": "FLUX", "resolution": "1080p", "source": "Web"},
+            },
+        )
+
+        self.assertEqual(result["member"], "Example.S01E02.1080p.WEB.FLUX.srt")
+        self.assertNotIn("episode", result)
+
+    def test_extract_download_falls_back_to_episode_without_field_match(self):
+        # Members differ but none matches the scored fields: ambiguous, so defer to the
+        # host's episode selection rather than guessing.
+        body = _zip_with(
+            {
+                "Example.S01E02.720p.HDTV.NTb.srt": b"one",
+                "Example.S01E02.XviD.AC3.srt": b"two",
+            }
+        )
+
+        result = self.mod.extract_download(
+            body,
+            {
+                "filename": "Example.S01E02.zip",
+                "season": 1,
+                "episode": 2,
+                "video": {"release_group": "FLUX", "resolution": "1080p", "source": "Bluray"},
+            },
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 2)
+
+    def test_extract_download_defers_when_requested_episode_absent(self):
+        # The requested episode is in no member; pinning another episode's member that
+        # happens to match the scored fields would hard-fail the host download, so defer.
+        # (E01 here matches release_group/resolution/source; the request is for E02.)
+        body = _zip_with(
+            {
+                "Example.S01E01.1080p.WEB.FLUX.srt": b"e1",
+                "Example.S01E03.720p.HDTV.NTb.srt": b"e3",
+            }
+        )
+
+        result = self.mod.extract_download(
+            body,
+            {
+                "filename": "Example.S01.zip",
+                "season": 1,
+                "episode": 2,
+                "video": {"release_group": "FLUX", "resolution": "1080p", "source": "Web"},
+            },
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 2)
+
+    def test_extract_download_narrows_separated_episode_tokens(self):
+        # Members can separate the season and episode tokens (S01.E02); narrowing must
+        # recognize that form. With two S01.E02 releases, recognizing the separated token
+        # is what lets the release_group/resolution/source scoring pin the scored member
+        # instead of falling back to host episode-only selection.
+        body = _zip_with(
+            {
+                "Example.S01.E01.1080p.WEB.FLUX.srt": b"e1",
+                "Example.S01.E02.720p.WEB.NTb.srt": b"e2 ntb",
+                "Example.S01.E02.1080p.WEB.FLUX.srt": SRT_BODY,
+            }
+        )
+
+        result = self.mod.extract_download(
+            body,
+            {
+                "filename": "Example.S01.zip",
+                "season": 1,
+                "episode": 2,
+                "video": {"release_group": "FLUX", "resolution": "1080p", "source": "Web"},
+            },
+        )
+
+        self.assertEqual(result["member"], "Example.S01.E02.1080p.WEB.FLUX.srt")
+        self.assertNotIn("episode", result)
+
+    def test_extract_download_rejects_empty_body(self):
+        with self.assertRaisesRegex(ValueError, "empty"):
+            self.mod.extract_download(b"", {"filename": "Dune.2021.WEB.zip"})
+
+    def test_extract_download_rejects_html_error_page(self):
+        with self.assertRaisesRegex(ValueError, "HTML"):
             self.mod.extract_download(
-                body,
-                {
-                    "filename": "Example.S01.zip",
-                    "video": {"kind": "episode", "series": "Example", "season": 1, "episode": 2},
-                },
+                b"<!DOCTYPE html><html><body>error</body></html>",
+                {"filename": "Dune.2021.WEB.zip"},
             )
-
-    def test_archive_selection_requires_matching_season_for_episode_members(self):
-        body = _zip_with(
-            {
-                "Example.S02E02.srt": b"wrong season",
-                "Example.S01E02.srt": SRT_BODY,
-            }
-        )
-
-        result = self.mod.extract_download(
-            body,
-            {
-                "filename": "Example.S01.zip",
-                "video": {"kind": "episode", "series": "Example", "season": 1, "episode": 2},
-            },
-        )
-
-        data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
-        self.assertEqual(data, SRT_BODY)
-
-    def test_archive_selection_matches_numeric_episode_members(self):
-        body = _zip_with(
-            {
-                "01.srt": b"episode one",
-                "02.srt": SRT_BODY,
-                "03.srt": b"episode three",
-            }
-        )
-
-        result = self.mod.extract_download(
-            body,
-            {
-                "filename": "Example.S01.zip",
-                "video": {"kind": "episode", "series": "Example", "season": 1, "episode": 2},
-            },
-        )
-
-        data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
-        self.assertEqual(data, SRT_BODY)
 
 
 class YavkaNetCodexFixTests(unittest.TestCase):
@@ -740,34 +1062,29 @@ class YavkaNetCodexFixTests(unittest.TestCase):
 
         self.assertEqual(results, [])
 
-    def test_content_payload_reports_windows_1251_encoding(self):
+    def test_extract_download_never_sets_encoding_for_archives(self):
+        # The worker no longer guesses an encoding. The host runs chardet via
+        # Subtitle.normalize() over the extracted member, so an archive payload
+        # must not carry an encoding hint that could reintroduce mojibake.
         cyrillic = "Здравей свят".encode("cp1251")
         body = _zip_with({"Dune.2021.WEB.srt": cyrillic})
 
-        result = self.mod.extract_download(
-            body,
-            {
-                "filename": "Dune.2021.WEB.zip",
-                "video": {"kind": "movie", "title": "Dune", "year": 2021},
-            },
-        )
+        result = self.mod.extract_download(body, {"filename": "Dune.2021.WEB.zip"})
 
-        self.assertEqual(result["encoding"], "cp1251")
+        self.assertNotIn("encoding", result)
+        raw = base64.b64decode(result["archive_b64"].encode("ascii"), validate=True)
+        self.assertEqual(raw, body)
+
+    def test_extract_download_passes_non_archive_subtitle_through(self):
+        # A bare subtitle stream (not zip/rar) stays in content mode, still with
+        # no worker-side encoding guess.
+        result = self.mod.extract_download(SRT_BODY, {"filename": "Dune.2021.WEB.srt"})
+
+        self.assertNotIn("encoding", result)
+        self.assertNotIn("archive_b64", result)
         data = base64.b64decode(result["content_b64"].encode("ascii"), validate=True)
-        self.assertEqual(data, cyrillic)
-
-    def test_content_payload_reports_utf8_for_ascii_subtitle(self):
-        body = _zip_with({"Dune.2021.WEB.srt": SRT_BODY})
-
-        result = self.mod.extract_download(
-            body,
-            {
-                "filename": "Dune.2021.WEB.zip",
-                "video": {"kind": "movie", "title": "Dune", "year": 2021},
-            },
-        )
-
-        self.assertEqual(result["encoding"], "utf-8")
+        self.assertEqual(data, SRT_BODY)
+        self.assertEqual(result["format"], "srt")
 
 
 if __name__ == "__main__":

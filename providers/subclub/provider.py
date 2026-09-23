@@ -4,22 +4,15 @@ import base64
 import hashlib
 import html
 import io
-import os
 import re
-import shutil
-import subprocess
-import tempfile
+import socket
 import time
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
 from http.cookiejar import CookieJar
-
-try:
-    import py7zz
-except ImportError:  # pragma: no cover, dependency is declared in manifest
-    py7zz = None
 
 PROVIDER_ID = "subclub"
 BASE_URL = "https://www.subclub.eu"
@@ -27,6 +20,13 @@ SEARCH_URL = f"{BASE_URL}/jutud.php"
 ARCHIVE_LIST_URL = f"{BASE_URL}/subtitles_archivecontent.php"
 DOWNLOAD_URL = f"{BASE_URL}/down.php"
 HTTP_TIMEOUT_SECONDS = 30
+# Transport-level retry: tolerate a single transient network blip (DNS / reset /
+# timeout / 5xx / 429) without aborting the whole search or download. Mirrors the
+# ~3-try behaviour of upstream subliminal's RetryingSession / ProviderRetryMixin.
+HTTP_RETRIES = 2
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8.0
+RETRY_STATUS = 429
 SUPPORTED_LANGUAGES = {"est": "et"}
 ALPHA2_TO_ALPHA3 = {"et": "est"}
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
@@ -148,8 +148,23 @@ class SubclubProvider:
         if referer:
             headers["Referer"] = referer
         request = urllib.request.Request(url, headers=headers)
-        with self._opener.open(request, timeout=timeout) as response:
-            return response.read()
+        for attempt in range(1, HTTP_RETRIES + 2):
+            try:
+                with self._opener.open(request, timeout=timeout) as response:
+                    return response.read()
+            except urllib.error.HTTPError as error:
+                # 5xx and 429 are transient; every other 4xx (auth, not-found,
+                # forbidden) is a real answer and must propagate on the first try.
+                transient = error.code == RETRY_STATUS or 500 <= error.code <= 599
+                if not transient or attempt > HTTP_RETRIES:
+                    raise
+                _retry_sleep(attempt, _retry_after_seconds(error))
+            except (TimeoutError, socket.timeout, urllib.error.URLError):
+                # Connection refused / DNS / reset / read timeout: transient transport.
+                if attempt > HTTP_RETRIES:
+                    raise
+                _retry_sleep(attempt, None)
+        raise RuntimeError("unreachable subclub retry state")
 
     def search(self, video, languages, config):
         video = dict(video or {})
@@ -221,10 +236,11 @@ class SubclubProvider:
             "media_type": item.get("media_type"),
             "release_info": filename,
         }
-        # A synthetic fallback archive has only the generic "subclub-<id>.zip" name,
-        # so carry the video's release hints into the payload. Without this,
-        # select_subtitle_file() has nothing but "subclub" and the archive id and
-        # would pick the first .srt instead of the file matching the wanted release.
+        # A synthetic fallback archive only has the generic "subclub-<id>.zip" name, so its
+        # release_info carries no release signal. Carry the video's release hints into the
+        # payload so worker-side member selection (and the host's episode pick) have
+        # something to disambiguate a multi-member archive on. Without this, a season pack
+        # or a multi-release movie archive would be picked blindly.
         if item.get("synthetic_archive"):
             hints = _video_release_hints(video)
             if hints:
@@ -259,158 +275,146 @@ class SubclubProvider:
         url = payload.get("url")
         if url:
             body = self._http_get(url, timeout=30)
-            if not body:
-                raise ValueError(f"subclub empty response for archive {payload.get('archive_id')}")
-            return _content_payload(_normalize_line_endings(body), _format_from_filename(payload.get("filename")))
+            return _download_payload(body, payload)
         archive_url = payload.get("archive_url")
         if not archive_url:
             raise ValueError("subclub download requires url or archive_url")
         body = self._http_get(archive_url, timeout=60)
-        return extract_archive_download(body, payload)
+        return _download_payload(body, payload)
 
 
-def extract_archive_download(body, payload=None):
+def _download_payload(body, payload):
     payload = payload or {}
-    if _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        selected = select_subtitle_file([name for name, _data in files], payload)
-        return _content_payload(_normalize_line_endings(dict(files)[selected]), _subtitle_extension(selected) or "srt")
-    stream = io.BytesIO(body or b"")
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist(), payload)
-            return _content_payload(_normalize_line_endings(archive.read(selected)), _subtitle_extension(selected) or "srt")
-    # Non-archive fallback: the archive endpoint can answer down.php with an HTML/error
-    # page or an empty body. The synthetic fallback filename ends in ".zip", so
-    # _format_from_filename() defaults to "srt" and we would otherwise hand back an
-    # invalid subtitle that looks successful. Reject those bodies instead.
+    # Reject broken responses up front: the down.php endpoint can answer with an empty
+    # stream or an HTML/error page that would otherwise look like a successful download.
     if not body or not body.strip():
         raise ValueError(f"subclub empty download for archive {payload.get('archive_id')}")
     if _is_html_body(body):
         raise ValueError(f"subclub returned an HTML/error page for archive {payload.get('archive_id')}")
+    if _is_archive_body(body):
+        # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
+        # the host, which lists it, detects encoding, and picks the member.
+        #
+        # The archive path is only reached for the synthetic fallback, where the listing
+        # endpoint returned no direct file links, so the archive can hold several subtitle
+        # members (a full-season pack, or one movie with multiple release variants). The
+        # host's episode-only pick cannot tell a season pack's S01E05 from S02E05, and for a
+        # movie episode is None so it has nothing to select on. When we can list the zip we
+        # pin the member matching season+episode and the scored release hints; otherwise
+        # (rar/7z, single member, or no confident winner) we defer to the host episode pick.
+        archive = {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+        }
+        member = _select_zip_member(body, payload)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = payload.get("episode")
+        return archive
+    # Direct, non-archive subtitle body.
     return _content_payload(_normalize_line_endings(body), _format_from_filename(payload.get("filename")))
 
 
-def select_subtitle_file(names, payload):
-    candidates = [name for name in names if _subtitle_extension(name)]
-    if not candidates:
-        raise ValueError("subclub archive contains no supported subtitle files")
+def _select_zip_member(body, payload):
+    # Pin the zip member matching the requested season+episode and the scored release hints.
+    # Listing only, no extraction or decoding: the host reads the named member and runs
+    # chardet. Returns None for rar (not stdlib-listable), a single member (nothing to
+    # disambiguate), or when no field breaks the tie, so the caller falls back to host-side
+    # episode selection. Pinning the WRONG member hard-fails the host download with no
+    # fallback, so we only pin a confident unique winner.
+    payload = payload or {}
+    if _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body or b"")):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        members = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/")
+            and _subtitle_extension(name)
+            and not name.rsplit("/", 1)[-1].startswith(".")
+        ]
+    if len(members) < 2:
+        return None  # a lone member: the host's episode pick already lands here
+    season = _safe_int(payload.get("season"))
+    episode = _safe_int(payload.get("episode"))
+    pool = members
+    if season is not None and episode is not None:
+        # Narrow to the requested episode, using the season-aware SxxExx form so a season
+        # pack that repeats an episode number across seasons (S01E05 vs S02E05) is matched on
+        # both axes, not on episode alone.
+        episode_pool = [name for name in members if _member_has_episode(name, season, episode)]
+        if not episode_pool:
+            # Episode requested but absent from every member: pinning a member from another
+            # episode would hard-fail the host download, so defer to host episode selection.
+            return None
+        if len(episode_pool) == 1:
+            # A unique season+episode match on a delimited SxxExx token is confident. Pin it
+            # rather than defer: the host's fallback pick carries only the episode number
+            # (no season), so for a cross-season pack it could land on the wrong season.
+            return episode_pool[0]
+        pool = episode_pool
+    # Several members survive (a multi-release episode, or a movie archive with several
+    # release variants). Break the tie with the same release hints the result was scored on.
+    # Pin only a unique winner; ties or a zero score defer to the host.
+    hint_tokens = _release_hint_tokens(payload)
+    if not hint_tokens:
+        return None
+    best, best_score, tied = None, 0, False
+    for name in pool:
+        score = _member_hint_score(name, hint_tokens)
+        if score > best_score:
+            best, best_score, tied = name, score, False
+        elif score == best_score and best is not None:
+            tied = True
+    if best is None or best_score == 0 or tied:
+        return None  # cannot confidently disambiguate; let the host pick by episode
+    return best
+
+
+def _member_has_episode(name, season, episode):
+    # Match the episode as a DELIMITED token, tolerating a separator between the season and
+    # episode parts (S01E02, S01.E02, S01 E02, S01-E02), plus NxNN (1x02) and the bare
+    # "{season}{episode:02d}" form (e.g. 101). The (?!\d) guard stops a 3-digit code from
+    # matching a substring ("720" must not match "720p", "101" must not match "1010").
+    text = _normalize_release(name).replace(".", " ")
+    return bool(
+        # S01E02 / S01 E02 / S01-E02 (separator already collapsed to a space).
+        re.search(rf"(?<![a-z0-9])s0*{season}[\s]*e0*{episode}(?!\d)", text)
+        # 1x02.
+        or re.search(rf"(?<![a-z0-9]){season}x0*{episode}(?!\d)", text)
+        # Bare "{season}{episode:02d}" (e.g. 101). Require a non-alnum boundary on BOTH sides
+        # so "720" (S07E20) never matches "720p" and "264" never matches "x264".
+        or re.search(rf"(?<![a-z0-9]){season}{episode:02d}(?![a-z0-9])", text)
+    )
+
+
+def _release_hint_tokens(payload):
+    payload = payload or {}
+    sources = (
+        _normalize_release(payload.get("release_info") or payload.get("filename")),
+        _normalize_release(payload.get("release_hints")),
+    )
+    return {token for source in sources for token in source.split(".") if len(token) > 2}
+
+
+def _member_hint_score(name, hint_tokens):
+    # Score on release-hint token overlap only. The extension (.srt) is not a release signal,
+    # so it must never break a real tie between two equally-matching releases.
+    normalized = _normalize_release(name.rsplit("/", 1)[-1])
+    member_tokens = {token for token in normalized.split(".") if len(token) > 2}
+    return sum(1 for token in hint_tokens if token in member_tokens)
+
+
+def _safe_int(value):
     try:
-        season = int((payload or {}).get("season"))
-        episode = int((payload or {}).get("episode"))
+        return int(value)
     except (TypeError, ValueError):
-        season = episode = None
-    release_info = _normalize_release((payload or {}).get("release_info") or (payload or {}).get("filename"))
-    release_hints = _normalize_release((payload or {}).get("release_hints"))
-    hint_tokens = {
-        token
-        for source in (release_info, release_hints)
-        for token in source.split(".")
-        if len(token) > 2
-    }
-
-    def score(index_name):
-        index, name = index_name
-        normalized = _normalize_release(os.path.basename(name))
-        value = max(0, 10 - index)
-        if season is not None and episode is not None:
-            if f"s{season:02d}e{episode:02d}" in normalized:
-                value += 70
-            elif f"{season}x{episode:02d}" in normalized or f"{season}x{episode}" in normalized:
-                value += 65
-        for token in hint_tokens:
-            if token in normalized:
-                value += 4
-        if name.lower().endswith(".srt"):
-            value += 5
-        return value
-
-    return max(enumerate(candidates), key=score)[1]
+        return None
 
 
-def _extract_rar_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"Subclub RAR extraction failed: {details}") from errors[-1]
-    raise RuntimeError("Subclub RAR extraction requires bundled py7zz")
-
-
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("Subclub bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subclub.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_unar(body):
-    unar = shutil.which("unar")
-    if not unar:
-        raise RuntimeError("Subclub RAR fallback requires unar")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subclub.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run([unar, "-quiet", "-o", output_dir, archive_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"unar failed to extract Subclub RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("Subclub RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "subclub.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run([sevenzip, "x", "-y", f"-o{output_dir}", archive_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract Subclub RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if not _subtitle_extension(rel):
-                continue
-            with open(path, "rb") as handle:
-                files.append((rel, handle.read()))
-    if not files:
-        raise ValueError("subclub archive contains no supported subtitle files")
-    return files
+def _is_archive_body(body):
+    return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
 
 
 def _subtitle_link(row):
@@ -522,20 +526,14 @@ def _normalize_line_endings(content):
 
 
 def _content_payload(content, subtitle_format):
-    encoding = "utf-8"
-    for candidate in ("utf-8", "cp1257", "latin-1"):
-        try:
-            content.decode(candidate)
-            encoding = candidate
-            break
-        except UnicodeDecodeError:
-            continue
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 
@@ -554,6 +552,33 @@ def _sleep(config):
     delay_ms = (config or {}).get("request_delay_ms", 0) or 0
     if delay_ms > 0:
         time.sleep(min(int(delay_ms), 5000) / 1000.0)
+
+
+def _retry_sleep(attempt, retry_after):
+    # Exponential backoff with a small base, capped. Honor a server Retry-After
+    # hint (429) when it is larger than the computed backoff. time.sleep is looked
+    # up on the module so tests can monkeypatch it.
+    backoff = min(RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1)), RETRY_BACKOFF_CAP_SECONDS)
+    if retry_after is not None:
+        backoff = min(max(backoff, retry_after), RETRY_BACKOFF_CAP_SECONDS)
+    time.sleep(backoff)
+
+
+def _retry_after_seconds(error):
+    # Only delay-seconds form is honored; an HTTP-date Retry-After falls back to
+    # the normal backoff. Never let a malformed header break the retry.
+    header = None
+    try:
+        header = error.headers.get("Retry-After")
+    except AttributeError:
+        header = None
+    if not header:
+        return None
+    try:
+        seconds = float(str(header).strip())
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds >= 0 else None
 
 
 def _title_matches(wanted, candidate):

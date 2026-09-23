@@ -5,8 +5,10 @@ import hashlib
 import html
 import io
 import re
+import socket
 import time
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -15,6 +17,10 @@ import zipfile
 PROVIDER_ID = "tvsubtitles"
 BASE_URL = "https://www.tvsubtitles.net"
 HTTP_TIMEOUT_SECONDS = 10
+HTTP_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8.0
+RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 SUPPORTED_EXTENSIONS = (".srt", ".sub", ".ass", ".ssa")
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -193,22 +199,27 @@ def parse_episode_subtitles(body, series, season, episode, year=None):
 
 
 def extract_download(body, payload=None):
-    payload = payload or {}
+    del payload
     if not body:
-        return _content_payload(b"", "srt", empty=True)
+        raise ValueError("tvsubtitles download returned an empty body")
     stream = io.BytesIO(body)
     if not zipfile.is_zipfile(stream):
         raise ValueError("tvsubtitles download did not return a zip archive")
+    # List the zip cheaply with stdlib zipfile to pick the single member, then hand the
+    # raw archive bytes back to the host (Provider Hub v1.1+), which extracts the member
+    # and detects encoding via Subtitle.normalize().
     with zipfile.ZipFile(stream) as archive:
         names = archive.namelist()
-        if len(names) != 1:
-            raise ValueError("tvsubtitles archive contains more than one file")
-        name = names[0]
-        subtitle_format = _subtitle_extension(name)
-        if not subtitle_format:
-            raise ValueError("tvsubtitles archive contains no supported subtitle file")
-        content = _normalize_line_endings(archive.read(name))
-    return _content_payload(content, subtitle_format)
+    if len(names) != 1:
+        raise ValueError("tvsubtitles archive contains more than one file")
+    member = names[0]
+    if not _subtitle_extension(member):
+        raise ValueError("tvsubtitles archive contains no supported subtitle file")
+    return {
+        "archive_b64": base64.b64encode(body).decode("ascii"),
+        "archive_sha256": hashlib.sha256(body).hexdigest(),
+        "member": member,
+    }
 
 
 class TvSubtitlesProvider:
@@ -221,8 +232,7 @@ class TvSubtitlesProvider:
             "X-Requested-With": "XMLHttpRequest",
         }
         request = urllib.request.Request(url, data=data, headers=headers)
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.read()
+        return _urlopen_with_retry(request, timeout)
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         return self._http_request(url, timeout=timeout, referer=referer)
@@ -454,39 +464,6 @@ def _subtitle_extension(name):
     return None
 
 
-def _content_payload(content, subtitle_format, empty=False):
-    if empty:
-        return {
-            "content_b64": "",
-            "content_sha256": "",
-            "content_type": _content_type(subtitle_format),
-            "format": subtitle_format,
-            "encoding": "utf-8",
-            "empty": True,
-        }
-    encoding = "utf-8"
-    try:
-        content.decode("utf-8")
-    except UnicodeDecodeError:
-        encoding = "latin-1"
-    return {
-        "content_b64": base64.b64encode(content).decode("ascii"),
-        "content_sha256": hashlib.sha256(content).hexdigest(),
-        "content_type": _content_type(subtitle_format),
-        "format": subtitle_format,
-        "encoding": encoding,
-        "empty": False,
-    }
-
-
-def _content_type(subtitle_format):
-    if subtitle_format in {"ass", "ssa"}:
-        return "text/x-ssa"
-    if subtitle_format == "sub":
-        return "text/plain"
-    return "application/x-subrip"
-
-
 def _title_matches(candidate, titles):
     candidate_norm = _normalize(candidate)
     if not candidate_norm:
@@ -539,16 +516,60 @@ def _safe_int(value):
         return None
 
 
-def _normalize_line_endings(content):
-    return (content or b"").replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-
-
 def _decode(value):
     if value is None:
         return ""
     if isinstance(value, str):
         return value
     return value.decode("utf-8", errors="replace")
+
+
+def _urlopen_with_retry(request, timeout):
+    # Bounded retry around the raw urllib transport. Only transient transport
+    # failures are retried: connection errors / DNS / reset (URLError), socket
+    # timeouts, and HTTP 5xx / 429. Every other failure (4xx other than 429,
+    # parse errors, etc.) propagates unchanged on the first occurrence. The body
+    # read happens inside the try so a reset mid-read is also retried; the
+    # return type and behavior of the original urlopen call are preserved.
+    last_error = None
+    for attempt in range(1, HTTP_MAX_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.read()
+        except urllib.error.HTTPError as error:
+            if error.code not in RETRY_STATUS_CODES:
+                raise
+            last_error = error
+            retry_after = _retry_after_seconds(error) if error.code == 429 else None
+        except (urllib.error.URLError, socket.timeout, TimeoutError) as error:
+            # HTTPError is a subclass of URLError and is handled above, so this
+            # branch only sees genuine transport failures.
+            last_error = error
+            retry_after = None
+        if attempt >= HTTP_MAX_ATTEMPTS:
+            raise last_error
+        time.sleep(_retry_delay_seconds(attempt, retry_after))
+
+
+def _retry_delay_seconds(attempt, retry_after=None):
+    delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    if retry_after is not None:
+        delay = max(delay, retry_after)
+    return min(delay, RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _retry_after_seconds(error):
+    header = None
+    try:
+        header = error.headers.get("Retry-After")
+    except AttributeError:
+        header = None
+    if not header:
+        return None
+    try:
+        return max(0.0, float(header.strip()))
+    except (TypeError, ValueError):
+        return None
 
 
 def _sleep(config):

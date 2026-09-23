@@ -255,17 +255,31 @@ class MoviesubtitlesProvider:
 
 def extract_download(body, payload=None):
     payload = payload or {}
-    if not body:
-        return _content_payload(b"", "srt", empty=True)
+    if not body or not body.strip():
+        raise ValueError("moviesubtitles download returned an empty body")
+    if _is_html_body(body):
+        raise ValueError("moviesubtitles download did not return a supported subtitle file")
     stream = io.BytesIO(body)
     if zipfile.is_zipfile(stream):
+        # A multi-part subtitle (CD1/CD2 ...) has to be concatenated, which the single-member
+        # host contract cannot do: pinning one member would deliver only one disc and silently
+        # drop the rest. When the zip holds a multipart set, join those members worker-side
+        # (stdlib listing only) and return direct content so the user gets the whole subtitle.
+        multipart = _multipart_content(body)
+        if multipart is not None:
+            return multipart
+        # Single member: list the zip cheaply with stdlib to pick the member, then hand the raw
+        # archive bytes back. The host extracts that exact member and detects encoding via
+        # Subtitle.normalize().
         with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_files(archive.namelist())
-            subtitle_format = _subtitle_extension(selected[0]) or "srt"
-            content = b"\n\n".join(archive.read(name) for name in selected)
-            return _content_payload(content, subtitle_format)
+            member = select_subtitle_file(archive.namelist())
+        return _archive_payload(body, member=member)
+    if _is_rar_archive(body) or _is_7z_archive(body):
+        # RAR/7z are not stdlib-listable (and bundling rarfile/py7zz is banned), so even a
+        # multipart rar falls back to the host's episode pick over the whole archive.
+        return _archive_payload(body, episode=payload.get("episode"))
     subtitle_format = _subtitle_extension(payload.get("filename", ""))
-    if not subtitle_format or _looks_like_html(body):
+    if not subtitle_format:
         raise ValueError("moviesubtitles download did not return a supported subtitle file")
     return _content_payload(body, subtitle_format)
 
@@ -275,13 +289,30 @@ def select_subtitle_file(names):
 
 
 def select_subtitle_files(names):
-    candidates = [name for name in names if _subtitle_extension(name)]
+    candidates = _subtitle_candidates(names)
     if not candidates:
         raise ValueError("moviesubtitles archive contains no supported subtitle files")
     multipart = _multipart_subset(candidates)
     if multipart:
         return multipart
     return [_primary_subtitle_file(candidates)]
+
+
+def _subtitle_candidates(names):
+    # Drop directory entries and editor/OS sidecars (__MACOSX/._x.srt, .DS_Store) so a stray
+    # resource fork never shadows the real subtitle in selection or multipart grouping.
+    return [
+        name
+        for name in names
+        if not name.endswith("/") and _subtitle_extension(name) and not _is_sidecar(name)
+    ]
+
+
+def _is_sidecar(name):
+    parts = name.replace("\\", "/").split("/")
+    if any(part == "__MACOSX" for part in parts):
+        return True
+    return os.path.basename(name).startswith(".")
 
 
 def _open_url(url, data=None, timeout=HTTP_TIMEOUT_SECONDS, referer=None, host_header=None, insecure=False):
@@ -398,27 +429,45 @@ def _subtitle_extension(name):
     return None
 
 
-def _content_payload(content, subtitle_format, empty=False):
-    if empty:
-        return {
-            "content_b64": "",
-            "content_sha256": "",
-            "content_type": _content_type(subtitle_format),
-            "format": subtitle_format,
-            "encoding": "utf-8",
-            "empty": True,
-        }
-    encoding = "utf-8"
-    try:
-        content.decode("utf-8")
-    except UnicodeDecodeError:
-        encoding = "latin-1"
+def _archive_payload(body, member=None, episode=None):
+    # Hand the raw archive bytes to the host (Provider Hub v1.1+). The host extracts the
+    # member with its own zipfile/rarfile stack and detects encoding via normalize().
+    payload = {
+        "archive_b64": _base64.b64encode(body).decode("ascii"),
+        "archive_sha256": _hashlib.sha256(body).hexdigest(),
+    }
+    if member is not None:
+        payload["member"] = member
+    else:
+        payload["episode"] = episode
+    return payload
+
+
+def _multipart_content(body):
+    # Concatenate a CD1/CD2-style multipart subtitle from a zip into one content payload.
+    # Listing only (no host-banned rar/7z libs). Returns None when the archive holds no
+    # multipart set, so the caller falls back to pinning a single member for the host.
+    if _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body)):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        names = _subtitle_candidates(archive.namelist())
+        multipart = _multipart_subset(names)
+        if not multipart:
+            return None
+        # Same order and b"\n\n" join the pre-migration worker used, so the rendered subtitle
+        # is byte-for-byte what it produced before extraction moved to the host.
+        content = b"\n\n".join(archive.read(name) for name in multipart)
+    return _content_payload(content, _subtitle_extension(multipart[0]) or "srt")
+
+
+def _content_payload(content, subtitle_format):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially latin-1, which never fails to decode) only reintroduces mojibake.
     return {
         "content_b64": _base64.b64encode(content).decode("ascii"),
         "content_sha256": _hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 
@@ -507,9 +556,17 @@ def _extension_priority(name):
         return len(SUBTITLE_EXTENSIONS)
 
 
-def _looks_like_html(body):
+def _is_html_body(body):
     sample = (body or b"").lstrip()[:512].lower()
     return sample.startswith((b"<!doctype html", b"<html")) or b"<title" in sample
+
+
+def _is_rar_archive(body):
+    return bool(body) and body[:4] == b"Rar!"
+
+
+def _is_7z_archive(body):
+    return bool(body) and body[:6] == b"7z\xbc\xaf\x27\x1c"
 
 
 def _allows_legacy_500_body(url):
