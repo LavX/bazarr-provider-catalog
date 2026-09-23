@@ -228,7 +228,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "e5310687f58f035fec531d2864a13d8ec08f69665de614b2503c355bcd0904c4",
+        "bundle_sha256": "71e605773bddc5e67e045952c92d363fafd7d0e3a459f9e6c0fd668e55b28401",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -258,7 +258,7 @@
         "entry_class": "AnimeToshoProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "040accf3d437e00f10fc692e527bc4a8e4b7ca2ee27d28d8fa330af466ef2c75"
+          "provider.py": "a10645c053e1eacbb302ce03cf5e764cd5bcf13fe820b5b6240824637f895888"
         },
         "languages": [
           "ara",
@@ -295,7 +295,7 @@
         "supported_media": [
           "episode"
         ],
-        "version": "0.1.4"
+        "version": "0.1.5"
       }
     },
     {
@@ -851,7 +851,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "9c9e651a4756a4b07c2fdd0e48e95d16b26d1ea69e75f04bd61e64b20bebb3f8",
+        "bundle_sha256": "54464e25fb76a6d5fb5a71fd94ce6d5274d56876091ac2e7227997cd9fccdf80",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -881,7 +881,7 @@
         "entry_class": "GestdownProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "0571be21783dfa81b56cc60ee65668cf65258eb19224ceb3cad02cd437bebb77"
+          "provider.py": "1b86904ececbe38e6fa122178a0cc8beb3be31267344ccd4839842bd476aa1c4"
         },
         "languages": [
           "ara",
@@ -947,7 +947,7 @@
         "supported_media": [
           "episode"
         ],
-        "version": "0.1.3"
+        "version": "0.1.4"
       }
     },
     {
@@ -2013,7 +2013,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "7bdef231885a558fb4f69336ac592ef84f0d80ecc3e67979d338e91bc06e7d48",
+        "bundle_sha256": "7dcaa937e4009e329f1343fa5e5912d76da49be9960976592c08a2cee62ad531",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -2030,6 +2030,12 @@
               "description": "Optional FlareSolverr /v1 endpoint used when ai-cloudscraper receives a Cloudflare challenge during NapiProjekt catalog scraping.",
               "title": "FlareSolverr URL",
               "type": "string"
+            },
+            "hash_only": {
+              "default": false,
+              "description": "Search only for subtitles matching the video fingerprint. This temporary workaround may return fewer results and ignores author filters.",
+              "title": "Hash-only search",
+              "type": "boolean"
             },
             "only_authors": {
               "default": false,
@@ -2322,7 +2328,7 @@
         "entry_class": "NapiProjektProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "eb7edddedff776c92098cbd89c562864e754f921cc3e31c8834f01301e125bd3"
+          "provider.py": "1f577592d958344ab7ca1f93b1146ff5e248c570acb354c99679c0b91e908d5f"
         },
         "flaresolverr": true,
         "languages": [
@@ -2345,7 +2351,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.6"
+        "version": "0.1.7"
       }
     },
     {
@@ -4168,13 +4174,13 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "90d98a43795dbd60bc0bd77324058226badf2fcb6778c0ca2b317754614112da",
+        "bundle_sha256": "06d26e8f3cacec666d3622290f438f2f74b5d3425a34065a2f3d8a0199aa4f0c",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
             "anime_mode": {
               "default": false,
-              "description": "Enable extra absolute-episode, season-only, title-only, and pack matching searches for anime libraries.",
+              "description": "Enable extra absolute-episode, season-only, and title-only searches for anime libraries.",
               "title": "Anime mode",
               "type": "boolean"
             },
@@ -4201,11 +4207,11 @@
         "dependencies": {
           "requirements": []
         },
-        "description": "Uses the official SubDL API for movie and episode subtitles, including optional anime pack handling.",
+        "description": "Uses the official SubDL API for movie and episode subtitles, including season packs and optional anime search fallbacks.",
         "entry_class": "SubDLProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "77b972fddb348f5e570da317d532c38def63c8fa86e67202ed6ce7d7ff78bfbc"
+          "provider.py": "e9e67200acd1ca8e4576507e8c7df9d5c5ec048bddae52030bf7657ae916f8d9"
         },
         "languages": [
           "ara",
@@ -4222,25 +4228,35 @@
           "eng",
           "epo",
           "est",
+          "eus",
           "fas",
           "fin",
           "fra",
+          "gle",
+          "glg",
           "heb",
           "hin",
           "hrv",
           "hun",
+          "hye",
           "ind",
           "isl",
           "ita",
+          "jav",
           "jpn",
           "kal",
+          "kan",
           "kat",
+          "kaz",
+          "khm",
+          "kir",
           "kor",
           "kur",
           "lav",
           "lit",
           "mal",
           "mkd",
+          "mon",
           "msa",
           "mya",
           "nld",
@@ -4255,6 +4271,7 @@
           "spa",
           "sqi",
           "srp",
+          "sun",
           "swe",
           "tam",
           "tel",
@@ -4285,7 +4302,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.4"
+        "version": "0.1.5"
       }
     },
     {
@@ -5221,7 +5238,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "b465062630b4aa189a840d852547ab2162030f79cc74915358c43d664310dc64",
+        "bundle_sha256": "63a21f4a778068a9bb14ccf84020cff1507f60cc1c83022d5cc237729221c24a",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -5243,7 +5260,7 @@
         "entry_class": "SubsSabBzProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "26d4d58b9f541a443249c065bac4e12a1264d04df435a7cad2540ef5659d79f4"
+          "provider.py": "9fb08869a1578b52e54de5050dba55ec3f2b3429d1ace3abf589055c113f473b"
         },
         "languages": [
           "bul",
@@ -5266,7 +5283,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.5"
+        "version": "0.1.6"
       }
     },
     {

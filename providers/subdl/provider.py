@@ -22,6 +22,7 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
 )
 HTTP_TIMEOUT_SECONDS = 30
+SUBS_PER_PAGE = 30
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
 ARCHIVE_EXTENSIONS = (".zip",)
 
@@ -191,8 +192,19 @@ _SUBDL_TO_LANGUAGE = {
     "TR": ("tur", None, None),
     "UK": ("ukr", None, None),
     "UR": ("urd", None, None),
+    "HY": ("hye", None, None),
+    "KK": ("kaz", None, None),
+    "KY": ("kir", None, None),
+    "KM": ("khm", None, None),
+    "KN": ("kan", None, None),
+    "MN": ("mon", None, None),
+    "EU": ("eus", None, None),
+    "GL": ("glg", None, None),
+    "GA": ("gle", None, None),
+    "JV": ("jav", None, None),
+    "SU": ("sun", None, None),
     "BR_PT": ("por", "BR", None),
-    "ZH_BG": ("zho", None, "Hant"),
+    "ZH_BG": ("zho", "TW", None),
 }
 _LANGUAGE_TO_SUBDL = {value: key for key, value in _SUBDL_TO_LANGUAGE.items()}
 SUPPORTED_ALPHA3 = sorted({value[0] for value in _SUBDL_TO_LANGUAGE.values()})
@@ -240,6 +252,11 @@ def _subdl_code(language):
     alpha3 = payload.get("alpha3")
     country = payload.get("country_alpha2") or payload.get("country")
     script = payload.get("script")
+    if alpha3 == "zho" and (
+        str(country or "").upper() == "TW"
+        or str(script or "").lower() in {"hant", "traditional"}
+    ):
+        return "ZH_BG"
     candidates = [
         (alpha3, country, script),
         (alpha3, country, None),
@@ -293,7 +310,7 @@ def _base_params(video, languages, api_key):
     params = {
         "api_key": api_key,
         "languages": ",".join(codes),
-        "subs_per_page": 30,
+        "subs_per_page": SUBS_PER_PAGE,
         "comment": 1,
         "releases": 1,
         "bazarr": 1,
@@ -376,6 +393,22 @@ def _response_items(data):
     return [item for item in data.get("subtitles", []) if isinstance(item, dict)]
 
 
+def _apply_runtime_policy(policy, data):
+    """Apply only the bounded search controls returned by SubDL's API."""
+    if not isinstance(data, dict):
+        return
+    api_policy = data.get("bazarr_policy")
+    if not isinstance(api_policy, dict):
+        return
+    for key in ("enabled", "season_fallback_enabled", "title_fallback_enabled", "unpack_enabled"):
+        value = api_policy.get(key)
+        if isinstance(value, bool):
+            policy[key] = value
+    max_pages = api_policy.get("max_pages")
+    if isinstance(max_pages, int) and not isinstance(max_pages, bool):
+        policy["max_pages"] = max(1, min(max_pages, 2))
+
+
 def _merge_items(target, seen, data):
     for item in _response_items(data):
         item_id = _clean_text(item.get("name")) or _clean_text(item.get("url"))
@@ -434,7 +467,7 @@ def is_hearing_impaired(item, child=None):
     )
     if any(tag in metadata for tag in non_hi_tags):
         return False
-    hi_tags = ("_hi_", " hi ", ".hi.", "sdh")
+    hi_tags = ("_hi_", " hi ", ".hi.", "sdh", "𝓢𝓓𝓗")
     return any(tag in metadata for tag in hi_tags)
 
 
@@ -471,33 +504,65 @@ def _is_pack(item):
 
 
 def _pack_contains_episode(item, video):
+    unpack_files = item.get("unpack_files")
+    if isinstance(unpack_files, list):
+        # When the API provides archive members, those entries are the most
+        # precise episode identity available. Do not fall back to the pack's
+        # season flag when none of its listed files matches the request.
+        return bool(_children_for_item(item, video))
+
+    target_season = _coerce_int(video.get("season"))
+    item_season = _coerce_int(item.get("season"))
+    season_matches = target_season is None or item_season is None or item_season == target_season
     start, end = _episode_range(item)
     if start is None or end is None:
+        # A full-season flag without member listings or an episode range is
+        # usable only when both sides identify the same season.
+        return target_season is not None and item_season == target_season
+    absolute_episode = _coerce_int(video.get("absolute_episode"))
+    if absolute_episode is not None and start <= absolute_episode <= end:
         return True
-    targets = [
-        _coerce_int(video.get("episode")),
-        _coerce_int(video.get("absolute_episode")),
-    ]
-    return any(target is not None and start <= target <= end for target in targets)
+    episode = _coerce_int(video.get("episode"))
+    return season_matches and episode is not None and start <= episode <= end
 
 
-def _child_matches_video(child, video):
+def _child_matches_video(child, video, parent_season=None):
     if not child:
         return False
-    targets = {
-        _coerce_int(video.get("episode")),
-        _coerce_int(video.get("absolute_episode")),
-    }
-    targets.discard(None)
     child_episode = _coerce_int(child.get("episode"))
-    return child_episode in targets
+    if child_episode is None:
+        return False
+
+    target_episode = _coerce_int(video.get("episode"))
+    if target_episode is not None and child_episode == target_episode:
+        target_season = _coerce_int(video.get("season"))
+        child_season = _coerce_int(child.get("season"))
+        effective_season = child_season if child_season is not None else parent_season
+        return target_season is None or effective_season is None or effective_season == target_season
+
+    absolute_episode = _coerce_int(video.get("absolute_episode"))
+    if (
+        absolute_episode is not None
+        and absolute_episode != target_episode
+        and child_episode == absolute_episode
+    ):
+        # Anime absolute numbering can map a requested season/episode to a
+        # different season number in the provider's catalogue.
+        return True
+    return False
 
 
 def _children_for_item(item, video):
     children = item.get("unpack_files")
     if not isinstance(children, list):
         return []
-    return [child for child in children if isinstance(child, dict) and _child_matches_video(child, video)]
+    parent_season = _coerce_int(item.get("season"))
+    return [
+        child
+        for child in children
+        if isinstance(child, dict)
+        and _child_matches_video(child, video, parent_season=parent_season)
+    ]
 
 
 def _release_names(item, child=None):
@@ -791,36 +856,81 @@ class SubDLProvider:
         if not requests:
             return []
 
+        runtime_policy = {
+            "enabled": True,
+            "max_pages": 2,
+            "season_fallback_enabled": True,
+            "title_fallback_enabled": True,
+            "unpack_enabled": True,
+        }
         all_items = []
         seen = set()
         primary_params = requests[0][1]
         primary_data = None
         for label, params in requests:
-            self._sleep(config)
-            data = self._http_get_json(params)
-            if label == "primary":
-                primary_data = data
-            _merge_items(all_items, seen, data)
+            if not runtime_policy["enabled"]:
+                break
+            if label == "season" and not runtime_policy["season_fallback_enabled"]:
+                continue
+            page = 1
+            while True:
+                call_params = dict(params)
+                if not runtime_policy["unpack_enabled"]:
+                    call_params.pop("unpack", None)
+                if page > 1:
+                    call_params["page"] = page
+                self._sleep(config)
+                data = self._http_get_json(call_params)
+                page_items = _response_items(data)
+                if page == 1:
+                    _apply_runtime_policy(runtime_policy, data)
+                    if label == "primary":
+                        primary_data = data
+                _merge_items(all_items, seen, data)
+                max_pages = runtime_policy["max_pages"] if label == "primary" else 1
+                if page >= max_pages or len(page_items) < SUBS_PER_PAGE:
+                    break
+                page += 1
+            if not runtime_policy["enabled"]:
+                break
+
+        if not runtime_policy["enabled"]:
+            return []
 
         if not all_items and video.get("kind") == "movie" and primary_data is not None and _is_empty_response(primary_data):
             fallback = _movie_tmdb_fallback_params(video, primary_params)
             if fallback:
+                if not runtime_policy["unpack_enabled"]:
+                    fallback.pop("unpack", None)
                 self._sleep(config)
-                _merge_items(all_items, seen, self._http_get_json(fallback))
+                fallback_data = self._http_get_json(fallback)
+                _apply_runtime_policy(runtime_policy, fallback_data)
+                if not runtime_policy["enabled"]:
+                    return []
+                _merge_items(all_items, seen, fallback_data)
 
-        if anime_mode and not all_items and video.get("kind") == "episode":
+        if (
+            anime_mode
+            and runtime_policy["title_fallback_enabled"]
+            and not all_items
+            and video.get("kind") == "episode"
+        ):
             fallback = _title_only_request(video, requested_languages, api_key)
             if fallback:
+                if not runtime_policy["unpack_enabled"]:
+                    fallback.pop("unpack", None)
                 self._sleep(config)
-                _merge_items(all_items, seen, self._http_get_json(fallback))
+                fallback_data = self._http_get_json(fallback)
+                _apply_runtime_policy(runtime_policy, fallback_data)
+                if not runtime_policy["enabled"]:
+                    return []
+                _merge_items(all_items, seen, fallback_data)
 
         candidates = []
         for item in all_items:
             is_pack = _is_pack(item)
             if video.get("kind") == "episode":
                 if is_pack:
-                    if not anime_mode:
-                        continue
                     if not _pack_contains_episode(item, video):
                         continue
                     children = _children_for_item(item, video)
