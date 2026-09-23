@@ -1,16 +1,9 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "f8d2c17dd045b1155d01ba3fbf107d2e5d5b4da16b47446a8795a638a011ffdd",
+  "bundle_sha256": "1b67a60cfa92caa5d22d39d6b04b44b6aeb05312e73bab200af2576785702b2f",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
-      "api_key": {
-        "description": "OpenSubtitles.com API key.",
-        "minLength": 1,
-        "secret": true,
-        "title": "API key",
-        "type": "string"
-      },
       "include_ai_translated": {
         "default": false,
         "description": "Include API results marked as AI translated.",
@@ -46,19 +39,18 @@
     },
     "required": [
       "username",
-      "password",
-      "api_key"
+      "password"
     ],
     "type": "object"
   },
   "dependencies": {
     "requirements": []
   },
-  "description": "Uses the official OpenSubtitles.com API for movie and episode subtitles. Requires username, password, and API key.",
+  "description": "Uses the official OpenSubtitles.com API for movie and episode subtitles. Requires only a username and password; the API key is built in.",
   "entry_class": "OpenSubtitlesComProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "4e3626b635afdb56fd2fd3d896d93339b4684230fbf96c5f9167a287789841d5"
+    "provider.py": "b9521f7696d76ed7fbfadf3d427c8d439ff598735e86d859e2441d911a81f3f1"
   },
   "languages": [
     "abk",
@@ -76,6 +68,7 @@
     "bul",
     "cat",
     "ces",
+    "cnr",
     "cym",
     "dan",
     "deu",
@@ -125,6 +118,7 @@
     "ori",
     "pol",
     "por",
+    "por-BR",
     "pus",
     "ron",
     "rus",
@@ -136,6 +130,7 @@
     "snd",
     "som",
     "spa",
+    "spa-MX",
     "sqi",
     "srp",
     "swa",
@@ -153,15 +148,15 @@
     "urd",
     "uzb",
     "vie",
-    "zho"
+    "zho",
+    "zho-TW"
   ],
   "name": "OpenSubtitles.com",
   "provider_id": "opensubtitlescom",
   "schema_version": 1,
   "secret_fields": [
     "username",
-    "password",
-    "api_key"
+    "password"
   ],
   "source": {
     "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
@@ -176,5 +171,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.2"
+  "version": "0.1.9"
 }

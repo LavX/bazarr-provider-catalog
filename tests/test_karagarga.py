@@ -262,6 +262,7 @@ class KaragargaDownloadTests(unittest.TestCase):
         self.assertEqual(payload, b"1\n00:00:01,000 --> 00:00:02,000\nHello\n")
         self.assertEqual(result["content_sha256"], hashlib.sha256(payload).hexdigest())
         self.assertEqual(result["format"], "srt")
+        self.assertNotIn("encoding", result)
         self.assertEqual(calls[0][0], "https://forum.karagarga.in/download/file.php?id=best")
         self.assertFalse(calls[0][2])
 

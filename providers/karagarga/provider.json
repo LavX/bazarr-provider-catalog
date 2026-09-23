@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "ab8a4c36fd1d4f981dcd6f91fb4181e9c3312361cb9f967a09c0aaef7aaa3f35",
+  "bundle_sha256": "902b4bda5a946d134bae7156285b524692c9dab2d18b906be4097e0c53d8aac8",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -45,7 +45,7 @@
   "entry_class": "KaragargaProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "2f362ff54256029d2f912a70a0b6c41cd24ee3ddc9fb782d8c70aece3a619f5b"
+    "provider.py": "a5fa52e9d94180236980769261cf2946098247a73ea5148b1e13f6999383b448"
   },
   "languages": [
     "eng"
@@ -70,5 +70,5 @@
   "supported_media": [
     "movie"
   ],
-  "version": "0.1.2"
+  "version": "0.1.3"
 }

@@ -556,17 +556,11 @@ def _normalize_line_endings(body):
 
 
 def _content_payload(body, fmt):
-    try:
-        body.decode("utf-8")
-        encoding = "utf-8"
-    except UnicodeDecodeError:
-        encoding = "latin-1"
     return {
         "content_b64": base64.b64encode(body).decode("ascii"),
         "content_sha256": hashlib.sha256(body).hexdigest(),
         "content_type": _content_type(fmt),
         "format": fmt,
-        "encoding": encoding,
         "empty": False,
     }
 

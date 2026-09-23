@@ -5,6 +5,8 @@ import datetime as _datetime
 import hashlib
 import html
 import re
+import socket
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -19,6 +21,16 @@ DOWNLOAD_CAP = 40
 VIP_DOWNLOAD_CAP = 80
 DOWNLOAD_WINDOW = _datetime.timedelta(hours=24)
 
+# Transport-level retry on transient network failures only, mirroring upstream
+# subliminal's RetryingSession (~3 tries with backoff). This wraps the raw
+# urllib call; it does not change header/cookie handling, redirect handling, the
+# 429/5xx -> response mapping, or the existing URLError -> RuntimeError mapping.
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8
+# HTTP statuses treated as transient. 429 is rate limiting; 5xx are server-side.
+RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+
 LANGUAGE_NAMES = {
     "arabic": "ara",
     "azerbaijani": "aze",
@@ -27,6 +39,7 @@ LANGUAGE_NAMES = {
     "bulgarian": "bul",
     "catalan": "cat",
     "catala": "cat",
+    "català": "cat",
     "czech": "ces",
     "danish": "dan",
     "german": "deu",
@@ -38,7 +51,9 @@ LANGUAGE_NAMES = {
     "farsi": "fas",
     "finnish": "fin",
     "french": "fra",
+    "french (canadian)": ("fra", "CA"),
     "galician": "glg",
+    "galego": "glg",
     "hebrew": "heb",
     "croatian": "hrv",
     "hungarian": "hun",
@@ -60,16 +75,22 @@ LANGUAGE_NAMES = {
     "slovak": "slk",
     "slovenian": "slv",
     "spanish": "spa",
+    "spanish (spain)": "spa",
+    "spanish (latin america)": "spa",
     "albanian": "sqi",
     "serbian": "srp",
-    "serbian latin": "srp",
-    "serbian cyrillic": "srp",
+    "serbian latin": ("srp", None, "Latn"),
+    "serbian cyrillic": ("srp", None, "Cyrl"),
+    "serbian (latin)": ("srp", None, "Latn"),
+    "serbian (cyrillic)": ("srp", None, "Cyrl"),
     "swedish": "swe",
     "thai": "tha",
     "turkish": "tur",
     "ukrainian": "ukr",
     "vietnamese": "vie",
     "chinese": "zho",
+    "chinese (simplified)": "zho",
+    "chinese (traditional)": ("zho", None, "Hant"),
 }
 
 
@@ -168,9 +189,14 @@ class Addic7edProvider:
         return None
 
     def _get_movie_id(self, title, year, config, cookies):
+        # Upstream get_movie_id() queries search.php (not the front-page srch.php,
+        # which can return an interstitial with no movie table). The real site only
+        # returns results for search.php when a Referer is supplied, mirroring the
+        # patched _search_show_id behavior.
+        headers = self._headers(config, referer=f"{BASE_URL}/srch.php")
         response = self._http_get(
-            f"{BASE_URL}/srch.php",
-            self._headers(config),
+            f"{BASE_URL}/search.php",
+            headers,
             cookies,
             timeout=10,
             params={"Submit": "Search", "search": title},
@@ -315,6 +341,55 @@ def _http_request(
     params=None,
     allow_redirects=True,
 ):
+    # Bounded retry/backoff around the raw transport. Only transient failures are
+    # retried; everything else (4xx other than 429, parse errors, auth failures,
+    # any non-network exception) propagates unchanged on the first occurrence.
+    # A 5xx/429 status response is only retried for GET, never for a POST, so a
+    # non-idempotent login is never submitted twice.
+    last_response = None
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            response = _http_request_once(
+                method,
+                url,
+                headers,
+                cookies,
+                data=data,
+                timeout=timeout,
+                params=params,
+                allow_redirects=allow_redirects,
+            )
+        except (urllib.error.URLError, socket.timeout, TimeoutError) as exc:
+            # Transport-level failures only. HTTPError (a URLError subclass) never
+            # reaches here: _http_request_once converts it to a response. This is
+            # connection refused / DNS / reset / timeout. On the final attempt,
+            # surface the same error the provider raises today (URLError stays
+            # mapped to the existing RuntimeError; other transport errors keep
+            # their own type).
+            if attempt >= RETRY_ATTEMPTS:
+                if isinstance(exc, urllib.error.URLError):
+                    raise RuntimeError(f"Addic7ed request failed: {exc.reason}") from exc
+                raise
+            _retry_sleep(attempt)
+            continue
+        last_response = response
+        if method == "GET" and response.status in RETRY_STATUS_CODES and attempt < RETRY_ATTEMPTS:
+            _retry_sleep(attempt, response)
+            continue
+        return response
+    return last_response
+
+
+def _http_request_once(
+    method,
+    url,
+    headers,
+    cookies,
+    data=None,
+    timeout=HTTP_TIMEOUT_SECONDS,
+    params=None,
+    allow_redirects=True,
+):
     if params:
         delimiter = "&" if urllib.parse.urlsplit(url).query else "?"
         url = f"{url}{delimiter}{urllib.parse.urlencode(params)}"
@@ -333,9 +408,30 @@ def _http_request(
         with opener.open(request, timeout=timeout) as response:
             return HttpResponse(response.status, response.read(), list(response.headers.items()))
     except urllib.error.HTTPError as exc:
+        # 4xx/5xx (including 429) map to a response, as before. The retry loop
+        # decides whether a 5xx/429 GET should be re-attempted.
         return HttpResponse(exc.code, exc.read(), list(exc.headers.items()))
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Addic7ed request failed: {exc.reason}") from exc
+
+
+def _retry_sleep(attempt, response=None):
+    delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    delay = min(delay, RETRY_BACKOFF_CAP_SECONDS)
+    if response is not None and response.status == 429:
+        retry_after = _retry_after_seconds(response.headers)
+        if retry_after is not None:
+            delay = min(retry_after, RETRY_BACKOFF_CAP_SECONDS)
+    # Module-level time.sleep so tests can monkeypatch provider.time.sleep.
+    time.sleep(delay)
+
+
+def _retry_after_seconds(headers):
+    value = _header(headers, "retry-after").strip()
+    if not value:
+        return None
+    try:
+        return max(0, int(float(value)))
+    except (TypeError, ValueError):
+        return None
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -372,24 +468,51 @@ def _requested_languages(languages):
     for item in languages or []:
         if not isinstance(item, dict) or not item.get("alpha3"):
             continue
-        alpha3, country = _language_code_parts(item.get("alpha3"))
-        country = str(item.get("country_alpha2") or item.get("country") or country or "").upper() or None
-        requested.add((alpha3, country))
+        alpha3, country, script = _language_code_parts(
+            item.get("alpha3"), item.get("country_alpha2") or item.get("country"), item.get("script")
+        )
+        requested.add((alpha3, country, script))
     return requested
 
 
 def _language_matches(language, requested):
-    alpha3, country = _language_code_parts((language or {}).get("alpha3"))
-    country = str((language or {}).get("country_alpha2") or country or "").upper() or None
-    return (alpha3, country) in requested or (alpha3, None) in requested
+    alpha3, country, script = _language_code_parts(
+        (language or {}).get("alpha3"),
+        (language or {}).get("country_alpha2"),
+        (language or {}).get("script"),
+    )
+    # An exact match wins; otherwise a request without a region/script qualifier
+    # still matches a more specific candidate so real Addic7ed variant rows are
+    # never dropped.
+    return (
+        (alpha3, country, script) in requested
+        or (alpha3, None, script) in requested
+        or (alpha3, country, None) in requested
+        or (alpha3, None, None) in requested
+    )
 
 
-def _language_code_parts(value):
+# Script suffixes carried on ietf-style codes (e.g. "sr-Cyrl", "zho-Hant"). These
+# must be parsed as a script, not mistaken for a country code.
+_KNOWN_SCRIPTS = {"cyrl": "Cyrl", "latn": "Latn", "hant": "Hant", "hans": "Hans"}
+
+
+def _language_code_parts(value, country=None, script=None):
     code = str(value or "").strip()
+    suffix_country = None
+    suffix_script = None
     if "-" in code:
-        alpha3, country = code.split("-", 1)
-        return alpha3.lower(), country.upper()
-    return code.lower(), None
+        code, suffix = code.split("-", 1)
+        if suffix.lower() in _KNOWN_SCRIPTS:
+            suffix_script = _KNOWN_SCRIPTS[suffix.lower()]
+        else:
+            suffix_country = suffix.upper()
+    alpha3 = code.lower()
+    country = str(country or suffix_country or "").upper() or None
+    script = str(script or suffix_script or "").strip() or None
+    if script:
+        script = _KNOWN_SCRIPTS.get(script.lower(), script)
+    return alpha3, country, script
 
 
 def parse_show_ids(body):
@@ -668,7 +791,14 @@ def _language_from_name(value):
 
 def _language_payload(value, hi=False):
     if isinstance(value, tuple):
-        payload = {"alpha3": value[0], "country_alpha2": value[1]}
+        alpha3 = value[0]
+        country = value[1] if len(value) > 1 else None
+        script = value[2] if len(value) > 2 else None
+        payload = {"alpha3": alpha3}
+        if country:
+            payload["country_alpha2"] = country
+        if script:
+            payload["script"] = script
     else:
         payload = {"alpha3": value}
     payload.update({"hi": bool(hi), "forced": False})

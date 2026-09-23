@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-and-test:
+    name: validate + tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Validate catalog and manifests
+        run: python3 -B -m sdk validate
+      - name: catalog.json is up to date
+        run: |
+          python3 -B -m sdk build-catalog
+          git diff --exit-code -- catalog.json providers
+      - name: Install optional deps a few provider tests import
+        # Most providers guard their optional imports, but the ai-cloudscraper and
+        # smokehub tests patch real modules, so install just those for full coverage.
+        # Pin to the versions locked in the manifests (derived here, single source of
+        # truth) so CI matches what Bazarr workers install and a new upstream release
+        # cannot break or silently shift the build.
+        run: |
+          python3 -m pip install --quiet $(python3 -c "import glob,json;names={'ai-cloudscraper','humanfriendly'};v={r['name']:r['version'] for p in sorted(glob.glob('providers/*/provider.json')) for r in json.load(open(p)).get('dependencies',{}).get('requirements',[]) if r['name'] in names};print(' '.join(sorted(f'{n}=={ver}' for n,ver in v.items())))")
+      - name: Run test suite
+        run: python3 -B -m unittest discover -s tests
+
+  wheel-coverage:
+    name: wheel matrix coverage (no drift)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compiled dependency wheels cover the worker matrix
+        # --strict so a PyPI/network fetch failure fails the gate instead of
+        # silently passing on an empty (no-drift) diff.
+        run: |
+          python3 scripts/expand_wheel_hashes.py --strict
+          git diff --exit-code -- providers

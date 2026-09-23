@@ -1,6 +1,8 @@
 import base64
 import hashlib
 import importlib.util
+import socket
+import urllib.error
 import urllib.parse
 import unittest
 from pathlib import Path
@@ -214,3 +216,126 @@ class GreekSubsProviderTests(unittest.TestCase):
                 {"alpha3": "ell", "alpha2": "el"},
                 {},
             )
+
+
+class _FakeResponse:
+    def __init__(self, body):
+        self._body = body
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class GreekSubsTransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.slept = []
+        self._real_sleep = self.mod.time.sleep
+        self.mod.time.sleep = lambda seconds: self.slept.append(seconds)
+
+    def tearDown(self):
+        self.mod.time.sleep = self._real_sleep
+
+    def _http_error(self, code, headers=None):
+        return urllib.error.HTTPError(
+            "https://greeksubs.net/x", code, "boom", headers or {}, None
+        )
+
+    def test_retries_on_url_error_then_succeeds(self):
+        provider = self.mod.GreekSubsProvider()
+        attempts = []
+
+        def fake_open(request, timeout=None):
+            attempts.append(1)
+            if len(attempts) < 3:
+                raise urllib.error.URLError("connection reset")
+            return _FakeResponse(b"ok")
+
+        provider._opener.open = fake_open
+
+        self.assertEqual(provider._http_request("https://greeksubs.net/x"), b"ok")
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual(len(self.slept), 2)
+
+    def test_retries_on_503_then_succeeds(self):
+        provider = self.mod.GreekSubsProvider()
+        attempts = []
+
+        def fake_open(request, timeout=None):
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise self._http_error(503)
+            return _FakeResponse(b"ok")
+
+        provider._opener.open = fake_open
+
+        self.assertEqual(provider._http_request("https://greeksubs.net/x"), b"ok")
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(len(self.slept), 1)
+
+    def test_honors_retry_after_header_on_429(self):
+        provider = self.mod.GreekSubsProvider()
+        attempts = []
+
+        def fake_open(request, timeout=None):
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise self._http_error(429, {"Retry-After": "5"})
+            return _FakeResponse(b"ok")
+
+        provider._opener.open = fake_open
+
+        self.assertEqual(provider._http_request("https://greeksubs.net/x"), b"ok")
+        self.assertEqual(self.slept, [5.0])
+
+    def test_timeout_is_retried(self):
+        provider = self.mod.GreekSubsProvider()
+        attempts = []
+
+        def fake_open(request, timeout=None):
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise socket.timeout("timed out")
+            return _FakeResponse(b"ok")
+
+        provider._opener.open = fake_open
+
+        self.assertEqual(provider._http_request("https://greeksubs.net/x"), b"ok")
+        self.assertEqual(len(attempts), 2)
+
+    def test_does_not_retry_on_404(self):
+        provider = self.mod.GreekSubsProvider()
+        attempts = []
+
+        def fake_open(request, timeout=None):
+            attempts.append(1)
+            raise self._http_error(404)
+
+        provider._opener.open = fake_open
+
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            provider._http_request("https://greeksubs.net/x")
+        self.assertEqual(ctx.exception.code, 404)
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(self.slept, [])
+
+    def test_gives_up_after_max_attempts(self):
+        provider = self.mod.GreekSubsProvider()
+        attempts = []
+
+        def fake_open(request, timeout=None):
+            attempts.append(1)
+            raise urllib.error.URLError("dns failure")
+
+        provider._opener.open = fake_open
+
+        with self.assertRaises(urllib.error.URLError):
+            provider._http_request("https://greeksubs.net/x")
+        self.assertEqual(len(attempts), self.mod.HTTP_MAX_ATTEMPTS)
+        self.assertEqual(len(self.slept), self.mod.HTTP_MAX_ATTEMPTS - 1)

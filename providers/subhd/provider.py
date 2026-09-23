@@ -667,6 +667,8 @@ class SubHDProvider:
                 "language": alpha3,
                 "format": fmt,
                 "release_info": entry.get("release_info"),
+                "season": (video or {}).get("season"),
+                "episode": (video or {}).get("episode"),
             },
         }
 
@@ -701,49 +703,73 @@ class SubHDProvider:
         if not final_url:
             raise ValueError("subhd download API returned no file URL")
         body = self._http_get(final_url, referer=download_url)
+        if _is_archive_body(body):
+            # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back
+            # to the host, which extracts the member and detects encoding. subhd serves
+            # zip archives, so list it cheaply with stdlib zipfile to keep our member
+            # selection; for the rare rar/7z body let the host pick by episode.
+            result = {
+                "archive_b64": _base64.b64encode(body).decode("ascii"),
+                "archive_sha256": _hashlib.sha256(body).hexdigest(),
+            }
+            if zipfile.is_zipfile(io.BytesIO(body)):
+                result["member"] = _select_archive_member(body)
+            else:
+                result["episode"] = payload.get("episode")
+            return result
         fmt = _format_from_url(final_url, payload.get("format"))
-        body, fmt = _extract_best_subtitle(body, fmt)
         return _content_payload(body, fmt)
 
 
 def _format_from_url(url, fallback=None):
     suffix = urllib.parse.urlparse(url or "").path.rsplit(".", 1)[-1].lower()
-    if suffix in {"srt", "ass", "ssa", "vtt", "zip"}:
+    if suffix in {"srt", "ass", "ssa", "vtt"}:
         return suffix
     return (fallback or "srt").lower()
 
 
-def _extract_best_subtitle(body, fmt):
-    if fmt != "zip" and not (body or b"").startswith(b"PK\x03\x04"):
-        return body, fmt if fmt in {"srt", "ass", "ssa", "vtt"} else "srt"
+def _is_archive_body(body):
+    if not body:
+        return False
+    return (
+        zipfile.is_zipfile(io.BytesIO(body))
+        or body.startswith(b"Rar!")
+        or body.startswith(b"7z\xbc\xaf\x27\x1c")
+    )
+
+
+def _select_archive_member(body):
     with zipfile.ZipFile(io.BytesIO(body)) as archive:
         names = [name for name in archive.namelist() if name.lower().endswith(SUBTITLE_EXTENSIONS)]
-        if not names:
-            raise ValueError("subhd archive contained no subtitle files")
-        names.sort(key=lambda name: (not name.lower().endswith(".srt"), len(name), name.lower()))
-        name = names[0]
-        content = archive.read(name)
-        if not content:
-            raise ValueError("subhd downloaded empty subtitle")
-        return content, name.rsplit(".", 1)[-1].lower()
+    if not names:
+        raise ValueError("subhd archive contained no subtitle files")
+    names.sort(key=lambda name: (not name.lower().endswith(".srt"), len(name), name.lower()))
+    return names[0]
 
 
 def _content_payload(body, fmt):
     if not body:
         raise ValueError("subhd downloaded empty subtitle")
-    try:
-        body.decode("utf-8")
-        encoding = "utf-8"
-    except UnicodeDecodeError:
-        encoding = "latin-1"
+    if _is_html_body(body):
+        raise ValueError("subhd returned an HTML/error page instead of a subtitle")
     return {
         "content_b64": _base64.b64encode(body).decode("ascii"),
         "content_sha256": _hashlib.sha256(body).hexdigest(),
         "content_type": _content_type(fmt),
         "format": fmt,
-        "encoding": encoding,
         "empty": False,
     }
+
+
+def _is_html_body(body):
+    head = body[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or b"<body" in head
+        or b"<head" in head
+    )
 
 
 def _content_type(fmt):
