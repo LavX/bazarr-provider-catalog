@@ -162,7 +162,7 @@ def parse_probe_streams(payload, config):
         codec = str(stream.get("codec_name") or "").strip().lower()
         if codec not in allowed_codecs:
             continue
-        language, display_language = _language_from_stream(stream, config)
+        language, display_language, language_fallback = _language_from_stream(stream, config)
         if language is None:
             continue
         disposition = stream.get("disposition") or {}
@@ -182,6 +182,7 @@ def parse_probe_streams(payload, config):
                 "codec": codec,
                 "format": fmt,
                 "language": language,
+                "language_fallback": language_fallback,
                 "display_language": display_language,
                 "title": title,
                 "default": _as_bool(disposition.get("default")),
@@ -287,6 +288,7 @@ class EmbeddedSubtitlesProvider:
             streams = parse_probe_streams(self.probe_runner(path, config or {}), config or {})
         except EmbeddedSubtitleError:
             return []
+        streams = _suppress_duplicate_fallbacks(streams)
         if _as_bool((config or {}).get("hi_fallback")):
             _apply_hi_fallback(streams, requested)
         results = []
@@ -327,12 +329,12 @@ def _language_from_stream(stream, config):
     raw = str(tags.get("language") or "").strip()
     language = _language_from_tag(raw)
     if language is not None:
-        return language, language["alpha3"]
+        return language, language["alpha3"], False
     if _as_bool((config or {}).get("unknown_as_fallback")):
         fallback = _language_from_tag((config or {}).get("fallback_lang") or "eng")
         if fallback is not None:
-            return fallback, f"{raw or 'und'} -> {fallback['alpha3']}"
-    return None, raw
+            return fallback, f"{raw or 'und'} -> {fallback['alpha3']}", True
+    return None, raw, False
 
 
 def _language_from_tag(tag):
@@ -409,6 +411,20 @@ def _apply_hi_fallback(streams, requested):
         if group and all(stream["language"].get("hi") for stream in group):
             for stream in group:
                 stream["language"]["hi"] = False
+
+
+def _suppress_duplicate_fallbacks(streams):
+    explicit_keys = {
+        _language_key(stream["language"])
+        for stream in streams
+        if not stream.get("language_fallback")
+    }
+    return [
+        stream
+        for stream in streams
+        if not stream.get("language_fallback")
+        or _language_key(stream["language"]) not in explicit_keys
+    ]
 
 
 def _language_requested(stream_language, requested):

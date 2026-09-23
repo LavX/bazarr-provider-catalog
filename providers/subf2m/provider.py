@@ -183,6 +183,11 @@ def rank_movie_paths(video, rows):
     return [row for _score, _index, row in ranked[:MAX_TITLE_PATHS]]
 
 
+def rank_imdb_paths(rows):
+    ordered = sorted(rows or [], key=lambda row: row.get("index", 0))
+    return ordered[:MAX_TITLE_PATHS]
+
+
 def rank_episode_paths(video, rows):
     wanted_series = _coerce_text((video or {}).get("series"))
     wanted_year = _safe_int((video or {}).get("year"))
@@ -207,7 +212,9 @@ def rank_episode_paths(video, rows):
     return [row for _score, _index, row in ranked[:MAX_TITLE_PATHS]]
 
 
-def parse_subtitle_page(body, alpha3, video):
+def parse_subtitle_page(body, alpha3, video, require_imdb=False):
+    if require_imdb and not _imdb_confirmed(body, video):
+        return []
     if not _imdb_matches(body, video):
         return []
     imdb_matched = _imdb_confirmed(body, video)
@@ -236,12 +243,30 @@ class SubF2MProvider:
             return []
         results = []
         seen = set()
-        for query in build_queries(video):
+        queries = [(query, False) for query in build_queries(video)]
+        if video.get("kind") == "movie":
+            imdb_id = _coerce_text(video.get("imdb_id"))
+            if imdb_id and re.fullmatch(r"tt\d+", imdb_id, re.IGNORECASE):
+                imdb_query = imdb_id.lower()
+                matching_query = next(
+                    (index for index, (query, _is_imdb_fallback) in enumerate(queries) if query.lower() == imdb_query),
+                    None,
+                )
+                if matching_query is None:
+                    queries.append((imdb_query, True))
+                else:
+                    queries[matching_query] = (queries[matching_query][0], True)
+        for query, is_imdb_fallback in queries:
             _sleep(config)
             search_url = f"{BASE_URL}/subtitles/searchbytitle?query={urllib.parse.quote(query, safe='')}&l="
             search_body = self._http_get(search_url, config=config)
             rows = parse_search_results(search_body)
-            paths = rank_episode_paths(video, rows) if video.get("kind") == "episode" else rank_movie_paths(video, rows)
+            if video.get("kind") == "episode":
+                paths = rank_episode_paths(video, rows)
+            elif is_imdb_fallback:
+                paths = rank_imdb_paths(rows)
+            else:
+                paths = rank_movie_paths(video, rows)
             for path in paths:
                 for language in requested:
                     _sleep(config)
@@ -252,7 +277,12 @@ class SubF2MProvider:
                         if error.code in {403, 404}:
                             continue
                         raise
-                    for row in parse_subtitle_page(page_body, language["alpha3"], video):
+                    for row in parse_subtitle_page(
+                        page_body,
+                        language["alpha3"],
+                        video,
+                        require_imdb=is_imdb_fallback,
+                    ):
                         if not _row_matches_language(row, language):
                             continue
                         key = (row["subtitle_id"], row["language"])
