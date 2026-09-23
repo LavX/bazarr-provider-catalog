@@ -6,6 +6,7 @@ import json
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "avistaz"
@@ -162,7 +163,7 @@ class AvistazManifestTests(unittest.TestCase):
         requirements = manifest["dependencies"]["requirements"]
         names = {item["name"].lower() for item in requirements}
 
-        self.assertEqual(manifest["version"], "0.1.3")
+        self.assertEqual(manifest["version"], "0.1.4")
         self.assertTrue(names.isdisjoint({"py7zz", "py7zr", "rarfile"}))
 
 
@@ -486,6 +487,184 @@ class AvistazDownloadTests(unittest.TestCase):
 
         self.assertEqual(base64.b64decode(result["content_b64"]), body.replace(b"\r\n", b"\n"))
         self.assertNotIn("archive_b64", result)
+
+
+class AvistazRequestSecurityTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_download_rejects_unsafe_urls_before_cookie_parsing_or_io(self):
+        provider = self.mod.AvistazProvider()
+        unsafe_urls = (
+            "http://avistaz.to/subtitles/123/download",
+            "https://user:secret@avistaz.to/subtitles/123/download",
+            "https://@avistaz.to/subtitles/123/download",
+            "https://avistaz.to:444/subtitles/123/download",
+            "https://evil.invalid/subtitles/123/download",
+        )
+
+        for url in unsafe_urls:
+            with self.subTest(url=url):
+                with patch.object(self.mod, "_parse_cookies", side_effect=AssertionError("cookies parsed")) as parse_cookies:
+                    with patch.object(self.mod.urllib.request, "build_opener") as build_opener:
+                        with self.assertRaisesRegex(ValueError, "HTTPS"):
+                            provider.download({"download_url": url}, {"alpha3": "eng"}, {})
+                parse_cookies.assert_not_called()
+                build_opener.assert_not_called()
+
+    def test_parser_discards_unsafe_download_links(self):
+        unsafe_links = (
+            b"http://avistaz.to/subtitles/23456/download",
+            b"https://user:secret@avistaz.to/subtitles/23456/download",
+            b"https://avistaz.to:444/subtitles/23456/download",
+            b"https://evil.invalid/subtitles/23456/download",
+        )
+
+        for link in unsafe_links:
+            with self.subTest(link=link):
+                page = _release_page().replace(b"/subtitles/23456/download", link)
+                parsed = self.mod.parse_release_page(page, "https://avistaz.to/torrent/123")
+                urls = [subtitle["download_url"] for subtitle in parsed["subtitles"]]
+                self.assertNotIn(link.decode("ascii"), urls)
+                self.assertIn("https://avistaz.to/subtitles/12345/download", urls)
+
+    def test_http_get_blocks_unsafe_redirects_before_forwarding_cookies(self):
+        class FakeResponse:
+            def __init__(self, status, body=b"", headers=None):
+                self.status = status
+                self._body = body
+                self.headers = headers or {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                return False
+
+            def read(self):
+                return self._body
+
+        class FakeOpener:
+            def __init__(self, redirect_handler, location):
+                self.redirect_handler = redirect_handler
+                self.location = location
+                self.requests = []
+
+            def open(self, request, timeout):
+                del timeout
+                self.requests.append(request)
+                if len(self.requests) == 1:
+                    redirected = self.redirect_handler.redirect_request(
+                        request, None, 302, "Found", {"Location": self.location}, self.location
+                    )
+                    if redirected is None:
+                        return FakeResponse(302, headers={"Location": self.location})
+                    return self.open(redirected, 30)
+                return FakeResponse(200, b"subtitle")
+
+        unsafe_locations = (
+            "https://evil.invalid/subtitles/123/download",
+            "http://avistaz.to/subtitles/123/download",
+            "https://avistaz.to:444/subtitles/123/download",
+            "https://user:secret@avistaz.to/subtitles/123/download",
+        )
+
+        for location in unsafe_locations:
+            with self.subTest(location=location):
+                provider = self.mod.AvistazProvider()
+                openers = []
+
+                def make_opener(*handlers):
+                    handler = handlers[0] if handlers else self.mod.urllib.request.HTTPRedirectHandler()
+                    opener = FakeOpener(handler, location)
+                    openers.append(opener)
+                    return opener
+
+                with patch.object(self.mod.urllib.request, "build_opener", side_effect=make_opener):
+                    response = provider._http_get(
+                        "https://avistaz.to/subtitles/start/download",
+                        {"User-Agent": "UnitTest/1.0"},
+                        {"avistazx_session": "secret"},
+                    )
+
+                opener = openers[0]
+                self.assertEqual(
+                    len(opener.requests),
+                    1,
+                    [(request.full_url, request.get_header("Cookie")) for request in opener.requests],
+                )
+                self.assertEqual(response.status, 302)
+                self.assertEqual(opener.requests[0].get_header("Cookie"), "avistazx_session=secret")
+
+    def test_http_get_preserves_same_origin_redirects_and_cookie(self):
+        class FakeResponse:
+            def __init__(self, status, body=b"", headers=None):
+                self.status = status
+                self._body = body
+                self.headers = headers or {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                return False
+
+            def read(self):
+                return self._body
+
+        class FakeOpener:
+            def __init__(self, redirect_handler):
+                self.redirect_handler = redirect_handler
+                self.requests = []
+
+            def open(self, request, timeout):
+                del timeout
+                self.requests.append(request)
+                if len(self.requests) == 1:
+                    redirected = self.redirect_handler.redirect_request(
+                        request,
+                        None,
+                        302,
+                        "Found",
+                        {"Location": "https://avistaz.to:443/subtitles/123/download"},
+                        "https://avistaz.to:443/subtitles/123/download",
+                    )
+                    return self.open(redirected, 30)
+                return FakeResponse(200, b"subtitle")
+
+        provider = self.mod.AvistazProvider()
+        openers = []
+
+        def make_opener(*handlers):
+            handler = handlers[0] if handlers else self.mod.urllib.request.HTTPRedirectHandler()
+            opener = FakeOpener(handler)
+            openers.append(opener)
+            return opener
+
+        with patch.object(self.mod.urllib.request, "build_opener", side_effect=make_opener):
+            response = provider._http_get(
+                "https://avistaz.to/subtitles/start/download",
+                {"User-Agent": "UnitTest/1.0"},
+                {"avistazx_session": "secret"},
+            )
+
+        opener = openers[0]
+        self.assertEqual(response.status, 200)
+        self.assertEqual(len(opener.requests), 2)
+        self.assertEqual(opener.requests[1].full_url, "https://avistaz.to:443/subtitles/123/download")
+        self.assertEqual(opener.requests[1].get_header("Cookie"), "avistazx_session=secret")
+
+
+class AvistazScoreTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_score_is_monotonic_for_zero_through_six_matches(self):
+        scores = [self.mod._score(["match"] * count) for count in range(7)]
+
+        self.assertEqual(scores, [0, 20, 40, 60, 80, 95, 95])
+        self.assertTrue(all(left <= right for left, right in zip(scores, scores[1:])))
+        self.assertLess(scores[0], min(scores[1:]))
 
 
 if __name__ == "__main__":
