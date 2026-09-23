@@ -4,25 +4,11 @@ import base64
 import hashlib
 import html
 import io
-import os
 import re
-import shutil
-import subprocess
-import tempfile
 import time
 import urllib.parse
 import urllib.request
 import zipfile
-
-try:
-    import rarfile
-except ImportError:  # pragma: no cover, optional system fallback
-    rarfile = None
-
-try:
-    import py7zz
-except ImportError:  # pragma: no cover, dependency is declared in manifest
-    py7zz = None
 
 PROVIDER_ID = "fansubs"
 BASE_URL = "http://fansubs.ru"
@@ -235,27 +221,6 @@ def _season_in_text(text, season):
     return False if found else None
 
 
-def select_subtitle_file(names, video):
-    candidates = [name for name in names if _subtitle_extension(name)]
-    if not candidates:
-        raise ValueError("fansubs archive contains no supported subtitle files")
-    episode = (video or {}).get("episode")
-    try:
-        episode_int = int(episode)
-    except (TypeError, ValueError):
-        episode_int = None
-    if episode_int is None:
-        return candidates[0]
-
-    def score(name):
-        base = os.path.basename(name)
-        if re.search(rf"(?<!\d)0*{episode_int}(?!\d)", base):
-            return 100
-        return 0
-
-    return max(candidates, key=score)
-
-
 def _subtitle_extension(name):
     lowered = (name or "").lower()
     for extension in SUBTITLE_EXTENSIONS:
@@ -273,170 +238,131 @@ def _is_rar_archive(body):
     )
 
 
-def _setup_rar_tools():
-    if rarfile is None:
-        raise RuntimeError("rarfile dependency is required for Fansubs RAR downloads")
-    unar = shutil.which("unar")
-    unrar = shutil.which("unrar")
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if unar:
-        rarfile.UNAR_TOOL = unar
-        rarfile.UNRAR_TOOL = None
-        rarfile.SEVENZIP_TOOL = None
-        rarfile.tool_setup(unrar=False, unar=True, bsdtar=False, sevenzip=False, force=True)
-        return
-    if unrar:
-        rarfile.UNRAR_TOOL = unrar
-        rarfile.UNAR_TOOL = None
-        rarfile.SEVENZIP_TOOL = None
-        rarfile.tool_setup(unrar=True, unar=False, bsdtar=False, sevenzip=False, force=True)
-        return
-    if sevenzip:
-        rarfile.UNRAR_TOOL = None
-        rarfile.UNAR_TOOL = None
-        rarfile.SEVENZIP_TOOL = sevenzip
-        rarfile.tool_setup(unrar=False, unar=False, bsdtar=False, sevenzip=True, force=True)
-        return
-    raise RuntimeError("Fansubs RAR download requires unar, unrar, or 7z")
-
-
-def _extract_rar_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if rarfile is not None:
-        try:
-            return _extract_rar_files_with_rarfile(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"Fansubs RAR extraction failed: {details}") from errors[-1]
-    raise RuntimeError("Fansubs RAR extraction requires py7zz, unar, unrar, or 7z")
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if not _subtitle_extension(rel):
-                continue
-            with open(path, "rb") as handle:
-                files.append((rel, handle.read()))
-    if not files:
-        raise ValueError("fansubs RAR contains no supported subtitle files")
-    return files
-
-
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("Fansubs bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "fansubs.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_rarfile(body):
-    _setup_rar_tools()
-    stream = io.BytesIO(body)
-    with rarfile.RarFile(stream) as archive:
-        return [
-            (name, archive.read(name))
-            for name in archive.namelist()
-            if _subtitle_extension(name)
-        ]
-
-
-def _extract_rar_files_with_unar(body):
-    unar = shutil.which("unar")
-    if not unar:
-        raise RuntimeError("Fansubs RAR fallback requires unar")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "fansubs.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [unar, "-quiet", "-o", output_dir, archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"unar failed to extract Fansubs RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("Fansubs RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "fansubs.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [sevenzip, "x", "-y", f"-o{output_dir}", archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract Fansubs RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def extract_download(body, filename="", content_type="", video=None):
-    del content_type
+def _is_html_body(body):
     if not body:
-        return _content_payload(b"", _format_from_filename(filename), empty=True)
+        return False
+    head = body[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or b"<head" in head
+        or b"<body" in head
+    )
+
+
+def extract_download(body, filename="", content_type="", episode=None, season=None):
+    del content_type
+    if not body or not body.strip():
+        raise ValueError("fansubs download returned an empty body")
 
     stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            names = archive.namelist()
-            selected = select_subtitle_file(names, video or {})
-            return _content_payload(
-                archive.read(selected),
-                _subtitle_extension(selected) or _format_from_filename(selected),
-            )
+    if zipfile.is_zipfile(stream) or _is_rar_archive(body):
+        # Host-side archive extraction (Provider Hub v1.1+): hand the raw archive
+        # back to the host, which extracts the member and detects the encoding.
+        # A single fansubs subtitle row can be an episode pack ("ONA 1-12") whose
+        # zip holds one file per episode; the old worker selected that file by its
+        # episode number. The host's generic episode pick (guessit) does not align
+        # with fansubs' bare-number anime naming, so when we can list the zip we pin
+        # the member matching the requested episode. Otherwise (rar, a single
+        # member, or no unique winner) we defer to host-side episode selection.
+        archive = {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+        }
+        member = _select_zip_member(body, season, episode)
+        if member is not None:
+            archive["member"] = member
+        else:
+            archive["episode"] = episode
+        return archive
 
-    if _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        names = [name for name, _data in files]
-        selected = select_subtitle_file(names, video or {})
-        content_by_name = dict(files)
-        return _content_payload(
-            content_by_name[selected],
-            _subtitle_extension(selected) or _format_from_filename(selected),
-        )
+    if _is_html_body(body):
+        raise ValueError("fansubs download returned an HTML/error page")
 
     return _content_payload(body, _format_from_filename(filename))
+
+
+def _select_zip_member(body, season, episode):
+    # Pin the zip member that carries the requested episode. Listing only, no
+    # extraction or decoding: the host reads the named member and runs chardet.
+    # Returns None for rar (not stdlib-listable), a single member (nothing to
+    # disambiguate), or when no member uniquely matches the episode, so the caller
+    # falls back to host-side episode selection (which fails loudly on no match).
+    if _is_rar_archive(body) or not zipfile.is_zipfile(io.BytesIO(body)):
+        return None
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        members = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/")
+            and _subtitle_extension(name)
+            and not name.rsplit("/", 1)[-1].startswith(".")
+        ]
+    if len(members) < 2:
+        return None  # a lone member: the host's episode pick already lands here
+    try:
+        episode_int = int(episode)
+    except (TypeError, ValueError):
+        return None  # no episode to disambiguate on (movie); defer to the host
+    try:
+        season_int = int(season)
+    except (TypeError, ValueError):
+        season_int = None
+    matches = [
+        name for name in members if _member_has_episode(name, season_int, episode_int)
+    ]
+    if len(matches) != 1:
+        # Zero matches: pinning a member from another episode would hard-fail the
+        # host download, so defer. Several matches: cannot confidently disambiguate
+        # (the fields scored here do not separate them), so defer too.
+        return None
+    return matches[0]
+
+
+# Bare 1-3 digit episode numbers (fansubs anime members are named "Title - 08.ass",
+# not SxxExx), guarded so 720/264 cannot match inside 720p/x264.
+_MEMBER_NUMBER_RE = re.compile(r"(?<![a-z0-9])0*(\d{1,3})(?![a-z0-9])")
+_MEMBER_RANGE_RE = re.compile(r"(?<![a-z0-9])0*(\d{1,3})\s*-\s*0*(\d{1,3})(?![a-z0-9])")
+
+
+def _member_has_episode(name, season, episode):
+    # Match the requested episode in a member basename. Anime members usually carry
+    # only a bare episode number, but tolerate SxxExx/NxNN packs that also encode the
+    # season. A separator between the season and episode part is optional, and the
+    # (?!\d) guard keeps "e02" from matching "e020" and "720" from matching "720p".
+    base = name.rsplit("/", 1)[-1].lower()
+    if season is not None:
+        if re.search(rf"s0*{season}[\s._-]*e0*{episode}(?!\d)", base):
+            return True
+        if re.search(rf"(?<!\d){season}x0*{episode}(?!\d)", base):
+            return True
+        # Contiguous whole-token "{season}{episode:02d}" form, e.g. "108" for S01E08.
+        if re.search(rf"(?<![a-z0-9]){season}{episode:02d}(?![a-z0-9])", base):
+            return True
+    # A member that carries an SxxExx marker for a DIFFERENT season must not be
+    # matched on its bare episode number alone (S02E08 is not the S01E08 we want).
+    if season is not None and _member_has_other_season_episode(base, season, episode):
+        return False
+    for start, end in _MEMBER_RANGE_RE.findall(base):
+        if int(start) <= episode <= int(end):
+            return True
+    for number in _MEMBER_NUMBER_RE.findall(base):
+        if int(number) == episode:
+            return True
+    return False
+
+
+_MEMBER_SXXEXX_RE = re.compile(r"s0*(\d{1,2})[\s._-]*e0*(\d{1,3})(?!\d)", re.IGNORECASE)
+
+
+def _member_has_other_season_episode(base, season, episode):
+    # True when the member encodes this episode under a season that is NOT the one
+    # requested (so the bare-number fallback must not claim it).
+    for found_season, found_episode in _MEMBER_SXXEXX_RE.findall(base):
+        if int(found_episode) == episode and int(found_season) != season:
+            return True
+    return False
 
 
 def _format_from_filename(filename):
@@ -444,27 +370,13 @@ def _format_from_filename(filename):
     return extension or "srt"
 
 
-def _content_payload(content, subtitle_format, empty=False):
-    if empty:
-        return {
-            "content_b64": "",
-            "content_sha256": "",
-            "content_type": _content_type(subtitle_format),
-            "format": subtitle_format,
-            "encoding": "utf-8",
-            "empty": True,
-        }
-    encoding = "utf-8"
-    try:
-        content.decode("utf-8")
-    except UnicodeDecodeError:
-        encoding = "windows-1251"
+def _content_payload(content, subtitle_format):
+    # Leave encoding unset; the host normalizes via chardet (Subtitle.normalize()).
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 
@@ -659,6 +571,8 @@ class FansubsProvider:
                                 "subtitle_id": subtitle["subtitle_id"],
                                 "format": subtitle["format"],
                                 "media_id": subtitle["media_id"],
+                                "season": (video or {}).get("season"),
+                                "episode": (video or {}).get("episode"),
                                 "video": _video_payload(video),
                             },
                         }
@@ -693,11 +607,18 @@ class FansubsProvider:
         filename = _filename_from_headers(headers) or (
             f"fansubs.{subtitle_id}.{payload.get('format') or 'srt'}"
         )
+        episode = payload.get("episode")
+        if episode is None:
+            episode = (payload.get("video") or {}).get("episode")
+        season = payload.get("season")
+        if season is None:
+            season = (payload.get("video") or {}).get("season")
         return extract_download(
             body,
             filename=filename,
             content_type=headers.get("content-type", ""),
-            video=payload.get("video") or {},
+            episode=episode,
+            season=season,
         )
 
 

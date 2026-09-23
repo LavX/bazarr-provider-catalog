@@ -3,7 +3,9 @@ import hashlib
 import importlib.util
 import io
 import json
+import socket
 import unittest
+import urllib.error
 import zipfile
 from pathlib import Path
 
@@ -215,20 +217,24 @@ class PrijevodiOnlineProviderTests(unittest.TestCase):
             [],
         )
 
-    def test_download_selects_subtitle_from_zip_archive(self):
+    def test_download_pins_release_member_for_requested_episode(self):
+        # Happy path: a multi-member zip with a release that uniquely matches the scored
+        # releases must pin that member (not just defer the whole archive by episode).
         provider = self.mod.PrijevodiOnlineProvider()
         body = _zip_body(
             {
                 "Game.of.Thrones.S01E02.HDTV.srt": "wrong episode",
+                "Game.of.Thrones.S01E01.HDTV.XviD-FEVER.srt": "wrong release",
                 "Game.of.Thrones.S01E01.720p.HDTV.CTU.srt": "right subtitle",
             }
         )
         provider._http_get = lambda url, timeout=30, referer=None: body
 
-        content = provider.download(
+        result = provider.download(
             {
                 "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/game-of-thrones-01x01-winter-is-coming-hdtv-hr",
                 "filename": "prijevodionline.game-of-thrones.s01e01.hr.zip",
+                "subtitle_id": "18050",
                 "season": 1,
                 "episode": 1,
                 "releases": ["720p.HDTV.X264-CTU"],
@@ -236,46 +242,809 @@ class PrijevodiOnlineProviderTests(unittest.TestCase):
             {"alpha3": "hrv", "alpha2": "hr"},
             {},
         )
-        data = base64.b64decode(content["content_b64"])
 
-        self.assertEqual(data, b"right subtitle")
-        self.assertEqual(content["content_sha256"], hashlib.sha256(data).hexdigest())
-        self.assertEqual(content["format"], "srt")
+        # Archive mode: the worker hands the raw bytes back, the host extracts the pinned
+        # member. No content extraction or decoding happens on the worker.
+        self.assertNotIn("content_b64", result)
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["member"], "Game.of.Thrones.S01E01.720p.HDTV.CTU.srt")
+        self.assertNotIn("episode", result)
+        self.assertNotIn("encoding", result)
 
-    def test_download_does_not_match_episode_one_against_episode_ten(self):
+    def test_download_defers_to_episode_when_release_tie_is_ambiguous(self):
+        # Defer: two members for the requested episode tie on releases overlap (or carry
+        # no release tokens at all), so we must NOT pin a member and instead let the host
+        # pick by episode. Pinning the wrong member would silently deliver a bad subtitle.
         provider = self.mod.PrijevodiOnlineProvider()
-        # The episode-ten file is listed first so the buggy unbounded substring
-        # match (1x1 inside 1x10) would otherwise select it for episode 1.
         body = _zip_body(
             {
-                "Game.of.Thrones.1x10.720p.HDTV.srt": "episode ten",
-                "Game.of.Thrones.1x01.720p.HDTV.srt": "episode one",
+                "Game.of.Thrones.S01E01.HDTV.part1.srt": "a",
+                "Game.of.Thrones.S01E01.HDTV.part2.srt": "b",
             }
         )
         provider._http_get = lambda url, timeout=30, referer=None: body
 
-        content = provider.download(
+        result = provider.download(
             {
-                "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/got-1x01",
+                "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/got-s01e01-hr",
                 "filename": "prijevodionline.game-of-thrones.s01e01.hr.zip",
+                "subtitle_id": "18050",
+                "season": 1,
+                "episode": 1,
+                "releases": ["HDTV"],
+            },
+            {"alpha3": "hrv", "alpha2": "hr"},
+            {},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 1)
+
+    def test_download_does_not_pin_wrong_season_member(self):
+        # A season pack repeats the episode number across seasons. The requested S02E05
+        # must never be served the S01E05 member: with no S02E05 present but episode
+        # markers around, defer to the host (which fails loudly on a true no-match)
+        # instead of pinning the wrong season.
+        provider = self.mod.PrijevodiOnlineProvider()
+        body = _zip_body(
+            {
+                "Show.S01E05.720p.WEB.CTU.srt": "season 1",
+                "Show.S03E05.720p.WEB.CTU.srt": "season 3",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        result = provider.download(
+            {
+                "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/show-s02e05-hr",
+                "filename": "prijevodionline.show.s02e05.hr.zip",
+                "subtitle_id": "18050",
+                "season": 2,
+                "episode": 5,
+                "releases": ["720p.WEB.CTU"],
+            },
+            {"alpha3": "hrv", "alpha2": "hr"},
+            {},
+        )
+
+        self.assertNotIn("member", result)
+        self.assertEqual(result["episode"], 5)
+
+    def test_download_pins_lone_season_match_in_cross_season_pack(self):
+        # A cross-season pack repeats the episode number across seasons (S01E05 and S02E05).
+        # When exactly one member matches the requested season+episode, the worker must pin
+        # it: handing the host a season-blind episode pick could silently deliver the other
+        # season's same-numbered episode (a wrong-season subtitle). Request S02E05 -> pin the
+        # S02E05 member, never the S01E05 one.
+        provider = self.mod.PrijevodiOnlineProvider()
+        body = _zip_body(
+            {
+                "Show.S01E05.720p.WEB-DL-CTU.srt": "season 1",
+                "Show.S02E05.720p.WEB-DL-CTU.srt": "season 2",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        result = provider.download(
+            {
+                "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/show-s02e05-hr",
+                "filename": "prijevodionline.show.s02e05.hr.zip",
+                "subtitle_id": "18050",
+                "season": 2,
+                "episode": 5,
+                "releases": ["720p.WEB-DL-CTU"],
+            },
+            {"alpha3": "hrv", "alpha2": "hr"},
+            {},
+        )
+
+        self.assertEqual(result["member"], "Show.S02E05.720p.WEB-DL-CTU.srt")
+        self.assertNotIn("episode", result)
+
+    def test_download_does_not_mispin_on_unbounded_episode_marker(self):
+        # Left-boundary guard: a bonus member like "Show.Extras1E02..." must NOT be read as
+        # the SxxExx marker for S01E02 just because "s1e02" appears inside "extraS1E02".
+        # Without the boundary the decoy is wrongly pooled for the requested episode and, on
+        # a release-token overlap, gets pinned instead of the genuine S01E02 member.
+        provider = self.mod.PrijevodiOnlineProvider()
+        body = _zip_body(
+            {
+                "Show.Extras1E02.WEB-DL-CTU.srt": "bonus reel, not S01E02",
+                "Show.S01E02.HDTV-FEVER.srt": "the real S01E02 subtitle",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        result = provider.download(
+            {
+                "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/show-s01e02-hr",
+                "filename": "prijevodionline.show.s01e02.hr.zip",
+                "subtitle_id": "18050",
+                "season": 1,
+                "episode": 2,
+                "releases": ["WEB-DL-CTU"],
+            },
+            {"alpha3": "hrv", "alpha2": "hr"},
+            {},
+        )
+
+        # The decoy's release tokens overlap the requested release, so a season/episode pool
+        # that wrongly includes it would pin it. The boundary keeps it out, leaving only the
+        # genuine member to pin.
+        self.assertEqual(result["member"], "Show.S01E02.HDTV-FEVER.srt")
+        self.assertNotIn("episode", result)
+
+    def test_download_ignores_sidecar_and_separated_token_members(self):
+        # __MACOSX/dot sidecars must be excluded, and a 3-digit episode code must not match
+        # a resolution substring: "720p" must NOT satisfy a request for S07E20. Here only
+        # the genuine S07E20 member (written with a separator) is the real candidate.
+        provider = self.mod.PrijevodiOnlineProvider()
+        body = _zip_body(
+            {
+                "__MACOSX/._Show.S07E20.srt": "mac sidecar",
+                ".hidden.srt": "dotfile",
+                "Show.720p.WEB-DL.srt": "resolution decoy (no S07E20 token)",
+                "Show.S07.E20.HDTV-FEVER.srt": "right episode, wrong release",
+                "Show.S07.E20.WEB-DL-CTU.srt": "right subtitle",
+            }
+        )
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        result = provider.download(
+            {
+                "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/show-s07e20-hr",
+                "filename": "prijevodionline.show.s07e20.hr.zip",
+                "subtitle_id": "18050",
+                "season": 7,
+                "episode": 20,
+                "releases": ["WEB-DL-CTU"],
+            },
+            {"alpha3": "hrv", "alpha2": "hr"},
+            {},
+        )
+
+        self.assertEqual(result["member"], "Show.S07.E20.WEB-DL-CTU.srt")
+        self.assertNotIn("episode", result)
+
+    def test_download_returns_rar_archive_bytes_for_host_extraction(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        body = b"Rar!\x1a\x07\x00" + b"binary rar payload"
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        result = provider.download(
+            {
+                "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/got-s01e01-hr",
+                "filename": "prijevodionline.game-of-thrones.s01e01.hr.rar",
+                "subtitle_id": "18050",
                 "season": 1,
                 "episode": 1,
             },
             {"alpha3": "hrv", "alpha2": "hr"},
             {},
         )
-        data = base64.b64decode(content["content_b64"])
 
-        self.assertEqual(data, b"episode one")
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["episode"], 1)
+        self.assertNotIn("encoding", result)
 
-    def test_select_subtitle_file_bounds_compact_episode_token(self):
-        names = ["Show.1x10.srt", "Show.1x01.srt"]
+    def test_download_carries_none_episode_when_payload_has_no_episode(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        body = _zip_body({"some.subtitle.srt": "data"})
+        provider._http_get = lambda url, timeout=30, referer=None: body
 
-        self.assertEqual(
-            self.mod.select_subtitle_file(names, {"season": 1, "episode": 1}),
-            "Show.1x01.srt",
+        result = provider.download(
+            {
+                "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/movie-hr",
+                "filename": "prijevodionline.movie.hr.zip",
+                "subtitle_id": "18050",
+            },
+            {"alpha3": "hrv", "alpha2": "hr"},
+            {},
         )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertIsNone(result["episode"])
+
+    def test_download_returns_content_for_direct_subtitle_body(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        body = b"1\n00:00:01,000 --> 00:00:02,000\nHello\n"
+        provider._http_get = lambda url, timeout=30, referer=None: body
+
+        result = provider.download(
+            {
+                "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/got-s01e01-hr",
+                "filename": "prijevodionline.game-of-thrones.s01e01.hr.srt",
+                "subtitle_id": "18050",
+                "episode": 1,
+            },
+            {"alpha3": "hrv", "alpha2": "hr"},
+            {},
+        )
+
+        self.assertEqual(base64.b64decode(result["content_b64"]), body)
+        self.assertEqual(result["content_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["format"], "srt")
+        self.assertNotIn("encoding", result)
+
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        provider._http_get = lambda url, timeout=30, referer=None: b"   \n"
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {
+                    "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/got",
+                    "subtitle_id": "18050",
+                    "episode": 1,
+                },
+                {"alpha3": "hrv", "alpha2": "hr"},
+                {},
+            )
+
+    def test_download_rejects_html_error_page(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        provider._http_get = lambda url, timeout=30, referer=None: (
+            b"<!DOCTYPE html><html><body>Not found</body></html>"
+        )
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {
+                    "url": "https://www.prijevodi-online.org/preuzmi-prijevod/epizoda/18050/got",
+                    "subtitle_id": "18050",
+                    "episode": 1,
+                },
+                {"alpha3": "hrv", "alpha2": "hr"},
+                {},
+            )
+
+
+class _FakeResponse:
+    def __init__(self, body):
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return self._body
+
+
+class _ScriptedOpener:
+    """Opener stub that yields a scripted sequence of errors then a body.
+
+    Each entry is either an exception instance (raised) or bytes (returned via a
+    response context manager). Records every call so tests can assert attempt
+    counts.
+    """
+
+    def __init__(self, sequence):
+        self._sequence = list(sequence)
+        self.calls = 0
+
+    def open(self, request, timeout=None):
+        del request, timeout
+        self.calls += 1
+        step = self._sequence.pop(0)
+        if isinstance(step, Exception):
+            raise step
+        return _FakeResponse(step)
+
+
+def _http_error(code, retry_after=None):
+    headers = {}
+    if retry_after is not None:
+        headers["Retry-After"] = retry_after
+    return urllib.error.HTTPError(
+        "https://www.prijevodi-online.org/test", code, "boom", headers, io.BytesIO(b"")
+    )
+
+
+class PrijevodiOnlineTransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.slept = []
+        self._orig_sleep = self.mod.time.sleep
+        # Patch the module-level sleep to a no-op recorder so retries are instant
+        # and observable.
+        self.mod.time.sleep = lambda seconds: self.slept.append(seconds)
+
+    def tearDown(self):
+        self.mod.time.sleep = self._orig_sleep
+
+    def test_http_get_retries_url_error_then_succeeds(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        opener = _ScriptedOpener(
+            [urllib.error.URLError("connection reset"), b"<html>ok</html>"]
+        )
+        provider._opener = opener
+
+        body = provider._http_get("https://www.prijevodi-online.org/serije/index/g")
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(opener.calls, 2)
+        self.assertEqual(len(self.slept), 1)
+
+    def test_http_get_retries_timeout_then_succeeds(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        opener = _ScriptedOpener([socket.timeout("timed out"), b"payload"])
+        provider._opener = opener
+
+        body = provider._http_get("https://www.prijevodi-online.org/serije/index/g")
+
+        self.assertEqual(body, b"payload")
+        self.assertEqual(opener.calls, 2)
+
+    def test_http_get_retries_503_twice_then_succeeds(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        opener = _ScriptedOpener([_http_error(503), _http_error(503), b"finally"])
+        provider._opener = opener
+
+        body = provider._http_get("https://www.prijevodi-online.org/serije/index/g")
+
+        self.assertEqual(body, b"finally")
+        self.assertEqual(opener.calls, 3)
+        self.assertEqual(len(self.slept), 2)
+
+    def test_http_get_gives_up_after_three_attempts(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        opener = _ScriptedOpener(
+            [_http_error(500), _http_error(500), _http_error(500)]
+        )
+        provider._opener = opener
+
+        with self.assertRaises(urllib.error.HTTPError):
+            provider._http_get("https://www.prijevodi-online.org/serije/index/g")
+
+        self.assertEqual(opener.calls, 3)
+
+    def test_http_get_does_not_retry_404(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        opener = _ScriptedOpener([_http_error(404), b"never reached"])
+        provider._opener = opener
+
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            provider._http_get("https://www.prijevodi-online.org/serije/index/g")
+
+        self.assertEqual(ctx.exception.code, 404)
+        self.assertEqual(opener.calls, 1)
+        self.assertEqual(self.slept, [])
+
+    def test_http_get_does_not_retry_403(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        opener = _ScriptedOpener([_http_error(403), b"never reached"])
+        provider._opener = opener
+
+        with self.assertRaises(urllib.error.HTTPError):
+            provider._http_get("https://www.prijevodi-online.org/serije/index/g")
+
+        self.assertEqual(opener.calls, 1)
+
+    def test_http_post_retries_then_succeeds(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        opener = _ScriptedOpener([_http_error(502), b"post-ok"])
+        provider._opener = opener
+
+        body = provider._http_post(
+            "https://www.prijevodi-online.org/prijevod/get/33945", {"key": "abc"}
+        )
+
+        self.assertEqual(body, b"post-ok")
+        self.assertEqual(opener.calls, 2)
+
+    def test_429_honors_retry_after_header(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        opener = _ScriptedOpener([_http_error(429, retry_after="3"), b"after-429"])
+        provider._opener = opener
+
+        body = provider._http_get("https://www.prijevodi-online.org/serije/index/g")
+
+        self.assertEqual(body, b"after-429")
+        self.assertEqual(self.slept, [3.0])
+
+    def test_backoff_is_capped(self):
+        # A Retry-After far above the cap must still be clamped.
+        provider = self.mod.PrijevodiOnlineProvider()
+        opener = _ScriptedOpener([_http_error(429, retry_after="600"), b"ok"])
+        provider._opener = opener
+
+        provider._http_get("https://www.prijevodi-online.org/serije/index/g")
+
+        self.assertEqual(self.slept, [self.mod.RETRY_BACKOFF_CAP_SECONDS])
+
+    def test_value_error_is_not_retried(self):
+        # A non-network error from the transport must propagate on the first hit.
+        provider = self.mod.PrijevodiOnlineProvider()
+        opener = _ScriptedOpener([ValueError("not a network problem"), b"x"])
+        provider._opener = opener
+
+        with self.assertRaises(ValueError):
+            provider._http_get("https://www.prijevodi-online.org/serije/index/g")
+
+        self.assertEqual(opener.calls, 1)
+        self.assertEqual(self.slept, [])
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _RecordingOpener:
+    """Returns scripted bodies while keeping every request for inspection."""
+
+    def __init__(self, sequence):
+        self._sequence = list(sequence)
+        self.requests = []
+
+    def open(self, request, timeout=None):
+        del timeout
+        self.requests.append(request)
+        entry = self._sequence.pop(0)
+        if isinstance(entry, Exception):
+            raise entry
+
+        class _Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        return _Response(entry)
+
+
+def _challenge_error(url="https://www.prijevodi-online.org/serije/index/s"):
+    return urllib.error.HTTPError(
+        url,
+        403,
+        "Forbidden",
+        {"Server": "cloudflare", "cf-mitigated": "challenge", "Content-Type": "text/html"},
+        io.BytesIO(b"<html><title>Just a moment...</title></html>"),
+    )
+
+
+def _solution(body="<html>ok</html>", status=200, cookies=(), user_agent="FS UA", url=None):
+    return {
+        "status": "ok",
+        "solution": {
+            "url": url or "https://www.prijevodi-online.org/serije/index/s",
+            "status": status,
+            "response": body,
+            "cookies": [{"name": name, "value": value} for name, value in cookies],
+            "userAgent": user_agent,
+        },
+    }
+
+
+class PrijevodiOnlineCloudflareTests(unittest.TestCase):
+    """The site fronts everything with a Cloudflare managed challenge now; the
+    provider delegates challenged requests to FlareSolverr and reuses the
+    solved cookies and User-Agent, or fails with an actionable message."""
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self._orig_sleep = self.mod.time.sleep
+        self.mod.time.sleep = lambda seconds: None
+
+    def tearDown(self):
+        self.mod.time.sleep = self._orig_sleep
+
+    def _provider(self, opener, config=None, solutions=None):
+        provider = self.mod.PrijevodiOnlineProvider()
+        provider._opener = opener
+        provider._config = dict(config or {})
+        self.solver_payloads = []
+
+        def transport(payload):
+            self.solver_payloads.append(payload)
+            return (solutions or []).pop(0)
+
+        provider._flaresolverr_transport = transport
+        return provider
+
+    def test_challenge_without_flaresolverr_raises_a_clear_error(self):
+        opener = _RecordingOpener([_challenge_error()])
+        provider = self._provider(opener)
+        with self.assertRaises(self.mod.CloudflareBlockedError) as caught:
+            provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+        self.assertIn("FlareSolverr", str(caught.exception))
+        # A challenge is not a transient failure: no retry storm against the wall.
+        self.assertEqual(len(opener.requests), 1)
+
+    def test_challenge_is_solved_through_flaresolverr(self):
+        opener = _RecordingOpener([_challenge_error(), b"<html>later</html>"])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution(cookies=[("cf_clearance", "token")])],
+        )
+
+        body = provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+
+        # The solve earns cookies and a User-Agent; the payload itself comes
+        # from replaying the original request through the opener.
+        self.assertEqual(body, b"<html>later</html>")
+        self.assertEqual(self.solver_payloads[0]["cmd"], "request.get")
+        jar = {cookie.name: cookie.value for cookie in provider._cookie_jar}
+        self.assertEqual(jar.get("cf_clearance"), "token")
+        # The clearance cookie is bound to the browser that earned it, so the
+        # replay (and every later request) presents the solved User-Agent.
+        self.assertEqual(opener.requests[-1].get_header("User-agent"), "FS UA")
+
+    def test_challenged_post_is_replayed_as_a_flaresolverr_post(self):
+        opener = _RecordingOpener([_challenge_error(), b"rows"])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution(body="rows")],
+        )
+
+        body = provider._http_post(
+            "https://www.prijevodi-online.org/prijevod/get/1", {"key": "abc"}
+        )
+
+        self.assertEqual(body, b"rows")
+        payload = self.solver_payloads[0]
+        self.assertEqual(payload["cmd"], "request.post")
+        self.assertEqual(payload["postData"], "key=abc")
+        # The replay is a real POST again, body intact.
+        replay = opener.requests[-1]
+        self.assertEqual(replay.get_method(), "POST")
+        self.assertEqual(replay.data, b"key=abc")
+
+    def test_a_solution_that_is_still_a_challenge_raises(self):
+        opener = _RecordingOpener([_challenge_error()])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution(body="<html>Just a moment...</html>", status=403)],
+        )
+        with self.assertRaises(self.mod.CloudflareBlockedError):
+            provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+
+    def test_a_plain_403_still_raises_http_error(self):
+        opener = _RecordingOpener([_http_error(403)])
+        provider = self._provider(opener)
+        with self.assertRaises(urllib.error.HTTPError):
+            provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+
+    def test_search_threads_config_into_the_transport(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        provider._opener = _RecordingOpener([_challenge_error()])
+        with self.assertRaises(self.mod.CloudflareBlockedError):
+            provider.search(
+                {"kind": "episode", "series": "Show", "season": 1, "episode": 1},
+                [{"alpha3": "hrv"}],
+                {"flaresolverr_url": ""},
+            )
+
+
+    def test_binary_downloads_survive_the_clearance(self):
+        archive = b"PK\x03\x04\x00binary\xffbytes"
+        opener = _RecordingOpener([_challenge_error(), archive])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution(cookies=[("cf_clearance", "token")])],
+        )
+        body = provider._http_get("https://www.prijevodi-online.org/preuzmi/1/hr")
+        # FlareSolverr's JSON response field cannot carry a ZIP intact; the
+        # bytes must come from the replay, exactly as the server sent them.
+        self.assertEqual(body, archive)
+
+    def test_transient_errors_after_the_clearance_keep_their_retry(self):
+        opener = _RecordingOpener([_challenge_error(), _http_error(503), b"fine"])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution()],
+        )
+        body = provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+        self.assertEqual(body, b"fine")
+
+    def test_a_challenge_on_the_replay_is_a_hard_failure_not_a_loop(self):
+        opener = _RecordingOpener([_challenge_error(), _challenge_error()])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution()],
+        )
+        with self.assertRaises(self.mod.CloudflareBlockedError):
+            provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+        self.assertEqual(len(self.solver_payloads), 1)
+
+    def test_a_generic_cloudflare_error_page_is_not_a_challenge(self):
+        # Cloudflare's ordinary error template carries cf-error-details too; a
+        # plain 403 with it must keep its meaning instead of demanding a solver.
+        error = urllib.error.HTTPError(
+            "https://www.prijevodi-online.org/serije/index/s",
+            403,
+            "Forbidden",
+            {"Server": "cloudflare", "Content-Type": "text/html"},
+            io.BytesIO(b"<html>cf-error-details: access denied</html>"),
+        )
+        provider = self._provider(_RecordingOpener([error]))
+        with self.assertRaises(urllib.error.HTTPError):
+            provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+
+    def test_the_solve_window_fits_the_worker_deadline(self):
+        self.assertEqual(
+            self.mod._flaresolverr_timeout_ms({"flaresolverr_timeout_ms": 30000}), 25000
+        )
+
+    def test_the_replay_drops_the_stale_cookie_header(self):
+        # The opener's cookie processor stamps requests with the jar's (stale)
+        # clearance; a request that already carries a Cookie header is left
+        # alone by the processor, so the replay must shed it or the fresh
+        # clearance never gets sent.
+        opener = _RecordingOpener([_challenge_error(), b"ok"])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution(cookies=[("cf_clearance", "fresh")])],
+        )
+        import urllib.request as _ur
+
+        request = _ur.Request(
+            "https://www.prijevodi-online.org/serije/index/s",
+            headers={"User-Agent": "old", "Cookie": "cf_clearance=stale"},
+        )
+        body = provider._open_with_retry(request, 10)
+        self.assertEqual(body, b"ok")
+        replay = opener.requests[-1]
+        self.assertIsNone(replay.get_header("Cookie"))
+        self.assertEqual(replay.get_header("User-agent"), "FS UA")
+
+    def test_an_exhausted_deadline_refuses_to_solve(self):
+        opener = _RecordingOpener([_challenge_error()])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution()],
+        )
+        import urllib.request as _ur
+
+        request = _ur.Request("https://www.prijevodi-online.org/serije/index/s")
+        with self.assertRaises(self.mod.CloudflareBlockedError) as caught:
+            provider._open_with_retry(
+                request, 10, deadline=self.mod.time.monotonic() + 3
+            )
+        self.assertIn("deadline", str(caught.exception))
+        # No solver call was even attempted: the budget could not fit one.
+        self.assertEqual(self.solver_payloads, [])
+
+    def test_the_solve_window_shrinks_to_the_remaining_budget(self):
+        opener = _RecordingOpener([_challenge_error(), b"ok"])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1", "flaresolverr_timeout_ms": 25000},
+            solutions=[_solution()],
+        )
+        import urllib.request as _ur
+
+        request = _ur.Request("https://www.prijevodi-online.org/serije/index/s")
+        provider._open_with_retry(
+            request, 10, deadline=self.mod.time.monotonic() + 13
+        )
+        # 13s budget minus the 5s replay reserve and the 2s solver transport
+        # buffer leaves ~6s for the solver, not the configured 25s: even a
+        # solver that uses its whole window cannot eat the replay reserve.
+        self.assertLessEqual(self.solver_payloads[0]["maxTimeout"], 6000)
+        self.assertGreaterEqual(self.solver_payloads[0]["maxTimeout"], 5000)
+
+    def test_a_429_challenge_reaches_the_solver(self):
+        error = urllib.error.HTTPError(
+            "https://www.prijevodi-online.org/serije/index/s",
+            429,
+            "Too Many Requests",
+            {"Server": "cloudflare", "cf-mitigated": "challenge"},
+            io.BytesIO(b"<html><title>Just a moment...</title></html>"),
+        )
+        opener = _RecordingOpener([error, b"ok"])
+        provider = self._provider(
+            opener,
+            config={"flaresolverr_url": "http://fs:8191/v1"},
+            solutions=[_solution()],
+        )
+        body = provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+        self.assertEqual(body, b"ok")
+        self.assertEqual(len(self.solver_payloads), 1)
+
+    def test_a_plain_429_keeps_its_retry_semantics(self):
+        opener = _RecordingOpener([_http_error(429), b"ok"])
+        provider = self._provider(opener)
+        body = provider._http_get("https://www.prijevodi-online.org/serije/index/s")
+        self.assertEqual(body, b"ok")
+        self.assertEqual(self.solver_payloads, [])
+
+    def test_search_arms_the_shared_deadline_before_its_first_request(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        provider._opener = _RecordingOpener(
+            [urllib.error.URLError("down")] * (self.mod.HTTP_RETRIES + 1)
+        )
+        with self.assertRaises(urllib.error.URLError):
+            provider.search(
+                {"kind": "episode", "series": "Show", "season": 1, "episode": 1},
+                [{"alpha3": "hrv"}],
+                {},
+            )
+        self.assertIsNotNone(provider._deadline)
+        remaining = provider._deadline - self.mod.time.monotonic()
+        self.assertLessEqual(remaining, self.mod.WORKER_DEADLINE_SECONDS)
+
+    def test_an_instance_deadline_is_picked_up_and_bounds_the_solve(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        provider._deadline = self.mod.time.monotonic() + 3
+        provider._opener = _RecordingOpener([_challenge_error()])
+        provider._config = {"flaresolverr_url": "http://fs:8191/v1"}
+        provider._flaresolverr_transport = lambda payload: (_ for _ in ()).throw(
+            AssertionError("solver must not run on an exhausted shared budget")
+        )
+        import urllib.request as _ur
+
+        with self.assertRaises(self.mod.CloudflareBlockedError) as caught:
+            provider._open_with_retry(
+                _ur.Request("https://www.prijevodi-online.org/serije/index/s"), 10
+            )
+        self.assertIn("deadline", str(caught.exception))
+
+    def test_politeness_delays_never_sleep_into_the_deadline(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        slept = []
+        self.mod.time.sleep = lambda seconds: slept.append(seconds)
+        provider._deadline = self.mod.time.monotonic() + 2
+        provider._pause({"request_delay_ms": 5000})
+        self.assertTrue(all(seconds <= 1.0 for seconds in slept), slept)
+
+    def test_politeness_delays_run_in_full_with_budget_to_spare(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        slept = []
+        self.mod.time.sleep = lambda seconds: slept.append(seconds)
+        provider._deadline = self.mod.time.monotonic() + 20
+        provider._pause({"request_delay_ms": 3000})
+        self.assertEqual(slept, [3.0])
+
+    def test_a_fresh_clearance_replaces_stale_domain_variants(self):
+        provider = self.mod.PrijevodiOnlineProvider()
+        # A stale clearance scoped to the www host, as a browser would set it.
+        provider._cookie_jar.set_cookie(
+            self.mod._jar_cookie("cf_clearance", "stale", domain="www.prijevodi-online.org")
+        )
+        provider._store_flaresolverr_solution(
+            {
+                "userAgent": "FS UA",
+                "cookies": [
+                    {
+                        "name": "cf_clearance",
+                        "value": "fresh",
+                        "domain": ".prijevodi-online.org",
+                        "path": "/",
+                    }
+                ],
+            }
+        )
+        clearances = [c for c in provider._cookie_jar if c.name == "cf_clearance"]
+        self.assertEqual([c.value for c in clearances], ["fresh"])
+        self.assertEqual(clearances[0].domain, ".prijevodi-online.org")
+
+    def test_the_waf_block_page_is_not_a_challenge(self):
+        # Error 1020 and friends title themselves "Attention Required!"; no
+        # solver clears an IP block, so it must surface as the 403 it is.
+        self.assertFalse(self.mod._is_cloudflare_challenge(
+            403,
+            {"Server": "cloudflare"},
+            b"<html><title>Attention Required! | Cloudflare</title></html>",
+        ))
+
+    def test_manifest_declares_the_flaresolverr_capability(self):
+        manifest = json.loads((PROVIDER_DIR / "provider.json").read_text("utf-8"))
+        self.assertIs(manifest.get("flaresolverr"), True)
+        properties = manifest["config_schema"]["properties"]
+        self.assertIn("flaresolverr_url", properties)
+        self.assertIn("flaresolverr_timeout_ms", properties)

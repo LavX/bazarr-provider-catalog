@@ -90,6 +90,44 @@ DETAIL_MULTI_SEASON_PACK = {
         ]
     }
 }
+DETAIL_PENGUIN_LANGUAGE_PACK = {
+    "sub": {
+        "subs": [
+            {
+                "id": 72003,
+                "filelist": [
+                    {
+                        "f": "The.Penguin.S01E01.chs.srt",
+                        "url": "https://assrt.test/download/penguin-s01e01-chs.srt",
+                    },
+                    {
+                        "f": "The.Penguin.S01E01.eng.srt",
+                        "url": "https://assrt.test/download/penguin-s01e01-eng.srt",
+                    },
+                ],
+            }
+        ]
+    }
+}
+DETAIL_PACK_MISSING_EPISODE = {
+    "sub": {
+        "subs": [
+            {
+                "id": 72004,
+                "filelist": [
+                    {
+                        "f": "Rick.and.Morty.S06E01.eng.srt",
+                        "url": "https://assrt.test/download/rick-s06e01-eng.srt",
+                    },
+                    {
+                        "f": "Rick.and.Morty.S06E03.eng.srt",
+                        "url": "https://assrt.test/download/rick-s06e03-eng.srt",
+                    },
+                ],
+            }
+        ]
+    }
+}
 
 
 def _query(url):
@@ -330,6 +368,53 @@ class AssrtProviderTests(unittest.TestCase):
 
         self.assertEqual(selected_urls[0], "https://assrt.test/download/rick-s06e02-eng.srt")
 
+    def test_download_rejects_pack_without_requested_episode(self):
+        provider = self.mod.AssrtProvider()
+        selected_urls = []
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else DETAIL_PACK_MISSING_EPISODE
+        provider._http_get_bytes = lambda url, timeout=15, config=None: selected_urls.append(url) or b"wrong episode"
+        provider._sleep = lambda seconds: None
+
+        with self.assertRaisesRegex(ValueError, "download URL"):
+            provider.download(
+                {
+                    "provider": "assrt",
+                    "schema": 1,
+                    "subtitle_id": "72004",
+                    "language_code": "eng",
+                    "season": 6,
+                    "episode": 2,
+                    "filename": "rick-pack.srt",
+                },
+                {"alpha3": "eng"},
+                {"token": "secret-token"},
+            )
+
+        self.assertEqual(selected_urls, [])
+
+    def test_download_matches_language_code_as_a_filename_token(self):
+        provider = self.mod.AssrtProvider()
+        selected_urls = []
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else DETAIL_PENGUIN_LANGUAGE_PACK
+        provider._http_get_bytes = lambda url, timeout=15, config=None: selected_urls.append(url) or b"english"
+        provider._sleep = lambda seconds: None
+
+        provider.download(
+            {
+                "provider": "assrt",
+                "schema": 1,
+                "subtitle_id": "72003",
+                "language_code": "eng",
+                "season": 1,
+                "episode": 1,
+                "filename": "penguin-pack.srt",
+            },
+            {"alpha3": "eng"},
+            {"token": "secret-token"},
+        )
+
+        self.assertEqual(selected_urls, ["https://assrt.test/download/penguin-s01e01-eng.srt"])
+
     def test_search_accepts_declared_chinese_variant_codes(self):
         provider = self.mod.AssrtProvider()
         provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_RICK
@@ -360,7 +445,7 @@ class AssrtProviderTests(unittest.TestCase):
         self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["71001"])
         self.assertEqual(results[0]["language"]["country"], "CN")
 
-    def test_download_payload_includes_content_type_and_encoding(self):
+    def test_download_payload_includes_content_type_without_encoding_guess(self):
         provider = self.mod.AssrtProvider()
         provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else DETAIL_ASS
         provider._http_get_bytes = lambda url, timeout=15, config=None: "[Script Info]\nTitle: 你好\n".encode("utf-8")
@@ -380,9 +465,9 @@ class AssrtProviderTests(unittest.TestCase):
 
         self.assertEqual(result["format"], "ass")
         self.assertEqual(result["content_type"], "text/x-ssa")
-        self.assertEqual(result["encoding"], "utf-8")
+        self.assertNotIn("encoding", result)
 
-    def test_download_payload_detects_gbk_encoding(self):
+    def test_download_payload_does_not_guess_gbk_encoding(self):
         provider = self.mod.AssrtProvider()
         provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else DETAIL_SINGLE
         provider._http_get_bytes = lambda url, timeout=15, config=None: "1\n00:00:01,000 --> 00:00:02,000\n你好世界\n".encode("gbk")
@@ -402,7 +487,7 @@ class AssrtProviderTests(unittest.TestCase):
 
         self.assertEqual(result["format"], "srt")
         self.assertEqual(result["content_type"], "application/x-subrip")
-        self.assertEqual(result["encoding"], "gbk")
+        self.assertNotIn("encoding", result)
 
 
 if __name__ == "__main__":

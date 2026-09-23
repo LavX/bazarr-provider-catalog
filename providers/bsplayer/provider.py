@@ -6,6 +6,7 @@ import hashlib
 import html
 import os
 import re
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -16,6 +17,10 @@ SOAP_NAMESPACE = "http://api.bsplayer-subtitles.com/v1.php"
 USER_AGENT = "BSPlayer/2.x (1022.12360)"
 DOWNLOAD_USER_AGENT = "Mozilla/4.0 (compatible; Synapse)"
 DEFAULT_TIMEOUT_SECONDS = 12
+RETRY_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8
+RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 SUBDOMAINS = (
     "s1",
     "s2",
@@ -148,6 +153,72 @@ ALPHA3_TO_ALPHA2 = {
 }
 
 
+def _retry_status_for_error(exc):
+    """Return the HTTP status that makes a urllib failure retryable, else None.
+
+    Only transient transport failures qualify: connection level URLError,
+    socket/timeout errors, and HTTP 5xx / 429. A urllib.error.HTTPError with a
+    4xx code other than 429 is not transient and must propagate unchanged.
+    """
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code if exc.code in RETRY_STATUS_CODES else None
+    if isinstance(exc, (socket.timeout, TimeoutError)):
+        return 0
+    if isinstance(exc, urllib.error.URLError):
+        return 0
+    return None
+
+
+def _retry_after_seconds(exc):
+    """Return a Retry-After delay from a 429 response header, capped, or None."""
+    if not isinstance(exc, urllib.error.HTTPError):
+        return None
+    headers = getattr(exc, "headers", None)
+    if headers is None:
+        return None
+    value = headers.get("Retry-After")
+    if not value:
+        return None
+    try:
+        seconds = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    if seconds < 0:
+        return None
+    return min(seconds, RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _backoff_seconds(attempt):
+    delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    return min(delay, RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _urlopen_read(request, timeout):
+    """Open ``request`` and read the body, retrying transient transport errors.
+
+    Wraps urllib with a bounded retry loop (RETRY_MAX_ATTEMPTS total). Only
+    transient failures are retried; everything else propagates on the first
+    occurrence exactly as before. The final transient failure is re-raised
+    unchanged so callers keep their existing error handling.
+    """
+    last_exc = None
+    for attempt in range(1, RETRY_MAX_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+                return response.read()
+        except Exception as exc:  # noqa: BLE001 - re-raised below if not retryable
+            status = _retry_status_for_error(exc)
+            if status is None or attempt >= RETRY_MAX_ATTEMPTS:
+                raise
+            last_exc = exc
+            retry_after = _retry_after_seconds(exc) if status == 429 else None
+            delay = retry_after if retry_after is not None else _backoff_seconds(attempt)
+            if delay > 0:
+                time.sleep(delay)
+    # Unreachable: the loop either returns or raises, but keep mypy/readers happy.
+    raise last_exc
+
+
 class BSPlayerServiceError(RuntimeError):
     """Raised when the BSPlayer SOAP service cannot be queried."""
 
@@ -175,8 +246,7 @@ class BSPlayerApiClient:
             str(url),
             headers={"User-Agent": DOWNLOAD_USER_AGENT},
         )
-        with urllib.request.urlopen(request, timeout=max(self.timeout, 30)) as response:  # noqa: S310
-            return response.read()
+        return _urlopen_read(request, timeout=max(self.timeout, 30))
 
     def _candidate_urls(self):
         if self.api_url:
@@ -197,8 +267,7 @@ class BSPlayerApiClient:
                 "SOAPAction": f'"{SOAP_NAMESPACE}#{func_name}"',
             },
         )
-        with urllib.request.urlopen(request, timeout=self.timeout) as response:  # noqa: S310
-            return response.read()
+        return _urlopen_read(request, timeout=self.timeout)
 
 
 def _normalize_api_url(api_url):

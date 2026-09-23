@@ -482,7 +482,10 @@ def _candidate(video, path, stream):
             "source": "embedded",
             "codec": stream["codec"],
             "stream": stream["index"],
-            "language": stream.get("display_language") or language.get("alpha3"),
+            # Cosmetic track-language label only. Must NOT be keyed "language":
+            # the host splats display keys onto the Subtitle via setattr, and a
+            # string under "language" overwrites the babelfish Language object.
+            "track_language": stream.get("display_language") or language.get("alpha3"),
             "default": stream.get("default", False),
         },
         "provider_payload": {

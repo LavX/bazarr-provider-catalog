@@ -277,8 +277,7 @@ def select_download_file(detail, payload):
     language_code = str((payload or {}).get("language_code") or "").lower()
     if language_code:
         for item in files:
-            filename = str(item.get("f") or "").lower()
-            if language_code in filename:
+            if language_code in _tokens(item.get("f")):
                 return item
     return files[0]
 
@@ -289,20 +288,20 @@ def _filter_download_files_by_episode(files, payload):
         return files
     target_season = _safe_int((payload or {}).get("season"))
     episode_files = []
-    structured_episode_files = []
+    has_structured_episodes = False
     for item in files:
         season_episode = _file_season_episode(item.get("f"))
         if season_episode:
+            has_structured_episodes = True
             season, episode = season_episode
             if episode == target_episode:
-                structured_episode_files.append(item)
                 if target_season is None or season == target_season:
                     episode_files.append(item)
         elif _file_episode(item.get("f")) == target_episode:
             episode_files.append(item)
     if episode_files:
         return episode_files
-    if structured_episode_files:
+    if has_structured_episodes:
         return []
     return files
 
@@ -451,7 +450,6 @@ def _content_payload(body, extension, empty=False):
         "content_sha256": hashlib.sha256(data).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": _detect_encoding(data),
         "empty": bool(empty),
     }
 
@@ -464,18 +462,6 @@ def _content_type(subtitle_format):
     if subtitle_format == "sub":
         return "text/plain"
     return "application/x-subrip"
-
-
-def _detect_encoding(body):
-    # Assrt serves Chinese subtitles, so fall back through the common Simplified
-    # (GBK) and Traditional (Big5) charsets before latin-1 catches the rest.
-    for candidate in ("utf-8", "gbk", "big5", "latin-1"):
-        try:
-            (body or b"").decode(candidate)
-            return candidate
-        except (UnicodeDecodeError, LookupError):
-            continue
-    return "latin-1"
 
 
 def _subtitle_extension(name):
