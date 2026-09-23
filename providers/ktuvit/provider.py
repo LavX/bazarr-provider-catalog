@@ -141,17 +141,28 @@ class KtuvitProvider:
             "SearchType": "0" if is_movie else "1",
             "WithSubsOnly": False,
         }
+        results = self._query_once(title, video, imdb_id, is_movie, cookies, query)
+        if results or not query["Year"]:
+            return results
+
+        query["Year"] = ""
+        return self._query_once(title, video, imdb_id, is_movie, cookies, query)
+
+    def _query_once(self, title, video, imdb_id, is_movie, cookies, query):
         response = self._http_post(SEARCH_URL, {"request": query}, self._headers(), cookies, timeout=10)
         _raise_for_status(response, "Ktuvit search")
         films = _parse_d_response(response, "Films", [])
         results = []
+        seen_film_ids = set()
+        seen_subtitle_ids = set()
         for film in films:
             result_imdb_id = _imdb_from_link(film.get("IMDB_Link"))
             if result_imdb_id != imdb_id:
                 continue
             ktuvit_id = str(film.get("ID") or "")
-            if not ktuvit_id:
+            if not ktuvit_id or ktuvit_id in seen_film_ids:
                 continue
+            seen_film_ids.add(ktuvit_id)
             if is_movie:
                 subs = self._search_movie_subtitles(ktuvit_id, cookies)
             else:
@@ -162,6 +173,10 @@ class KtuvitProvider:
                     cookies,
                 )
             for sub in subs:
+                subtitle_id = str(sub.get("subtitle_id") or "")
+                if not subtitle_id or subtitle_id in seen_subtitle_ids:
+                    continue
+                seen_subtitle_ids.add(subtitle_id)
                 results.append(
                     {
                         "kind": "movie" if is_movie else "episode",
@@ -172,7 +187,7 @@ class KtuvitProvider:
                         "episode": _int_or_none(video.get("episode")),
                         "imdb_id": imdb_id,
                         "ktuvit_id": ktuvit_id,
-                        "subtitle_id": sub["subtitle_id"],
+                        "subtitle_id": subtitle_id,
                         "release_info": sub["release_info"],
                         "language": {"alpha3": "heb", "alpha2": "he", "hi": False, "forced": False},
                         "page_url": f"{MOVIE_INFO_URL}{ktuvit_id}",

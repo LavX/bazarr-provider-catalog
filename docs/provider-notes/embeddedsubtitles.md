@@ -7,3 +7,4 @@
 - External requirements: Bazarr+ worker must be able to read the media path and execute configured `ffprobe` and `ffmpeg` binaries.
 - Supported codecs: `ass`, `subrip`, `webvtt`, and `mov_text`.
 - Download flow: generated subtitle bytes from the local media container.
+- Unknown-language fallback results are suppressed when an explicit stream has the same language and forced/hearing-impaired disposition. A fallback with a different disposition remains available.
