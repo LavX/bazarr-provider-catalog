@@ -3425,6 +3425,76 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "332b7fdce3eab1a897f74146f92deca19afe40e2825c436a8ef5fb2663a2f3a9",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "password": {
+              "description": "Pipocas.tv password.",
+              "title": "Password",
+              "type": "string"
+            },
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between HTTP calls to pipocas.tv.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            },
+            "username": {
+              "description": "Pipocas.tv username.",
+              "title": "Username",
+              "type": "string"
+            }
+          },
+          "required": [
+            "username",
+            "password"
+          ],
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Scrapes Pipocas.tv for movie and episode subtitles in Portuguese, Brazilian Portuguese, English, and Spanish. Login is required. ZIP and RAR downloads are supported.",
+        "entry_class": "PipocasProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "ca8c9260a8ab1788fd3ea8977d0d8392f16efd65d8d2d85cfae17a93922c7576"
+        },
+        "languages": [
+          "eng",
+          "por",
+          "por-BR",
+          "spa"
+        ],
+        "name": "Pipocas.tv",
+        "provider_id": "pipocas",
+        "schema_version": 1,
+        "secret_fields": [
+          "username",
+          "password"
+        ],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/pipocas",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.3"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "d2569692e2b5c73d3467d7b96d11dd3e4df1a479e8a1bceb502637a0ad3e75aa",
         "config_schema": {
           "additionalProperties": false,
