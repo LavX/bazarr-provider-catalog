@@ -28,7 +28,8 @@ class HttpResponse:
 class KaragargaProvider:
     def __init__(self):
         self._authenticated = False
-        self._cookies = {}
+        self._tracker_cookies = {}
+        self._forum_cookies = {}
 
     def search(self, video, languages, config):
         video = video or {}
@@ -37,11 +38,11 @@ class KaragargaProvider:
         if not _wants_plain_english(languages):
             return []
         config = dict(config or {})
-        cookies = self._ensure_authenticated(config)
+        self._ensure_authenticated(config)
         response = self._http_get(
             f"{BASE_URL}/pots.php",
             self._headers(),
-            cookies,
+            dict(self._tracker_cookies),
             timeout=HTTP_TIMEOUT_SECONDS,
             params={"search": video.get("title") or "", "status": "completed"},
             allow_redirects=False,
@@ -54,7 +55,7 @@ class KaragargaProvider:
         for forum_url in parse_search_page(response.body, video.get("year")):
             if scans >= 3:
                 break
-            subtitles.extend(self._parse_forum(forum_url, cookies))
+            subtitles.extend(self._parse_forum(forum_url))
             scans += 1
         if not subtitles:
             return []
@@ -67,20 +68,37 @@ class KaragargaProvider:
         page_url = payload.get("page_url")
         if not page_url:
             raise ValueError("karagarga download requires page_url")
+        if _allowed_origin(page_url) != "forum.karagarga.in":
+            raise ValueError("Karagarga attachment URL must use the forum origin")
         config = dict(config or {})
-        cookies = self._ensure_authenticated(config)
-        response = self._http_get(page_url, self._headers(), cookies, timeout=HTTP_TIMEOUT_SECONDS, allow_redirects=False)
+        self._ensure_authenticated(config)
+        response = self._http_get(
+            page_url, self._headers(), dict(self._forum_cookies),
+            timeout=HTTP_TIMEOUT_SECONDS, allow_redirects=False,
+        )
         _raise_for_status(response, "Karagarga download")
         if _looks_like_login_html(response):
             raise PermissionError("Karagarga request redirected to login")
-        body = _normalize_line_endings(response.body)
-        if not body:
+        body = response.body
+        if not body or not body.strip():
             raise ValueError("karagarga downloaded empty subtitle")
-        return _content_payload(body, _format_from_filename(payload.get("filename") or page_url))
+        if _is_archive_body(body):
+            return _archive_payload(body)
+        if _looks_like_binary_or_html(body):
+            raise ValueError("Karagarga attachment is not a subtitle")
+        if not _is_utf16_bom(body):
+            body = _normalize_line_endings(body)
+        fmt = _format_from_filename(payload.get("filename") or page_url) or _format_from_content(body)
+        if not fmt:
+            raise ValueError("Karagarga attachment format is unrecognized")
+        return _content_payload(body, fmt)
 
-    def _parse_forum(self, forum_url, cookies):
+    def _parse_forum(self, forum_url):
+        if _allowed_origin(forum_url) != "forum.karagarga.in":
+            raise ValueError("Karagarga forum URL must use the forum origin")
         response = self._http_get(
-            forum_url, self._headers(), cookies, timeout=HTTP_TIMEOUT_SECONDS, allow_redirects=False
+            forum_url, self._headers(), dict(self._forum_cookies),
+            timeout=HTTP_TIMEOUT_SECONDS, allow_redirects=False,
         )
         _raise_for_status(response, "Karagarga forum scan")
         if _looks_like_login_html(response):
@@ -89,7 +107,7 @@ class KaragargaProvider:
 
     def _ensure_authenticated(self, config):
         if self._authenticated:
-            return dict(self._cookies)
+            return
         username = str(config.get("username") or "").strip()
         password = str(config.get("password") or "")
         if not username or not password:
@@ -98,13 +116,13 @@ class KaragargaProvider:
             f"{BASE_URL}/takelogin.php",
             {"username": username, "password": password},
             self._headers(),
-            dict(self._cookies),
+            dict(self._tracker_cookies),
             timeout=HTTP_TIMEOUT_SECONDS,
             allow_redirects=False,
         )
         _raise_for_login_status(main_response, "Karagarga tracker login")
-        _store_response_cookies(self._cookies, main_response)
-        if "pass" not in self._cookies:
+        _store_response_cookies(self._tracker_cookies, main_response)
+        if "pass" not in self._tracker_cookies:
             raise PermissionError("Karagarga tracker username or password is invalid")
         forum_username = str(config.get("f_username") or username).strip()
         forum_password = str(config.get("f_password") or password)
@@ -120,7 +138,7 @@ class KaragargaProvider:
                 "anonymous": "1",
             },
             self._headers(),
-            dict(self._cookies),
+            dict(self._forum_cookies),
             timeout=HTTP_TIMEOUT_SECONDS,
             allow_redirects=False,
             params={
@@ -131,23 +149,23 @@ class KaragargaProvider:
             },
         )
         _raise_for_login_status(forum_response, "Karagarga forum login")
-        _store_response_cookies(self._cookies, forum_response)
-        if not {"session_id", "pass_hash"}.issubset(self._cookies):
+        _store_response_cookies(self._forum_cookies, forum_response)
+        if not {"session_id", "pass_hash"}.issubset(self._forum_cookies):
             raise PermissionError("Karagarga forum username or password is invalid")
         self._authenticated = True
-        return dict(self._cookies)
+        return
 
     def _forum_auth_key(self):
         response = self._http_get(
             f"{FORUM_URL}/index.php",
             self._headers(),
-            dict(self._cookies),
+            dict(self._forum_cookies),
             timeout=HTTP_TIMEOUT_SECONDS,
             allow_redirects=False,
             params={"app": "core", "module": "global", "section": "login"},
         )
         _raise_for_login_status(response, "Karagarga forum login page")
-        _store_response_cookies(self._cookies, response)
+        _store_response_cookies(self._forum_cookies, response)
         return _parse_auth_key(response.body) or _DEFAULT_AUTH_KEY
 
     def _headers(self):
@@ -199,6 +217,7 @@ def _http_request(
     params=None,
     allow_redirects=True,
 ):
+    origin = _allowed_origin(url)
     if params:
         delimiter = "&" if urllib.parse.urlsplit(url).query else "?"
         url = f"{url}{delimiter}{urllib.parse.urlencode(params)}"
@@ -210,9 +229,7 @@ def _http_request(
         body = urllib.parse.urlencode(data).encode("utf-8")
         request_headers["Content-Type"] = "application/x-www-form-urlencoded"
     request = urllib.request.Request(url, data=body, headers=request_headers, method=method)
-    opener = urllib.request.build_opener()
-    if not allow_redirects:
-        opener = urllib.request.build_opener(_NoRedirectHandler)
+    opener = urllib.request.build_opener(_ScopedRedirectHandler(origin) if allow_redirects else _NoRedirectHandler)
     try:
         with opener.open(request, timeout=timeout) as response:
             return HttpResponse(response.status, response.read(), response.headers)
@@ -220,6 +237,37 @@ def _http_request(
         return HttpResponse(exc.code, exc.read(), exc.headers)
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Karagarga request failed: {exc.reason}") from exc
+
+
+def _allowed_origin(url):
+    if not isinstance(url, str) or not url or url != url.strip():
+        raise ValueError("Invalid Karagarga URL")
+    if "\\" in url or any(ord(char) < 32 for char in url):
+        raise ValueError("Invalid Karagarga URL")
+    try:
+        parts = urllib.parse.urlsplit(url)
+        port = parts.port
+    except ValueError as exc:
+        raise ValueError("Invalid Karagarga URL") from exc
+    if (
+        parts.scheme != "https"
+        or parts.username is not None
+        or parts.password is not None
+        or port not in (None, 443)
+        or parts.hostname not in {"karagarga.in", "forum.karagarga.in"}
+    ):
+        raise ValueError("Karagarga URL must use a known HTTPS origin")
+    return parts.hostname
+
+
+class _ScopedRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def __init__(self, origin):
+        self._origin = origin
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if _allowed_origin(newurl) != self._origin:
+            raise ValueError("Karagarga redirect changed origin")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -261,8 +309,17 @@ def parse_search_page(body, year):
                 continue
             link = forum_item.first_link()
             if link:
-                forum_urls.append(urllib.parse.urljoin(f"{FORUM_URL}/", link))
+                url = urllib.parse.urljoin(f"{FORUM_URL}/", link)
+                if _is_forum_url(url):
+                    forum_urls.append(url)
     return forum_urls
+
+
+def _is_forum_url(url):
+    try:
+        return _allowed_origin(url) == "forum.karagarga.in"
+    except ValueError:
+        return False
 
 
 def _parse_auth_key(body):
@@ -298,7 +355,7 @@ def parse_forum_page(body):
             if not href:
                 continue
             url = urllib.parse.urljoin(f"{FORUM_URL}/", href)
-            if url in seen:
+            if not _is_forum_url(url) or url in seen:
                 continue
             strong = item.first_descendant("strong")
             release_info = strong.text() if strong is not None else ""
@@ -323,7 +380,7 @@ def _attachment_format(text, href):
         match = re.search(r"\.(srt|ass|ssa|vtt|sub)\b", str(source or ""), re.IGNORECASE)
         if match:
             return match.group(1).lower()
-    return "srt"
+    return None
 
 
 def _candidate(item, video):
@@ -332,8 +389,8 @@ def _candidate(item, video):
     if release_group and release_group in _clean_key(item.get("release_info") or ""):
         matches.append("release_group")
     score = min(100, 25 * len(matches))
-    attachment_format = item.get("attachment_format") or "srt"
-    filename = _clean_filename(item["release_info"]) + "." + attachment_format
+    attachment_format = item.get("attachment_format")
+    filename = _clean_filename(item["release_info"]) + ("." + attachment_format if attachment_format else "")
     return {
         "provider": PROVIDER_ID,
         "id": item["page_url"],
@@ -548,11 +605,59 @@ def _format_from_filename(filename):
     for extension in (".srt", ".ass", ".ssa", ".vtt", ".sub"):
         if lower.endswith(extension):
             return extension.lstrip(".")
-    return "srt"
+    return None
 
 
 def _normalize_line_endings(body):
     return body.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
+def _is_archive_body(body):
+    return body.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08", b"Rar!\x1a\x07\x00", b"Rar!\x1a\x07\x01\x00"))
+
+
+def _archive_payload(body):
+    return {
+        "archive_b64": base64.b64encode(body).decode("ascii"),
+        "archive_sha256": hashlib.sha256(body).hexdigest(),
+    }
+
+
+def _is_utf16_bom(body):
+    return body.startswith((b"\xff\xfe", b"\xfe\xff"))
+
+
+def _looks_like_binary_or_html(body):
+    if _is_utf16_bom(body):
+        try:
+            decoded = body.decode("utf-16")
+        except UnicodeDecodeError:
+            return True
+        sample = decoded[:4096].lstrip().lower()
+        if sample.startswith(("<html", "<!doctype html", "<body", "<form", "<?xml")):
+            return True
+        return any(ord(char) < 32 and char not in "\t\n\r" for char in decoded[:4096])
+    sample = body[:4096].lstrip().lower()
+    if sample.startswith((b"<html", b"<!doctype html", b"<body", b"<form", b"<?xml")):
+        return True
+    return any(byte < 32 and byte not in (9, 10, 13) for byte in body[:4096])
+
+
+def _format_from_content(body):
+    if _is_utf16_bom(body):
+        sample = body.decode("utf-16")[:4096].encode("utf-8")
+    else:
+        sample = body[:4096]
+    sample = sample.lstrip(b"\xef\xbb\xbf \t\r\n")
+    if sample.startswith(b"WEBVTT"):
+        return "vtt"
+    if sample.startswith((b"[Script Info]", b"[Events]")):
+        return "ass"
+    if re.search(rb"(?m)^\s*\d+\s*\n\s*\d{2}:\d{2}:\d{2}[,.]\d+\s*-->\s*\d{2}:\d{2}:\d{2}[,.]\d+", sample):
+        return "srt"
+    if re.search(rb"(?m)^\s*\{\d+\}\{\d+\}", sample):
+        return "sub"
+    return None
 
 
 def _content_payload(body, fmt):
