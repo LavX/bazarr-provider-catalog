@@ -439,6 +439,10 @@ def subtitles_url(show_id, season, episode, language_name):
 def derive_matches(video, entry):
     video = video or {}
     matches = {"series", "season", "episode", "tvdb_id", "title"}
+    requested_tvdb_id = _video_series_tvdb_id(video)
+    returned_tvdb_id = _int_or_none(entry.get("show_tvdb_id"))
+    if requested_tvdb_id is not None and returned_tvdb_id == requested_tvdb_id:
+        matches.add("year")
     release_group = _normalise_match_text(video.get("release_group"))
     if release_group:
         for release in entry.get("releases") or []:
@@ -454,6 +458,8 @@ def derive_matches(video, entry):
 def compute_score(video, entry):
     score = 75
     matches = set(derive_matches(video, entry))
+    if "year" in matches:
+        score += 10
     if "release_group" in matches:
         score += 10
     if "resolution" in matches:
@@ -537,6 +543,7 @@ class GestdownProvider:
                     season=season,
                     episode=episode,
                 ):
+                    entry["show_tvdb_id"] = show.get("tvdb_id")
                     key = (entry["subtitle_id"],) + _language_key(language_payload)
                     if key in seen:
                         continue

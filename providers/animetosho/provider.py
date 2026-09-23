@@ -253,7 +253,12 @@ class AnimeToshoProvider:
                 alpha3 = language["alpha3"]
                 if not _language_matches_request(language, requested):
                     continue
-                key = (row["download_url"], alpha3, row["language"].get("country_alpha2"))
+                key = (
+                    row.get("entry_id"),
+                    row["download_url"],
+                    alpha3,
+                    row["language"].get("country_alpha2"),
+                )
                 if key in seen:
                     continue
                 seen.add(key)
@@ -278,7 +283,12 @@ class AnimeToshoProvider:
         }
         return {
             "provider": PROVIDER_ID,
-            "id": _stable_id(row["download_url"], language["alpha3"], language.get("country_alpha2")),
+            "id": _stable_id(
+                row["download_url"],
+                language["alpha3"],
+                language.get("country_alpha2"),
+                row.get("entry_id"),
+            ),
             "language": language,
             "release_info": row.get("release_info"),
             "filename": row.get("filename"),
@@ -544,8 +554,10 @@ def _sleep(config):
         time.sleep(min(delay_ms, 5000) / 1000.0)
 
 
-def _stable_id(download_url, alpha3, country_alpha2=None):
+def _stable_id(download_url, alpha3, country_alpha2=None, entry_id=None):
     key = f"{download_url}:{alpha3}:{country_alpha2 or ''}"
+    if entry_id is not None:
+        key = f"{entry_id}:{key}"
     digest = _hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
     return f"animetosho-{digest}"
 
