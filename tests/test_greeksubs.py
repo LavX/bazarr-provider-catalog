@@ -217,6 +217,78 @@ class GreekSubsProviderTests(unittest.TestCase):
                 {},
             )
 
+    def test_download_refreshes_expired_sec_code_from_matching_detail_page(self):
+        provider = self.mod.GreekSubsProvider()
+        page_url = "https://greeksubs.net/en/view/tt1480055/subtitle-for-game-of-thrones-winter-is-coming-season-1-episode-1"
+        stale_url = "https://greeksubs.net/dll/kDCtQ-5a72ef1d3756e/0/stale-token"
+        fresh_url = "https://greeksubs.net/dll/kDCtQ-5a72ef1d3756e/0/dZCzW0PjQ"
+        subtitle = b"1\r\n00:00:01,000 --> 00:00:02,000\r\nGreek line\r\n"
+        calls = []
+
+        def stub(url, data=None, timeout=20, referer=None):
+            del timeout
+            calls.append((url, data, referer))
+            if url == stale_url and data is None:
+                return b"<html>expired token</html>"
+            if url == page_url and data is None:
+                return EPISODE_HTML
+            if url == fresh_url and data is None:
+                return DOWNLOAD_GATE_HTML
+            if url == fresh_url and data is not None:
+                return subtitle
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_request = stub
+        result = provider.download(
+            {
+                "provider": "greeksubs",
+                "schema": 1,
+                "download_url": stale_url,
+                "page_url": page_url,
+                "subtitle_id": "kDCtQ-5a72ef1d3756e",
+                "filename": "game-of-thrones.srt",
+            },
+            {"alpha3": "ell", "alpha2": "el"},
+            {},
+        )
+
+        self.assertEqual([call[0] for call in calls], [stale_url, page_url, fresh_url, fresh_url])
+        self.assertIsNone(calls[1][2])
+        self.assertEqual(calls[2][2], page_url)
+        self.assertEqual(calls[3][2], fresh_url)
+        self.assertEqual(base64.b64decode(result["content_b64"]), b"1\n00:00:01,000 --> 00:00:02,000\nGreek line\n")
+
+    def test_expired_download_rejects_subtitle_id_missing_from_detail_page(self):
+        provider = self.mod.GreekSubsProvider()
+        page_url = "https://greeksubs.net/en/view/tt1480055/subtitle-for-game-of-thrones-winter-is-coming-season-1-episode-1"
+        stale_url = "https://greeksubs.net/dll/wrong-subtitle-id/0/stale-token"
+        calls = []
+
+        def stub(url, data=None, timeout=20, referer=None):
+            del timeout
+            calls.append((url, data, referer))
+            if url == stale_url:
+                return b"<html>expired token</html>"
+            if url == page_url:
+                return EPISODE_HTML
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_request = stub
+        with self.assertRaisesRegex(ValueError, "subtitle id"):
+            provider.download(
+                {
+                    "provider": "greeksubs",
+                    "schema": 1,
+                    "download_url": stale_url,
+                    "page_url": page_url,
+                    "subtitle_id": "wrong-subtitle-id",
+                },
+                {"alpha3": "ell", "alpha2": "el"},
+                {},
+            )
+
+        self.assertEqual([call[0] for call in calls], [stale_url, page_url])
+
 
 class _FakeResponse:
     def __init__(self, body):

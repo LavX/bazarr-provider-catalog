@@ -1,9 +1,11 @@
 """SubSource provider for the Bazarr+ Provider Hub catalog."""
 
 import base64
+import datetime
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import socket
@@ -34,16 +36,37 @@ SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
 RETRY_ATTEMPTS = 3
 RETRY_BACKOFF_SECONDS = 0.5
 RETRY_BACKOFF_MAX_SECONDS = 8.0
+MAX_INLINE_RATE_LIMIT_WAIT_SECONDS = 60
 RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
 
 def _retry_after_seconds(exc):
-    # Honor a Retry-After header on a 429 if the server sent one. Only the simple
-    # delta-seconds form is supported; anything else falls back to the backoff.
+    # Prefer SubSource's absolute reset time, then its JSON retryAfter, and finally
+    # the standard Retry-After header used by older API responses.
     headers = getattr(exc, "headers", None)
-    if headers is None:
-        return None
-    value = headers.get("Retry-After")
+    reset_at = headers.get("X-RateLimit-Reset") if headers is not None else None
+    if reset_at:
+        try:
+            reset_at = datetime.datetime.fromisoformat(str(reset_at).replace("Z", "+00:00"))
+            if reset_at.tzinfo is None:
+                reset_at = reset_at.replace(tzinfo=datetime.timezone.utc)
+        except (TypeError, ValueError):
+            reset_at = None
+        if reset_at is not None:
+            delay = (reset_at - datetime.datetime.now(datetime.timezone.utc)).total_seconds()
+            return max(math.ceil(delay), 1)
+
+    try:
+        body = exc.read(64 * 1024)
+        payload = json.loads(body.decode("utf-8")) if body else None
+        body_delay = payload.get("retryAfter") if isinstance(payload, dict) else None
+    except (OSError, UnicodeError, ValueError, AttributeError, TypeError):
+        body_delay = None
+    if isinstance(body_delay, (int, float)) and not isinstance(body_delay, bool):
+        if body_delay >= 0:
+            return max(math.ceil(body_delay), 1)
+
+    value = headers.get("Retry-After") if headers is not None else None
     if value is None:
         return None
     try:
@@ -52,7 +75,7 @@ def _retry_after_seconds(exc):
         return None
     if seconds < 0:
         return None
-    return min(seconds, RETRY_BACKOFF_MAX_SECONDS)
+    return max(math.ceil(seconds), 1)
 
 
 def _is_retriable_http_error(exc):
@@ -84,13 +107,24 @@ def _with_transport_retry(do_request):
     # exponential backoff up to RETRY_ATTEMPTS total tries; the final failure and
     # any non-transient error are re-raised unchanged so existing error handling
     # (HTTPError 429/4xx mapping, parse errors) still runs in the caller.
+    rate_limit_retried = False
     for attempt in range(1, RETRY_ATTEMPTS + 1):
         try:
             return do_request()
         except Exception as exc:  # noqa: BLE001 - re-raised below unless transient
             if attempt >= RETRY_ATTEMPTS or not _is_retriable_transport_error(exc):
                 raise
-            delay = _retry_delay(attempt, exc)
+            if _is_retriable_http_error(exc) and exc.code == 429:
+                retry_after = _retry_after_seconds(exc)
+                if retry_after is not None:
+                    if retry_after > MAX_INLINE_RATE_LIMIT_WAIT_SECONDS or rate_limit_retried:
+                        raise
+                    delay = retry_after
+                    rate_limit_retried = True
+                else:
+                    delay = _retry_delay(attempt, exc)
+            else:
+                delay = _retry_delay(attempt, exc)
             if delay > 0:
                 time.sleep(delay)
 

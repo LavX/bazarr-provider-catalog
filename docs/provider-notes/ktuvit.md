@@ -18,6 +18,7 @@ Clean-room target for `ktuvit`.
 - Ktuvit expects the password value stored by Bazarr as `hashed_password`, not a plain text password.
 - Ktuvit service JSON wraps the useful payload in a `d` field containing a JSON string.
 - If the video does not have an IMDb id, the provider falls back to TMDB lookup to resolve the IMDb id before searching Ktuvit.
+- If a year-filtered Ktuvit search yields no usable exact-IMDb subtitle results, it retries once without the year. Repeated film and subtitle ids are de-duplicated.
 - Live verification on 2026-05-31 found the homepage reachable and the login service returning HTTP `405` for GET, confirming the login endpoint is POST-only.
 
 ## License notes
