@@ -7,6 +7,7 @@ import io
 import json
 import os
 import re
+import socket
 import time
 import unicodedata
 import urllib.error
@@ -18,6 +19,13 @@ PROVIDER_ID = "legendasnet"
 BASE_URL = "https://legendas.net"
 API_URL = f"{BASE_URL}/api/v1"
 HTTP_TIMEOUT_SECONDS = 30
+# Transport-level retry for transient network blips only (mirrors upstream
+# subliminal's RetryingSession/ProviderRetryMixin: a few tries with backoff).
+HTTP_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
+RETRY_BACKOFF_CAP_SECONDS = 8.0
+# HTTP statuses worth retrying: throttling (429) and server-side faults (5xx).
+RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
@@ -32,6 +40,64 @@ class HttpResponse:
         self.status = int(status)
         self.body = body or b""
         self.headers = dict(headers or {})
+
+
+def _perform_request(request, timeout):
+    # One raw attempt. Preserves the original error-to-response conversion: an
+    # HTTPError still becomes an HttpResponse carrying its status/body/headers,
+    # so 4xx/5xx/429 keep flowing back to the existing status-mapping callers.
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return HttpResponse(response.status, response.read(), dict(response.headers.items()))
+    except urllib.error.HTTPError as error:
+        try:
+            return HttpResponse(error.code, error.read(), dict(error.headers.items()))
+        finally:
+            error.close()
+
+
+def _request_with_retry(request, timeout):
+    # Bounded retry around the raw transport only. Retries transient transport
+    # exceptions (connection reset/refused, DNS, timeouts) and transient HTTP
+    # statuses (429 + 5xx); everything else (success, 4xx) returns on the first
+    # attempt and any non-transient exception propagates unchanged.
+    last_error = None
+    for attempt in range(1, HTTP_MAX_ATTEMPTS + 1):
+        try:
+            response = _perform_request(request, timeout)
+        except (urllib.error.URLError, socket.timeout, TimeoutError) as error:
+            last_error = error
+            if attempt >= HTTP_MAX_ATTEMPTS:
+                raise
+            time.sleep(_retry_delay(attempt))
+            continue
+        if response.status in RETRY_STATUS_CODES and attempt < HTTP_MAX_ATTEMPTS:
+            time.sleep(_retry_delay(attempt, response))
+            continue
+        return response
+    # Loop only falls through when the final attempt raised transiently.
+    raise last_error
+
+
+def _retry_delay(attempt, response=None):
+    delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    if response is not None and response.status == 429:
+        retry_after = _retry_after_seconds(response.headers)
+        if retry_after is not None:
+            delay = max(delay, retry_after)
+    return min(delay, RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _retry_after_seconds(headers):
+    for key, value in (headers or {}).items():
+        if str(key).lower() != "retry-after":
+            continue
+        try:
+            seconds = int(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+        return seconds if seconds >= 0 else None
+    return None
 
 
 class LegendasNetProvider:
@@ -83,7 +149,7 @@ class LegendasNetProvider:
         # synthetic ".zip" name stored on the search candidate, so direct
         # ".ass"/".ssa"/".sub"/".vtt" downloads are not mislabeled as ".srt".
         disposition_name = _content_disposition_filename(response.headers)
-        return extract_download(response.body, disposition_name or str(download_link))
+        return _download_payload(response.body, disposition_name or str(download_link), payload)
 
     def _search_response(self, video, config):
         if video.get("kind") == "episode":
@@ -165,30 +231,46 @@ class LegendasNetProvider:
         request_headers = dict(headers or {})
         request_headers["Content-Type"] = "application/json"
         request = urllib.request.Request(url, data=body, headers=request_headers, method=method)
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                return HttpResponse(response.status, response.read(), dict(response.headers.items()))
-        except urllib.error.HTTPError as error:
-            return HttpResponse(error.code, error.read(), dict(error.headers.items()))
+        return _request_with_retry(request, timeout)
 
     def _http_get(self, url, headers=None, timeout=HTTP_TIMEOUT_SECONDS):
         request = urllib.request.Request(url, headers=dict(headers or {}), method="GET")
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                return HttpResponse(response.status, response.read(), dict(response.headers.items()))
-        except urllib.error.HTTPError as error:
-            return HttpResponse(error.code, error.read(), dict(error.headers.items()))
+        return _request_with_retry(request, timeout)
 
 
-def extract_download(body, filename=""):
-    if not body:
-        return _content_payload(b"", _format_from_filename(filename), empty=True)
+def _download_payload(body, filename, provider_payload):
+    provider_payload = provider_payload or {}
+    # Reject broken responses: a 200 with an empty stream or an HTML/error page
+    # would otherwise look like a successful download but yields no subtitle.
+    if not body or not body.strip():
+        raise ValueError("legendasnet download returned an empty body")
+    if _is_html_body(body):
+        raise ValueError("legendasnet download returned an HTML/error page")
     stream = io.BytesIO(body)
     if zipfile.is_zipfile(stream):
+        # Host-side extraction (Provider Hub v1.1+): the provider still lists the
+        # zip cheaply with stdlib to pick the member, but hands the raw archive
+        # back to the host, which extracts it and detects the encoding.
         with zipfile.ZipFile(stream) as archive:
-            selected = _first_subtitle_file(archive.namelist())
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
+            member = _first_subtitle_file(archive.namelist())
+        return _archive_payload(body, member=member)
+    if _is_rar_archive(body) or _is_7z_archive(body):
+        # No stdlib listing for rar/7z; let the host pick the member by episode.
+        return _archive_payload(body, episode=provider_payload.get("episode"))
+    # Direct, non-archive subtitle body.
     return _content_payload(body, _direct_format(filename, body))
+
+
+def _archive_payload(body, member=None, episode=None):
+    payload = {
+        "archive_b64": base64.b64encode(body).decode("ascii"),
+        "archive_sha256": hashlib.sha256(body).hexdigest(),
+    }
+    if member is not None:
+        payload["member"] = member
+    else:
+        payload["episode"] = episode
+    return payload
 
 
 def _direct_format(filename, body):
@@ -268,6 +350,10 @@ def _candidate(video, item, kind):
             "forced": forced,
             "release_info": release_info,
             "page_link": page_link,
+            # Carried for host-side member selection when the archive is rar/7z
+            # (which the worker cannot list with stdlib zipfile).
+            "season": _int_or_none(item.get("season")) if kind == "episode" else None,
+            "episode": _int_or_none(item.get("episode")) if kind == "episode" else None,
         },
     }
 
@@ -375,28 +461,38 @@ def _first_subtitle_file(names):
     raise ValueError("legendasnet archive contains no files")
 
 
-def _content_payload(content, subtitle_format, empty=False):
-    if empty:
-        return {
-            "content_b64": "",
-            "content_sha256": "",
-            "content_type": _content_type(subtitle_format),
-            "format": subtitle_format,
-            "encoding": "utf-8",
-            "empty": True,
-        }
+def _is_rar_archive(body):
+    return bool(body) and (body.startswith(b"Rar!\x1a\x07\x00") or body.startswith(b"Rar!\x1a\x07\x01\x00"))
+
+
+def _is_7z_archive(body):
+    return bool(body) and body.startswith(b"7z\xbc\xaf\x27\x1c")
+
+
+def _is_html_body(body):
+    if not body:
+        return False
+    head = body[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or head.startswith(b"<!--")
+        or b"<body" in head
+        or b"<head" in head
+    )
+
+
+def _content_payload(content, subtitle_format):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a
+    # worker guess (especially latin-1, which never fails to decode) only
+    # reintroduces mojibake. Leave encoding unset and let the host normalize.
     content = _normalize_line_endings(content or b"")
-    encoding = "utf-8"
-    try:
-        content.decode("utf-8")
-    except UnicodeDecodeError:
-        encoding = "latin-1"
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": encoding,
         "empty": False,
     }
 
@@ -413,10 +509,6 @@ def _content_type(subtitle_format):
 
 def _normalize_line_endings(content):
     return (content or b"").replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-
-
-def _format_from_filename(filename):
-    return _subtitle_extension(filename or "") or "srt"
 
 
 def _subtitle_extension(name):

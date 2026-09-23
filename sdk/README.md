@@ -28,7 +28,18 @@ A provider bundle is a folder with `provider.json` plus declared `.py` files. Th
 ```python
 search(video: dict, languages: list[dict], config: dict) -> list[dict]
 download(provider_payload: dict, language: dict, config: dict) -> dict | bytes | str | None
+# optional: only needed when download() returns {"archive_b64": ..., "select_member": true}
+select_archive_member(provider_payload: dict, language: dict, members: list[str], config: dict) -> dict
 ```
+
+`select_archive_member` is how a worker language-pins a member of an archive it cannot list
+itself (rar/7z are not stdlib-listable). When `download()` returns `select_member: true`
+with the raw `archive_b64`, the host lists the members and calls `select_archive_member`
+with their names; the worker runs its own language tagging and returns
+`{"member": <name>|None, "decision": "pin"|"defer"|"reject"}` — **pin** the named member,
+**defer** to the host's episode pick (safe for single-language archives), or **reject**
+(host fails loud, e.g. a multilingual archive missing the requested language). This keeps
+language selection identical for zip and rar/7z and avoids silent wrong-language downloads.
 
 No wheels, sdists, native files, symlinks, vendored dependencies, or app-environment `pip install` are part of the bundle. Optional dependencies must be declared in `provider.json` under `dependencies.requirements` with exact versions and SHA256 wheel hashes.
 

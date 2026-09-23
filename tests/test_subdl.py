@@ -1,10 +1,13 @@
 import base64
 import hashlib
+import http.client
 import importlib.util
 import io
+import json
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import call, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -71,6 +74,28 @@ class SubDLLanguageTests(unittest.TestCase):
         codes = self.mod.language_codes([{"alpha3": "por", "country_alpha2": "BR"}])
 
         self.assertEqual(codes, ["BR_PT"])
+
+    def test_new_subdl_language_codes_are_searchable(self):
+        languages = [
+            {"alpha3": code}
+            for code in ("hye", "kaz", "kir", "khm", "kan", "mon", "eus", "glg", "gle", "jav", "sun")
+        ]
+
+        self.assertEqual(
+            self.mod.language_codes(languages),
+            ["EU", "GA", "GL", "HY", "JV", "KK", "KM", "KN", "KY", "MN", "SU"],
+        )
+
+    def test_traditional_chinese_country_and_script_aliases_use_big5_code(self):
+        self.assertEqual(
+            self.mod.language_codes(
+                [
+                    {"alpha3": "zho", "country_alpha2": "TW"},
+                    {"alpha3": "zho", "script": "Hant"},
+                ]
+            ),
+            ["ZH_BG"],
+        )
 
 
 class SubDLQueryTests(unittest.TestCase):
@@ -193,7 +218,7 @@ class SubDLProviderSearchTests(unittest.TestCase):
         self.assertIn("imdb_id", first["matches"])
         self.assertIn("title", first["matches"])
 
-    def test_episode_search_skips_packs_outside_anime_mode(self):
+    def test_episode_search_accepts_packs_outside_anime_mode(self):
         provider = self.mod.SubDLProvider()
         pack_item = {
             "language": "EN",
@@ -222,7 +247,189 @@ class SubDLProviderSearchTests(unittest.TestCase):
             {"api_key": "test-key", "anime_mode": False},
         )
 
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["provider_payload"]["episode"], 5)
+        self.assertTrue(results[0]["provider_payload"]["is_pack"])
+
+    def test_episode_search_rejects_pack_from_another_season(self):
+        provider = self.mod.SubDLProvider()
+        pack_item = {
+            "language": "EN",
+            "name": "show.s02.pack.zip",
+            "url": "/subtitle/pack.zip",
+            "release_name": "Show S02 Pack",
+            "season": 2,
+            "episode_from": 1,
+            "episode_end": 10,
+            "hi": False,
+        }
+        provider._http_get_json = lambda params: _subdl_response(pack_item)
+
+        results = provider.search(
+            {"kind": "episode", "series": "Show", "season": 1, "episode": 5},
+            [{"alpha3": "eng"}],
+            {"api_key": "test-key"},
+        )
+
         self.assertEqual(results, [])
+
+    def test_full_season_pack_requires_matching_child_when_unpack_files_are_listed(self):
+        provider = self.mod.SubDLProvider()
+        pack_item = {
+            "language": "EN",
+            "name": "show.s01.full.season.zip",
+            "url": "/subtitle/season-pack.zip",
+            "release_name": "Show S01 Full Season",
+            "season": 1,
+            "full_season": True,
+            "unpack_files": [
+                {
+                    "file_n_id": "episode-2",
+                    "name": "Show.S01E02.srt",
+                    "season": 1,
+                    "episode": 2,
+                    "language": "EN",
+                    "hi": False,
+                    "url": "/subtitle/episode-2.srt",
+                }
+            ],
+            "hi": False,
+        }
+        provider._http_get_json = lambda params: _subdl_response(pack_item)
+
+        results = provider.search(
+            {"kind": "episode", "series": "Show", "season": 1, "episode": 5},
+            [{"alpha3": "eng"}],
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(results, [])
+
+    def test_pack_child_from_another_season_does_not_match_same_episode_number(self):
+        provider = self.mod.SubDLProvider()
+        pack_item = {
+            "language": "EN",
+            "name": "show.s02.full.season.zip",
+            "url": "/subtitle/season-2-pack.zip",
+            "release_name": "Show S02 Full Season",
+            "season": 2,
+            "full_season": True,
+            "unpack_files": [
+                {
+                    "file_n_id": "season-2-episode-5",
+                    "name": "Show.S02E05.srt",
+                    "season": 2,
+                    "episode": 5,
+                    "language": "EN",
+                    "hi": False,
+                    "url": "/subtitle/season-2-episode-5.srt",
+                }
+            ],
+            "hi": False,
+        }
+        provider._http_get_json = lambda params: _subdl_response(pack_item)
+
+        results = provider.search(
+            {"kind": "episode", "series": "Show", "season": 1, "episode": 5},
+            [{"alpha3": "eng"}],
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(results, [])
+
+    def test_stylized_sdh_marker_marks_result_hearing_impaired(self):
+        item = {
+            "language": "EN",
+            "name": "movie-en.zip",
+            "release_name": "Movie.2026.1080p.𝓢𝓓𝓗",
+        }
+
+        self.assertTrue(self.mod.is_hearing_impaired(item))
+
+    def test_subdl_runtime_policy_bounds_pagination_and_controls_unpack(self):
+        provider = self.mod.SubDLProvider()
+        calls = []
+        full_page = [
+            {"name": f"unsupported-{index}", "language": "unsupported", "url": f"/subtitle/{index}.zip"}
+            for index in range(30)
+        ]
+
+        def get_json(params):
+            calls.append(dict(params))
+            if params.get("page", 1) == 1:
+                return {
+                    "status": True,
+                    "subtitles": full_page,
+                    "bazarr_policy": {"max_pages": 99, "unpack_enabled": False},
+                }
+            return {"status": True, "subtitles": full_page}
+
+        provider._http_get_json = get_json
+        provider.search(
+            {"kind": "movie", "title": "Movie", "imdb_id": "tt1234567"},
+            [{"alpha3": "eng"}],
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1]["page"], 2)
+        self.assertNotIn("unpack", calls[1])
+
+    def test_subdl_runtime_policy_can_disable_the_provider(self):
+        provider = self.mod.SubDLProvider()
+        item = {"name": "movie-en.zip", "language": "EN", "url": "/movie.zip"}
+        calls = []
+
+        def get_json(params):
+            calls.append(dict(params))
+            return {
+                "status": True,
+                "subtitles": [item],
+                "bazarr_policy": {"enabled": False},
+            }
+
+        provider._http_get_json = get_json
+        results = provider.search(
+            {"kind": "movie", "title": "Movie", "imdb_id": "tt1234567"},
+            [{"alpha3": "eng"}],
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(results, [])
+        self.assertEqual(len(calls), 1)
+
+    def test_subdl_runtime_policy_can_disable_season_and_title_fallbacks(self):
+        provider = self.mod.SubDLProvider()
+        calls = []
+
+        def get_json(params):
+            calls.append(dict(params))
+            if len(calls) == 1:
+                return {
+                    "status": True,
+                    "subtitles": [],
+                    "bazarr_policy": {
+                        "season_fallback_enabled": False,
+                        "title_fallback_enabled": False,
+                    },
+                }
+            return {"status": True, "subtitles": []}
+
+        provider._http_get_json = get_json
+        provider.search(
+            {
+                "kind": "episode",
+                "series": "Show",
+                "season": 2,
+                "episode": 3,
+                "absolute_episode": 40,
+                "series_imdb_id": "tt1234567",
+            },
+            [{"alpha3": "eng"}],
+            {"api_key": "test-key", "anime_mode": True},
+        )
+
+        self.assertEqual([call.get("episode_number") for call in calls], [3, 40])
 
     def test_anime_mode_accepts_matching_pack_unpack_file(self):
         provider = self.mod.SubDLProvider()
@@ -406,7 +613,7 @@ class SubDLProviderDownloadTests(unittest.TestCase):
         self.assertEqual(result["format"], "vtt")
         self.assertEqual(result["content_type"], "text/vtt")
 
-    def test_download_selects_requested_episode_from_pack_zip(self):
+    def test_download_returns_archive_with_selected_pack_member(self):
         provider = self.mod.SubDLProvider()
         wanted = b"1\n00:00:01,000 --> 00:00:02,000\nEpisode three\n"
         archive = _zip_bytes(
@@ -434,11 +641,41 @@ class SubDLProviderDownloadTests(unittest.TestCase):
             {"api_key": "test-key"},
         )
 
-        self.assertEqual(base64.b64decode(result["content_b64"]), wanted)
-        self.assertEqual(result["format"], "srt")
-        self.assertFalse(result["empty"])
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["member"], "Show.S01E03.srt")
+        self.assertNotIn("episode", result)
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
 
-    def test_download_returns_empty_when_pack_zip_has_no_requested_episode(self):
+    def test_download_returns_first_member_for_non_pack_zip(self):
+        provider = self.mod.SubDLProvider()
+        archive = _zip_bytes(
+            {
+                "B.movie.srt": b"second alphabetically",
+                "A.movie.srt": b"first alphabetically",
+                "notes.txt": b"not a subtitle",
+            }
+        )
+
+        provider._http_get_bytes = lambda url, timeout=30: archive
+        result = provider.download(
+            {
+                "provider": "subdl",
+                "schema": 1,
+                "download_url": "/subtitle/movie.zip",
+                "format": "zip",
+            },
+            {"alpha3": "eng"},
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["member"], "A.movie.srt")
+        self.assertNotIn("encoding", result)
+
+    def test_download_lets_host_pick_when_pack_zip_has_no_requested_episode(self):
         provider = self.mod.SubDLProvider()
         archive = _zip_bytes({"Show.S01E02.srt": b"episode two"})
 
@@ -459,8 +696,383 @@ class SubDLProviderDownloadTests(unittest.TestCase):
             {"api_key": "test-key"},
         )
 
-        self.assertTrue(result["empty"])
-        self.assertEqual(result["content_b64"], "")
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["episode"], 3)
+        self.assertNotIn("member", result)
+
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.SubDLProvider()
+        provider._http_get_bytes = lambda url, timeout=30: b"   "
+
+        with self.assertRaisesRegex(ValueError, "empty"):
+            provider.download(
+                {
+                    "provider": "subdl",
+                    "schema": 1,
+                    "download_url": "/subtitle/empty.srt",
+                    "format": "srt",
+                },
+                {"alpha3": "eng"},
+                {"api_key": "test-key"},
+            )
+
+    def test_download_rejects_html_error_page(self):
+        provider = self.mod.SubDLProvider()
+        provider._http_get_bytes = lambda url, timeout=30: b"<!DOCTYPE html><html><body>Not found</body></html>"
+
+        with self.assertRaisesRegex(ValueError, "HTML"):
+            provider.download(
+                {
+                    "provider": "subdl",
+                    "schema": 1,
+                    "download_url": "/subtitle/broken.srt",
+                    "format": "srt",
+                },
+                {"alpha3": "eng"},
+                {"api_key": "test-key"},
+            )
+
+
+class _FakeResponse:
+    def __init__(self, body):
+        self._body = body
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+def _http_error(code, body=b"", headers=None):
+    import urllib.error
+
+    return urllib.error.HTTPError(
+        url="https://api.subdl.com/api/v1/subtitles",
+        code=code,
+        msg="error",
+        hdrs=headers or {},
+        fp=io.BytesIO(body),
+    )
+
+
+class SubDLTransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.sleeps = []
+        sleep_patch = patch.object(self.mod.time, "sleep", self.sleeps.append)
+        sleep_patch.start()
+        self.addCleanup(sleep_patch.stop)
+
+    def _patch_urlopen(self, sequence):
+        calls = {"count": 0}
+
+        def fake_urlopen(request, timeout=None):
+            del request, timeout
+            index = calls["count"]
+            calls["count"] += 1
+            outcome = sequence[index]
+            if isinstance(outcome, Exception):
+                raise outcome
+            return _FakeResponse(outcome)
+
+        urlopen_patch = patch.object(self.mod.urllib.request, "urlopen", fake_urlopen)
+        urlopen_patch.start()
+        self.addCleanup(urlopen_patch.stop)
+        return calls
+
+    def test_json_helper_retries_on_url_error_then_succeeds(self):
+        import urllib.error
+
+        body = json.dumps(_subdl_response()).encode("utf-8")
+        calls = self._patch_urlopen(
+            [urllib.error.URLError("connection reset"), body]
+        )
+
+        provider = self.mod.SubDLProvider()
+        data = provider._http_get_json({"api_key": "test-key"})
+
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(len(self.sleeps), 1)
+        self.assertTrue(data.get("status"))
+
+    def test_json_helper_retries_on_503_then_succeeds(self):
+        body = json.dumps(_subdl_response()).encode("utf-8")
+        calls = self._patch_urlopen(
+            [_http_error(503), _http_error(503), body]
+        )
+
+        provider = self.mod.SubDLProvider()
+        data = provider._http_get_json({"api_key": "test-key"})
+
+        self.assertEqual(calls["count"], 3)
+        self.assertEqual(len(self.sleeps), 2)
+        self.assertTrue(data.get("status"))
+
+    def test_json_helper_honors_retry_after_on_429(self):
+        body = json.dumps(_subdl_response()).encode("utf-8")
+        self._patch_urlopen(
+            [_http_error(429, headers={"Retry-After": "4"}), body]
+        )
+
+        provider = self.mod.SubDLProvider()
+        data = provider._http_get_json({"api_key": "test-key"})
+
+        self.assertEqual(self.sleeps, [4.0])
+        self.assertTrue(data.get("status"))
+
+    def test_json_helper_does_not_retry_404(self):
+        calls = self._patch_urlopen([_http_error(404, body=b"missing")])
+
+        provider = self.mod.SubDLProvider()
+        with self.assertRaises(RuntimeError):
+            provider._http_get_json({"api_key": "test-key"})
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(self.sleeps, [])
+
+    def test_json_helper_does_not_retry_403(self):
+        calls = self._patch_urlopen([_http_error(403, body=b"forbidden")])
+
+        provider = self.mod.SubDLProvider()
+        with self.assertRaises(ValueError):
+            provider._http_get_json({"api_key": "test-key"})
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(self.sleeps, [])
+
+    def test_json_helper_raises_after_exhausting_transient_retries(self):
+        calls = self._patch_urlopen(
+            [_http_error(503), _http_error(503), _http_error(503)]
+        )
+
+        provider = self.mod.SubDLProvider()
+        with self.assertRaises(RuntimeError):
+            provider._http_get_json({"api_key": "test-key"})
+
+        self.assertEqual(calls["count"], 3)
+        self.assertEqual(len(self.sleeps), 2)
+
+    def test_bytes_helper_retries_on_timeout_then_succeeds(self):
+        calls = self._patch_urlopen([TimeoutError("read timed out"), b"OK"])
+
+        provider = self.mod.SubDLProvider()
+        body = provider._http_get_bytes("https://dl.subdl.com/file.srt")
+
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(len(self.sleeps), 1)
+        self.assertEqual(body, b"OK")
+
+    def test_bytes_helper_does_not_retry_404(self):
+        calls = self._patch_urlopen([_http_error(404)])
+
+        provider = self.mod.SubDLProvider()
+        with self.assertRaises(self.mod.urllib.error.HTTPError):
+            provider._http_get_bytes("https://dl.subdl.com/missing.srt")
+
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(self.sleeps, [])
+
+
+class SubDLSemanticHTTPErrorTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.provider = self.mod.SubDLProvider()
+
+    def _invoke(self, helper):
+        if helper == "json":
+            return self.provider._http_get_json({"api_key": "synthetic-private-key"})
+        return self.provider._http_get_bytes("https://dl.subdl.com/synthetic-private-url.srt")
+
+    def _errors(self, codes, bodies, headers=None):
+        errors = [_http_error(code, body, headers) for code, body in zip(codes, bodies)]
+        for error in errors:
+            self.addCleanup(error.close)
+        return errors
+
+    def _assert_failure(self, helper, code, body, expected):
+        errors = self._errors([code] * 3, [body] * 3)
+        with patch.object(self.mod.urllib.request, "urlopen", side_effect=errors) as request:
+            with patch.object(self.mod.time, "sleep") as sleep:
+                with self.assertRaises(Exception) as raised:
+                    self._invoke(helper)
+        self.assertEqual(type(raised.exception).__name__, expected)
+        self.assertIs(type(raised.exception), getattr(self.mod, expected))
+        self.assertIs(raised.exception.__cause__, errors[-1])
+        self.assertEqual(request.call_count, 3)
+        self.assertEqual(sleep.call_args_list, [call(0.5), call(1.0)])
+        for private_text in ("synthetic-private", "https://", "api_key", "diagnostic-marker"):
+            self.assertNotIn(private_text, str(raised.exception))
+
+    def test_known_429_tokens_keep_distinct_semantics(self):
+        for helper in ("json", "bytes"):
+            for token, expected in (
+                ("daily_limit", "DownloadLimitExceeded"),
+                ("api_download_limit_exceeded", "DownloadLimitExceeded"),
+                ("service_busy", "ServiceUnavailable"),
+                ("rate_limit", "TooManyRequests"),
+            ):
+                with self.subTest(helper=helper, token=token):
+                    body = json.dumps({"error": token, "message": "diagnostic-marker"}).encode()
+                    self._assert_failure(helper, 429, body, expected)
+
+    def test_unrecognized_429_bodies_remain_rate_limited(self):
+        bodies = (
+            b"", b"<html>daily_limit diagnostic-marker</html>", b"\xff",
+            b"{", b"null", b"42", b'"daily_limit"', b"[]", b"{}",
+            b'{"error":null}', b'{"error":["daily_limit"]}',
+            b'{"error":{"code":"daily_limit"}}', b'{"code":"daily_limit"}',
+            b'{"error":"unknown"}', b'{"error":"DAILY_LIMIT"}',
+            b'{"error":" daily_limit "}',
+            b'{"error":"daily_limit","padding":"' + b"x" * (64 * 1024) + b'"}',
+        )
+        for helper in ("json", "bytes"):
+            for index, body in enumerate(bodies):
+                with self.subTest(helper=helper, body_index=index):
+                    self._assert_failure(helper, 429, body, "TooManyRequests")
+
+    def test_all_server_errors_are_service_failures_even_with_quota_body(self):
+        for helper in ("json", "bytes"):
+            for code in (500, 502, 503, 599):
+                for body in (b"<html>diagnostic-marker</html>", b'{"error":"daily_limit"}'):
+                    with self.subTest(helper=helper, code=code, body=body):
+                        self._assert_failure(helper, code, body, "ServiceUnavailable")
+
+    def test_excessively_nested_429_json_remains_rate_limited(self):
+        body = b"[" * 30000 + b"0" + b"]" * 30000
+        for helper in ("json", "bytes"):
+            with self.subTest(helper=helper):
+                self._assert_failure(helper, 429, body, "TooManyRequests")
+
+    def test_error_body_read_is_bounded_and_only_final_response_is_read(self):
+        for helper in ("json", "bytes"):
+            with self.subTest(helper=helper):
+                errors = self._errors([429] * 3, [b"x" * (70 * 1024)] * 3)
+                with patch.object(errors[0], "read", wraps=errors[0].read) as first_read:
+                    with patch.object(errors[-1], "read", wraps=errors[-1].read) as final_read:
+                        with patch.object(self.mod.urllib.request, "urlopen", side_effect=errors):
+                            with patch.object(self.mod.time, "sleep"):
+                                with self.assertRaises(Exception) as raised:
+                                    self._invoke(helper)
+                self.assertEqual(type(raised.exception).__name__, "TooManyRequests")
+                first_read.assert_not_called()
+                final_read.assert_called_once_with(64 * 1024 + 1)
+
+    def test_exhausted_semantic_error_closes_final_http_response(self):
+        class FakeSocket:
+            def __init__(self, code, body):
+                self.stream = io.BytesIO(
+                    f"HTTP/1.1 {code} Error\r\nContent-Length: {len(body)}\r\n\r\n".encode() + body
+                )
+
+            def makefile(self, *args):
+                return self.stream
+
+        for helper in ("json", "bytes"):
+            for code, body in ((429, b'{"error":"daily_limit"}'), (429, b"x" * (70 * 1024)),
+                               (500, b"service unavailable"), (503, b"x" * (70 * 1024))):
+                with self.subTest(helper=helper, code=code, body_size=len(body)):
+                    responses = []
+                    errors = []
+                    for _ in range(3):
+                        response = http.client.HTTPResponse(FakeSocket(code, body))
+                        response.begin()
+                        error = self.mod.urllib.error.HTTPError(
+                            "https://fixture.invalid", code, "Error", response.headers, response
+                        )
+                        responses.append(response)
+                        errors.append(error)
+                        self.addCleanup(error.close)
+                    with patch.object(self.mod.urllib.request, "urlopen", side_effect=errors):
+                        with patch.object(self.mod.time, "sleep"):
+                            with self.assertRaises(RuntimeError) as raised:
+                                self._invoke(helper)
+                    self.assertIs(raised.exception.__cause__, errors[-1])
+                    self.assertTrue(responses[-1].isclosed())
+
+    def test_failed_error_body_read_remains_rate_limited(self):
+        for helper in ("json", "bytes"):
+            for read_failure in (OSError("diagnostic-marker"), ValueError("closed response")):
+                with self.subTest(helper=helper, read_failure=type(read_failure).__name__):
+                    errors = self._errors([429] * 3, [b""] * 3)
+                    with patch.object(errors[-1], "read", side_effect=read_failure):
+                        with patch.object(self.mod.urllib.request, "urlopen", side_effect=errors):
+                            with patch.object(self.mod.time, "sleep"):
+                                with self.assertRaises(Exception) as raised:
+                                    self._invoke(helper)
+                    self.assertEqual(type(raised.exception).__name__, "TooManyRequests")
+                    self.assertNotIn("diagnostic-marker", str(raised.exception))
+
+    def test_final_exhausted_response_determines_category(self):
+        for helper in ("json", "bytes"):
+            for bodies, expected in (
+                ([b'{"error":"daily_limit"}', b"", b'{"error":"rate_limit"}'], "TooManyRequests"),
+                ([b'{"error":"rate_limit"}', b"", b'{"error":"daily_limit"}'], "DownloadLimitExceeded"),
+            ):
+                with self.subTest(helper=helper, expected=expected):
+                    errors = self._errors([429] * 3, bodies)
+                    with patch.object(self.mod.urllib.request, "urlopen", side_effect=errors):
+                        with patch.object(self.mod.time, "sleep"):
+                            with self.assertRaises(Exception) as raised:
+                                self._invoke(helper)
+                    self.assertEqual(type(raised.exception).__name__, expected)
+                    self.assertIs(raised.exception.__cause__, errors[-1])
+
+    def test_transient_failures_can_recover_before_exhaustion(self):
+        for helper in ("json", "bytes"):
+            with self.subTest(helper=helper):
+                body = b'{"status":true,"subtitles":[]}' if helper == "json" else b"subtitle bytes"
+                errors = self._errors([429, 500], [b'{"error":"daily_limit"}', b""])
+                with patch.object(self.mod.urllib.request, "urlopen", side_effect=errors + [_FakeResponse(body)]):
+                    with patch.object(self.mod.time, "sleep") as sleep:
+                        result = self._invoke(helper)
+                self.assertEqual(result, json.loads(body) if helper == "json" else body)
+                self.assertEqual(sleep.call_args_list, [call(0.5), call(1.0)])
+
+    def test_retry_after_clamps_integer_and_preserves_invalid_backoff(self):
+        for helper in ("json", "bytes"):
+            for header, expected_delay in (("999", 8.0), ("-1", 0.5), ("later", 0.5),
+                                           ("Wed, 21 Oct 2015 07:28:00 GMT", 0.5), ("0", None)):
+                with self.subTest(helper=helper, header=header):
+                    error = self._errors([429], [b""], {"Retry-After": header})[0]
+                    body = b"{}" if helper == "json" else b"subtitle"
+                    with patch.object(self.mod.urllib.request, "urlopen", side_effect=[error, _FakeResponse(body)]):
+                        with patch.object(self.mod.time, "sleep") as sleep:
+                            self._invoke(helper)
+                    self.assertEqual(sleep.call_args_list, [] if expected_delay is None else [call(expected_delay)])
+
+    def test_permanent_statuses_keep_existing_behavior_and_single_attempt(self):
+        for helper in ("json", "bytes"):
+            for code in (403, 404):
+                with self.subTest(helper=helper, code=code):
+                    error = self._errors([code], [b"missing"])[0]
+                    expected = ValueError if code == 403 else (RuntimeError if helper == "json" else self.mod.urllib.error.HTTPError)
+                    with patch.object(self.mod.urllib.request, "urlopen", side_effect=error) as request:
+                        with patch.object(self.mod.time, "sleep") as sleep:
+                            with self.assertRaises(Exception) as raised:
+                                self._invoke(helper)
+                    self.assertIs(type(raised.exception), expected)
+                    self.assertEqual(request.call_count, 1)
+                    sleep.assert_not_called()
+
+    def test_quota_failure_does_not_start_movie_or_anime_fallback(self):
+        videos = (
+            {"kind": "movie", "title": "Example", "imdb_id": "tt1234567", "tmdb_id": 123},
+            {"kind": "episode", "series": "Example", "season": 2, "episode": 1, "absolute_episode": 13},
+        )
+        for video in videos:
+            with self.subTest(kind=video["kind"]):
+                errors = self._errors([429] * 3, [b'{"error":"daily_limit"}'] * 3)
+                with patch.object(self.mod.urllib.request, "urlopen", side_effect=errors) as request:
+                    with patch.object(self.mod.time, "sleep"):
+                        with self.assertRaises(Exception) as raised:
+                            self.provider.search(video, [{"alpha3": "eng"}], {"api_key": "synthetic-key", "anime_mode": True})
+                self.assertEqual(type(raised.exception).__name__, "DownloadLimitExceeded")
+                self.assertEqual(request.call_count, 3)
 
 
 if __name__ == "__main__":

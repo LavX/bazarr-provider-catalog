@@ -6,7 +6,6 @@ import json
 import unittest
 import zipfile
 from pathlib import Path
-from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "hdbits"
@@ -403,52 +402,34 @@ class HDBitsDownloadTests(unittest.TestCase):
             {"username": "user", "passkey": "secret"},
         )
 
-        self.assertEqual(base64.b64decode(result["content_b64"]), SRT_BODY)
+        self.assertEqual(base64.b64decode(result["archive_b64"]), zip_body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(zip_body).hexdigest())
+        self.assertEqual(result["season"], 1)
+        self.assertEqual(result["episode"], 1)
+        self.assertTrue(result["select_member"])
+        self.assertNotIn("content_b64", result)
 
-    def test_download_selects_archive_member_by_requested_language(self):
+    def test_archive_selector_pins_member_by_requested_language(self):
         provider = self.mod.HDBitsProvider()
-        zip_body = _zip_body(
-            {
-                "Chernobyl.S01E01.en.srt": b"english",
-                "Chernobyl.S01E01.gr.srt": b"greek",
-            }
-        )
-        provider._http_get = lambda url, timeout=15: zip_body
-
-        result = provider.download(
-            {
-                "provider": "hdbits",
-                "schema": 1,
-                "subtitle_id": 603,
-                "filename": "Chernobyl.S01E01.zip",
-                "season": 1,
-                "episode": 1,
-                "language": "ell",
-            },
+        result = provider.select_archive_member(
+            {"season": 1, "episode": 1},
             {"alpha3": "ell", "alpha2": "el"},
-            {"username": "user", "passkey": "secret"},
+            ["Chernobyl.S01E01.en.srt", "Chernobyl.S01E01.gr.srt"],
+            {},
         )
 
-        self.assertEqual(base64.b64decode(result["content_b64"]), b"greek")
+        self.assertEqual(result, {"decision": "pin", "member": "Chernobyl.S01E01.gr.srt"})
 
-    def test_download_rejects_archive_missing_requested_episode(self):
+    def test_archive_selector_rejects_archive_missing_requested_episode(self):
         provider = self.mod.HDBitsProvider()
-        zip_body = _zip_body({"Chernobyl.S01E02.en.srt": SRT_BODY})
-        provider._http_get = lambda url, timeout=15: zip_body
+        result = provider.select_archive_member(
+            {"season": 1, "episode": 1},
+            {"alpha3": "eng", "alpha2": "en"},
+            ["Chernobyl.S01E02.en.srt"],
+            {},
+        )
 
-        with self.assertRaisesRegex(ValueError, "episode"):
-            provider.download(
-                {
-                    "provider": "hdbits",
-                    "schema": 1,
-                    "subtitle_id": 601,
-                    "filename": "Chernobyl.S01.en.zip",
-                    "season": 1,
-                    "episode": 1,
-                },
-                {"alpha3": "eng", "alpha2": "en"},
-                {"username": "user", "passkey": "secret"},
-            )
+        self.assertEqual(result, {"decision": "reject"})
 
     def test_download_rejects_empty_response(self):
         provider = self.mod.HDBitsProvider()
@@ -461,38 +442,30 @@ class HDBitsDownloadTests(unittest.TestCase):
                 {"username": "user", "passkey": "secret"},
             )
 
-    def test_content_payload_reports_cp1250_encoding(self):
+    def test_content_payload_omits_guessed_encoding(self):
         body = "Zażółć gęślą jaźń".encode("cp1250")
 
         result = self.mod._content_payload(body, "srt")
 
         self.assertEqual(base64.b64decode(result["content_b64"]), body)
-        self.assertEqual(result["encoding"], "cp1250")
+        self.assertNotIn("encoding", result)
 
-    def test_download_extracts_matching_episode_from_rar(self):
+    def test_download_returns_rar_archive_for_host_extraction(self):
         provider = self.mod.HDBitsProvider()
-        provider._http_get = lambda url, timeout=15: b"rar bytes"
+        raw_archive = b"rar bytes"
+        provider._http_get = lambda url, timeout=15: raw_archive
 
-        with mock.patch.object(
-            self.mod,
-            "_extract_rar_files",
-            return_value=[
-                ("Chernobyl.S01E02.en.srt", b"wrong"),
-                ("Chernobyl.S01E01.en.srt", SRT_BODY),
-            ],
-        ) as extractor:
-            result = provider.download(
-                {
-                    "provider": "hdbits",
-                    "schema": 1,
-                    "subtitle_id": 603,
-                    "filename": "Chernobyl.S01.rar",
-                    "season": 1,
-                    "episode": 1,
-                },
-                {"alpha3": "ell", "alpha2": "el"},
-                {"username": "user", "passkey": "secret"},
-            )
+        result = provider.download(
+            {
+                "provider": "hdbits",
+                "schema": 1,
+                "subtitle_id": 603,
+                "filename": "Chernobyl.S01.rar",
+                "season": 1,
+                "episode": 1,
+            },
+            {"alpha3": "ell", "alpha2": "el"},
+            {"username": "user", "passkey": "secret"},
+        )
 
-        extractor.assert_called_once_with(b"rar bytes")
-        self.assertEqual(base64.b64decode(result["content_b64"]), SRT_BODY)
+        self.assertEqual(base64.b64decode(result["archive_b64"]), raw_archive)

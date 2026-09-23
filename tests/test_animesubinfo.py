@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import io
 import unittest
+import urllib.error
 import zipfile
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -198,13 +199,14 @@ class AnimeSubInfoDownloadTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
 
-    def test_download_posts_hidden_fields_and_extracts_zip_subtitle(self):
+    def test_download_posts_hidden_fields_and_returns_raw_zip_for_host(self):
         provider = self.mod.AnimeSubInfoProvider()
         posts = []
-        provider._http_post = lambda url, data, timeout=15, referer=None: posts.append((url, data, referer)) or _zip_body(
+        body = _zip_body(
             "[HorribleSubs] Kimetsu no Yaiba - 01 [1080p].ass",
             "[Script Info]\r\nTitle: ok\r\n",
         )
+        provider._http_post = lambda url, data, timeout=15, referer=None: posts.append((url, data, referer)) or body
 
         result = provider.download(
             {
@@ -225,22 +227,26 @@ class AnimeSubInfoDownloadTests(unittest.TestCase):
         self.assertEqual(posts[0][1]["id"], "68055")
         self.assertEqual(posts[0][1]["sh"], "session-hash-1")
         self.assertEqual(posts[0][1]["single_file"], "Pobierz napisy")
-        body = base64.b64decode(result["content_b64"])
-        self.assertEqual(body, b"[Script Info]\nTitle: ok\n")
-        self.assertEqual(result["format"], "ass")
-        self.assertEqual(result["content_sha256"], hashlib.sha256(body).hexdigest())
+        # Archive mode: the worker hands the raw archive bytes back untouched and only
+        # names the member it selected from the cheap stdlib listing.
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["member"], "[HorribleSubs] Kimetsu no Yaiba - 01 [1080p].ass")
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
 
     def test_download_refreshes_hash_after_security_error(self):
         provider = self.mod.AnimeSubInfoProvider()
         posts = []
         provider._http_get = lambda url, timeout=15, referer=None: KIMETSU_REFRESHED_HTML
+        archive = _zip_body("Kimetsu.no.Yaiba.ep01.srt", "1\r\n00:00:01,000 --> 00:00:02,000\r\nOK\r\n")
 
         def post(url, data, timeout=15, referer=None):
             del timeout, referer
             posts.append(data["sh"])
             if len(posts) == 1:
                 return b"<html><body>Blad zabezpieczen.</body></html>"
-            return _zip_body("Kimetsu.no.Yaiba.ep01.srt", "1\r\n00:00:01,000 --> 00:00:02,000\r\nOK\r\n")
+            return archive
 
         provider._http_post = post
         result = provider.download(
@@ -260,7 +266,9 @@ class AnimeSubInfoDownloadTests(unittest.TestCase):
         )
 
         self.assertEqual(posts, ["expired-hash", "session-hash-refreshed"])
-        self.assertEqual(base64.b64decode(result["content_b64"]), b"1\n00:00:01,000 --> 00:00:02,000\nOK\n")
+        self.assertEqual(base64.b64decode(result["archive_b64"]), archive)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(archive).hexdigest())
+        self.assertEqual(result["member"], "Kimetsu.no.Yaiba.ep01.srt")
 
     def test_download_returns_direct_subtitle_with_normalized_line_endings(self):
         provider = self.mod.AnimeSubInfoProvider()
@@ -304,6 +312,62 @@ class AnimeSubInfoDownloadTests(unittest.TestCase):
         self.assertEqual(result["format"], "ass")
         self.assertTrue(base64.b64decode(result["content_b64"]).startswith(b"\xef\xbb\xbf[Script Info]\n"))
 
+    def test_download_direct_body_does_not_ship_worker_encoding(self):
+        provider = self.mod.AnimeSubInfoProvider()
+        provider._http_post = lambda url, data, timeout=15, referer=None: b"1\r\n00:00:01,000 --> 00:00:02,000\r\nOK\r\n"
+
+        result = provider.download(
+            {
+                "provider": "animesubinfo",
+                "schema": 1,
+                "subtitle_id": "raw",
+                "download_hash": "hash",
+                "download_url": "http://animesub.info/sciagnij.php",
+                "filename": "raw.srt",
+            },
+            {"alpha3": "pol", "alpha2": "pl"},
+            {},
+        )
+
+        self.assertNotIn("encoding", result)
+        self.assertNotIn("archive_b64", result)
+
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.AnimeSubInfoProvider()
+        provider._http_post = lambda url, data, timeout=15, referer=None: b"   "
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {
+                    "provider": "animesubinfo",
+                    "schema": 1,
+                    "subtitle_id": "raw",
+                    "download_hash": "hash",
+                    "download_url": "http://animesub.info/sciagnij.php",
+                    "filename": "raw.srt",
+                },
+                {"alpha3": "pol", "alpha2": "pl"},
+                {},
+            )
+
+    def test_download_rejects_html_error_page(self):
+        provider = self.mod.AnimeSubInfoProvider()
+        provider._http_post = lambda url, data, timeout=15, referer=None: b"<html><body>Error page</body></html>"
+
+        with self.assertRaises(ValueError):
+            provider.download(
+                {
+                    "provider": "animesubinfo",
+                    "schema": 1,
+                    "subtitle_id": "raw",
+                    "download_hash": "hash",
+                    "download_url": "http://animesub.info/sciagnij.php",
+                    "filename": "raw.srt",
+                },
+                {"alpha3": "pol", "alpha2": "pl"},
+                {},
+            )
+
     def test_archive_rejects_wrong_season_episode_marker(self):
         with self.assertRaises(ValueError):
             self.mod.select_subtitle_file(["Show.S01E02.srt"], {"episode": 1})
@@ -313,6 +377,142 @@ class AnimeSubInfoDownloadTests(unittest.TestCase):
             {"episode": 1},
         )
         self.assertEqual(selected, "Show.S01E01.ass")
+
+
+class _FakeResponse:
+    def __init__(self, body):
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return self._body
+
+
+class _RecordingOpener:
+    """Stub urllib opener that yields a queued sequence of outcomes per open() call."""
+
+    def __init__(self, outcomes):
+        self._outcomes = list(outcomes)
+        self.calls = 0
+
+    def open(self, request, timeout=None):
+        del request, timeout
+        self.calls += 1
+        outcome = self._outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return _FakeResponse(outcome)
+
+
+class AnimeSubInfoTransportRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.sleeps = []
+        self._orig_sleep = self.mod.time.sleep
+        self.mod.time.sleep = lambda seconds: self.sleeps.append(seconds)
+        self.addCleanup(self._restore_sleep)
+
+    def _restore_sleep(self):
+        self.mod.time.sleep = self._orig_sleep
+
+    def _http_error(self, code, headers=None):
+        error = urllib.error.HTTPError(
+            "http://animesub.info/x", code, "boom", headers or {}, io.BytesIO(b"")
+        )
+        self.addCleanup(error.close)
+        return error
+
+    def test_get_retries_url_error_then_succeeds(self):
+        provider = self.mod.AnimeSubInfoProvider()
+        provider._opener = _RecordingOpener(
+            [urllib.error.URLError("connection reset"), b"<html>ok</html>"]
+        )
+
+        body = provider._http_get("http://animesub.info/szukaj.php")
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(provider._opener.calls, 2)
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_get_retries_503_twice_then_succeeds(self):
+        provider = self.mod.AnimeSubInfoProvider()
+        provider._opener = _RecordingOpener(
+            [self._http_error(503), self._http_error(503), b"<html>ok</html>"]
+        )
+
+        body = provider._http_get("http://animesub.info/szukaj.php")
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(provider._opener.calls, 3)
+        # Exponential backoff: 0.5 then 1.0 seconds.
+        self.assertEqual(self.sleeps, [0.5, 1.0])
+
+    def test_post_retries_timeout_then_succeeds(self):
+        provider = self.mod.AnimeSubInfoProvider()
+        provider._opener = _RecordingOpener([TimeoutError(), b"archive-bytes"])
+
+        body = provider._http_post(
+            "http://animesub.info/sciagnij.php", {"id": "1", "sh": "h"}
+        )
+
+        self.assertEqual(body, b"archive-bytes")
+        self.assertEqual(provider._opener.calls, 2)
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_429_honors_retry_after_header(self):
+        provider = self.mod.AnimeSubInfoProvider()
+        provider._opener = _RecordingOpener(
+            [self._http_error(429, {"Retry-After": "3"}), b"<html>ok</html>"]
+        )
+
+        body = provider._http_get("http://animesub.info/szukaj.php")
+
+        self.assertEqual(body, b"<html>ok</html>")
+        self.assertEqual(self.sleeps, [3.0])
+
+    def test_404_is_not_retried_and_propagates_first_call(self):
+        provider = self.mod.AnimeSubInfoProvider()
+        provider._opener = _RecordingOpener([self._http_error(404)])
+
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            provider._http_get("http://animesub.info/szukaj.php")
+
+        self.assertEqual(ctx.exception.code, 404)
+        self.assertEqual(provider._opener.calls, 1)
+        self.assertEqual(self.sleeps, [])
+
+    def test_persistent_503_exhausts_retries_and_raises(self):
+        provider = self.mod.AnimeSubInfoProvider()
+        provider._opener = _RecordingOpener(
+            [self._http_error(503), self._http_error(503), self._http_error(503)]
+        )
+
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            provider._http_get("http://animesub.info/szukaj.php")
+
+        self.assertEqual(ctx.exception.code, 503)
+        self.assertEqual(provider._opener.calls, 3)
+        self.assertEqual(self.sleeps, [0.5, 1.0])
+
+    def test_persistent_url_error_exhausts_retries_and_raises(self):
+        provider = self.mod.AnimeSubInfoProvider()
+        provider._opener = _RecordingOpener(
+            [
+                urllib.error.URLError("reset"),
+                urllib.error.URLError("reset"),
+                urllib.error.URLError("reset"),
+            ]
+        )
+
+        with self.assertRaises(urllib.error.URLError):
+            provider._http_get("http://animesub.info/szukaj.php")
+
+        self.assertEqual(provider._opener.calls, 3)
 
 
 if __name__ == "__main__":

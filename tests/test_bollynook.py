@@ -265,7 +265,7 @@ class BollyNookProviderTests(unittest.TestCase):
 
         self.assertEqual([result["provider_payload"]["movie_id"] for result in results], ["22998"])
 
-    def test_download_extracts_zip_subtitle(self):
+    def test_download_returns_zip_archive_for_host_extraction(self):
         provider = self.mod.BollyNookProvider()
         body = _zip_body("Pathaan.2023.eng.srt", b"1\n00:00:01,000 --> 00:00:02,000\nMovie line\n")
         provider._http_request = lambda url, data=None, timeout=15, referer=None: body
@@ -283,10 +283,11 @@ class BollyNookProviderTests(unittest.TestCase):
             {},
         )
 
-        decoded = base64.b64decode(result["content_b64"])
-        self.assertIn(b"Movie line", decoded)
-        self.assertEqual(result["format"], "srt")
-        self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["member"], "Pathaan.2023.eng.srt")
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
 
     def test_download_selects_zip_member_for_requested_language(self):
         provider = self.mod.BollyNookProvider()
@@ -311,9 +312,54 @@ class BollyNookProviderTests(unittest.TestCase):
             {},
         )
 
-        decoded = base64.b64decode(result["content_b64"])
-        self.assertIn(b"English line", decoded)
-        self.assertNotIn(b"Hindi line", decoded)
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["member"], "Pathaan.2023.eng.srt")
+
+    def test_download_returns_direct_subtitle_body_as_content(self):
+        provider = self.mod.BollyNookProvider()
+        body = b"1\n00:00:01,000 --> 00:00:02,000\nDirect line\n"
+        provider._http_request = lambda url, data=None, timeout=15, referer=None: body
+
+        result = provider.download(
+            {
+                "provider": "bollynook",
+                "schema": 1,
+                "movie_id": "22997",
+                "url": "https://www.bollynook.com/uploaded_pictures/content/titlovi/22997-pathaan.srt",
+                "filename": "22997-pathaan.srt",
+            },
+            {"alpha3": "eng", "alpha2": "en"},
+            {},
+        )
+
+        self.assertEqual(base64.b64decode(result["content_b64"]), body)
+        self.assertEqual(result["content_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["format"], "srt")
+        self.assertNotIn("archive_b64", result)
+        self.assertNotIn("encoding", result)
+
+    def test_download_rejects_empty_body(self):
+        provider = self.mod.BollyNookProvider()
+        provider._http_request = lambda url, data=None, timeout=15, referer=None: b""
+        with self.assertRaises(ValueError):
+            provider.download(
+                {"provider": "bollynook", "url": "https://www.bollynook.com/x.zip"},
+                {"alpha3": "eng", "alpha2": "en"},
+                {},
+            )
+
+    def test_download_rejects_html_error_page(self):
+        provider = self.mod.BollyNookProvider()
+        provider._http_request = (
+            lambda url, data=None, timeout=15, referer=None: b"<!DOCTYPE html><html><body>error</body></html>"
+        )
+        with self.assertRaises(ValueError):
+            provider.download(
+                {"provider": "bollynook", "url": "https://www.bollynook.com/x.zip"},
+                {"alpha3": "eng", "alpha2": "en"},
+                {},
+            )
 
 
 if __name__ == "__main__":

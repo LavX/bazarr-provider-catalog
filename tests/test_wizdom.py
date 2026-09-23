@@ -497,6 +497,8 @@ class WizdomProviderTests(unittest.TestCase):
         )
 
         self.assertEqual(results[0]["provider_payload"]["imdb_id"], "tt4565380")
+        self.assertEqual(results[0]["provider_payload"]["season"], 1)
+        self.assertEqual(results[0]["provider_payload"]["episode"], 2)
         self.assertIn("season", results[0]["matches"])
         self.assertIn("episode", results[0]["matches"])
 
@@ -516,7 +518,7 @@ class WizdomProviderTests(unittest.TestCase):
 
         self.assertEqual(results, [])
 
-    def test_download_extracts_zip_subtitle_and_normalizes_line_endings(self):
+    def test_download_returns_zip_archive_for_host_side_extraction(self):
         provider = self.mod.WizdomProvider()
         body = _zip_files(
             {"Inception.he.srt": b"1\r\n00:00:01,000 --> 00:00:02,000\r\nHello\r\n"}
@@ -530,34 +532,24 @@ class WizdomProviderTests(unittest.TestCase):
                 "subtitle_id": "101",
                 "page_link": "https://wizdom.xyz/movies/tt1375666",
                 "filename": "wizdom.inception.he.zip",
+                "episode": 4,
             },
             {"alpha3": "heb", "alpha2": "he"},
             {},
         )
 
-        decoded = base64.b64decode(result["content_b64"])
-        self.assertEqual(decoded, b"1\n00:00:01,000 --> 00:00:02,000\nHello\n")
-        self.assertEqual(result["format"], "srt")
-        self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertEqual(result["archive_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(result["episode"], 4)
+        self.assertNotIn("content_b64", result)
+        self.assertNotIn("encoding", result)
 
-    def test_content_payload_detects_windows_1255_hebrew(self):
-        body = "1\n00:00:01,000 --> 00:00:02,000\nשלום\n".encode("cp1255")
-
-        result = self.mod._content_payload(body, "srt")
-
-        self.assertEqual(base64.b64decode(result["content_b64"]), body)
-        self.assertEqual(result["encoding"], "windows-1255")
-
-    def test_solve_pow_obeys_deadline(self):
-        with self.assertRaisesRegex(self.mod.ServiceUnavailable, "Anubis"):
-            self.mod._solve_pow("random-data", 64, deadline=self.mod.time.monotonic())
-
-    def test_download_tries_next_archive_member_when_first_is_not_subtitle_text(self):
+    def test_download_passes_none_episode_for_movie_archive(self):
         provider = self.mod.WizdomProvider()
         body = _zip_files(
             {
-                "bad.srt": b"not a subtitle",
-                "good.srt": b"1\n00:00:01,000 --> 00:00:02,000\nGood line\n",
+                "Inception.he.srt": b"1\n00:00:01,000 --> 00:00:02,000\nHello\n",
+                "Inception.notes.txt": b"ignored by the host",
             }
         )
         provider._http_get = lambda url, timeout=10, referer=None: body
@@ -574,34 +566,52 @@ class WizdomProviderTests(unittest.TestCase):
             {},
         )
 
-        decoded = base64.b64decode(result["content_b64"])
-        self.assertIn(b"Good line", decoded)
-        self.assertNotIn(b"not a subtitle", decoded)
+        self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+        self.assertIsNone(result["episode"])
 
-    def test_download_empty_body_returns_empty_payload(self):
+    def test_download_returns_direct_subtitle_body_as_content_without_encoding(self):
         provider = self.mod.WizdomProvider()
-        provider._http_get = lambda url, timeout=10, referer=None: b""
+        body = b"1\r\n00:00:01,000 --> 00:00:02,000\r\nHello\r\n"
+        provider._http_get = lambda url, timeout=10, referer=None: body
 
         result = provider.download(
-            {"provider": "wizdom", "schema": 1, "subtitle_id": "101"},
+            {
+                "provider": "wizdom",
+                "schema": 1,
+                "subtitle_id": "101",
+                "page_link": "https://wizdom.xyz/movies/tt1375666",
+                "filename": "wizdom.inception.he.srt",
+            },
             {"alpha3": "heb", "alpha2": "he"},
             {},
         )
 
-        self.assertTrue(result["empty"])
-        self.assertEqual(result["content_b64"], "")
+        decoded = base64.b64decode(result["content_b64"])
+        self.assertEqual(decoded, b"1\n00:00:01,000 --> 00:00:02,000\nHello\n")
+        self.assertEqual(result["format"], "srt")
+        self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
+        self.assertNotIn("encoding", result)
 
-    def test_download_rejects_archive_with_no_valid_subtitle_text(self):
+    def test_solve_pow_obeys_deadline(self):
+        with self.assertRaisesRegex(self.mod.ServiceUnavailable, "Anubis"):
+            self.mod._solve_pow("random-data", 64, deadline=self.mod.time.monotonic())
+
+    def test_download_empty_body_is_rejected(self):
         provider = self.mod.WizdomProvider()
-        body = _zip_files(
-            {
-                "error.srt": b"<html>upstream error page</html>",
-                "placeholder.srt": b"not a subtitle either",
-            }
-        )
-        provider._http_get = lambda url, timeout=10, referer=None: body
+        provider._http_get = lambda url, timeout=10, referer=None: b""
 
-        with self.assertRaisesRegex(ValueError, "no valid subtitle text"):
+        with self.assertRaisesRegex(ValueError, "subtitle payload"):
+            provider.download(
+                {"provider": "wizdom", "schema": 1, "subtitle_id": "101"},
+                {"alpha3": "heb", "alpha2": "he"},
+                {},
+            )
+
+    def test_download_rejects_html_error_body(self):
+        provider = self.mod.WizdomProvider()
+        provider._http_get = lambda url, timeout=10, referer=None: b"<html>upstream error page</html>"
+
+        with self.assertRaisesRegex(ValueError, "subtitle payload"):
             provider.download(
                 {
                     "provider": "wizdom",

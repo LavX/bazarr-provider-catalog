@@ -19,7 +19,7 @@ Clean-room target for `hdbits`.
 - Supported downloads:
   - Direct subtitle files.
   - ZIP archives.
-  - RAR archives through bundled `py7zz`, with `unar` or `7z` fallback.
+  - ZIP and RAR archives through the host archive API, preserving language and episode selection.
 
 ## Compatibility quirks
 

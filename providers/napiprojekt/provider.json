@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "13d9da1060513cf68d384c2d2d2687f7c301677c34b92a79e909563e492a8188",
+  "bundle_sha256": "7dcaa937e4009e329f1343fa5e5912d76da49be9960976592c08a2cee62ad531",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -17,6 +17,12 @@
         "description": "Optional FlareSolverr /v1 endpoint used when ai-cloudscraper receives a Cloudflare challenge during NapiProjekt catalog scraping.",
         "title": "FlareSolverr URL",
         "type": "string"
+      },
+      "hash_only": {
+        "default": false,
+        "description": "Search only for subtitles matching the video fingerprint. This temporary workaround may return fewer results and ignores author filters.",
+        "title": "Hash-only search",
+        "type": "boolean"
       },
       "only_authors": {
         "default": false,
@@ -309,8 +315,9 @@
   "entry_class": "NapiProjektProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "0a1a7e8d0cf3183be982a07018fca4fc89d066d834cdd4b5b2fd77b654d51707"
+    "provider.py": "1f577592d958344ab7ca1f93b1146ff5e248c570acb354c99679c0b91e908d5f"
   },
+  "flaresolverr": true,
   "languages": [
     "pol"
   ],
@@ -331,5 +338,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.4"
+  "version": "0.1.7"
 }

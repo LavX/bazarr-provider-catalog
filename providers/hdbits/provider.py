@@ -6,19 +6,10 @@ import io
 import json
 import os
 import re
-import shutil
-import subprocess
-import tempfile
 import time
 import urllib.parse
 import urllib.request
 import zipfile
-
-try:
-    import py7zz
-except ImportError:
-    py7zz = None
-
 
 PROVIDER_ID = "hdbits"
 TORRENTS_URL = "https://hdbits.org/api/torrents"
@@ -505,21 +496,28 @@ def _content_payload(content, subtitle_format, empty=False):
     return {
         "content_b64": _base64.b64encode(content).decode("ascii"),
         "content_sha256": _hashlib.sha256(content).hexdigest(),
-        "content_type": "application/x-subrip" if subtitle_format == "srt" else "text/plain",
+        "content_type": _content_type(subtitle_format),
         "format": subtitle_format,
-        "encoding": _detect_encoding(content),
         "empty": bool(empty),
     }
 
 
-def _detect_encoding(content):
-    for encoding in ("utf-8", "cp1250", "latin-1"):
-        try:
-            (content or b"").decode(encoding)
-            return encoding
-        except UnicodeDecodeError:
-            continue
-    return "latin-1"
+def _content_type(subtitle_format):
+    if subtitle_format in {"ass", "ssa"}:
+        return "text/x-ssa"
+    if subtitle_format == "vtt":
+        return "text/vtt"
+    if subtitle_format == "sub":
+        return "text/plain"
+    return "application/x-subrip"
+
+
+def _safe_nonnegative_int(value):
+    if type(value) is int:
+        return value if value >= 0 else None
+    if not isinstance(value, str) or not value.strip().isdigit():
+        return None
+    return int(value.strip())
 
 
 def _delay(config):
@@ -571,7 +569,18 @@ class HDBitsProvider:
         body = self._http_get(f"{DOWNLOAD_URL}?{query}")
         if not body:
             raise RuntimeError("hdbits download returned an empty response")
-        return extract_download(body, payload)
+        return download_payload(body, payload)
+
+    def select_archive_member(self, provider_payload, language, members, config):
+        del config
+        payload = dict(provider_payload or {})
+        if isinstance(language, dict) and language.get("alpha3"):
+            payload["language"] = language["alpha3"]
+        try:
+            member = select_subtitle_file(members, payload)
+        except ValueError:
+            return {"decision": "reject"}
+        return {"decision": "pin", "member": member}
 
     def _result(self, video, row, torrent_id, episode):
         language = row["language"]
@@ -645,23 +654,29 @@ class HDBitsProvider:
             return response.read()
 
 
-def extract_download(body, payload):
+def download_payload(body, payload):
     payload = payload or {}
     filename = payload.get("filename") or ""
     if not body:
         raise RuntimeError("hdbits download returned an empty response")
-    lowered = filename.lower()
-    if lowered.endswith(".rar") or _is_rar_archive(body):
-        files = _extract_rar_files(body)
-        selected = select_subtitle_file([name for name, _data in files], payload)
-        return _content_payload(dict(files)[selected], _subtitle_extension(selected) or "srt")
-    stream = io.BytesIO(body)
-    if lowered.endswith(".zip") or zipfile.is_zipfile(stream):
-        stream.seek(0)
-        with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist(), payload)
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
+    if _is_archive_download(body, filename):
+        return {
+            "archive_b64": _base64.b64encode(body).decode("ascii"),
+            "archive_sha256": _hashlib.sha256(body).hexdigest(),
+            "season": _safe_nonnegative_int(payload.get("season")),
+            "episode": _safe_nonnegative_int(payload.get("episode")),
+            "select_member": True,
+        }
     return _content_payload(body, _format_from_filename(filename))
+
+
+def _is_archive_download(body, filename):
+    lowered = str(filename or "").lower()
+    return (
+        lowered.endswith((".zip", ".rar"))
+        or zipfile.is_zipfile(io.BytesIO(body))
+        or _is_rar_archive(body)
+    )
 
 
 def select_subtitle_file(names, payload):
@@ -751,98 +766,3 @@ def _is_rar_archive(body):
         body.startswith(b"Rar!\x1a\x07\x00")
         or body.startswith(b"Rar!\x1a\x07\x01\x00")
     )
-
-
-def _extract_rar_files(body):
-    errors = []
-    if py7zz is not None:
-        try:
-            return _extract_rar_files_with_py7zz(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("unar"):
-        try:
-            return _extract_rar_files_with_unar(body)
-        except Exception as error:
-            errors.append(error)
-    if shutil.which("7z") or shutil.which("7zz"):
-        try:
-            return _extract_rar_files_with_7z(body)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
-        raise RuntimeError(f"HDBits RAR extraction failed: {details}") from errors[-1]
-    raise RuntimeError("HDBits RAR extraction requires bundled py7zz")
-
-
-def _extract_rar_files_with_py7zz(body):
-    if py7zz is None:
-        raise RuntimeError("HDBits bundled py7zz extractor is unavailable")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "hdbits.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_unar(body):
-    unar = shutil.which("unar")
-    if not unar:
-        raise RuntimeError("HDBits RAR fallback requires unar")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "hdbits.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [unar, "-quiet", "-o", output_dir, archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"unar failed to extract HDBits RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _extract_rar_files_with_7z(body):
-    sevenzip = shutil.which("7z") or shutil.which("7zz")
-    if not sevenzip:
-        raise RuntimeError("HDBits RAR fallback requires 7z")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, "hdbits.rar")
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        result = subprocess.run(
-            [sevenzip, "x", "-y", f"-o{output_dir}", archive_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
-            raise RuntimeError(f"7z failed to extract HDBits RAR: {message}")
-        return _collect_extracted_subtitle_files(output_dir)
-
-
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if not _subtitle_extension(rel):
-                continue
-            with open(path, "rb") as handle:
-                files.append((rel, handle.read()))
-    if not files:
-        raise ValueError("hdbits archive contains no supported subtitle files")
-    return files

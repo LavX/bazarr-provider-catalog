@@ -12,7 +12,6 @@ import random
 import re
 import struct
 import sys
-import tempfile
 import time
 import unicodedata
 import urllib.error
@@ -27,16 +26,6 @@ if _PROVIDER_DIR and _PROVIDER_DIR not in sys.path:
     sys.path.insert(0, _PROVIDER_DIR)
 
 from yunsuo_templates import YUNSUO_CAPTCHA_TEMPLATE_ROWS
-
-try:
-    import py7zz
-except ImportError:  # pragma: no cover, dependency is declared in provider.json
-    py7zz = None
-
-try:
-    import charset_normalizer
-except ImportError:  # pragma: no cover, dependency is declared in provider.json
-    charset_normalizer = None
 
 PROVIDER_ID = "zimuku"
 BASE_URL = "https://srtku.com"
@@ -62,7 +51,7 @@ _ITEM_RE = re.compile(
 _ANCHOR_RE = re.compile(r"<a\b[^>]*>(?P<text>.*?)</a>", re.I | re.S)
 _ROW_RE = re.compile(r"<tr\b[^>]*>(?P<body>.*?)</tr>", re.I | re.S)
 _IMG_RE = re.compile(r"<img\b[^>]*>", re.I | re.S)
-_SXXEXX_RE = re.compile(r"\bs0*(?P<season>\d{1,2})e0*(?P<episode>\d{1,3})\b", re.I)
+_SXXEXX_RE = re.compile(r"\bs0*(?P<season>\d{1,2})[\s._-]*e0*(?P<episode>\d{1,3})\b", re.I)
 _X_EPISODE_RE = re.compile(r"\b0*(?P<season>\d{1,2})x0*(?P<episode>\d{1,3})\b", re.I)
 
 
@@ -307,54 +296,24 @@ def parse_episode_page(body, year=None):
 
 def extract_download(body, payload=None):
     payload = payload or {}
-    if not body:
-        return _content_payload(b"", _format_from_filename(payload.get("filename")), empty=True)
-    stream = io.BytesIO(body)
-    if zipfile.is_zipfile(stream):
-        with zipfile.ZipFile(stream) as archive:
-            selected = select_subtitle_file(archive.namelist(), payload)
-            return _content_payload(archive.read(selected), _subtitle_extension(selected) or "srt")
-    if _is_rar_archive(body):
-        files = _extract_external_archive_files(body, "zimuku.rar")
-        selected = select_subtitle_file([name for name, _data in files], payload)
-        return _content_payload(dict(files)[selected], _subtitle_extension(selected) or "srt")
-    if _is_7z_archive(body):
-        files = _extract_external_archive_files(body, "zimuku.7z")
-        selected = select_subtitle_file([name for name, _data in files], payload)
-        return _content_payload(dict(files)[selected], _subtitle_extension(selected) or "srt")
+    # Reject broken responses up front: the download endpoint can answer with an empty
+    # stream or an HTML/error page that would otherwise look like a successful download.
+    if not body or not body.strip():
+        raise ValueError("zimuku empty download response")
+    if _is_html_body(body):
+        raise ValueError("zimuku returned an HTML/error page instead of a subtitle")
+    if _is_archive_body(body):
+        # Host-side extraction with worker member selection. A Zimuku archive routinely
+        # bundles several languages (CHS + CHT + ENG) for one release; the host lists the
+        # members (zip/rar/7z alike) and calls select_archive_member so we language-pin one
+        # with our own tagging. Works for rar/7z too, which the worker cannot list itself.
+        return {
+            "archive_b64": base64.b64encode(body).decode("ascii"),
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "select_member": True,
+        }
+    # Direct, non-archive subtitle body.
     return _content_payload(body, _format_from_filename(payload.get("filename")))
-
-
-def select_subtitle_file(names, payload=None):
-    payload = payload or {}
-    candidates = [name for name in names if _subtitle_extension(name) and not _is_hidden_path(name)]
-    if not candidates:
-        raise ValueError("zimuku archive contains no supported subtitle files")
-    language = _language_code(payload.get("language"))
-
-    def score(name):
-        normalized = _normalize(os.path.basename(name))
-        value = 0
-        if any(token in normalized for token in ("ass", "ssa", "srt")):
-            value += 1
-        if any(token in normalized for token in ("chs", "gb", "jian", "simplified")):
-            value += 2
-            if language in {"zho", "zho-CN"}:
-                value += 6
-        if any(token in normalized for token in ("cht", "big5", "fan", "traditional")):
-            value += 2
-            if language == "zho-TW":
-                value += 6
-        if any(token in normalized for token in ("eng", "english")):
-            if language == "eng":
-                value += 6
-            if language.startswith("zho"):
-                value += 2
-        if any(token in normalized for token in ("bilingual", "chs eng", "cht eng", "zhong ying", "shuang yu")):
-            value += 4
-        return value
-
-    return max(candidates, key=score)
 
 
 def derive_matches(video, item):
@@ -477,11 +436,24 @@ class ZimukuProvider:
         payload.update({"filename": filename, "language": selected_language})
         return extract_download(file_response.content, payload)
 
+    def select_archive_member(self, provider_payload, language, members, config):
+        # Host lists the archive members (zip/rar/7z); we language-pin one with the same
+        # tagging _languages_from_row uses. Returns {member, decision: pin|defer|reject}.
+        payload = dict(provider_payload or {})
+        payload["language"] = provider_payload.get("language") or _language_code(language)
+        member, decision = _pick_archive_member(members, payload)
+        return {"member": member, "decision": decision}
+
     def _result(self, video, item):
+        video = video or {}
         matches = derive_matches(video, item)
         score = compute_score(video, item)
         language_payload = _language_payload(item["language"])
         filename = f"zimuku.{_slug(item.get('release_info'))}.{item['language']}.zip"
+        # Store episode (and season) so download() can pass episode for host-side
+        # member selection by the Provider Hub.
+        episode = _coerce_int(video.get("episode")) if video.get("kind") == "episode" else None
+        season = _coerce_int(video.get("season")) if video.get("kind") == "episode" else None
         payload = {
             "provider": PROVIDER_ID,
             "schema": 1,
@@ -490,6 +462,8 @@ class ZimukuProvider:
             "filename": filename,
             "language": item["language"],
             "year": item.get("year"),
+            "season": season,
+            "episode": episode,
         }
         return {
             "id": hashlib.sha1(f"{item['detail_url']}|{item['language']}".encode("utf-8")).hexdigest(),
@@ -1000,10 +974,6 @@ def _format_from_filename(filename):
     return _subtitle_extension(filename or "") or "srt"
 
 
-def _is_hidden_path(name):
-    return any(part.startswith(".") for part in (name or "").split("/"))
-
-
 def _is_rar_archive(body):
     return bool(body) and (
         body.startswith(b"Rar!\x1a\x07\x00")
@@ -1015,96 +985,137 @@ def _is_7z_archive(body):
     return bool(body) and body.startswith(b"7z\xbc\xaf\x27\x1c")
 
 
-def _extract_external_archive_files(body, archive_name):
-    if py7zz is None:
-        raise RuntimeError("Zimuku archive extraction requires bundled py7zz")
-    with tempfile.TemporaryDirectory() as temp_dir:
-        archive_path = os.path.join(temp_dir, archive_name)
-        output_dir = os.path.join(temp_dir, "out")
-        os.mkdir(output_dir)
-        with open(archive_path, "wb") as handle:
-            handle.write(body)
-        py7zz.extract_archive(archive_path, output_dir)
-        return _collect_extracted_subtitle_files(output_dir)
+def _is_archive_body(body):
+    # The host extracts zip, rar, and 7z. Detect all three by signature so the raw
+    # archive bytes are handed back for host-side member selection and encoding.
+    return (
+        _is_rar_archive(body)
+        or _is_7z_archive(body)
+        or zipfile.is_zipfile(io.BytesIO(body or b""))
+    )
 
 
-def _collect_extracted_subtitle_files(output_dir):
-    files = []
-    for root, _dirs, filenames in os.walk(output_dir):
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            rel = os.path.relpath(path, output_dir)
-            if _subtitle_extension(rel) and not _is_hidden_path(rel):
-                with open(path, "rb") as handle:
-                    files.append((rel, handle.read()))
-    if not files:
-        raise ValueError("zimuku archive contains no supported subtitle files")
-    return files
+def _pick_archive_member(members, payload):
+    # Language-pin one member from host-listed archive names (tri-state pin/defer/reject).
+    # No archive lib needed: the host lists zip/rar/7z and hands us the names. Same tagging
+    # _languages_from_row uses, so selection agrees with the row's declared language.
+    payload = payload or {}
+    language = _language_code(payload.get("language"))
+    subs = [
+        name
+        for name in (members or [])
+        if not name.endswith("/")
+        and _subtitle_extension(name)
+        and not os.path.basename(name).startswith(".")
+    ]
+    tagged = {name: _language_from_subtitle_filename(name) for name in subs}
+    present = {lang for lang in tagged.values() if lang}
+    # Single-language or untagged archive: nothing to disambiguate, so the host's episode
+    # pick is safe. A multilingual archive missing the requested language must NOT defer
+    # (the host would pick another language), so reject and let Bazarr fall back.
+    if not language or len(present) < 2:
+        return None, "defer"
+    if language not in present:
+        return None, "reject"
+    pool = [name for name in subs if tagged[name] == language]
+    # A season pack carries several episodes per language; resolve the episode here too
+    # before pinning, since the host cannot combine episode and language.
+    season = _coerce_int(payload.get("season"))
+    episode = _coerce_int(payload.get("episode"))
+    if season is not None and episode is not None:
+        episode_pool = [
+            name
+            for name in pool
+            if _file_matches_episode(_normalize(os.path.basename(name)), season, episode)
+        ]
+        if episode_pool:
+            return episode_pool[0], "pin"
+        # Episode markers present but none matches: can't pin safely in a multilingual
+        # archive (episode-only defer would risk another language), so reject.
+        if any(_file_has_episode_marker(_normalize(os.path.basename(name))) for name in pool):
+            return None, "reject"
+    return (pool[0], "pin") if len(pool) == 1 else (None, "reject")
 
 
-def _content_payload(content, subtitle_format="srt", empty=False):
+def _language_from_subtitle_filename(name):
+    # Tag a member by the SAME markers _languages_from_row uses to classify a Zimuku row,
+    # so member selection agrees with the row's declared language. Romanized markers are
+    # matched as delimited tokens (so "gb"/"chs"/"cht" can't hit a substring like "webgb"),
+    # and the script characters (简/繁) are unambiguous. "gb" is Zimuku's Simplified-Chinese
+    # (GB encoding) marker, not British English; Zimuku tags English as eng/english/英文.
+    # Bilingual *.CHS.ENG. members are tagged by their Chinese script (checked first) so an
+    # English request does not steal a Chinese-first release.
+    compact = " " + _normalize(os.path.basename(name or "")) + " "
+    if any(token in compact for token in (" cht ", " big5 ")) or any(
+        marker in (name or "") for marker in ("繁", "繁體", "繁体")
+    ):
+        return "zho-TW"
+    if any(token in compact for token in (" chs ", " gb ")) or any(
+        marker in (name or "") for marker in ("简", "簡", "简体", "簡體")
+    ):
+        return "zho-CN"
+    if any(token in compact for token in (" eng ", " english ")) or "英文" in (name or ""):
+        return "eng"
+    return None
+
+
+def _file_matches_episode(normalized_name, season, episode):
+    # _normalize collapses separators to spaces, so compare whole tokens. The bare
+    # "{season}{episode:02d}" form (S01E01 written as "101") is matched against split
+    # tokens; a substring match would read the "720" in "720p" as S07E20.
+    compact = normalized_name.lower()
+    # SxxExx, tolerating the separator _normalize leaves between season and episode
+    # (S01.E02 / S01 E02 normalize to "s01 e02"), as well as contiguous S01E02.
+    if re.search(rf"(?<![a-z0-9])s0*{season}[\s._-]*e0*{episode}(?!\d)", compact):
+        return True
+    tokens = compact.split()
+    if f"{season}x{episode:02d}" in tokens or f"{season}x{episode}" in tokens:
+        return True
+    return f"{season}{episode:02d}" in tokens
+
+
+def _file_has_episode_marker(normalized_name):
+    compact = normalized_name.lower()
+    return bool(
+        re.search(r"\bs\d{1,2}[\s._-]*e\d{1,3}\b", compact)
+        or re.search(r"\b\d{1,2}x\d{1,3}\b", compact)
+        or any(token.isdigit() and len(token) == 3 for token in compact.split())
+    )
+
+
+def _is_html_body(body):
+    if not body:
+        return False
+    head = body[:1024].lstrip().lower()
+    return (
+        head.startswith(b"<!doctype html")
+        or head.startswith(b"<html")
+        or head.startswith(b"<?xml")
+        or head.startswith(b"<!--")
+        or b"<body" in head
+        or b"<head" in head
+    )
+
+
+def _content_payload(content, subtitle_format="srt"):
+    # Do not guess an encoding. The host runs chardet via Subtitle.normalize(); a worker
+    # guess (especially a legacy codepage that never fails to decode) only reintroduces
+    # mojibake. Leave encoding unset and let the host normalize.
     content = _normalize_line_endings(content or b"")
     return {
         "content_b64": base64.b64encode(content).decode("ascii"),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "content_type": _content_type(subtitle_format),
         "format": subtitle_format or "srt",
-        "encoding": _detect_encoding(content),
-        "empty": bool(empty),
+        "empty": False,
     }
 
 
-def _detect_encoding(content):
-    # Zimuku serves many Chinese subtitles in GBK/GB18030 or Big5 rather than
-    # UTF-8. Report the encoding that actually decodes the bytes so consumers do
-    # not display mojibake by trusting a hard-coded utf-8 label.
-    content = content or b""
-    if not content:
-        return "utf-8"
+def _coerce_int(value):
     try:
-        content.decode("utf-8")
-        return "utf-8"
-    except UnicodeDecodeError:
-        pass
-    detected = _charset_normalizer_encoding(content)
-    if detected:
-        return detected
-    # gb18030 is a superset of GBK and covers simplified and traditional code
-    # points, so try it before Big5 and only fall back to latin-1 as a last
-    # resort to keep the bytes round-trippable.
-    for candidate in ("gb18030", "big5"):
-        try:
-            content.decode(candidate)
-            return candidate
-        except UnicodeDecodeError:
-            continue
-    return "latin-1"
-
-
-def _charset_normalizer_encoding(content):
-    if charset_normalizer is None:
+        return int(value)
+    except (TypeError, ValueError):
         return None
-    try:
-        best = charset_normalizer.from_bytes(content).best()
-    except Exception:  # pragma: no cover, defensive against detector failures
-        return None
-    if best is None:
-        return None
-    encoding = (best.encoding or "").lower().replace("_", "-")
-    # Only trust the detector when it lands on a Chinese-family code page. On
-    # short or ambiguous input it can otherwise guess unrelated encodings, so
-    # fall through to the gb18030/big5 decode chain in that case.
-    aliases = {
-        "gbk": "gb18030",
-        "gb2312": "gb18030",
-        "gb18030": "gb18030",
-        "hz-gb-2312": "gb18030",
-        "big5": "big5",
-        "big5hkscs": "big5",
-        "cp950": "big5",
-        "utf-8": "utf-8",
-    }
-    return aliases.get(encoding)
 
 
 def _content_type(subtitle_format):
