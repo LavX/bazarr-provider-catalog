@@ -222,7 +222,7 @@ class PipocasProviderTests(unittest.TestCase):
         )
         provider._http_post = lambda url, data, headers=None, timeout=10: self.mod.HttpResponse(
             200,
-            b"Cria uma conta",
+            b"<html><body>Cria uma conta</body></html>",
             {},
         )
 
@@ -340,6 +340,31 @@ class PipocasProviderTests(unittest.TestCase):
             )
 
 
+    def test_account_pages_allow_comments_and_head_prefix(self):
+        for page in (
+            b"<!-- comment --><html><body>Cria uma conta</body></html>",
+            b"<!-- first --> \n <!-- second --><head></head><body>Cria uma conta</body>",
+            b"<head></head><body>Cria uma conta</body>",
+        ):
+            with self.subTest(page=page):
+                self.assertTrue(self.mod._requires_account(page))
+
+    def test_subtitle_dialogue_does_not_trigger_account_recovery(self):
+        body = b"1\n00:00:01,000 --> 00:00:02,000\nCria uma conta\n"
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_STORED) as packed:
+            packed.writestr("Movie.srt", body)
+        for content, key in ((body, "content_b64"), (archive.getvalue(), "archive_b64")):
+            with self.subTest(payload=key):
+                provider = self.mod.PipocasProvider()
+                provider._authenticated = True
+                provider._http_get = mock.Mock(return_value=self.mod.HttpResponse(200, content))
+                provider._http_post = mock.Mock(side_effect=AssertionError("Subtitle text triggered login"))
+                result = provider.download({"download_url": self.mod.DOWNLOAD_URL.format(id=501), "filename": "Movie.srt"}, {"alpha3": "por"}, {"username": "user", "password": "pass"})
+                self.assertEqual(base64.b64decode(result[key]), content)
+                self.assertEqual(provider._http_get.call_count, 1)
+                provider._http_post.assert_not_called()
+
     def test_expired_search_session_reauthenticates_once(self):
         provider = self.mod.PipocasProvider()
         provider._authenticated = True
@@ -352,7 +377,7 @@ class PipocasProviderTests(unittest.TestCase):
                 self.assertNotIn("stale", provider._cookies.values())
                 return self.mod.HttpResponse(200, _fixture("pipocas_login.html"))
             searches.append(url)
-            return self.mod.HttpResponse(200, b"Cria uma conta" if len(searches) == 1 else b"<html>no results</html>")
+            return self.mod.HttpResponse(200, b"<html><body>Cria uma conta</body></html>" if len(searches) == 1 else b"<html>no results</html>")
 
         def post(url, data, **kwargs):
             logins.append(url)
@@ -374,7 +399,7 @@ class PipocasProviderTests(unittest.TestCase):
             if url == self.mod.LOGIN_URL:
                 return self.mod.HttpResponse(200, _fixture("pipocas_login.html"))
             downloads.append(url)
-            return self.mod.HttpResponse(200, b"Cria uma conta" if len(downloads) == 1 else subtitle)
+            return self.mod.HttpResponse(200, b"<html><body>Cria uma conta</body></html>" if len(downloads) == 1 else subtitle)
 
         def post(url, data, **kwargs):
             logins.append(url)
@@ -404,7 +429,7 @@ class PipocasProviderTests(unittest.TestCase):
             details.append(url)
             return self.mod.HttpResponse(
                 200,
-                b"Cria uma conta" if len(details) == 1 else _fixture("pipocas_detail_dune.html"),
+                b"<html><body>Cria uma conta</body></html>" if len(details) == 1 else _fixture("pipocas_detail_dune.html"),
             )
 
         def post(url, data, **kwargs):
@@ -429,7 +454,7 @@ class PipocasProviderTests(unittest.TestCase):
             if url == self.mod.LOGIN_URL:
                 return self.mod.HttpResponse(200, _fixture("pipocas_login.html"))
             searches.append(url)
-            return self.mod.HttpResponse(200, b"Cria uma conta")
+            return self.mod.HttpResponse(200, b"<html><body>Cria uma conta</body></html>")
 
         provider._http_get = get
         provider._http_post = mock.Mock(return_value=self.mod.HttpResponse(200, b"<html>profile</html>"))
@@ -441,7 +466,7 @@ class PipocasProviderTests(unittest.TestCase):
     def test_rate_limit_does_not_trigger_login_retry(self):
         provider = self.mod.PipocasProvider()
         provider._authenticated = True
-        provider._http_get = mock.Mock(return_value=self.mod.HttpResponse(429, b"Cria uma conta"))
+        provider._http_get = mock.Mock(return_value=self.mod.HttpResponse(429, b"<html><body>Cria uma conta</body></html>"))
         provider._http_post = mock.Mock()
         with self.assertRaisesRegex(urllib.error.HTTPError, "429"):
             provider.search({"kind": "movie", "title": "Dune"}, [{"alpha3": "por"}], {"username": "user", "password": "pass"})

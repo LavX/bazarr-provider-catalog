@@ -549,7 +549,16 @@ def _raise_for_status(response, url):
 
 
 def _requires_account(body):
-    return b"Cria uma conta" in (body or b"")
+    body = body or b""
+    page = body.lstrip(b"\xef\xbb\xbf \t\r\n")
+    while page.startswith(b"<!--"):
+        comment_end = page.find(b"-->", 4)
+        if comment_end < 0:
+            return False
+        page = page[comment_end + 3:].lstrip()
+    return b"Cria uma conta" in body and bool(
+        re.match(rb"(?i)<(?:!doctype\s+html\b|html\b|head\b|body\b|form\b|div\b)", page)
+    )
 
 
 def _sort_results(results):
