@@ -22,3 +22,7 @@
 - A no-cookie probe to `https://avistaz.to/` returned HTTP 200 with the public AvistaZ landing page.
 - A no-cookie probe to `https://avistaz.to/rules` returned HTTP 302 to `/auth/login`, confirming the cookie validation path.
 - Full release-page search and download proof requires valid AvistaZ session cookies from the test server.
+
+## Review follow-up
+
+Authenticated requests are restricted to the AvistaZ HTTPS origin. Subtitle links and redirects cannot send tracker cookies to another host. Match scores increase with recognized release metadata; an unmatched candidate has the lowest score.

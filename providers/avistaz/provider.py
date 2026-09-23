@@ -260,11 +260,13 @@ class AvistazProvider:
     def download(self, provider_payload, language, config):
         del language
         config = dict(config or {})
-        cookies = _parse_cookies(config)
         payload = provider_payload or {}
         download_url = payload.get("download_url")
         if not download_url:
             raise ValueError("avistaz download requires download_url")
+        if not _is_avistaz_url(download_url):
+            raise ValueError("AvistaZ download URL must use HTTPS on avistaz.to")
+        cookies = _parse_cookies(config)
         response = self._http_get(download_url, self._headers(config), cookies, timeout=HTTP_TIMEOUT_SECONDS, allow_redirects=False)
         _raise_for_status(response, "AvistaZ subtitle download")
         if _looks_like_html(response):
@@ -297,13 +299,16 @@ class AvistazProvider:
         }
 
     def _http_get(self, url, headers, cookies, timeout=HTTP_TIMEOUT_SECONDS, allow_redirects=True):
+        if not _is_avistaz_url(url):
+            raise ValueError("AvistaZ request URL must use HTTPS on avistaz.to")
         request_headers = dict(headers or {})
         if cookies:
             request_headers["Cookie"] = "; ".join(f"{key}={value}" for key, value in cookies.items())
         request = urllib.request.Request(url, headers=request_headers, method="GET")
-        opener = urllib.request.build_opener()
-        if not allow_redirects:
-            opener = urllib.request.build_opener(_NoRedirectHandler)
+        if allow_redirects:
+            opener = urllib.request.build_opener(_SameOriginRedirectHandler())
+        else:
+            opener = urllib.request.build_opener(_NoRedirectHandler())
         try:
             with opener.open(request, timeout=timeout) as response:
                 return HttpResponse(response.status, response.read(), dict(response.headers.items()))
@@ -311,6 +316,13 @@ class AvistazProvider:
             return HttpResponse(exc.code, exc.read(), dict(exc.headers.items()))
         except urllib.error.URLError as exc:
             raise RuntimeError(f"AvistaZ request failed: {exc.reason}") from exc
+
+
+class _SameOriginRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not _is_avistaz_url(newurl):
+            return None
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -362,8 +374,23 @@ def _language_matches(alpha3, country, hi, requested):
 
 
 def _is_avistaz_url(url):
-    parsed = urllib.parse.urlparse(url)
-    return parsed.scheme in {"http", "https"} and parsed.netloc.lower() == "avistaz.to"
+    if not isinstance(url, str) or not url or url != url.strip():
+        return False
+    if any(ord(character) <= 32 or ord(character) == 127 for character in url):
+        return False
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        port = parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme.lower() == "https"
+        and (parsed.hostname or "").lower() == "avistaz.to"
+        and parsed.username is None
+        and parsed.password is None
+        and "@" not in parsed.netloc
+        and port in {None, 443}
+    )
 
 
 def _raise_for_status(response, context):
@@ -468,7 +495,7 @@ def _clean_key(value):
 
 def _score(matches):
     if not matches:
-        return 50
+        return 0
     return min(95, 20 * len(matches))
 
 
@@ -549,10 +576,13 @@ def _subtitle_rows(table, page_url):
             continue
         uploader_cell = mapped.get("uploader")
         extension = _extension_from_cell(mapped.get("extension") or mapped.get("format") or mapped.get("type"))
+        download_url = urllib.parse.urljoin(page_url, href)
+        if not _is_avistaz_url(download_url):
+            continue
         rows.append(
             {
                 "language": language_cell.text(),
-                "download_url": urllib.parse.urljoin(page_url, href),
+                "download_url": download_url,
                 "uploader": uploader_cell.text() if uploader_cell is not None else None,
                 "filename": _filename_from_text(download_cell.text()),
                 "extension": extension,
