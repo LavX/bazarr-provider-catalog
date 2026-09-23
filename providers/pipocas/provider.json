@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "c8aca886108025e109280189bd067023f69fe99ff79d7b42417e0313e463c5a2",
+  "bundle_sha256": "ec581e9ac1240f2276b00973c5f3464424109c76fab78e4abd1f3efb45dec099",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -36,7 +36,7 @@
   "entry_class": "PipocasProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "304ba7c3a4e10f6952e5af9a4e0b19d71ee01a4f5a79378f74421904279df91a"
+    "provider.py": "a5a00bdd0fc6bf57cf9600089486284e6c2115fdb75d95de33788441614f6d93"
   },
   "languages": [
     "eng",
@@ -64,5 +64,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.4"
+  "version": "0.1.5"
 }
