@@ -14,6 +14,12 @@ Clean-room target for `subsource`.
 - Download endpoint: `GET /subtitles/{id}/download`.
 - Downloads are ZIP archives.
 
+## Rate limits
+
+- A `429` response's absolute `X-RateLimit-Reset` value is preferred, followed by JSON `retryAfter` and the standard `Retry-After` header.
+- The provider retries one short reset of at most 60 seconds. A longer reset is surfaced immediately so the host can throttle the provider.
+- Authentication failures remain immediate and are not retried.
+
 ## Compatibility quirks
 
 - Title lookup prefers IMDb id when available and falls back to text search when IMDb search returns no data.
