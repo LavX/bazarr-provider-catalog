@@ -574,8 +574,28 @@ class HDBitsProvider:
     def select_archive_member(self, provider_payload, language, members, config):
         del config
         payload = dict(provider_payload or {})
-        if isinstance(language, dict) and language.get("alpha3"):
-            payload["language"] = language["alpha3"]
+        if isinstance(language, dict):
+            host_language = {
+                key: value
+                for key, value in language.items()
+                if value not in (None, "")
+            }
+            if host_language:
+                provider_language = payload.get("language")
+                if isinstance(provider_language, dict):
+                    requested_language = dict(provider_language)
+                elif provider_language:
+                    requested_language = {"alpha3": provider_language}
+                else:
+                    requested_language = {}
+                requested_language.update(host_language)
+                if not (requested_language.get("country_alpha2") or requested_language.get("country")):
+                    provider_country = payload.get("country_alpha2")
+                    if provider_country:
+                        requested_language["country_alpha2"] = provider_country
+                payload["language"] = requested_language
+        elif language:
+            payload["language"] = language
         try:
             member = select_subtitle_file(members, payload)
         except ValueError:
@@ -731,9 +751,49 @@ def _best_language_candidate(candidates, payload):
 
 
 def _language_candidates(candidates, payload):
-    hints = _language_hints((payload or {}).get("language"))
+    language = (payload or {}).get("language")
+    hints = _language_hints(language)
     if not hints:
         return candidates
+
+    alpha3, _alpha2, country = _language_details(language)
+    country = country or str((payload or {}).get("country_alpha2") or "").upper()
+    if alpha3 == "por":
+        codes_by_name = {name: _filename_language_codes(name) for name in candidates}
+        regions_by_name = {name: _filename_language_region(name) for name in candidates}
+        generic = [
+            name
+            for name, codes in codes_by_name.items()
+            if codes & {"por", "pt"} and regions_by_name[name] is None and "br" not in codes
+        ]
+        brazilian = [
+            name
+            for name, codes in codes_by_name.items()
+            if regions_by_name[name] == "BR" or (regions_by_name[name] is None and codes == {"br"})
+        ]
+        european = [name for name, region in regions_by_name.items() if region == "PT"]
+        unlabelled = [name for name, codes in codes_by_name.items() if not codes]
+
+        if country == "BR":
+            if brazilian:
+                return brazilian
+            if generic:
+                return generic
+        elif country == "PT":
+            if european:
+                return european
+            if generic:
+                return generic
+        elif not country:
+            if european:
+                return european
+            if generic:
+                return generic
+
+        if unlabelled:
+            return unlabelled
+        raise ValueError("hdbits archive does not contain the requested language")
+
     matching = [name for name in candidates if hints & _filename_language_codes(name)]
     if matching:
         return matching
@@ -766,12 +826,54 @@ def _filename_language_codes(name):
     return labels
 
 
+def _filename_language_region(name):
+    tokens = _tokens(os.path.splitext(os.path.basename(name))[0])
+    if len(tokens) < 2:
+        return None
+    known = set(ALPHA2_TO_ALPHA3) | set(ALPHA3_TO_ALPHA2) | set(SPECIAL_HDBITS_LANGUAGE)
+    variants = {"forced", "sdh", "cc"}
+    end = len(tokens)
+    while end > 1 and tokens[end - 1] in variants:
+        end -= 1
+    if end > 1 and tokens[end - 1] == "hi":
+        previous = end - 2
+        while previous > 0 and tokens[previous] in variants:
+            previous -= 1
+        if previous > 0 and tokens[previous] in known and tokens[previous] != "hi":
+            end -= 1
+            while end > 1 and tokens[end - 1] in variants:
+                end -= 1
+    if end > 1 and tokens[end - 1] in {"br", "pt"} and tokens[end - 2] in {"pt", "por"}:
+        return tokens[end - 1].upper()
+    if tokens[end - 1] == "br":
+        return "BR"
+    return None
+
+
+def _language_details(language):
+    if isinstance(language, dict):
+        alpha3 = language.get("alpha3")
+        alpha2 = language.get("alpha2")
+        country = language.get("country_alpha2") or language.get("country")
+    else:
+        alpha3 = language
+        alpha2 = None
+        country = None
+    alpha3 = str(alpha3 or "").lower()
+    alpha2 = str(alpha2 or "").lower()
+    if not alpha3 and alpha2:
+        alpha3 = ALPHA2_TO_ALPHA3.get(alpha2, "")
+    return alpha3, alpha2, str(country or "").upper()
+
+
 def _language_hints(language):
-    alpha3 = str(language or "").lower()
+    alpha3, alpha2, _country = _language_details(language)
     if not alpha3:
         return set()
     hints = {alpha3}
-    alpha2 = ALPHA3_TO_ALPHA2.get(alpha3)
+    mapped_alpha2 = ALPHA3_TO_ALPHA2.get(alpha3)
+    if mapped_alpha2:
+        hints.add(mapped_alpha2)
     if alpha2:
         hints.add(alpha2)
     hints.update(code for code, (mapped, _country) in SPECIAL_HDBITS_LANGUAGE.items() if mapped == alpha3)
