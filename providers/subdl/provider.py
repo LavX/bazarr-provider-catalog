@@ -435,11 +435,18 @@ def _advertises_ai_translation(data):
     )
 
 
+def _only_hidden_ai_rows(item):
+    if _is_ai_translated(item):
+        return True
+    children = [child for child in item.get("unpack_files") or [] if isinstance(child, dict)]
+    return bool(children) and all(_is_ai_translated(None, child) for child in children)
+
+
 def _merge_items(target, seen, data, include_ai_translated=True):
     for item in _response_items(data):
         # A hidden AI row is dropped before deduplication, so it can never take
         # the name of a visible human row and remove it from the results.
-        if not include_ai_translated and _is_ai_translated(item):
+        if not include_ai_translated and _only_hidden_ai_rows(item):
             continue
         item_id = _clean_text(item.get("name")) or _clean_text(item.get("url"))
         if not item_id or item_id in seen:
@@ -660,6 +667,10 @@ def _matches_for_item(video, item, child, is_pack):
         if video.get("tmdb_id"):
             matches.add("tmdb_id")
     return sorted(matches)
+
+
+def _account_digest(api_key):
+    return hashlib.sha256(_coerce_text(api_key).encode("utf-8")).hexdigest()
 
 
 def _without_api_key(url):
@@ -931,8 +942,12 @@ def _build_ai_candidates(video, requested_languages, translation, existing_candi
     if not _valid_translation_block(translation) or translation.get("entitled") is not True or blocked:
         return []
     missing = translation.get("missing_languages")
-    sources = [source for source in translation["sources"] if _valid_translation_source(source)]
-    if not missing or not sources:
+    sources = [
+        source for source in translation["sources"]
+        if _valid_translation_source(source)
+        and _clean_text(source.get("language")).upper() in _SUBDL_TO_LANGUAGE
+    ]
+    if not missing or not sources or _quota_count(translation.get("remaining")) == 0:
         return []
     missing_codes = {_clean_text(code).upper() for code in missing if _clean_text(code)}
     results = []
@@ -1132,19 +1147,6 @@ def _translation_job_ready(job):
     return isinstance(job, dict) and job.get("download_ready") is True
 
 
-def _translation_estimate_seconds(job):
-    if not isinstance(job, dict):
-        return 60
-    response = job
-    job = _translation_job(response)
-    for value in (response.get("estimated_duration_ms"), job.get("eta_ms")):
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            continue
-        if math.isfinite(value) and value >= 0:
-            return value / 1000.0
-    return 60
-
-
 def _translation_file_format(headers):
     headers = headers or {}
     disposition = _coerce_text(headers.get("Content-Disposition"))
@@ -1232,6 +1234,7 @@ class SubDLProvider:
     def __init__(self):
         self._pending_event = None
         self._quota_blocked_until = 0.0
+        self._quota_blocked_account = None
         self._quota_status = None
         self._logged_video_keys = set()
         self._logged_video_order = []
@@ -1248,6 +1251,12 @@ class SubDLProvider:
         self._account_status_refresh_after = 0.0
         self._account_request_thread = None
 
+    def _quota_blocked(self, api_key):
+        return (
+            time.monotonic() < self._quota_blocked_until
+            and self._quota_blocked_account == _account_digest(api_key)
+        )
+
     def drain_events(self):
         if self._pending_event is None:
             return []
@@ -1262,7 +1271,9 @@ class SubDLProvider:
             entitled = entitled_value if type(entitled_value) is bool else None
         if type(exhausted) is not bool:
             sources = translation.get("sources")
-            if time.monotonic() < self._quota_blocked_until:
+            if self._quota_blocked(api_key):
+                exhausted = True
+            elif _quota_count(translation.get("remaining")) == 0:
                 exhausted = True
             elif isinstance(sources, list):
                 exhausted = not sources
@@ -1368,7 +1379,7 @@ class SubDLProvider:
             return None
         # A digest, never the key itself, ties the job to its account, so a new
         # API key neither polls the old account's job nor inherits its markers.
-        account = hashlib.sha256(_coerce_text(api_key).encode("utf-8")).hexdigest()
+        account = _account_digest(api_key)
         return (
             account, str(n_id), target,
             _coerce_int((payload or {}).get("season")),
@@ -1599,6 +1610,7 @@ class SubDLProvider:
         safe_token = _safe_translation_error_token(token, api_key)
         if safe_token == "translation_quota_exhausted":
             self._quota_blocked_until = time.monotonic() + 900.0
+            self._quota_blocked_account = _account_digest(api_key)
             self._set_translation_event({}, api_key=api_key, exhausted=True)
             if not self._quota_exhaustion_logged:
                 self._quota_exhaustion_logged = True
@@ -1761,10 +1773,7 @@ class SubDLProvider:
 
             if not _translation_job_ready(job):
                 now = time.monotonic()
-                estimate = _translation_estimate_seconds(response if response is not None else job)
-                upstream_window = max(90.0, min(estimate * 2, 180.0))
-                poll_window = max(0.0, deadline - now - 35.0)
-                poll_deadline = now + min(upstream_window, poll_window)
+                poll_deadline = now + max(0.0, deadline - now - 35.0)
                 failures = 0
                 while not _translation_job_ready(job):
                     remaining = poll_deadline - time.monotonic()
@@ -1975,7 +1984,7 @@ class SubDLProvider:
                 sources = translation_data["sources"]
                 if translation_data["entitled"] is True and not sources:
                     self._log_empty_sources_for_reset(translation_data.get("quota_reset_at"), api_key)
-                blocked = time.monotonic() < self._quota_blocked_until
+                blocked = self._quota_blocked(api_key)
                 if runtime_policy["ai_translation_enabled"] and not blocked:
                     try:
                         ai_candidates = _build_ai_candidates(

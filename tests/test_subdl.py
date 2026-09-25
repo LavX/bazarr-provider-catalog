@@ -1521,6 +1521,66 @@ class SubDLAITranslationSearchTests(unittest.TestCase):
         self.assertNotIn("episode", regular["matches"])
         self.assertEqual(translated["provider_payload"]["episode"], 3)
 
+    def test_reported_zero_quota_is_exhausted_even_with_sources(self):
+        provider = self.mod.SubDLProvider()
+        response = _subdl_response()
+        response["translation"] = {
+            "entitled": True, "missing_languages": ["FR"], "remaining": 0, "limit": 50,
+            "sources": [{"n_id": 771, "language": "EN", "hi": False}],
+        }
+        provider._http_get_json = lambda params: response
+
+        results = provider.search(
+            {"kind": "movie", "title": "Movie", "imdb_id": "tt1234567"},
+            [{"alpha3": "fra"}], {"api_key": "test-key", "ai_translate": True},
+        )
+
+        self.assertEqual(results, [])
+        self.assertIs(provider.drain_events()[0]["exhausted"], True)
+
+    def test_unsupported_source_language_does_not_win_the_ranking(self):
+        provider = self.mod.SubDLProvider()
+        response = _subdl_response()
+        response["translation"] = {
+            "entitled": True, "missing_languages": ["FR"],
+            "sources": [
+                {"n_id": 1, "language": "XX", "hi": False, "releases": ["Movie GROUPA BluRay"]},
+                {"n_id": 2, "language": "EN", "hi": False, "releases": ["Movie WEB"]},
+            ],
+        }
+        provider._http_get_json = lambda params: response
+
+        results = provider.search(
+            {"kind": "movie", "title": "Movie", "imdb_id": "tt1234567",
+             "release_group": "GROUPA", "source": "BluRay"},
+            [{"alpha3": "fra"}], {"api_key": "test-key", "ai_translate": True},
+        )
+
+        self.assertEqual([item["id"] for item in results], ["ai:2:FR:plain"])
+
+    def test_pack_of_hidden_ai_files_does_not_shadow_human_pack(self):
+        provider = self.mod.SubDLProvider()
+
+        def pack(url, ai):
+            child = {
+                "file_n_id": f"{url}-e03", "name": "Show.S01E03.srt", "season": 1, "episode": 3,
+                "language": "EN", "hi": False, "url": f"/subtitle/{url}-e03.srt",
+            }
+            if ai:
+                child["ai_translated"] = True
+            return {
+                "language": "EN", "name": "show.s01.zip", "url": f"/subtitle/{url}.zip",
+                "season": 1, "full_season": True, "hi": False, "unpack_files": [child],
+            }
+
+        provider._http_get_json = lambda params: _subdl_response(pack("ai-pack", True), pack("human-pack", False))
+        results = provider.search(
+            {"kind": "episode", "series": "Show", "season": 1, "episode": 3},
+            [{"alpha3": "eng"}], {"api_key": "test-key"},
+        )
+
+        self.assertEqual([item["id"] for item in results], ["human-pack-e03"])
+
     def test_regular_row_from_another_season_does_not_suppress_ai(self):
         provider = self.mod.SubDLProvider()
         translation = {
@@ -2654,6 +2714,53 @@ class SubDLAITranslationLifecycleTests(unittest.TestCase):
         )
         self.assertIsNone(self.provider._quota_status)
         self.assertEqual(self.provider.drain_events(), [])
+
+    def test_quota_pause_applies_only_to_the_refused_account(self):
+        import urllib.error
+
+        error = urllib.error.HTTPError(
+            "https://api.subdl.com/translation", 429, "quota", {},
+            io.BytesIO(b'{"error":"translation_quota_exhausted"}'),
+        )
+        self._patch_urlopen([error])
+        self.assertIsNone(self.provider.download(self.payload, {"alpha3": "fra"}, self.config))
+        self.provider.drain_events()
+        self.assertEqual(self._search(), [])
+
+        response = _subdl_response()
+        response["translation"] = {
+            "entitled": True, "missing_languages": ["FR"],
+            "sources": [{"n_id": 771, "language": "EN", "hi": False}],
+        }
+        self.provider._http_get_json = lambda params: response
+        other = self.provider.search(
+            {"kind": "movie", "title": "Movie", "imdb_id": "tt1234567"},
+            [{"alpha3": "fra"}], {**self.config, "api_key": "another-account-key"},
+        )
+
+        self.assertEqual([item["id"] for item in other], ["ai:771:FR:plain"])
+        self.assertIs(self.provider.drain_events()[0]["exhausted"], False)
+
+    def test_polling_honors_the_configured_wait(self):
+        queued = self._response({"request_id": "long-job", "job": {
+            "status": "queued", "download_ready": False,
+        }}, status=202)
+        running = self._response({"job": {"status": "running", "download_ready": False}})
+        ready = self._response({"job": {"status": "published", "download_ready": True}})
+        calls = self._patch_urlopen([
+            queued, *([running] * 80), ready,
+            _FakeTranslationHTTPResponse(b"1\n00:00:01,000 --> 00:00:02,000\nLate\n"),
+        ])
+        now = [0.0]
+        config = {**self.config, "ai_translate_timeout_seconds": "600"}
+        with patch.object(self.mod.time, "monotonic", side_effect=lambda: now[0]):
+            with patch.object(self.mod.time, "sleep", side_effect=lambda delay: now.__setitem__(0, now[0] + delay)):
+                result = self.provider.download(self.payload, {"alpha3": "fra"}, config)
+
+        self.assertIsNotNone(result)
+        self.assertGreater(now[0], 300)
+        self.assertLessEqual(now[0], 600)
+        self.assertEqual(sum(request.get_method() == "POST" for request, _ in calls), 1)
 
     def test_translation_state_is_kept_per_api_key(self):
         import urllib.error
