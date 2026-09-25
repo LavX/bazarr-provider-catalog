@@ -255,6 +255,29 @@ class SubDLProviderSearchTests(unittest.TestCase):
         self.assertEqual(results[0]["provider_payload"]["episode"], 5)
         self.assertTrue(results[0]["provider_payload"]["is_pack"])
 
+    def test_empty_unpack_files_falls_back_to_pack_range(self):
+        provider = self.mod.SubDLProvider()
+        pack = {
+            "language": "EN",
+            "name": "show.s01.zip",
+            "url": "/subtitle/season-1.zip",
+            "season": 1,
+            "full_season": True,
+            "episode_from": 1,
+            "episode_end": 10,
+            "unpack_files": [],
+            "hi": False,
+        }
+        provider._http_get_json = lambda params: _subdl_response(pack)
+
+        results = provider.search(
+            {"kind": "episode", "series": "Show", "season": 1, "episode": 5},
+            [{"alpha3": "eng"}],
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual([item["id"] for item in results], ["show.s01.zip"])
+
     def test_episode_search_rejects_pack_from_another_season(self):
         provider = self.mod.SubDLProvider()
         pack_item = {
@@ -668,6 +691,34 @@ class SubDLProviderDownloadTests(unittest.TestCase):
             provider.download(legacy, {"alpha3": "eng"}, {"api_key": key})
         self.assertEqual(requested, [f"https://dl.subdl.com/subtitle/1-1.zip?api_key={key}"])
         self.assertNotIn(key, str(raised.exception))
+
+    def test_signed_url_outside_subdl_download_origin_gets_no_key(self):
+        provider = self.mod.SubDLProvider()
+        key = "origin-check-secret-key"
+        requested = []
+        provider._http_get_bytes = lambda url, timeout=30: requested.append(url) or b"subtitle"
+        for url in (
+            "https://attacker.example/file.srt",
+            "https://dl.subdl.com.attacker.example/file.srt",
+            "https://dl.subdl.com@attacker.example/file.srt",
+            "http://dl.subdl.com/file.srt",
+            f"https://attacker.example/file.srt?api_key={key}",
+        ):
+            provider.download(
+                {"provider": "subdl", "schema": 1, "download_url": url,
+                 "download_url_signed": True, "format": "srt"},
+                {"alpha3": "eng"}, {"api_key": key},
+            )
+        self.assertEqual(len(requested), 5)
+        self.assertFalse(any(key in url for url in requested), requested)
+
+        requested.clear()
+        provider.download(
+            {"provider": "subdl", "schema": 1, "download_url": "https://dl.subdl.com/file.srt",
+             "download_url_signed": True, "format": "srt"},
+            {"alpha3": "eng"}, {"api_key": key},
+        )
+        self.assertEqual(requested, [f"https://dl.subdl.com/file.srt?api_key={key}"])
 
     def test_unsigned_download_url_is_fetched_without_a_key(self):
         provider = self.mod.SubDLProvider()
@@ -1169,7 +1220,7 @@ class SubDLAITranslationSearchTests(unittest.TestCase):
         manifest = json.loads((PROVIDER_DIR / "provider.json").read_text())
         schema = manifest["config_schema"]["properties"]
 
-        self.assertEqual(manifest["version"], "0.2.0")
+        self.assertEqual(manifest["version"], "0.2.1")
         self.assertIs(schema["ai_translate"]["default"], False)
         self.assertIn("SubDL publishes each translation as a regular subtitle", schema["ai_translate"]["title"])
         self.assertIs(schema["include_ai_translated"]["default"], False)
