@@ -14,6 +14,7 @@ Clean-room target for `assrt`.
 - Search results can expose several Assrt language codes from one subtitle item.
 - Season-pack detail responses include a `filelist`; the provider narrows episode packs to the requested episode before choosing a language-specific file.
 - Single-file detail responses can provide the final download URL directly on the subtitle entry.
+- An empty download body or an HTML page (login, quota or expired-file pages can arrive as HTTP 200) is rejected instead of being returned as a subtitle.
 
 ## Live verification
 

@@ -25,6 +25,9 @@ ACCOUNT_API_URL = "https://api.subdl.com/api/v1/me"
 DOWNLOAD_BASE_URL = "https://dl.subdl.com"
 # The only origin the configured API key may be sent to on a download.
 SIGNED_DOWNLOAD_HOSTS = frozenset({"dl.subdl.com"})
+# Every download, signed or not, stays on SubDL's own HTTPS hosts, so a tampered
+# row URL cannot make the worker fetch loopback, private-network or foreign hosts.
+DOWNLOAD_HOST_DOMAIN = "subdl.com"
 TRANSLATION_API_BASE_URL = "https://api.subdl.com/api/v1/pro/translate"
 TRANSLATION_POLL_INTERVAL_SECONDS = 4
 TRANSLATION_POLL_FAILURE_LIMIT = 5
@@ -119,7 +122,7 @@ def _backoff_seconds(attempt):
     return min(delay, RETRY_BACKOFF_CAP_SECONDS)
 
 
-def _urlopen_with_retry(request, timeout):
+def _urlopen_with_retry(request, timeout, opener=None):
     # Wrap only the raw urllib call in a bounded retry loop. Transient failures
     # (connection reset/refused/DNS via URLError, socket timeouts, and 5xx/429) are
     # retried up to HTTP_MAX_ATTEMPTS times with exponential backoff. Any other error,
@@ -127,9 +130,10 @@ def _urlopen_with_retry(request, timeout):
     # error handling. The successful response is read and returned as bytes so the caller
     # keeps its existing return type and post-processing.
     last_exc = None
+    open_url = urllib.request.urlopen if opener is None else opener.open
     for attempt in range(1, HTTP_MAX_ATTEMPTS + 1):
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with open_url(request, timeout=timeout) as response:
                 return response.read()
         except urllib.error.HTTPError as exc:
             if attempt >= HTTP_MAX_ATTEMPTS or not _is_transient_http_error(exc):
@@ -691,6 +695,49 @@ def _without_api_key(url):
     if len(kept) == len(query):
         return value, False
     return urllib.parse.urlunsplit(parts._replace(query=urllib.parse.urlencode(kept))), True
+
+
+def _download_request_url(url):
+    """Return the HTTPS URL to fetch for a SubDL download, or None if it is not SubDL's.
+
+    A plain http link on a SubDL host is upgraded, because dl.subdl.com only
+    redirects it to the same path over HTTPS.
+    """
+    value = _coerce_text(url)
+    if not value or "\\" in value or any(ord(char) <= 32 or ord(char) == 127 for char in value):
+        return None
+    try:
+        parts = urllib.parse.urlsplit(value)
+        port = parts.port
+    except ValueError:
+        return None
+    host = (parts.hostname or "").casefold()
+    if (
+        parts.scheme not in ("http", "https")
+        or parts.username is not None
+        or parts.password is not None
+        or "@" in parts.netloc
+        or not (host == DOWNLOAD_HOST_DOMAIN or host.endswith("." + DOWNLOAD_HOST_DOMAIN))
+        or port not in (None, 443 if parts.scheme == "https" else 80)
+    ):
+        return None
+    return urllib.parse.urlunsplit(parts._replace(scheme="https", netloc=host))
+
+
+def _is_https_download_url(url):
+    return _download_request_url(url) is not None and urllib.parse.urlsplit(url).scheme == "https"
+
+
+class _DownloadRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Returning None makes urllib raise the redirect as an HTTPError.
+        if not _is_https_download_url(newurl):
+            return None
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _download_opener():
+    return urllib.request.build_opener(_DownloadRedirectHandler())
 
 
 def _is_signed_download_origin(url):
@@ -1473,12 +1520,14 @@ class SubDLProvider:
         return json.loads(body.decode("utf-8"))
 
     def _http_get_bytes(self, url, timeout=HTTP_TIMEOUT_SECONDS):
+        if not _is_https_download_url(url):
+            raise ValueError("SubDL download URL must use HTTPS on a subdl.com host")
         request = urllib.request.Request(
             url,
             headers={"User-Agent": os.environ.get("SZ_USER_AGENT", USER_AGENT)},
         )
         try:
-            return _urlopen_with_retry(request, timeout)
+            return _urlopen_with_retry(request, timeout, opener=_download_opener())
         except urllib.error.HTTPError as exc:
             _raise_semantic_http_error(exc)
             if exc.code == 403:
@@ -2033,7 +2082,9 @@ class SubDLProvider:
         download_url, legacy_signed = _without_api_key(payload.get("download_url"))
         if not download_url:
             raise ValueError("SubDL download requires download_url")
-        request_url = _absolute_download_url(download_url)
+        request_url = _download_request_url(_absolute_download_url(download_url))
+        if request_url is None:
+            raise ValueError("SubDL download URL must be on a subdl.com host")
         if (payload.get("download_url_signed") is True or legacy_signed) and _is_signed_download_origin(request_url):
             request_url = _with_api_key(request_url, api_key)
         body = self._http_get_bytes(request_url, timeout=HTTP_TIMEOUT_SECONDS)

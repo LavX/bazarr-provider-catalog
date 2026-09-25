@@ -128,6 +128,11 @@ class AssrtProvider:
         download_url = _https_download_url(download_url)
         self._sleep(request_delay_seconds(quota))
         body = self._http_get_bytes(download_url, config=config)
+        # A login, quota or expired-file page can come back as HTTP 200.
+        if not body or not body.strip():
+            raise ValueError(f"assrt returned an empty file for {subtitle_id}")
+        if _looks_like_html(body):
+            raise ValueError(f"assrt returned an HTML page instead of a subtitle for {subtitle_id}")
         body = _normalize_line_endings(body)
         filename = selected_file.get("f") if selected_file else None
         return _content_payload(body, _subtitle_extension(filename or payload.get("filename")) or "srt")
@@ -502,6 +507,11 @@ def _file_season_episode(filename):
     if season and episode is not None:
         return _safe_int(season.group("season") or season.group("season_word")), episode
     return None
+
+
+def _looks_like_html(body):
+    sample = body[:512].lstrip(b"\xef\xbb\xbf \t\r\n").lower()
+    return sample.startswith((b"<!doctype html", b"<html", b"<head", b"<body"))
 
 
 def _normalize_line_endings(body):

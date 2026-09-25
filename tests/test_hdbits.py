@@ -122,7 +122,7 @@ class HDBitsLanguageAndFilterTests(unittest.TestCase):
             base_matches=["imdb_id", "title", "year"],
         )
 
-        # 502 is an HDBits "br" row, so it only matches a Brazilian Portuguese request.
+        # 502 is an HDBits "br" row, returned as Brazilian Portuguese.
         self.assertEqual([row["subtitle_id"] for row in rows], [501, 502])
         self.assertEqual([row["language"] for row in rows], ["eng", "por"])
         self.assertEqual([row["country_alpha2"] for row in rows], [None, "BR"])
@@ -152,7 +152,7 @@ class HDBitsLanguageAndFilterTests(unittest.TestCase):
         self.assertEqual(member, "Dune.2021.en.sub")
         self.assertEqual(payload["format"], "sub")
 
-    def test_parse_subtitles_keeps_brazilian_rows_out_of_plain_portuguese(self):
+    def test_parse_subtitles_returns_brazilian_rows_for_plain_portuguese(self):
         rows = self.mod.parse_subtitles(
             MOVIE_SUBS_1001["data"] + MOVIE_SUBS_1002["data"],
             requested_alpha3=[
@@ -163,8 +163,30 @@ class HDBitsLanguageAndFilterTests(unittest.TestCase):
             base_matches=["imdb_id", "title", "year"],
         )
 
-        # Plain Portuguese must not pick up the Brazilian-only "br" row (502).
-        self.assertEqual([row["subtitle_id"] for row in rows], [501])
+        # The manifest declares only "por", so the host sends plain Portuguese.
+        # The "br" row (502) answers it and keeps its Brazilian region.
+        self.assertEqual([row["subtitle_id"] for row in rows], [501, 502])
+        self.assertEqual([row["country_alpha2"] for row in rows], [None, "BR"])
+
+    def test_parse_subtitles_keeps_plain_portuguese_rows_out_of_brazilian_requests(self):
+        rows = self.mod.parse_subtitles(
+            [{"filename": "Dune.2021.pt.srt", "id": 511, "language": "pt", "title": "Dune.2021"}],
+            requested_alpha3=[{"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR"}],
+            video=MOVIE_VIDEO,
+            base_matches=["imdb_id", "title", "year"],
+        )
+
+        self.assertEqual(rows, [])
+
+    def test_every_advertised_language_is_reachable_from_an_hdbits_code(self):
+        manifest = json.loads((PROVIDER_DIR / "provider.json").read_text(encoding="utf-8"))
+        codes = set(self.mod.ALPHA2_TO_ALPHA3) | set(self.mod.SPECIAL_HDBITS_LANGUAGE)
+        reachable = {self.mod.hdbits_language(code)[0] for code in codes}
+
+        self.assertEqual(sorted(manifest["languages"]), self.mod.HDBITS_LANGUAGES)
+        self.assertEqual(set(manifest["languages"]) - reachable, set())
+        # "uk" is English on HDBits, so no row can be Ukrainian.
+        self.assertNotIn("ukr", manifest["languages"])
 
     def test_parse_subtitles_allows_extraction_titles(self):
         rows = self.mod.parse_subtitles(
@@ -284,6 +306,25 @@ class HDBitsLanguageAndFilterTests(unittest.TestCase):
         # Season-pack title hides the episode, but the filename tags S01E02 so an
         # S01E01 request must drop the row.
         self.assertEqual(parsed, [])
+
+    def test_parse_subtitles_rejects_same_episode_from_another_season(self):
+        rows = [
+            {"filename": "Chernobyl.S02E01.en.srt", "id": 731, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.en.srt", "id": 732, "language": "uk", "title": "Chernobyl.S02E01.1080p"},
+            {"filename": "Chernobyl.S01E01.en.srt", "id": 733, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.E01.en.srt", "id": 734, "language": "uk", "title": "Chernobyl"},
+        ]
+
+        parsed = self.mod.parse_subtitles(
+            rows,
+            requested_alpha3=[{"alpha3": "eng", "alpha2": "en"}],
+            video=EPISODE_VIDEO,
+            base_matches=["tvdb_id", "imdb_id", "series", "title", "season", "episode"],
+            episode=1,
+        )
+
+        # S02E01 is not S01E01. A bare E01 carries no season and still counts.
+        self.assertEqual([row["subtitle_id"] for row in parsed], [733, 734])
 
 
 class HDBitsSearchTests(unittest.TestCase):
@@ -409,6 +450,49 @@ class HDBitsSearchTests(unittest.TestCase):
 
         # Only the S01E01 torrent verifies an unnumbered direct subtitle.
         self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], [901])
+
+    def test_episode_search_skips_torrent_for_another_season(self):
+        provider = self.mod.HDBitsProvider()
+        torrents = {"data": [{"id": 3101, "name": "Chernobyl S02E01 1080p WEB-DL-GROUP"}]}
+
+        def post_stub(url, payload, timeout=15):
+            del timeout
+            if url == self.mod.TORRENTS_URL:
+                return torrents
+            raise AssertionError("a torrent for another season must not be scanned")
+
+        provider._post_json = post_stub
+        results = provider.search(
+            EPISODE_VIDEO,
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"username": "user", "passkey": "secret", "request_delay_ms": 0},
+        )
+
+        self.assertEqual(results, [])
+
+    def test_episode_scores_leave_room_for_release_matches(self):
+        provider = self.mod.HDBitsProvider()
+        torrents = {"data": [{"id": 3201, "name": "Chernobyl S01E01 1080p WEB-DL-GROUP"}]}
+        subtitles = {
+            "data": [
+                {"filename": "Chernobyl.S01E01.en.srt", "id": 941, "language": "uk", "title": "Chernobyl.S01E01.HDTV"},
+                {"filename": "Chernobyl.S01E01.en.srt", "id": 942, "language": "uk", "title": "Chernobyl.S01E01.1080p.WEB-DL-GROUP"},
+            ]
+        }
+        provider._post_json = lambda url, payload, timeout=15: torrents if url == self.mod.TORRENTS_URL else subtitles
+        video = {**EPISODE_VIDEO, "resolution": "1080p", "release_group": "GROUP"}
+
+        results = provider.search(
+            video,
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"username": "user", "passkey": "secret", "request_delay_ms": 0},
+        )
+
+        scores = {item["provider_payload"]["subtitle_id"]: item["score"] for item in results}
+        # Six identity matches alone used to reach 100 and tie every row.
+        self.assertEqual(scores[941], 70)
+        self.assertGreater(scores[942], scores[941])
+        self.assertLess(scores[942], 100)
 
 
 class HDBitsDownloadTests(unittest.TestCase):

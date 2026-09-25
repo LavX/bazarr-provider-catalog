@@ -362,6 +362,13 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         self.assertIn("release_group", first["matches"])
         self.assertEqual(first["score"], 100)
         self.assertEqual(first["provider_payload"]["page_link"], expected_episode_url)
+        for item in results:
+            self.assertEqual(item["filename"], item["provider_payload"]["filename"])
+            self.assertEqual(item["score_without_hash"], item["score"])
+            self.assertEqual(item["score_out_of"], 100)
+            self.assertIs(item["hash_verifiable"], False)
+            self.assertIs(item["hearing_impaired_verifiable"], False)
+            self.assertIs(item["hearing_impaired"], False)
         # The host needs episode (and season) to pick the archive member.
         self.assertEqual(first["provider_payload"]["season"], 1)
         self.assertEqual(first["provider_payload"]["episode"], 1)

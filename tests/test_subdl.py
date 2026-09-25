@@ -26,6 +26,16 @@ def _load_provider_module():
     return module
 
 
+def _route_downloads_through_urlopen(testcase, module):
+    # Byte downloads use their own opener so redirects can be checked. These tests
+    # stub urllib.request.urlopen, so send that opener's requests there as well.
+    opener = type("Opener", (), {})()
+    opener.open = lambda request, timeout=None: module.urllib.request.urlopen(request, timeout=timeout)
+    patcher = patch.object(module, "_download_opener", lambda: opener)
+    patcher.start()
+    testcase.addCleanup(patcher.stop)
+
+
 def _subdl_response(*items):
     return {
         "status": True,
@@ -692,7 +702,7 @@ class SubDLProviderDownloadTests(unittest.TestCase):
         self.assertEqual(requested, [f"https://dl.subdl.com/subtitle/1-1.zip?api_key={key}"])
         self.assertNotIn(key, str(raised.exception))
 
-    def test_signed_url_outside_subdl_download_origin_gets_no_key(self):
+    def test_download_rejects_urls_outside_subdl_before_any_request(self):
         provider = self.mod.SubDLProvider()
         key = "origin-check-secret-key"
         requested = []
@@ -701,24 +711,87 @@ class SubDLProviderDownloadTests(unittest.TestCase):
             "https://attacker.example/file.srt",
             "https://dl.subdl.com.attacker.example/file.srt",
             "https://dl.subdl.com@attacker.example/file.srt",
-            "http://dl.subdl.com/file.srt",
+            "https://dl.subdl.com:8443/file.srt",
+            "http://127.0.0.1/admin",
+            "http://169.254.169.254/latest/meta-data/",
+            "ftp://dl.subdl.com/file.srt",
             f"https://attacker.example/file.srt?api_key={key}",
+        ):
+            for signed in (True, False):
+                with self.subTest(url=url, signed=signed):
+                    with self.assertRaisesRegex(ValueError, "subdl.com host") as raised:
+                        provider.download(
+                            {"provider": "subdl", "schema": 1, "download_url": url,
+                             "download_url_signed": signed, "format": "srt"},
+                            {"alpha3": "eng"}, {"api_key": key},
+                        )
+                    self.assertNotIn(key, str(raised.exception))
+        self.assertEqual(requested, [])
+
+    def test_download_upgrades_http_subdl_links_and_signs_only_dl_subdl_com(self):
+        provider = self.mod.SubDLProvider()
+        key = "origin-check-secret-key"
+        requested = []
+        provider._http_get_bytes = lambda url, timeout=30: requested.append(url) or b"subtitle"
+        for url, signed in (
+            ("http://dl.subdl.com/file.srt", True),
+            ("https://dl.subdl.com/file.srt", True),
+            ("https://subdl.com/file.srt", True),
+            ("https://cdn.subdl.com/file.srt", False),
         ):
             provider.download(
                 {"provider": "subdl", "schema": 1, "download_url": url,
-                 "download_url_signed": True, "format": "srt"},
+                 "download_url_signed": signed, "format": "srt"},
                 {"alpha3": "eng"}, {"api_key": key},
             )
-        self.assertEqual(len(requested), 5)
-        self.assertFalse(any(key in url for url in requested), requested)
 
-        requested.clear()
-        provider.download(
-            {"provider": "subdl", "schema": 1, "download_url": "https://dl.subdl.com/file.srt",
-             "download_url_signed": True, "format": "srt"},
-            {"alpha3": "eng"}, {"api_key": key},
+        self.assertEqual(
+            requested,
+            [
+                f"https://dl.subdl.com/file.srt?api_key={key}",
+                f"https://dl.subdl.com/file.srt?api_key={key}",
+                "https://subdl.com/file.srt",
+                "https://cdn.subdl.com/file.srt",
+            ],
         )
-        self.assertEqual(requested, [f"https://dl.subdl.com/file.srt?api_key={key}"])
+
+    def test_download_redirects_stay_on_https_subdl_hosts(self):
+        handler = self.mod._DownloadRedirectHandler()
+        request = self.mod.urllib.request.Request("https://dl.subdl.com/subtitle/1-1.zip")
+
+        for target in (
+            "http://127.0.0.1/admin",
+            "http://dl.subdl.com/subtitle/1-1.zip",
+            "https://attacker.example/x.zip",
+            "https://dl.subdl.com.attacker.example/x.zip",
+        ):
+            with self.subTest(target=target):
+                self.assertIsNone(handler.redirect_request(request, None, 302, "Found", {}, target))
+        followed = handler.redirect_request(request, None, 302, "Found", {}, "https://dl.subdl.com/subtitle/2-2.zip")
+        self.assertEqual(followed.full_url, "https://dl.subdl.com/subtitle/2-2.zip")
+
+    def test_bytes_helper_refuses_non_subdl_urls_and_uses_the_redirect_checking_opener(self):
+        provider = self.mod.SubDLProvider()
+        with patch.object(self.mod.urllib.request, "urlopen", side_effect=AssertionError("no request")):
+            for url in ("http://127.0.0.1/admin", "http://dl.subdl.com/file.srt", "https://example.com/x.srt"):
+                with self.subTest(url=url):
+                    with self.assertRaisesRegex(ValueError, "subdl.com host"):
+                        provider._http_get_bytes(url)
+
+        opened = []
+
+        class Opener:
+            def open(self, request, timeout=None):
+                opened.append((request.full_url, timeout))
+                return _FakeResponse(b"subtitle")
+
+        with patch.object(self.mod, "_download_opener", lambda: Opener()):
+            self.assertEqual(provider._http_get_bytes("https://dl.subdl.com/file.srt", timeout=7), b"subtitle")
+        self.assertEqual(opened, [("https://dl.subdl.com/file.srt", 7)])
+        self.assertIsInstance(
+            next(h for h in self.mod._download_opener().handlers if isinstance(h, self.mod.urllib.request.HTTPRedirectHandler)),
+            self.mod._DownloadRedirectHandler,
+        )
 
     def test_unsigned_download_url_is_fetched_without_a_key(self):
         provider = self.mod.SubDLProvider()
@@ -900,6 +973,7 @@ def _http_error(code, body=b"", headers=None):
 class SubDLTransportRetryTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
+        _route_downloads_through_urlopen(self, self.mod)
         self.sleeps = []
         sleep_patch = patch.object(self.mod.time, "sleep", self.sleeps.append)
         sleep_patch.start()
@@ -1018,6 +1092,7 @@ class SubDLTransportRetryTests(unittest.TestCase):
 class SubDLSemanticHTTPErrorTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
+        _route_downloads_through_urlopen(self, self.mod)
         self.provider = self.mod.SubDLProvider()
 
     def _invoke(self, helper):
@@ -1220,7 +1295,7 @@ class SubDLAITranslationSearchTests(unittest.TestCase):
         manifest = json.loads((PROVIDER_DIR / "provider.json").read_text())
         schema = manifest["config_schema"]["properties"]
 
-        self.assertEqual(manifest["version"], "0.2.1")
+        self.assertEqual(manifest["version"], "0.2.2")
         self.assertIs(schema["ai_translate"]["default"], False)
         self.assertIn("SubDL publishes each translation as a regular subtitle", schema["ai_translate"]["title"])
         self.assertIs(schema["include_ai_translated"]["default"], False)

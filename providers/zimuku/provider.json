@@ -1,7 +1,7 @@
 {
   "anti_captcha": true,
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "23603c96ac81325d8da5628ec570be6ac17138036bf1e20c3fe7ccdf288a773a",
+  "bundle_sha256": "4c60bb321f4a4ad850ed452fcfd8fffe5d47d58b3e49f25ddc527a1b66ee213c",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -51,7 +51,7 @@
   "entry_class": "ZimukuProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "c16ac65c3410c51cbc5bafdf727971d4a4999ddcc4f442b43c6ba97c50d546f2",
+    "provider.py": "f9d79504099dac386f79c5efe74abaeb1a7c5f81d9dd1c415c9841614f60d805",
     "yunsuo_templates.py": "abad0d629bb24b28c40f7dc5a0257660266e6be449fbd8cda81a044d26c4959d"
   },
   "languages": [
@@ -80,5 +80,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.9"
+  "version": "0.1.10"
 }
