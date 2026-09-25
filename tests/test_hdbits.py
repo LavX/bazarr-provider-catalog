@@ -128,6 +128,30 @@ class HDBitsLanguageAndFilterTests(unittest.TestCase):
         self.assertEqual([row["country_alpha2"] for row in rows], [None, "BR"])
         self.assertTrue(all("commentary" not in row["release_info"].lower() for row in rows))
 
+    def test_parse_subtitles_accepts_sub_files(self):
+        rows = self.mod.parse_subtitles(
+            [
+                {
+                    "filename": "Dune.2021.1080p.BluRay.x264-GROUP.en.sub",
+                    "id": 504,
+                    "language": "uk",
+                    "title": "Dune.2021.1080p.BluRay.x264-GROUP",
+                }
+            ],
+            requested_alpha3=[{"alpha3": "eng", "alpha2": "en"}],
+            video=MOVIE_VIDEO,
+            base_matches=["imdb_id", "title", "year"],
+        )
+
+        self.assertEqual([row["subtitle_id"] for row in rows], [504])
+
+    def test_sub_files_are_selected_from_archives_and_keep_their_format(self):
+        member = self.mod.select_subtitle_file(["readme.txt", "Dune.2021.en.sub"], {"language": {"alpha3": "eng"}})
+        payload = self.mod.download_payload(b"{1}{25}Hello\n", {"filename": "Dune.2021.en.sub"})
+
+        self.assertEqual(member, "Dune.2021.en.sub")
+        self.assertEqual(payload["format"], "sub")
+
     def test_parse_subtitles_keeps_brazilian_rows_out_of_plain_portuguese(self):
         rows = self.mod.parse_subtitles(
             MOVIE_SUBS_1001["data"] + MOVIE_SUBS_1002["data"],

@@ -23,20 +23,20 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`animetosho`](providers/animetosho/) | 0.1.5 | Archive-only provider using [AnimeTosho](https://animetosho.org) JSON feeds to find embedded subtitle attachments for older anime episodes by AniDB episode id. New torrent ingestion stopped on May 9, 2026. No login or API key. |
 | [`animetosho_xyz`](providers/animetosho_xyz/) | 0.1.1 | Searches the separate AnimeTosho.xyz JSON feeds for embedded anime episode subtitles. No login or API key. |
 | [`assrt`](providers/assrt/) | 0.1.4 | Searches the [Assrt](https://assrt.net) API for Chinese and English movie and episode subtitles. Requires an API token. |
-| [`avistaz`](providers/avistaz/) | 0.1.4 | Uses [AvistaZ](https://avistaz.to) release pages from Sonarr or Radarr history to download attached subtitles. Requires session cookies. |
+| [`avistaz`](providers/avistaz/) | 0.1.5 | Uses [AvistaZ](https://avistaz.to) release pages from Sonarr or Radarr history to download attached subtitles. Requires session cookies. |
 | [`betaseries`](providers/betaseries/) | 0.1.6 | Searches the [BetaSeries](https://www.betaseries.com) API for French and English episode subtitles. Requires an API key. |
 | [`bollynook`](providers/bollynook/) | 0.1.3 | Scrapes [BollyNook](https://www.bollynook.com) for movie subtitles across Indian and international languages. No login or API key. |
 | [`bsplayer`](providers/bsplayer/) | 0.1.1 | Uses the BSPlayer subtitles SOAP API for hash and size based movie and episode subtitle lookup. No login or API key. |
-| [`cinemaz`](providers/cinemaz/) | 0.1.5 | Uses [CinemaZ](https://cinemaz.to) release pages from Sonarr or Radarr history to download attached subtitles. Requires session cookies. |
+| [`cinemaz`](providers/cinemaz/) | 0.1.6 | Uses [CinemaZ](https://cinemaz.to) release pages from Sonarr or Radarr history to download attached subtitles. Requires session cookies. |
 | [`embeddedsubtitles`](providers/embeddedsubtitles/) | 0.1.4 | Extracts subtitle streams embedded in local movie and episode media files with ffprobe and ffmpeg, suppressing duplicate unknown-language fallbacks by language and disposition. No login or API key. |
 | [`fansubs`](providers/fansubs/) | 0.1.6 | Scrapes [fansubs.ru](http://fansubs.ru) for Russian anime and Asian cinema subtitles. No login or API key. |
 | [`gestdown`](providers/gestdown/) | 0.1.4 | Uses the public Gestdown API for episode subtitles by TVDB show id, season, episode, and language. No login or API key. |
 | [`greeksubs`](providers/greeksubs/) | 0.1.2 | Scrapes [GreekSubs](https://greeksubs.net) for Greek movie and episode subtitles by IMDb id. No login or API key. |
 | [`greeksubtitles`](providers/greeksubtitles/) | 0.1.3 | Scrapes [GreekSubtitles](https://gr.greek-subtitles.com) for Greek and English movie and episode subtitles. ZIP and RAR downloads are supported. |
-| [`hdbits`](providers/hdbits/) | 0.1.5 | Uses authenticated [HDBits](https://hdbits.org) JSON APIs for movie and episode subtitles. Requires username and passkey. |
+| [`hdbits`](providers/hdbits/) | 0.1.6 | Uses authenticated [HDBits](https://hdbits.org) JSON APIs for movie and episode subtitles. Requires username and passkey. |
 | [`isubtitles`](providers/isubtitles/) | 0.1.4 | Scrapes [iSubtitles.org](https://isubtitles.org) for movie and episode subtitles in broad multilingual coverage. No login or API key. |
 | [`jimaku`](providers/jimaku/) | 0.1.4 | Uses the [Jimaku](https://jimaku.cc) API for Japanese movie and episode subtitles. Requires API key. |
-| [`karagarga`](providers/karagarga/) | 0.1.4 | Uses [Karagarga](https://karagarga.in) tracker search and forum attachments for English movie subtitles. Requires tracker and forum credentials. |
+| [`karagarga`](providers/karagarga/) | 0.1.5 | Uses [Karagarga](https://karagarga.in) tracker search and forum attachments for English movie subtitles. Requires tracker and forum credentials. |
 | [`kitsunekko`](providers/kitsunekko/) | 0.1.2 | Scrapes [Kitsunekko](https://kitsunekko.net) for anime subtitle directories and ZIP packs. No login or API key. |
 | [`ktuvit`](providers/ktuvit/) | 0.1.4 | Uses [Ktuvit.me](https://www.ktuvit.me) services for Hebrew movie and episode subtitles. Requires email and hashed password. |
 | [`legendasdivx`](providers/legendasdivx/) | 0.2.2 | Scrapes [LegendasDivx](https://www.legendasdivx.pt) for European and Brazilian Portuguese movie and episode subtitles. Requires username and password. Uses ai-cloudscraper, with optional FlareSolverr and captcha solver fallbacks. |

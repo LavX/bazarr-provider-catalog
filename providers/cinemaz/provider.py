@@ -427,15 +427,16 @@ def _normalize_language_name(value):
 
 def _candidate(release, subtitle, alpha3, country, video):
     download_url = subtitle["download_url"]
+    subtitle_id = _subtitle_id(download_url) or alpha3
     filename = subtitle.get("filename") or download_url.rstrip("/").split("/")[-1] or f"cinemaz-{alpha3}.srt"
     if not _subtitle_extension(filename) and subtitle.get("extension"):
-        subtitle_id = _subtitle_id(download_url) or alpha3
         filename = f"cinemaz-{subtitle_id}.{alpha3}.{subtitle['extension']}"
     release_info = release["title"]
     language = {"alpha3": alpha3, "hi": False, "forced": False}
     if country:
         language["country_alpha2"] = country
-    candidate_id = f"cinemaz-{filename}-{alpha3}-{country}" if country else f"cinemaz-{filename}-{alpha3}"
+    result_id = filename if _subtitle_extension(filename) else f"{subtitle_id}-{filename}"
+    candidate_id = f"cinemaz-{result_id}-{alpha3}-{country}" if country else f"cinemaz-{result_id}-{alpha3}"
     matches = _release_matches(release_info, video)
     score = _score(matches)
     return {
@@ -449,6 +450,8 @@ def _candidate(release, subtitle, alpha3, country, video):
         "score_without_hash": score,
         "score_out_of": 100,
         "hash_verifiable": False,
+        "hearing_impaired_verifiable": False,
+        "hearing_impaired": False,
         "page_link": release["page_url"],
         "display": {
             "source": "cinemaz.to",

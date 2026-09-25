@@ -401,6 +401,7 @@ def _candidate(item, video):
         "score": score,
         "score_without_hash": score,
         "score_out_of": 100,
+        "hash_verifiable": False,
         "hearing_impaired_verifiable": False,
         "hearing_impaired": False,
         "page_link": item["page_url"],

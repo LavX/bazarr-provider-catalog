@@ -157,8 +157,16 @@ class CinemaZManifestTests(unittest.TestCase):
         requirements = manifest["dependencies"]["requirements"]
         names = {item["name"].lower() for item in requirements}
 
-        self.assertEqual(manifest["version"], "0.1.5")
+        self.assertEqual(manifest["version"], "0.1.6")
         self.assertTrue(names.isdisjoint({"py7zz", "py7zr", "rarfile"}))
+
+    def test_manifest_declares_every_language_the_parser_maps(self):
+        manifest = json.loads((PROVIDER_DIR / "provider.json").read_text(encoding="utf-8"))
+        mod = _load_provider_module()
+        # bih is an ISO 639-2 collective code that babelfish, and so the host, cannot represent.
+        parsed = set(mod.LANGUAGE_NAME_TO_ALPHA3.values()) - {"bih"}
+
+        self.assertEqual(sorted(parsed - set(manifest["languages"])), [])
 
 
 class CinemaZSearchTests(unittest.TestCase):
@@ -227,7 +235,29 @@ class CinemaZSearchTests(unittest.TestCase):
         self.assertEqual(results[0]["score"], 60)
         self.assertEqual(results[0]["score_without_hash"], results[0]["score"])
         self.assertFalse(results[0]["hash_verifiable"])
+        self.assertIs(results[0]["hearing_impaired_verifiable"], False)
+        self.assertIs(results[0]["hearing_impaired"], False)
         self.assertNotIn("hash", results[0]["matches"])
+
+    def test_search_gives_extensionless_rows_distinct_ids(self):
+        provider = self.mod.CinemaZProvider()
+        page = _release_page().replace(b"<td>German</td>", b"<td>English</td>")
+
+        def get_bytes(url, headers, cookies, timeout=30, allow_redirects=True):
+            del headers, cookies, timeout, allow_redirects
+            if url.endswith("/rules"):
+                return self.mod.HttpResponse(200, b"<html>rules</html>", {})
+            return self.mod.HttpResponse(200, page, {})
+
+        provider._http_get = get_bytes
+        results = provider.search(
+            {"kind": "movie", "title": "The Cabinet of Dr Caligari", "info_url": "https://cinemaz.to/torrent/123-caligari"},
+            [{"alpha3": "eng"}],
+            {"cookies": "cinemazx_session=valid"},
+        )
+
+        self.assertEqual([item["filename"] for item in results], ["download", "download"])
+        self.assertEqual([item["id"] for item in results], ["cinemaz-111-download-eng", "cinemaz-222-download-eng"])
 
     def test_search_parses_unit3d_h1_subtitles_layout_and_extension_column(self):
         provider = self.mod.CinemaZProvider()
