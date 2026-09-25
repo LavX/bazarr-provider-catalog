@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import json
 import urllib.parse
+import urllib.request
 import unittest
 from pathlib import Path
 
@@ -65,7 +66,7 @@ DETAIL_ASS = {
             {
                 "id": 71001,
                 "filelist": [
-                    {"f": "Rick.and.Morty.S07E10.chs.ass", "url": "https://assrt.test/download/rick-s07e10-chs.ass"}
+                    {"f": "Rick.and.Morty.S07E10.chs.ass", "url": "https://file0.assrt.net/download/rick-s07e10-chs.ass"}
                 ],
             }
         ]
@@ -79,11 +80,11 @@ DETAIL_MULTI_SEASON_PACK = {
                 "filelist": [
                     {
                         "f": "Rick.and.Morty.S01E02.1080p.BluRay.x264-STORiES.eng.srt",
-                        "url": "https://assrt.test/download/rick-s01e02-eng.srt",
+                        "url": "https://file0.assrt.net/download/rick-s01e02-eng.srt",
                     },
                     {
                         "f": "Rick.and.Morty.S06E02.1080p.BluRay.x264-STORiES.eng.srt",
-                        "url": "https://assrt.test/download/rick-s06e02-eng.srt",
+                        "url": "https://file0.assrt.net/download/rick-s06e02-eng.srt",
                     },
                 ],
             }
@@ -98,11 +99,11 @@ DETAIL_PENGUIN_LANGUAGE_PACK = {
                 "filelist": [
                     {
                         "f": "The.Penguin.S01E01.chs.srt",
-                        "url": "https://assrt.test/download/penguin-s01e01-chs.srt",
+                        "url": "https://file0.assrt.net/download/penguin-s01e01-chs.srt",
                     },
                     {
                         "f": "The.Penguin.S01E01.eng.srt",
-                        "url": "https://assrt.test/download/penguin-s01e01-eng.srt",
+                        "url": "https://file0.assrt.net/download/penguin-s01e01-eng.srt",
                     },
                 ],
             }
@@ -117,11 +118,11 @@ DETAIL_PACK_MISSING_EPISODE = {
                 "filelist": [
                     {
                         "f": "Rick.and.Morty.S06E01.eng.srt",
-                        "url": "https://assrt.test/download/rick-s06e01-eng.srt",
+                        "url": "https://file0.assrt.net/download/rick-s06e01-eng.srt",
                     },
                     {
                         "f": "Rick.and.Morty.S06E03.eng.srt",
-                        "url": "https://assrt.test/download/rick-s06e03-eng.srt",
+                        "url": "https://file0.assrt.net/download/rick-s06e03-eng.srt",
                     },
                 ],
             }
@@ -228,7 +229,7 @@ class AssrtProviderTests(unittest.TestCase):
         )
 
         self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["71002"])
-        self.assertEqual(results[0]["language"]["country"], "TW")
+        self.assertEqual(results[0]["language"]["country_alpha2"], "TW")
 
     def test_search_uses_native_name_when_videoname_is_meaningless(self):
         provider = self.mod.AssrtProvider()
@@ -337,7 +338,7 @@ class AssrtProviderTests(unittest.TestCase):
             {"token": "secret-token"},
         )
 
-        self.assertEqual(selected_urls[0], "https://assrt.test/download/rick-s06e02-eng.srt")
+        self.assertEqual(selected_urls[0], "https://file0.assrt.net/download/rick-s06e02-eng.srt")
         self.assertIn(b"Episode two", base64.b64decode(result["content_b64"]))
 
     def test_download_selects_pack_file_by_season_and_episode(self):
@@ -366,7 +367,7 @@ class AssrtProviderTests(unittest.TestCase):
             {"token": "secret-token"},
         )
 
-        self.assertEqual(selected_urls[0], "https://assrt.test/download/rick-s06e02-eng.srt")
+        self.assertEqual(selected_urls[0], "https://file0.assrt.net/download/rick-s06e02-eng.srt")
 
     def test_download_rejects_pack_without_requested_episode(self):
         provider = self.mod.AssrtProvider()
@@ -413,23 +414,23 @@ class AssrtProviderTests(unittest.TestCase):
             {"token": "secret-token"},
         )
 
-        self.assertEqual(selected_urls, ["https://assrt.test/download/penguin-s01e01-eng.srt"])
+        self.assertEqual(selected_urls, ["https://file0.assrt.net/download/penguin-s01e01-eng.srt"])
 
     def test_download_rejects_standalone_wrong_episode_tags(self):
         for name in ("Show.E03.eng.srt", "Show.Episode3.eng.srt", "Show_Ep03_eng.srt", "Show.S02.E02.eng.srt"):
             with self.subTest(name=name):
-                detail = {"sub": {"subs": [{"filelist": [{"f": name, "url": "https://assrt.test/sub"}]}]}}
+                detail = {"sub": {"subs": [{"filelist": [{"f": name, "url": "https://file0.assrt.net/sub"}]}]}}
                 self.assertIsNone(self.mod.select_download_file(detail, {"season": 6, "episode": 2, "language_code": "eng"}))
-        detail = {"sub": {"subs": [{"filelist": [{"f": "Show.E02.eng.srt", "url": "https://assrt.test/sub"}]}]}}
+        detail = {"sub": {"subs": [{"filelist": [{"f": "Show.E02.eng.srt", "url": "https://file0.assrt.net/sub"}]}]}}
         self.assertEqual(self.mod.select_download_file(detail, {"episode": 2, "language_code": "eng"})["f"], "Show.E02.eng.srt")
 
     def test_download_rejects_explicit_other_language_and_allows_unlabelled(self):
-        files = [{"f": "Show.S01E01.chs.srt", "url": "https://assrt.test/chinese"}]
+        files = [{"f": "Show.S01E01.chs.srt", "url": "https://file0.assrt.net/chinese"}]
         detail = {"sub": {"subs": [{"filelist": files}]}}
         payload = {"season": 1, "episode": 1, "language_code": "eng"}
         self.assertIsNone(self.mod.select_download_file(detail, payload))
-        files.append({"f": "Show.S01E01.srt", "url": "https://assrt.test/unlabelled"})
-        self.assertEqual(self.mod.select_download_file(detail, payload)["url"], "https://assrt.test/unlabelled")
+        files.append({"f": "Show.S01E01.srt", "url": "https://file0.assrt.net/unlabelled"})
+        self.assertEqual(self.mod.select_download_file(detail, payload)["url"], "https://file0.assrt.net/unlabelled")
 
     def test_search_accepts_declared_chinese_variant_codes(self):
         provider = self.mod.AssrtProvider()
@@ -444,7 +445,7 @@ class AssrtProviderTests(unittest.TestCase):
         )
 
         self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["71002"])
-        self.assertEqual(results[0]["language"]["country"], "TW")
+        self.assertEqual(results[0]["language"]["country_alpha2"], "TW")
 
     def test_search_declared_variant_code_excludes_other_variant(self):
         provider = self.mod.AssrtProvider()
@@ -459,7 +460,7 @@ class AssrtProviderTests(unittest.TestCase):
         )
 
         self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["71001"])
-        self.assertEqual(results[0]["language"]["country"], "CN")
+        self.assertEqual(results[0]["language"]["country_alpha2"], "CN")
 
     def test_download_payload_includes_content_type_without_encoding_guess(self):
         provider = self.mod.AssrtProvider()
@@ -504,6 +505,96 @@ class AssrtProviderTests(unittest.TestCase):
         self.assertEqual(result["format"], "srt")
         self.assertEqual(result["content_type"], "application/x-subrip")
         self.assertNotIn("encoding", result)
+
+    def _download_with_detail_url(self, url):
+        provider = self.mod.AssrtProvider()
+        fetched = []
+        detail = {"sub": {"subs": [{"id": 602333, "url": url, "filelist": []}]}}
+        provider._http_get_json = lambda u, timeout=15, config=None: QUOTA if "/user/quota" in u else detail
+        provider._http_get_bytes = lambda u, timeout=15, config=None: fetched.append(u) or b"1\n"
+        provider._sleep = lambda seconds: None
+        provider.download(
+            {"subtitle_id": "602333", "language_code": "chs", "filename": "x.srt"},
+            {"alpha3": "zho", "country_alpha2": "CN"},
+            {"token": "secret-token"},
+        )
+        return fetched
+
+    def test_download_rejects_urls_outside_the_assrt_file_hosts(self):
+        for url in ("http://127.0.0.1/admin", "https://example.com/x.srt", "https://assrt.net.example.com/x.srt"):
+            with self.subTest(url=url):
+                with self.assertRaisesRegex(ValueError, "outside the Assrt file hosts"):
+                    self._download_with_detail_url(url)
+
+    def test_download_fetches_documented_http_file_url_over_https(self):
+        # The Assrt API documents file0.assrt.net links as plain http.
+        fetched = self._download_with_detail_url("http://file0.assrt.net/onthefly/602333/-/1/x.srt?api=1")
+
+        self.assertEqual(fetched, ["https://file0.assrt.net/onthefly/602333/-/1/x.srt?api=1"])
+
+    def test_redirects_are_followed_only_to_https_assrt_hosts(self):
+        handler = self.mod._AssrtRedirectHandler()
+        request = urllib.request.Request("https://file0.assrt.net/onthefly/602333/-/1/x.srt")
+
+        for target in ("http://127.0.0.1/admin", "http://assrt.net/download/failed/x", "https://example.com/x.srt"):
+            with self.subTest(target=target):
+                self.assertIsNone(handler.redirect_request(request, None, 302, "Found", {}, target))
+        followed = handler.redirect_request(request, None, 302, "Found", {}, "https://assrt.net/download/failed/x")
+        self.assertEqual(followed.full_url, "https://assrt.net/download/failed/x")
+
+    def test_search_drops_rows_for_a_different_episode(self):
+        search = {
+            "sub": {
+                "subs": [
+                    {"id": 74001, "videoname": "Rick.and.Morty.S06E03.1080p.WEB.h264-ETHEL", "lang": {"langlist": {"langeng": 1}}},
+                    {"id": 74002, "videoname": "Rick.and.Morty.S06E02.1080p.WEB.h264-ETHEL", "lang": {"langlist": {"langeng": 1}}},
+                ]
+            }
+        }
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else search
+        provider._sleep = lambda seconds: None
+
+        results = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 6, "episode": 2},
+            [{"alpha3": "eng"}],
+            {"token": "secret-token"},
+        )
+
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["74002"])
+
+    def test_search_skips_forced_only_and_hi_only_requests(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_RICK
+        provider._sleep = lambda seconds: None
+
+        # Assrt exposes no forced or HI metadata, so it cannot satisfy either variant.
+        for flag in ("forced", "hi"):
+            with self.subTest(flag=flag):
+                results = provider.search(
+                    {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+                    [{"alpha3": "eng", flag: True}],
+                    {"token": "secret-token"},
+                )
+                self.assertEqual(results, [])
+
+    def test_search_emits_country_alpha2_for_chinese_variants(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_RICK
+        provider._sleep = lambda seconds: None
+
+        results = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+            [{"alpha3": "zho", "country_alpha2": "CN"}, {"alpha3": "zho", "country_alpha2": "TW"}],
+            {"token": "secret-token"},
+        )
+
+        # The host builds the result Language from country_alpha2 only.
+        self.assertEqual(
+            {item["provider_payload"]["subtitle_id"]: item["language"].get("country_alpha2") for item in results},
+            {"71001": "CN", "71002": "TW"},
+        )
+        self.assertFalse(any("country" in item["language"] for item in results))
 
 
 if __name__ == "__main__":
