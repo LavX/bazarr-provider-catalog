@@ -435,8 +435,12 @@ def _advertises_ai_translation(data):
     )
 
 
-def _merge_items(target, seen, data):
+def _merge_items(target, seen, data, include_ai_translated=True):
     for item in _response_items(data):
+        # A hidden AI row is dropped before deduplication, so it can never take
+        # the name of a visible human row and remove it from the results.
+        if not include_ai_translated and _is_ai_translated(item):
+            continue
         item_id = _clean_text(item.get("name")) or _clean_text(item.get("url"))
         if not item_id or item_id in seen:
             continue
@@ -798,6 +802,18 @@ def _same_language_variant(left, right):
         and _clean_text(left.get("script")).casefold() == _clean_text(right.get("script")).casefold()
     )
 
+
+def _row_can_suppress_translation(video, item, child, candidate):
+    """Whether a regular row shows that this exact episode already has the language."""
+    if (video or {}).get("kind") != "episode":
+        return True
+    matches = candidate.get("matches", [])
+    if "episode" not in matches:
+        return False
+    row_season = _coerce_int((child or {}).get("season")) or _coerce_int((item or {}).get("season"))
+    return row_season is None or "season" in matches
+
+
 def _valid_translation_block(translation):
     return (
         isinstance(translation, dict)
@@ -921,8 +937,6 @@ def _build_ai_candidates(video, requested_languages, translation, existing_candi
             if language.get("forced") is True or (language.get("hi") is True) != hi:
                 continue
             if not _same_language_variant(language, wanted):
-                continue
-            if video and video.get("kind") == "episode" and "episode" not in existing.get("matches", []):
                 continue
             suppressed = True
             break
@@ -1310,15 +1324,18 @@ class SubDLProvider:
             while len(mapping) > TRANSLATION_STATE_MAX_ITEMS:
                 del mapping[next(iter(mapping))]
 
-    def _translation_key(self, payload):
+    def _translation_key(self, payload, api_key):
         n_id = (payload or {}).get("n_id")
         if type(n_id) not in (int, str) or not _clean_text(n_id):
             return None
         target = _clean_text((payload or {}).get("target_language")).upper()
         if not target:
             return None
+        # A digest, never the key itself, ties the job to its account, so a new
+        # API key neither polls the old account's job nor inherits its markers.
+        account = hashlib.sha256(_coerce_text(api_key).encode("utf-8")).hexdigest()
         return (
-            str(n_id), target,
+            account, str(n_id), target,
             _coerce_int((payload or {}).get("season")),
             _coerce_int((payload or {}).get("episode")),
         )
@@ -1622,7 +1639,7 @@ class SubDLProvider:
             return None
         started = time.monotonic()
         deadline = started + _translation_timeout_seconds(config)
-        key = self._translation_key(payload)
+        key = self._translation_key(payload, api_key)
         try:
             if key is None:
                 self._logger.warning("SubDL AI translation candidate has invalid job details")
@@ -1830,7 +1847,7 @@ class SubDLProvider:
                         primary_data = data
                         if ai_translate_enabled and isinstance(data, dict) and "translation" in data:
                             translation_data = data.get("translation")
-                _merge_items(all_items, seen, data)
+                _merge_items(all_items, seen, data, include_ai_translated)
                 max_pages = runtime_policy["max_pages"] if label == "primary" else 1
                 if page >= max_pages or len(page_items) < SUBS_PER_PAGE:
                     break
@@ -1855,7 +1872,7 @@ class SubDLProvider:
                         translation_data = fallback_data.get("translation")
                 if not runtime_policy["enabled"]:
                     return []
-                _merge_items(all_items, seen, fallback_data)
+                _merge_items(all_items, seen, fallback_data, include_ai_translated)
 
         if (
             anime_mode
@@ -1872,9 +1889,10 @@ class SubDLProvider:
                 _apply_runtime_policy(runtime_policy, fallback_data)
                 if not runtime_policy["enabled"]:
                     return []
-                _merge_items(all_items, seen, fallback_data)
+                _merge_items(all_items, seen, fallback_data, include_ai_translated)
 
         candidates = []
+        suppressors = []
 
         def append_candidate(item, child=None):
             marked_ai = _is_ai_translated(item, child)
@@ -1892,6 +1910,8 @@ class SubDLProvider:
                 display["uploader"] = f"{uploader} (AI translated)" if uploader else "AI translated"
                 candidate["ai_translated"] = True
             candidates.append(candidate)
+            if ai_translate_enabled and _row_can_suppress_translation(video, item, child, candidate):
+                suppressors.append(candidate)
 
         for item in all_items:
             is_pack = _is_pack(item)
@@ -1924,11 +1944,11 @@ class SubDLProvider:
                 if runtime_policy["ai_translation_enabled"] and not blocked:
                     try:
                         ai_candidates = _build_ai_candidates(
-                            video, requested_languages, translation_data, candidates,
+                            video, requested_languages, translation_data, suppressors,
                         )
                         now = time.monotonic()
                         for candidate in ai_candidates:
-                            key = self._translation_key(candidate.get("provider_payload"))
+                            key = self._translation_key(candidate.get("provider_payload"), api_key)
                             if not self._active_uncertainty(key, now):
                                 candidates.append(candidate)
                     except Exception:

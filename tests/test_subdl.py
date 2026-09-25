@@ -1439,6 +1439,64 @@ class SubDLAITranslationSearchTests(unittest.TestCase):
         self.assertNotIn("episode", regular["matches"])
         self.assertEqual(translated["provider_payload"]["episode"], 3)
 
+    def test_regular_row_from_another_season_does_not_suppress_ai(self):
+        provider = self.mod.SubDLProvider()
+        translation = {
+            "entitled": True,
+            "missing_languages": ["FR"],
+            "sources": [{"n_id": 771, "language": "EN", "hi": False}],
+        }
+        video = {
+            "kind": "episode",
+            "series": "Show",
+            "season": 2,
+            "episode": 4,
+            "series_imdb_id": "tt0944947",
+        }
+        config = {"api_key": "test-key", "ai_translate": True}
+
+        def search_with_row(season):
+            row = {
+                "language": "FR",
+                "name": f"Show.S0{season}E04.fr.srt",
+                "url": f"/subtitle/s0{season}e04.srt",
+                "subtitlePage": f"/en/subtitle/s0{season}e04",
+                "hi": False,
+                "season": season,
+                "episode": 4,
+            }
+            response = _subdl_response(row)
+            response["translation"] = translation
+            provider._http_get_json = lambda params: response
+            return [item["id"] for item in provider.search(video, [{"alpha3": "fra"}], config)]
+
+        self.assertEqual(search_with_row(3), ["Show.S03E04.fr.srt", "ai:771:FR:plain"])
+        self.assertEqual(search_with_row(2), ["Show.S02E04.fr.srt"])
+
+    def test_hidden_ai_row_does_not_shadow_human_row_with_same_name(self):
+        provider = self.mod.SubDLProvider()
+        ai_row = {
+            "language": "FR",
+            "name": "Movie.fr.srt",
+            "url": "/subtitle/translated.srt",
+            "subtitlePage": "/en/subtitle/translated",
+            "hi": False,
+            "ai_translated": True,
+        }
+        human_row = dict(ai_row, url="/subtitle/human.srt", subtitlePage="/en/subtitle/human")
+        del human_row["ai_translated"]
+        provider._http_get_json = lambda params: _subdl_response(ai_row, human_row)
+
+        results = provider.search(
+            {"kind": "movie", "title": "Movie", "imdb_id": "tt1234567"},
+            [{"alpha3": "fra"}],
+            {"api_key": "test-key"},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertNotIn("ai_translated", results[0])
+        self.assertEqual(results[0]["provider_payload"]["download_url"], "/subtitle/human.srt")
+
     def test_ai_translation_is_opt_in_and_does_not_emit_quota_event_when_off(self):
         provider = self.mod.SubDLProvider()
         response = _subdl_response()
@@ -2514,6 +2572,45 @@ class SubDLAITranslationLifecycleTests(unittest.TestCase):
         )
         self.assertIsNone(self.provider._quota_status)
         self.assertEqual(self.provider.drain_events(), [])
+
+    def test_translation_state_is_kept_per_api_key(self):
+        import urllib.error
+
+        error = urllib.error.HTTPError(
+            "https://api.subdl.com/translation", 503, "busy", {},
+            io.BytesIO(b'{"error":"provider_busy"}'),
+        )
+        self._patch_urlopen([error])
+        self.assertIsNone(self.provider.download(self.payload, {"alpha3": "fra"}, self.config))
+        self.assertEqual(self._search(), [])
+
+        other_config = {**self.config, "api_key": "another-account-key"}
+        response = _subdl_response()
+        response["translation"] = {
+            "entitled": True, "missing_languages": ["FR"],
+            "sources": [{"n_id": 771, "language": "EN", "hi": False}],
+        }
+        self.provider._http_get_json = lambda params: response
+        offered = self.provider.search(
+            {"kind": "movie", "title": "Movie", "imdb_id": "tt1234567"},
+            [{"alpha3": "fra"}], other_config,
+        )
+        self.assertEqual([item["id"] for item in offered], ["ai:771:FR:plain"])
+
+        queued = self._response({"request_id": "other-account-job", "job": {
+            "status": "published", "download_ready": True,
+        }}, status=202)
+        calls = self._patch_urlopen([queued, _FakeTranslationHTTPResponse(b"subtitle")])
+        self.assertIsNotNone(self.provider.download(self.payload, {"alpha3": "fra"}, other_config))
+        self.assertEqual(calls[0][0].get_method(), "POST")
+
+        # The first account keeps its own marker; the second account's job is not
+        # polled with the first account's key.
+        self.assertEqual(self._search(), [])
+        self.assertIsNone(self.provider.download(self.payload, {"alpha3": "fra"}, self.config))
+        for mapping in (self.provider._translation_jobs, self.provider._translation_uncertainty):
+            self.assertNotIn(self.key, repr(mapping))
+            self.assertNotIn("another-account-key", repr(mapping))
 
     def test_uncertainty_suppresses_same_episode_but_not_another_episode(self):
         import urllib.error
