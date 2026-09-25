@@ -53,6 +53,16 @@ _WS_RE = re.compile(r"\s+")
 _NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
 
 
+class _AssrtRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follow redirects only to HTTPS Assrt hosts."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        parts = _assrt_host_parts(newurl)
+        if parts is None or parts.scheme != "https":
+            return None
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 class AssrtProvider:
     def __init__(self):
         self._quota_by_token = {}
@@ -82,12 +92,14 @@ class AssrtProvider:
                 video_name = _video_name(item)
                 if not video_name:
                     continue
+                if _names_other_episode(video, video_name):
+                    continue
                 result = self._result(video, item, video_name, language_code, requested_language)
                 key = (
                     result["provider_payload"]["subtitle_id"],
                     result["provider_payload"]["language_code"],
                     result["language"]["alpha3"],
-                    result["language"].get("country"),
+                    result["language"].get("country_alpha2"),
                 )
                 if key in seen:
                     continue
@@ -113,6 +125,7 @@ class AssrtProvider:
         download_url = selected_file.get("url") if selected_file else None
         if not download_url:
             raise ValueError(f"assrt detail did not contain a download URL for {subtitle_id}")
+        download_url = _https_download_url(download_url)
         self._sleep(request_delay_seconds(quota))
         body = self._http_get_bytes(download_url, config=config)
         body = _normalize_line_endings(body)
@@ -145,7 +158,8 @@ class AssrtProvider:
                 "Accept": "application/json,*/*",
             },
         )
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        opener = urllib.request.build_opener(_AssrtRedirectHandler())
+        with opener.open(request, timeout=timeout) as response:
             return response.read()
 
     def _sleep(self, seconds):
@@ -167,7 +181,7 @@ class AssrtProvider:
             "forced": False,
         }
         if requested_language.get("country"):
-            language["country"] = requested_language["country"]
+            language["country_alpha2"] = requested_language["country"]
         return {
             "provider": PROVIDER_ID,
             "id": f"assrt-{subtitle_id}-{language_code}-{language_id}",
@@ -340,6 +354,9 @@ def _requested_language_meta(language):
         alpha3 = language
         country = None
     elif isinstance(language, dict):
+        # Assrt has no forced or HI metadata, so it cannot satisfy either variant.
+        if language.get("forced") or language.get("hi"):
+            return None
         alpha3 = language.get("alpha3") or language.get("code") or language.get("alpha2")
         country = language.get("country") or language.get("country_alpha2") or language.get("region")
     else:
@@ -418,6 +435,35 @@ def _token(config):
     if not token:
         raise ValueError("assrt token must be specified")
     return token
+
+
+def _assrt_host_parts(url):
+    try:
+        parts = urllib.parse.urlsplit(str(url or ""))
+        if parts.port is not None:
+            return None
+    except ValueError:
+        return None
+    host = (parts.hostname or "").lower()
+    if parts.username or parts.password or not (host == "assrt.net" or host.endswith(".assrt.net")):
+        return None
+    return parts
+
+
+def _https_download_url(url):
+    # The API documents file links as plain http; the same hosts serve HTTPS.
+    parts = _assrt_host_parts(url)
+    if parts is None or parts.scheme not in {"http", "https"}:
+        raise ValueError("assrt download URL is outside the Assrt file hosts")
+    return urllib.parse.urlunsplit(("https", parts.netloc, parts.path, parts.query, ""))
+
+
+def _names_other_episode(video, video_name):
+    season = _safe_int(video.get("season"))
+    episode = _safe_int(video.get("episode"))
+    if video.get("kind") != "episode" or season is None or episode is None:
+        return False
+    return _any_episode(video_name) and not _text_has_episode(video_name, season, episode)
 
 
 def _text_has_episode(text, season, episode):

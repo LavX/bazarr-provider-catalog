@@ -22,7 +22,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`animesubinfo`](providers/animesubinfo/) | 0.1.3 | Scrapes [AnimeSub.info](http://animesub.info) for Polish anime movie and episode subtitles. Direct subtitle files and ZIP packages are supported. |
 | [`animetosho`](providers/animetosho/) | 0.1.5 | Archive-only provider using [AnimeTosho](https://animetosho.org) JSON feeds to find embedded subtitle attachments for older anime episodes by AniDB episode id. New torrent ingestion stopped on May 9, 2026. No login or API key. |
 | [`animetosho_xyz`](providers/animetosho_xyz/) | 0.1.1 | Searches the separate AnimeTosho.xyz JSON feeds for embedded anime episode subtitles. No login or API key. |
-| [`assrt`](providers/assrt/) | 0.1.3 | Searches the [Assrt](https://assrt.net) API for Chinese and English movie and episode subtitles. Requires an API token. |
+| [`assrt`](providers/assrt/) | 0.1.4 | Searches the [Assrt](https://assrt.net) API for Chinese and English movie and episode subtitles. Requires an API token. |
 | [`avistaz`](providers/avistaz/) | 0.1.4 | Uses [AvistaZ](https://avistaz.to) release pages from Sonarr or Radarr history to download attached subtitles. Requires session cookies. |
 | [`betaseries`](providers/betaseries/) | 0.1.6 | Searches the [BetaSeries](https://www.betaseries.com) API for French and English episode subtitles. Requires an API key. |
 | [`bollynook`](providers/bollynook/) | 0.1.3 | Scrapes [BollyNook](https://www.bollynook.com) for movie subtitles across Indian and international languages. No login or API key. |
