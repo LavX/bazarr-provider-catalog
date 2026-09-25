@@ -520,6 +520,27 @@ class AssrtProviderTests(unittest.TestCase):
         )
         return fetched
 
+    def test_download_rejects_empty_and_html_bodies(self):
+        detail = {"sub": {"subs": [{"id": 602333, "url": "https://file0.assrt.net/x.srt", "filelist": []}]}}
+        for body in (
+            b"",
+            b" \r\n\t",
+            b"<!DOCTYPE html><html><body>Quota exceeded</body></html>",
+            b"\xef\xbb\xbf\r\n<html><head><title>Login</title></head></html>",
+            b"<body>File expired</body>",
+        ):
+            with self.subTest(body=body):
+                provider = self.mod.AssrtProvider()
+                provider._http_get_json = lambda u, timeout=15, config=None: QUOTA if "/user/quota" in u else detail
+                provider._http_get_bytes = lambda u, timeout=15, config=None, body=body: body
+                provider._sleep = lambda seconds: None
+                with self.assertRaisesRegex(ValueError, "empty file|HTML page"):
+                    provider.download(
+                        {"subtitle_id": "602333", "language_code": "chs", "filename": "x.srt"},
+                        {"alpha3": "zho", "country_alpha2": "CN"},
+                        {"token": "secret-token"},
+                    )
+
     def test_download_rejects_urls_outside_the_assrt_file_hosts(self):
         for url in ("http://127.0.0.1/admin", "https://example.com/x.srt", "https://assrt.net.example.com/x.srt"):
             with self.subTest(url=url):

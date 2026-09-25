@@ -345,6 +345,13 @@ class ZimukuProviderTests(unittest.TestCase):
         self.assertEqual(cookies["srcurl"], self.mod.string_to_hex("https://srtku.com/search?q=Dune 2021"))
         self.assertEqual({item["provider_payload"]["language"] for item in results}, {"zho-CN", "zho-TW"})
         self.assertTrue(all(item["provider"] == "zimuku" for item in results))
+        for item in results:
+            self.assertEqual(item["filename"], item["provider_payload"]["filename"])
+            self.assertEqual(item["score_without_hash"], item["score"])
+            self.assertEqual(item["score_out_of"], 100)
+            self.assertIs(item["hash_verifiable"], False)
+            self.assertIs(item["hearing_impaired_verifiable"], False)
+            self.assertIs(item["hearing_impaired"], False)
         # Episode searches must carry the episode (and season) into the payload so
         # download() can pass episode for host-side member selection.
         self.assertTrue(all(item["provider_payload"]["episode"] == 1 for item in results))

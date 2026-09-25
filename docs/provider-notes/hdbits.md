@@ -27,6 +27,10 @@ Clean-room target for `hdbits`.
   - `uk` means English.
   - `br` means Brazilian Portuguese.
   - `gr` means Greek.
+- Because `uk` is English, no known HDBits code means Ukrainian, so `ukr` is not advertised.
+- The manifest declares base codes only, so a plain Portuguese request also returns `br` rows, labelled `por` with `country_alpha2: BR`. A Brazilian request still skips plain `pt` rows.
+- For an episode, a subtitle or torrent name with an `SxxEyy` marker must name the requested season as well as the episode. A bare `E01` marker carries no season.
+- The score starts at 70 and rises 5 points per release match (source, resolution, codec, release group and similar). The identity matches from the ID lookup are shared by every result, so they do not add to it.
 - Subtitle filenames ending in `.ass`, `.srt`, `.ssa`, `.vtt`, `.zip`, or `.rar` are supported.
 - Rows containing `extra`, `commentary`, `lyrics`, or `forced` in the title or filename are ignored.
 - Credentials stay in provider config. Search results do not include the passkey in `provider_payload`.

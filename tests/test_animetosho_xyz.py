@@ -347,6 +347,53 @@ class AnimeToshoXYZProviderTests(unittest.TestCase):
 
         self.assertEqual([row["provider_payload"]["subtitle_id"] for row in results], [201])
 
+    def _batch_results(self, filenames, episode=1, absolute=None):
+        video = {
+            "kind": "episode",
+            "series": "Show",
+            "season": 1,
+            "episode": episode,
+            "series_anidb_episode_id": 101,
+        }
+        if absolute is not None:
+            video["series_anidb_episode_no"] = absolute
+        attachments = []
+        files = []
+        for index, filename in enumerate(filenames, start=201):
+            attachment = _attachment(
+                index,
+                url=f"https://animetosho.xyz/storage/attach/{index:08X}/{index}.xz",
+            )
+            attachment["filename"] = "English.srt"
+            attachments.append(attachment)
+            files.append({"filename": filename, "attachments": [{"id": index}]})
+        files.append({"filename": "Show.nfo", "attachments": []})
+        detail = {"torrent_name": "Show Batch", "attachments": attachments, "files": files}
+        provider, _ = self._provider(
+            {
+                f"{FEED}/feed/json?eid=101": _json([_entry(1, title="Show Batch")]),
+                f"{FEED}/json?show=torrent&id=1": _json(detail),
+            }
+        )
+        results = provider.search(video, [{"alpha3": "eng", "forced": False, "hi": False}], {})
+        return [row["provider_payload"]["subtitle_id"] for row in results]
+
+    def test_markerless_batch_files_are_matched_by_dash_number_or_dropped(self):
+        filenames = [
+            "[Group] Show - 01 [1080p].mkv",
+            "[Group] Show - 02v2 [1080p].mkv",
+            "[Group] Show [NCOP].mkv",
+        ]
+
+        self.assertEqual(self._batch_results(filenames), [201])
+        self.assertEqual(self._batch_results(filenames, episode=2), [202])
+        # A second-cour batch numbered 13 onward matches the AniDB absolute number.
+        self.assertEqual(self._batch_results(["Show - 13.mkv", "Show - 14.mkv"], absolute=13), [201])
+
+    def test_markerless_file_is_trusted_only_in_a_single_file_torrent(self):
+        self.assertEqual(self._batch_results(["Show [1080p].mkv"]), [201])
+        self.assertEqual(self._batch_results(["Show [1080p].mkv", "Show [NCED].mkv"]), [])
+
     def test_special_season_zero_rejects_regular_season_file(self):
         video = {
             "kind": "episode",

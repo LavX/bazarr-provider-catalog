@@ -278,6 +278,10 @@ class Addic7edSearchTests(unittest.TestCase):
         self.assertEqual(results[0]["language"], {"alpha3": "eng", "hi": True, "forced": False})
         self.assertEqual(results[0]["release_info"], "WEB-DL,GROUP")
         self.assertEqual(results[0]["provider_payload"]["download_link"], "updated/1/2/123")
+        # Addic7ed lists the HI flag per row but has no hash lookup.
+        self.assertIs(results[0]["hash_verifiable"], False)
+        self.assertIs(results[0]["hearing_impaired_verifiable"], True)
+        self.assertIs(results[0]["hearing_impaired"], True)
         self.assertIn("series", results[0]["matches"])
         self.assertIn("season", results[0]["matches"])
         self.assertIn("episode", results[0]["matches"])

@@ -60,6 +60,8 @@ XZ_MAGIC = b"\xfd7zXZ\x00"
 SXXEYY_RE = re.compile(r"\bs0*(\d{1,3})\s*e0*(\d{1,4})\b", re.IGNORECASE)
 X_MARKER_RE = re.compile(r"\b(\d{1,3})x(\d{1,4})\b", re.IGNORECASE)
 EPISODE_RE = re.compile(r"(?:^|[^a-z0-9])e(?:pisode)?[ ._-]*0*(\d{1,4})(?:[^0-9]|$)", re.IGNORECASE)
+# The usual anime batch name, "Show - 01 [1080p].mkv": a dash, then the number.
+DASH_EPISODE_RE = re.compile(r"(?:^|[\s_])-[\s_]*0*(\d{1,4})(?:v\d{1,2})?(?=$|[\s_.\[(])")
 
 
 def _redirect_origin(url):
@@ -290,6 +292,16 @@ def parse_torrent_subtitles(detail, entry, video=None):
                 (attachment, file_data.get("filename") or file_data.get("file_name"))
                 for attachment in file_data.get("attachments") or []
             )
+    # Files that carry subtitle attachments; an NFO or a sample without them
+    # does not make a single-episode torrent a batch.
+    media_files = {
+        str(file_data.get("filename") or file_data.get("file_name"))
+        for file_data in (files if isinstance(files, list) else [])
+        if isinstance(file_data, dict)
+        and (file_data.get("filename") or file_data.get("file_name"))
+        and file_data.get("attachments")
+    }
+    single_file = len(media_files) <= 1
     rows = []
     for attachment, associated_filename in attachment_rows:
         if not isinstance(attachment, dict) or attachment.get("type") not in ("subtitle", 1, "1"):
@@ -297,7 +309,7 @@ def parse_torrent_subtitles(detail, entry, video=None):
         attachment_filename = str(attachment.get("filename") or attachment.get("file_name") or "")
         associated_filename = str(associated_filename or "")
         match_filename = _file_match_filename(associated_filename, attachment_filename)
-        if not _file_matches_episode(video, match_filename):
+        if not _file_matches_episode(video, match_filename, single_file):
             continue
         filename = attachment_filename
         info = attachment.get("info") if isinstance(attachment.get("info"), dict) else {}
@@ -341,10 +353,15 @@ def _file_match_filename(associated_filename, attachment_filename):
 
 
 def _has_episode_marker(filename):
-    return bool(SXXEYY_RE.search(filename) or X_MARKER_RE.search(filename) or EPISODE_RE.search(filename))
+    return bool(
+        SXXEYY_RE.search(filename)
+        or X_MARKER_RE.search(filename)
+        or EPISODE_RE.search(filename)
+        or DASH_EPISODE_RE.search(filename)
+    )
 
 
-def _file_matches_episode(video, filename):
+def _file_matches_episode(video, filename, single_file=True):
     if not isinstance(video, dict) or video.get("kind") != "episode" or not filename:
         return True
     episode = _positive_id(_scalar(video.get("episode")))
@@ -372,7 +389,12 @@ def _file_matches_episode(video, filename):
     match = EPISODE_RE.search(filename)
     if match:
         return int(match.group(1)) in expected_episodes
-    return True
+    numbers = {int(item.group(1)) for item in DASH_EPISODE_RE.finditer(filename)}
+    if numbers:
+        return bool(numbers & expected_episodes)
+    # A markerless file is only trusted when it is the torrent's only file. In a
+    # batch it could be any episode.
+    return single_file
 
 
 def _result(video, row):

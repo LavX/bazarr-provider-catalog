@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "5f54e13c26b6e39ec29737eba8528bd1a16bf0cf18de9b3b4941a8470e4a11d6",
+  "bundle_sha256": "f6ce5d30be8b83863b349ef4f55679bfe5efa8062c88c8aa703dfdb713727c06",
   "config_schema": {
     "additionalProperties": false,
     "type": "object"
@@ -12,7 +12,7 @@
   "entry_class": "TsukiHimeProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "ba5c26b1ef9dfe08fcbfcafb8850b6d486b269a5475e7f7f79f9e840d90612ac"
+    "provider.py": "f14ea0aa05e5a6170cfe2e2a849f2113da7ac3d37791fdc86cc78901a18afc84"
   },
   "languages": [
     "afr",
@@ -99,5 +99,5 @@
     "episode",
     "movie"
   ],
-  "version": "0.1.1"
+  "version": "0.1.2"
 }

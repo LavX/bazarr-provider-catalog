@@ -84,10 +84,15 @@ _HI_MARKER_RE = re.compile(
     r"(?:^|[\s_.\-\[(])(?:cc|sdh|hearing[\s_.\-]*impaired)(?:$|[\s_.\-)\]])",
     re.IGNORECASE,
 )
+# A standalone "HI" also marks hearing-impaired tracks, except on Hindi tracks,
+# where "hi" is the language code.
+_HI_CODE_MARKER_RE = re.compile(r"(?:^|[\s_.\-\[(])hi(?:$|[\s_.\-)\]])", re.IGNORECASE)
 _SIGNS_MARKER_RE = re.compile(r"\bsigns?\b", re.IGNORECASE)
 _SXXEYY_RE = re.compile(r"\bs0*(\d{1,3})\s*e0*(\d{1,4})\b", re.I)
 _X_MARKER_RE = re.compile(r"\b(\d{1,3})x(\d{1,4})\b", re.I)
 _EPISODE_RE = re.compile(r"(?:^|[^a-z0-9])e(?:pisode)?[ ._-]*0*(\d{1,4})(?:[^0-9]|$)", re.I)
+# The usual anime batch name, "Show - 01 [1080p].mkv": a dash, then the number.
+_DASH_EPISODE_RE = re.compile(r"(?:^|[\s_])-[\s_]*0*(\d{1,4})(?:v\d{1,2})?(?=$|[\s_.\[(])")
 _TOKEN_RE = re.compile(r"[a-z0-9]+", re.I)
 _XZ_MAGIC = b"\xfd7zXZ\x00"
 
@@ -440,7 +445,10 @@ def _subtitle_from_attachment(video, anime, entry, file_data, attachment, reques
         return None
     track_name = str(info.get("name") or "")
     language["forced"] = _bool(info.get("forced")) or bool(_SIGNS_MARKER_RE.search(track_name))
-    language["hi"] = bool(_HI_MARKER_RE.search(track_name))
+    language["hi"] = bool(
+        _HI_MARKER_RE.search(track_name)
+        or (language["alpha3"] != "hin" and _HI_CODE_MARKER_RE.search(track_name))
+    )
     if not _language_matches_request(language, requested):
         return None
     codec = str(info.get("codec") or "").lower()
@@ -564,9 +572,19 @@ def _matching_files(video, files):
             recognized = True
             if int(episode_match.group(1)) in expected:
                 matching.append(item)
+            continue
+        numbers = {int(match.group(1)) for match in _DASH_EPISODE_RE.finditer(filename)}
+        if numbers:
+            recognized = True
+            if numbers & expected:
+                matching.append(item)
     if matching:
         return matching
-    return [] if recognized else files
+    # Markerless files are only trusted in a single-file torrent. In a batch
+    # every file would be advertised as the requested episode.
+    if recognized or len([item for item in files if item.get("attachments")]) > 1:
+        return []
+    return files
 
 
 def _entry_score(video, entry):

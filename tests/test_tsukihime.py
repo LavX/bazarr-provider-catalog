@@ -321,6 +321,84 @@ class TsukiHimeProviderTests(unittest.TestCase):
 
         self.assertEqual(results, [])
 
+    def _episode_results(self, files, episode=1, absolute=None, languages=None):
+        video = {
+            "kind": "episode",
+            "series": "Show",
+            "season": 1,
+            "episode": episode,
+            "series_anidb_id": 69,
+            "series_anidb_episode_id": 9001,
+            "name": f"Show.S01E{episode:02d}.mkv",
+        }
+        if absolute is not None:
+            video["series_anidb_episode_no"] = absolute
+        provider, _ = self._provider(
+            {
+                f"{API}/animes/anidb/69": _json({"id": 2086, "release_year": 2020}),
+                f"{API}/animes/2086/episodes/9001": _json(
+                    {"results": [{"id": 301, "state": "completed", "sublangs": ["en", "hi"]}]}
+                ),
+                f"{API}/torrents/301": _json({"files": files}),
+            }
+        )
+        return provider.search(video, languages or [{"alpha3": "eng", "forced": False, "hi": False}], {})
+
+    def test_markerless_batch_files_are_matched_by_dash_number_or_dropped(self):
+        files = [
+            {"filename": "[Group] Show - 01 [1080p].mkv", "attachments": [_attachment(1, "en")]},
+            {"filename": "[Group] Show - 02v2 [1080p].mkv", "attachments": [_attachment(2, "en")]},
+            {"filename": "[Group] Show [NCOP].mkv", "attachments": [_attachment(3, "en")]},
+        ]
+
+        def attachment_ids(**kwargs):
+            return [row["provider_payload"]["attachment_id"] for row in self._episode_results(files, **kwargs)]
+
+        self.assertEqual(attachment_ids(), [1])
+        self.assertEqual(attachment_ids(episode=2), [2])
+        files = [
+            {"filename": "Show - 13.mkv", "attachments": [_attachment(13, "en")]},
+            {"filename": "Show - 14.mkv", "attachments": [_attachment(14, "en")]},
+        ]
+        # A second-cour batch numbered 13 onward matches the AniDB absolute number.
+        self.assertEqual(attachment_ids(absolute=13), [13])
+
+    def test_markerless_file_is_trusted_only_in_a_single_file_torrent(self):
+        single = [
+            {"filename": "Show [1080p].mkv", "attachments": [_attachment(1, "en")]},
+            {"filename": "Show.nfo", "attachments": []},
+        ]
+        batch = single + [{"filename": "Show [NCED].mkv", "attachments": [_attachment(2, "en")]}]
+
+        self.assertEqual([row["provider_payload"]["attachment_id"] for row in self._episode_results(single)], [1])
+        self.assertEqual(self._episode_results(batch), [])
+
+    def test_standalone_hi_track_label_marks_hearing_impaired_except_for_hindi(self):
+        files = [
+            {
+                "filename": "Show - 01.mkv",
+                "attachments": [
+                    _attachment(1, "en", name="English HI"),
+                    _attachment(2, "en", name="English [HI]"),
+                    _attachment(3, "en", name="English"),
+                    _attachment(4, "en", name="Hindsight"),
+                    _attachment(5, "hi", name="hi"),
+                ],
+            }
+        ]
+        languages = [
+            {"alpha3": "eng", "forced": False, "hi": False},
+            {"alpha3": "eng", "forced": False, "hi": True},
+            {"alpha3": "hin", "forced": False, "hi": False},
+            {"alpha3": "hin", "forced": False, "hi": True},
+        ]
+
+        results = self._episode_results(files, languages=languages)
+
+        observed = {row["provider_payload"]["attachment_id"]: row["language"]["hi"] for row in results}
+        self.assertEqual(observed, {1: True, 2: True, 3: False, 4: False, 5: False})
+        self.assertTrue(all(row["hearing_impaired"] is row["language"]["hi"] for row in results))
+
     def test_special_season_zero_rejects_regular_season_file(self):
         video = {
             "kind": "episode",

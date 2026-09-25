@@ -20,7 +20,8 @@ HTTP_TIMEOUT_SECONDS = 15
 ALLOWED_EXTENSIONS = (".ass", ".srt", ".ssa", ".sub", ".vtt", ".zip", ".rar")
 SUBTITLE_EXTENSIONS = (".ass", ".srt", ".ssa", ".sub", ".vtt")
 BLOCKED_TOKENS = frozenset({"extra", "extras", "commentary", "lyrics"})
-EPISODE_TAG_RE = re.compile(r"\bs\d{1,3}e(\d{1,3})\b", re.I)
+IDENTITY_MATCHES = frozenset({"tvdb_id", "imdb_id", "series", "title", "year", "season", "episode"})
+SEASON_EPISODE_TAG_RE = re.compile(r"\bs(\d{1,3})e(\d{1,3})\b", re.I)
 LOOSE_EPISODE_RE = re.compile(r"(?:^|[^a-z0-9])e(\d{1,3})(?:[^a-z0-9]|$)", re.I)
 
 
@@ -211,13 +212,17 @@ ALPHA2_TO_ALPHA3 = {
 }
 ALPHA3_TO_ALPHA2 = {value: key for key, value in ALPHA2_TO_ALPHA3.items()}
 ALPHA3_TO_ALPHA2.update({"eng": "en", "ell": "el", "por": "pt"})
-HDBITS_LANGUAGES = sorted(set(ALPHA2_TO_ALPHA3.values()) | {"eng", "ell", "por"})
-
 SPECIAL_HDBITS_LANGUAGE = {
     "br": ("por", "BR"),
     "gr": ("ell", None),
     "uk": ("eng", None),
 }
+# HDBits uses "uk" for English, which leaves no known code for Ukrainian, so
+# only languages some HDBits code resolves to are advertised.
+HDBITS_LANGUAGES = sorted(
+    {alpha3 for code, alpha3 in ALPHA2_TO_ALPHA3.items() if code not in SPECIAL_HDBITS_LANGUAGE}
+    | {language for language, _country in SPECIAL_HDBITS_LANGUAGE.values()}
+)
 
 SOURCE_TOKENS = {
     "Blu-ray": ["bluray", "blueray", "brrip", "bdrip", "bd"],
@@ -397,12 +402,27 @@ def _format_from_filename(filename):
     return "srt"
 
 
-def _episode_numbers(title):
+def _episode_markers(title):
+    """Return the ``(season, episode)`` markers in a name.
+
+    A loose ``E01`` marker carries no season, so its season is ``None``.
+    """
     normalized = _normalize(title)
-    episodes = {int(match.group(1)) for match in EPISODE_TAG_RE.finditer(normalized)}
-    if episodes:
-        return episodes
-    return {int(match.group(1)) for match in LOOSE_EPISODE_RE.finditer(normalized)}
+    markers = {
+        (int(match.group(1)), int(match.group(2)))
+        for match in SEASON_EPISODE_TAG_RE.finditer(normalized)
+    }
+    if markers:
+        return markers
+    return {(None, int(match.group(1))) for match in LOOSE_EPISODE_RE.finditer(normalized)}
+
+
+def _names_episode(markers, season, episode):
+    return any(
+        marker_episode == episode
+        and (marker_season is None or season is None or marker_season == season)
+        for marker_season, marker_episode in markers or ()
+    )
 
 
 def derive_matches(video, release_info, base_matches=None):
@@ -439,9 +459,10 @@ def derive_matches(video, release_info, base_matches=None):
     return _ordered_unique(matches)
 
 
-def parse_subtitles(rows, requested_alpha3, video, base_matches, episode=None, torrent_episodes=None):
+def parse_subtitles(rows, requested_alpha3, video, base_matches, episode=None, torrent_markers=None):
     parsed = []
     requested = _requested_variant_map(requested_alpha3)
+    wanted_season = _safe_nonnegative_int((video or {}).get("season"))
     for row in rows or []:
         filename = str(row.get("filename") or "")
         if not filename.lower().endswith(ALLOWED_EXTENSIONS):
@@ -449,25 +470,31 @@ def parse_subtitles(rows, requested_alpha3, video, base_matches, episode=None, t
         if not _is_allowed(row):
             continue
         language, country = hdbits_language(row.get("language"))
-        key = (language, country)
-        if not language or key not in requested:
+        if not language:
+            continue
+        variants = set(requested.get((language, country), ()))
+        if country:
+            # The manifest declares only base codes, so the host sends a generic
+            # request (por) and a regional row (br, as por-BR) must still answer it.
+            variants |= requested.get((language, None), set())
+        if not variants:
             continue
         hearing_impaired, forced = _subtitle_flags(row, language)
-        if (hearing_impaired, forced) not in requested[key]:
+        if (hearing_impaired, forced) not in variants:
             continue
         if episode is not None:
-            explicit_episodes = _episode_numbers(f"{row.get('title') or ''} {filename}")
+            markers = _episode_markers(f"{row.get('title') or ''} {filename}")
             try:
                 wanted_episode = int(episode)
             except (TypeError, ValueError):
                 wanted_episode = None
-            if explicit_episodes and wanted_episode not in explicit_episodes:
+            if markers and not _names_episode(markers, wanted_season, wanted_episode):
                 continue
             # An unnumbered row is only trusted when its torrent names the episode;
             # an archive is checked again when the host selects its member.
             if (
-                not explicit_episodes
-                and wanted_episode not in (torrent_episodes or ())
+                not markers
+                and not _names_episode(torrent_markers, wanted_season, wanted_episode)
                 and not filename.lower().endswith((".zip", ".rar"))
             ):
                 continue
@@ -554,8 +581,16 @@ class HDBitsProvider:
         results = []
         for item in torrent_items:
             torrent_id = item.get("id")
-            torrent_episodes = _episode_numbers(item.get("name"))
-            if episode is not None and torrent_episodes and _safe_nonnegative_int(episode) not in torrent_episodes:
+            torrent_markers = _episode_markers(item.get("name"))
+            if (
+                episode is not None
+                and torrent_markers
+                and not _names_episode(
+                    torrent_markers,
+                    _safe_nonnegative_int((video or {}).get("season")),
+                    _safe_nonnegative_int(episode),
+                )
+            ):
                 continue
             _delay(config)
             subtitles = self._post_json(SUBTITLES_URL, {**auth, "torrent_id": torrent_id})
@@ -565,7 +600,7 @@ class HDBitsProvider:
                 video=video,
                 base_matches=base_matches,
                 episode=episode,
-                torrent_episodes=torrent_episodes,
+                torrent_markers=torrent_markers,
             )
             for row in rows:
                 results.append(self._result(video, row, torrent_id, episode))
@@ -620,7 +655,10 @@ class HDBitsProvider:
         alpha2 = ALPHA3_TO_ALPHA2.get(language, language[:2])
         country = row.get("country_alpha2")
         matches = row["matches"]
-        score = min(100, 70 + len(matches) * 5)
+        # Every result shares the identity matches from the ID lookup, so only
+        # release matches (source, resolution, codec, group, ...) rank them.
+        release_matches = [match for match in matches if match not in IDENTITY_MATCHES]
+        score = min(100, 70 + len(release_matches) * 5)
         language_payload = {
             "alpha3": language,
             "alpha2": alpha2,
