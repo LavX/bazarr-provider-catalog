@@ -472,6 +472,9 @@ class OpenSubtitlesComProvider:
             "hash_verifiable": bool(attrs.get("moviehash_match")),
             "hearing_impaired_verifiable": True,
             "hearing_impaired": bool(attrs.get("hearing_impaired")),
+            # The host reads AI provenance only from this top-level field. The
+            # API's separate machine_translated flag does not count as AI.
+            "ai_translated": bool(attrs.get("ai_translated")),
             "page_link": attrs.get("url"),
             "display": {
                 "source": "opensubtitles.com",
