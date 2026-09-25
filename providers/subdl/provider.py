@@ -23,6 +23,8 @@ PROVIDER_ID = "subdl"
 API_URL = "https://api.subdl.com/api/v1/subtitles"
 ACCOUNT_API_URL = "https://api.subdl.com/api/v1/me"
 DOWNLOAD_BASE_URL = "https://dl.subdl.com"
+# The only origin the configured API key may be sent to on a download.
+SIGNED_DOWNLOAD_HOSTS = frozenset({"dl.subdl.com"})
 TRANSLATION_API_BASE_URL = "https://api.subdl.com/api/v1/pro/translate"
 TRANSLATION_POLL_INTERVAL_SECONDS = 4
 TRANSLATION_POLL_FAILURE_LIMIT = 5
@@ -542,7 +544,7 @@ def _is_pack(item):
 
 def _pack_contains_episode(item, video):
     unpack_files = item.get("unpack_files")
-    if isinstance(unpack_files, list):
+    if isinstance(unpack_files, list) and unpack_files:
         # When the API provides archive members, those entries are the most
         # precise episode identity available. Do not fall back to the pack's
         # season flag when none of its listed files matches the request.
@@ -689,6 +691,19 @@ def _without_api_key(url):
     if len(kept) == len(query):
         return value, False
     return urllib.parse.urlunsplit(parts._replace(query=urllib.parse.urlencode(kept))), True
+
+
+def _is_signed_download_origin(url):
+    parts = urllib.parse.urlsplit(url)
+    try:
+        port = parts.port
+    except ValueError:
+        return False
+    return (
+        parts.scheme == "https"
+        and (parts.hostname or "").casefold() in SIGNED_DOWNLOAD_HOSTS
+        and port in (None, 443)
+    )
 
 
 def _with_api_key(url, api_key):
@@ -2019,7 +2034,7 @@ class SubDLProvider:
         if not download_url:
             raise ValueError("SubDL download requires download_url")
         request_url = _absolute_download_url(download_url)
-        if payload.get("download_url_signed") is True or legacy_signed:
+        if (payload.get("download_url_signed") is True or legacy_signed) and _is_signed_download_origin(request_url):
             request_url = _with_api_key(request_url, api_key)
         body = self._http_get_bytes(request_url, timeout=HTTP_TIMEOUT_SECONDS)
         if not body or not body.strip():
