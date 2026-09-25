@@ -163,8 +163,17 @@ class AvistazManifestTests(unittest.TestCase):
         requirements = manifest["dependencies"]["requirements"]
         names = {item["name"].lower() for item in requirements}
 
-        self.assertEqual(manifest["version"], "0.1.4")
+        self.assertEqual(manifest["version"], "0.1.5")
         self.assertTrue(names.isdisjoint({"py7zz", "py7zr", "rarfile"}))
+
+    def test_manifest_declares_every_language_the_parser_maps(self):
+        manifest = json.loads((PROVIDER_DIR / "provider.json").read_text(encoding="utf-8"))
+        mod = _load_provider_module()
+        # por-BR is a country variant of the declared por. bih is an ISO 639-2
+        # collective code that babelfish, and so the host, cannot represent.
+        parsed = {code.split("-")[0] for code in mod.LANGUAGE_NAME_TO_ALPHA3.values()} - {"bih"}
+
+        self.assertEqual(sorted(parsed - set(manifest["languages"])), [])
 
 
 class AvistazSearchTests(unittest.TestCase):

@@ -171,6 +171,7 @@ class KaragargaSearchTests(unittest.TestCase):
         self.assertIn("title", results[0]["matches"])
         self.assertIn("year", results[0]["matches"])
         self.assertIn("release_group", results[0]["matches"])
+        self.assertIs(results[0]["hash_verifiable"], False)
 
     def test_login_accepts_redirect_responses_that_set_auth_cookies(self):
         provider = self.mod.KaragargaProvider()

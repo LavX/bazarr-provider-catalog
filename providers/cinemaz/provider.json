@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "3b83f436f4e40adcbef6d03bac783e1813475848f3f3c604ca41d53bd360676a",
+  "bundle_sha256": "3fc0def9f50391fa520342a10a47a1d9e247a288ddfc30c37c11b84e5fba54aa",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -30,7 +30,7 @@
   "entry_class": "CinemaZProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "b2ef66b96768b2bdb075b290e7b5b0c34735b6f597a68e0d750920fa8e894642"
+    "provider.py": "cda4f7afd7128d11aed1af46183094ca3b778f07a0ea2c1d805ed8d927ac855d"
   },
   "languages": [
     "aar",
@@ -66,7 +66,9 @@
     "cym",
     "dan",
     "deu",
+    "div",
     "dzo",
+    "ell",
     "eng",
     "epo",
     "est",
@@ -80,6 +82,7 @@
     "fra",
     "fry",
     "ful",
+    "gla",
     "gle",
     "glg",
     "glv",
@@ -99,6 +102,7 @@
     "iii",
     "iku",
     "ile",
+    "ina",
     "ind",
     "ipk",
     "isl",
@@ -111,6 +115,7 @@
     "kat",
     "kau",
     "kaz",
+    "khm",
     "kik",
     "kin",
     "kir",
@@ -135,19 +140,23 @@
     "mlg",
     "mlt",
     "mon",
+    "mos",
     "mri",
+    "msa",
     "mya",
     "nau",
     "nav",
     "nbl",
     "nde",
     "ndo",
+    "nep",
     "nld",
     "nno",
     "nor",
     "nya",
     "oci",
     "oji",
+    "ori",
     "orm",
     "oss",
     "pan",
@@ -177,6 +186,7 @@
     "srp",
     "ssw",
     "sun",
+    "swa",
     "swe",
     "tah",
     "tam",
@@ -186,6 +196,7 @@
     "tgl",
     "tha",
     "tir",
+    "ton",
     "tsn",
     "tso",
     "tuk",
@@ -226,5 +237,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.5"
+  "version": "0.1.6"
 }
