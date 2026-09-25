@@ -347,9 +347,10 @@ def _has_episode_marker(filename):
 def _file_matches_episode(video, filename):
     if not isinstance(video, dict) or video.get("kind") != "episode" or not filename:
         return True
+    episode = _positive_id(_scalar(video.get("episode")))
     expected_episodes = {
         value for value in (
-            _positive_id(_scalar(video.get("episode"))),
+            episode,
             _positive_id(_scalar(video.get("series_anidb_episode_no"))),
         ) if value is not None
     }
@@ -359,13 +360,13 @@ def _file_matches_episode(video, filename):
     match = SXXEYY_RE.search(filename)
     if match:
         return (
-            int(match.group(2)) in expected_episodes
+            int(match.group(2)) == episode
             and (expected_season is None or int(match.group(1)) == expected_season)
         )
     match = X_MARKER_RE.search(filename)
     if match:
         return (
-            int(match.group(2)) in expected_episodes
+            int(match.group(2)) == episode
             and (expected_season is None or int(match.group(1)) == expected_season)
         )
     match = EPISODE_RE.search(filename)
