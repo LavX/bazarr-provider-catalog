@@ -301,7 +301,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "e1933251eee82678885dbf37fb041f48f7fdb562762177ef4fbb02cadf50fb1c",
+        "bundle_sha256": "a4e409261efd3b6f0c1bead4a72bfc3ce84721c506b5729732d0858b64a17991",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -331,7 +331,7 @@
         "entry_class": "AnimeToshoXYZProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "44b5105d0be10ba2cc1e7aa21a4599085c4e5b061963ee2cbb25e1d351efca79"
+          "provider.py": "6777ad59f220d51de466bef3ed17b16ff6bce6d79849e6b6913c41ab40882083"
         },
         "languages": [
           "ara",
@@ -380,7 +380,7 @@
         "supported_media": [
           "episode"
         ],
-        "version": "0.1.0"
+        "version": "0.1.1"
       }
     },
     {
@@ -7051,7 +7051,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "e9fb793c2b12e788069aee7e7457b73918cb1d917c458bd8267599a9f55cf9e4",
+        "bundle_sha256": "5f54e13c26b6e39ec29737eba8528bd1a16bf0cf18de9b3b4941a8470e4a11d6",
         "config_schema": {
           "additionalProperties": false,
           "type": "object"
@@ -7063,7 +7063,7 @@
         "entry_class": "TsukiHimeProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "332c87b1814999959a330a653a5e8bcb3e359aa048138ea171b8f02ac39fd28a"
+          "provider.py": "ba5c26b1ef9dfe08fcbfcafb8850b6d486b269a5475e7f7f79f9e840d90612ac"
         },
         "languages": [
           "afr",
@@ -7150,7 +7150,7 @@
           "episode",
           "movie"
         ],
-        "version": "0.1.0"
+        "version": "0.1.1"
       }
     },
     {

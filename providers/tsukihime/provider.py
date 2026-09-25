@@ -527,10 +527,11 @@ def _matching_files(video, files):
         return [max(files, key=lambda item: _name_overlap(item.get("filename", ""), reference))]
     if video.get("kind") != "episode":
         return files
+    episode = _positive_id(video.get("episode"))
     expected = {
         value for value in (
             _positive_id(_scalar(video.get("series_anidb_episode_no"))),
-            _positive_id(video.get("episode")),
+            episode,
         ) if value is not None
     }
     expected_season = _season_number(_scalar(video.get("season")))
@@ -543,7 +544,7 @@ def _matching_files(video, files):
             recognized = True
             file_season = int(season_episode.group(1))
             if (
-                int(season_episode.group(2)) in expected
+                int(season_episode.group(2)) == episode
                 and (expected_season is None or file_season == expected_season)
             ):
                 matching.append(item)
@@ -553,7 +554,7 @@ def _matching_files(video, files):
             recognized = True
             file_season = int(season_episode.group(1))
             if (
-                int(season_episode.group(2)) in expected
+                int(season_episode.group(2)) == episode
                 and (expected_season is None or file_season == expected_season)
             ):
                 matching.append(item)

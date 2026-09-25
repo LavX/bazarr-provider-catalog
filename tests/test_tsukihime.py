@@ -254,6 +254,39 @@ class TsukiHimeProviderTests(unittest.TestCase):
 
         self.assertEqual({row["provider_payload"]["attachment_id"] for row in results}, {1, 3})
 
+    def test_absolute_episode_number_only_matches_unseasoned_markers(self):
+        video = {
+            "kind": "episode",
+            "series": "Show",
+            "season": 2,
+            "episode": 1,
+            "series_anidb_id": 69,
+            "series_anidb_episode_id": 9001,
+            "series_anidb_episode_no": 13,
+            "name": "Show.S02E01.mkv",
+        }
+        responses = {
+            f"{API}/animes/anidb/69": _json({"id": 2086, "release_year": 2020}),
+            f"{API}/animes/2086/episodes/9001": _json(
+                {"results": [{"id": 301, "state": "completed", "sublangs": ["en"]}]}
+            ),
+            f"{API}/torrents/301": _json(
+                {
+                    "files": [
+                        {"filename": "Show.S02E01.en.srt", "attachments": [_attachment(1, "en")]},
+                        {"filename": "Show.S02E13.en.srt", "attachments": [_attachment(2, "en")]},
+                        {"filename": "Show.2x13.en.srt", "attachments": [_attachment(3, "en")]},
+                        {"filename": "Show.E13.en.srt", "attachments": [_attachment(4, "en")]},
+                    ]
+                }
+            ),
+        }
+        provider, _ = self._provider(responses)
+
+        results = provider.search(video, [{"alpha3": "eng", "forced": False, "hi": False}], {})
+
+        self.assertEqual({row["provider_payload"]["attachment_id"] for row in results}, {1, 4})
+
     def test_single_file_with_wrong_season_is_rejected(self):
         video = {
             "kind": "episode",

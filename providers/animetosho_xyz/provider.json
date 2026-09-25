@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "e1933251eee82678885dbf37fb041f48f7fdb562762177ef4fbb02cadf50fb1c",
+  "bundle_sha256": "a4e409261efd3b6f0c1bead4a72bfc3ce84721c506b5729732d0858b64a17991",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -30,7 +30,7 @@
   "entry_class": "AnimeToshoXYZProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "44b5105d0be10ba2cc1e7aa21a4599085c4e5b061963ee2cbb25e1d351efca79"
+    "provider.py": "6777ad59f220d51de466bef3ed17b16ff6bce6d79849e6b6913c41ab40882083"
   },
   "languages": [
     "ara",
@@ -79,5 +79,5 @@
   "supported_media": [
     "episode"
   ],
-  "version": "0.1.0"
+  "version": "0.1.1"
 }

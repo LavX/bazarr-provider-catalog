@@ -280,6 +280,39 @@ class AnimeToshoXYZProviderTests(unittest.TestCase):
 
         self.assertEqual([row["provider_payload"]["subtitle_id"] for row in results], [201])
 
+    def test_absolute_episode_number_only_matches_unseasoned_markers(self):
+        video = {
+            "kind": "episode",
+            "series": "Show",
+            "season": 2,
+            "episode": 1,
+            "series_anidb_episode_id": 101,
+            "series_anidb_episode_no": 13,
+        }
+        attachments = []
+        for attachment_id, filename in (
+            (201, "Show.S02E01.en.srt"),
+            (202, "Show.S02E13.en.srt"),
+            (203, "Show.2x13.en.srt"),
+            (204, "Show.E13.en.srt"),
+        ):
+            attachment = _attachment(
+                attachment_id,
+                url=f"https://animetosho.xyz/storage/attach/{attachment_id:08X}/{attachment_id}.xz",
+            )
+            attachment["filename"] = filename
+            attachments.append(attachment)
+        provider, _ = self._provider(
+            {
+                f"{FEED}/feed/json?eid=101": _json([_entry(1, title="Show S02E01")]),
+                f"{FEED}/json?show=torrent&id=1": _json(_torrent(attachments, "Show Season Pack")),
+            }
+        )
+
+        results = provider.search(video, [{"alpha3": "eng", "forced": False, "hi": False}], {})
+
+        self.assertEqual({row["provider_payload"]["subtitle_id"] for row in results}, {201, 204})
+
     def test_top_level_attachments_use_nested_file_associations(self):
         video = {
             "kind": "episode",
