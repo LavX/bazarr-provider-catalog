@@ -528,6 +528,44 @@ class PipocasProviderTests(unittest.TestCase):
         self.assertIn("release_group", self.mod.derive_matches(video, "Show.S01E01.Horrible-Subs"))
         self.assertNotIn("release_group", self.mod.derive_matches(video, "Show.S01E01.Horrible"))
 
+    def test_forced_and_hearing_impaired_requests_are_skipped(self):
+        provider = self.mod.PipocasProvider()
+        provider._http_get = mock.Mock(side_effect=AssertionError("no request expected"))
+
+        results = provider.search(
+            _video("pipocas_video_dune_2021.json"),
+            [{"alpha3": "por", "forced": True}, {"alpha3": "eng", "hi": True}],
+            {"username": "user", "password": "pass"},
+        )
+
+        self.assertEqual(results, [])
+        provider._http_get.assert_not_called()
+
+    def test_episode_search_rejects_row_for_a_different_episode(self):
+        provider = self.mod.PipocasProvider()
+
+        def get(url, headers=None, timeout=10, params=None):
+            del headers, timeout, params
+            if url.endswith("/login"):
+                return self.mod.HttpResponse(200, _fixture("pipocas_login.html"), {})
+            if url.endswith("/legendas"):
+                return self.mod.HttpResponse(200, _fixture("pipocas_search_chernobyl.html"), {})
+            if url.endswith("/legendas/info/601"):
+                return self.mod.HttpResponse(200, _fixture("pipocas_detail_chernobyl.html"), {})
+            raise AssertionError(url)
+
+        provider._http_get = get
+        provider._http_post = lambda url, data, headers=None, timeout=10: self.mod.HttpResponse(200, b"profile", {})
+        video = dict(_video("pipocas_video_chernobyl_s01e01.json"), episode=2)
+        results = provider.search(
+            video,
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"username": "user", "password": "pass", "request_delay_ms": 0},
+        )
+
+        # The only detail page is S01E01, so an S01E02 search has nothing to offer.
+        self.assertEqual(results, [])
+
 
 class _FakeHeaders:
     """Minimal multi-valued header container mirroring http.client.HTTPMessage."""

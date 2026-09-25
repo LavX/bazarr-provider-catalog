@@ -188,7 +188,7 @@ class PipocasProvider:
         if _requires_account(response.body):
             raise PermissionError("Pipocas login is required for details")
         item = parse_detail_page(response.body, url)
-        if not item:
+        if not item or _names_other_episode(video, item["release_info"]):
             return None
         matches = derive_matches(video, item["release_info"])
         language_payload = _language_payload(language)
@@ -458,6 +458,9 @@ def _format_from_content(body):
 def _language_for_request(language):
     if not isinstance(language, dict):
         return None
+    # Pipocas has no forced or hearing-impaired variants to offer.
+    if language.get("forced") or language.get("hi"):
+        return None
     alpha3 = (language.get("alpha3") or "").strip()
     country = (language.get("country") or "").upper()
     if not country and isinstance(language.get("country_alpha2"), str):
@@ -609,6 +612,16 @@ def _content_type(subtitle_format):
 def _looks_like_html(body):
     sample = (body or b"")[:512].lstrip(b"\xef\xbb\xbf \t\r\n").lower()
     return sample.startswith(b"<!doctype html") or sample.startswith(b"<html") or b"<body" in sample
+
+
+def _names_other_episode(video, release):
+    video = video or {}
+    season = _safe_int(video.get("season"))
+    episode = _safe_int(video.get("episode"))
+    if video.get("kind") != "episode" or season is None or episode is None:
+        return False
+    markers = {(int(s), int(e)) for s, e in re.findall(r"\bs(\d+)e(\d+)\b", _normalize(release))}
+    return bool(markers) and (season, episode) not in markers
 
 
 def _has_season(release, season):

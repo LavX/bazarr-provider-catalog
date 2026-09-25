@@ -439,7 +439,7 @@ def derive_matches(video, release_info, base_matches=None):
     return _ordered_unique(matches)
 
 
-def parse_subtitles(rows, requested_alpha3, video, base_matches, episode=None):
+def parse_subtitles(rows, requested_alpha3, video, base_matches, episode=None, torrent_episodes=None):
     parsed = []
     requested = _requested_variant_map(requested_alpha3)
     for row in rows or []:
@@ -462,6 +462,14 @@ def parse_subtitles(rows, requested_alpha3, video, base_matches, episode=None):
             except (TypeError, ValueError):
                 wanted_episode = None
             if explicit_episodes and wanted_episode not in explicit_episodes:
+                continue
+            # An unnumbered row is only trusted when its torrent names the episode;
+            # an archive is checked again when the host selects its member.
+            if (
+                not explicit_episodes
+                and wanted_episode not in (torrent_episodes or ())
+                and not filename.lower().endswith((".zip", ".rar"))
+            ):
                 continue
         release_info = str(row.get("title") or filename)
         subtitle_id = row.get("id")
@@ -542,9 +550,13 @@ class HDBitsProvider:
 
         auth = {"username": username, "passkey": passkey}
         torrents = self._post_json(TORRENTS_URL, {**auth, **lookup})
-        torrent_ids = [item.get("id") for item in _api_data(torrents, "HDBits torrent lookup") if item.get("id") is not None]
+        torrent_items = [item for item in _api_data(torrents, "HDBits torrent lookup") if item.get("id") is not None]
         results = []
-        for torrent_id in torrent_ids:
+        for item in torrent_items:
+            torrent_id = item.get("id")
+            torrent_episodes = _episode_numbers(item.get("name"))
+            if episode is not None and torrent_episodes and _safe_nonnegative_int(episode) not in torrent_episodes:
+                continue
             _delay(config)
             subtitles = self._post_json(SUBTITLES_URL, {**auth, "torrent_id": torrent_id})
             rows = parse_subtitles(
@@ -553,6 +565,7 @@ class HDBitsProvider:
                 video=video,
                 base_matches=base_matches,
                 episode=episode,
+                torrent_episodes=torrent_episodes,
             )
             for row in rows:
                 results.append(self._result(video, row, torrent_id, episode))
@@ -679,6 +692,8 @@ def download_payload(body, payload):
     filename = payload.get("filename") or ""
     if not body:
         raise RuntimeError("hdbits download returned an empty response")
+    if _looks_like_html(body):
+        raise RuntimeError("hdbits download returned an HTML page instead of a subtitle")
     if _is_archive_download(body, filename):
         return {
             "archive_b64": _base64.b64encode(body).decode("ascii"),
@@ -891,6 +906,11 @@ def _api_data(payload, context):
         detail = message or status or "missing data"
         raise ValueError(f"{context} failed: {detail}")
     return []
+
+
+def _looks_like_html(body):
+    sample = body[:512].lstrip(b"\xef\xbb\xbf \t\r\n").lower()
+    return sample.startswith((b"<!doctype html", b"<html", b"<head", b"<body"))
 
 
 def _is_rar_archive(body):
