@@ -904,7 +904,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "27ba46f9233869319be8e903f581daff2724f443631c18123323468c51535ba8",
+        "bundle_sha256": "3b83f436f4e40adcbef6d03bac783e1813475848f3f3c604ca41d53bd360676a",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -934,7 +934,7 @@
         "entry_class": "CinemaZProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "13fc4c94325ac9435e92b30d345a90ebe60f4df449339ef987e73ac5d1d69b16"
+          "provider.py": "b2ef66b96768b2bdb075b290e7b5b0c34735b6f597a68e0d750920fa8e894642"
         },
         "languages": [
           "aar",
@@ -1130,7 +1130,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.4"
+        "version": "0.1.5"
       }
     },
     {
@@ -1573,7 +1573,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "b6130556b6b37347816738030b0de8baa79dde372b5508f2834890b5cc604617",
+        "bundle_sha256": "24405582df387985f7b5833132a1710036f47fe69f7b69da132667334fadc040",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1611,7 +1611,7 @@
         "entry_class": "HDBitsProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "9d3ec3fa3f68c70575ec0921b8775545c82ef7efc9483f06b19eadcf61a9c4f4"
+          "provider.py": "2e7871c3fb03bc3bd163bd8bf0f6dae3d816b6d1c872eba885ea9240e7f5f6c8"
         },
         "languages": [
           "aar",
@@ -1818,7 +1818,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.4"
+        "version": "0.1.5"
       }
     },
     {
@@ -4271,7 +4271,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "ec581e9ac1240f2276b00973c5f3464424109c76fab78e4abd1f3efb45dec099",
+        "bundle_sha256": "eabbccfc13e8ef1c60c872ac21637074bd7283d2653084433847a75359b2eaab",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -4307,7 +4307,7 @@
         "entry_class": "PipocasProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "a5a00bdd0fc6bf57cf9600089486284e6c2115fdb75d95de33788441614f6d93"
+          "provider.py": "811319bb2f0589e26354798af8f567548eb7d23c224d8d63c71826c0206291ff"
         },
         "languages": [
           "eng",
@@ -4335,7 +4335,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.5"
+        "version": "0.1.6"
       }
     },
     {

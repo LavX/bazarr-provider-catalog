@@ -1,6 +1,7 @@
 """CinemaZ provider for the Bazarr+ Provider Hub catalog."""
 
 import base64
+import email.message
 import hashlib
 import html
 import io
@@ -262,7 +263,8 @@ class CinemaZProvider:
                 continue
             country = language_country(subtitle["language"])
             key = f"{alpha3}-{country}" if country else alpha3
-            if (key, False) not in requested:
+            # A generic request (por) also accepts a regional row (por-BR).
+            if (key, False) not in requested and (alpha3, False) not in requested:
                 continue
             results.append(_candidate(release, subtitle, alpha3, country, video))
         return results
@@ -287,8 +289,9 @@ class CinemaZProvider:
         if _is_archive_body(body):
             return _archive_payload(body, payload)
         filename = payload.get("filename") or download_url
+        subtitle_format = _subtitle_extension(_response_filename(response.headers)) or _format_from_filename(filename)
         body = _normalize_line_endings(body)
-        return _content_payload(body, _format_from_filename(filename))
+        return _content_payload(body, subtitle_format)
 
     def _ensure_cookies(self, cookies, config):
         if self._cookies_verified:
@@ -744,6 +747,15 @@ def _looks_like_html(response):
     content_type = str((response.headers or {}).get("content-type") or (response.headers or {}).get("Content-Type") or "").lower()
     sample = (response.body or b"").lstrip()[:2048].decode("utf-8", errors="ignore").lower()
     return "text/html" in content_type or sample.startswith("<!doctype html") or sample.startswith("<html")
+
+
+def _response_filename(headers):
+    for key, value in (headers or {}).items():
+        if str(key).lower() == "content-disposition":
+            message = email.message.Message()
+            message["Content-Disposition"] = str(value)
+            return message.get_filename()
+    return None
 
 
 def _subtitle_extension(name):

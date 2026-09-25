@@ -355,6 +355,37 @@ class HDBitsSearchTests(unittest.TestCase):
         self.assertEqual(results[0]["provider_payload"]["subtitle_id"], 601)
         self.assertEqual(results[0]["provider_payload"]["episode"], 1)
 
+    def test_episode_search_requires_row_or_torrent_to_name_the_episode(self):
+        provider = self.mod.HDBitsProvider()
+        torrents = {
+            "data": [
+                {"id": 3001, "name": "Chernobyl S01E01 1080p WEB-DL-GROUP"},
+                {"id": 3002, "name": "Chernobyl S01E02 1080p WEB-DL-GROUP"},
+                {"id": 3003, "name": "Chernobyl S01 1080p WEB-DL-GROUP"},
+            ]
+        }
+        subtitles = {
+            3001: {"data": [{"filename": "Chernobyl.en.srt", "id": 901, "language": "uk", "title": "Chernobyl"}]},
+            3002: {"data": [{"filename": "Chernobyl.en.srt", "id": 902, "language": "uk", "title": "Chernobyl"}]},
+            3003: {"data": [{"filename": "Chernobyl.en.srt", "id": 903, "language": "uk", "title": "Chernobyl"}]},
+        }
+
+        def post_stub(url, payload, timeout=15):
+            del timeout
+            if url == self.mod.TORRENTS_URL:
+                return torrents
+            return subtitles[payload["torrent_id"]]
+
+        provider._post_json = post_stub
+        results = provider.search(
+            EPISODE_VIDEO,
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"username": "user", "passkey": "secret", "request_delay_ms": 0},
+        )
+
+        # Only the S01E01 torrent verifies an unnumbered direct subtitle.
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], [901])
+
 
 class HDBitsDownloadTests(unittest.TestCase):
     def setUp(self):
@@ -576,6 +607,19 @@ class HDBitsDownloadTests(unittest.TestCase):
                 {"alpha3": "eng", "alpha2": "en"},
                 {"username": "user", "passkey": "secret"},
             )
+
+    def test_download_rejects_html_error_page(self):
+        provider = self.mod.HDBitsProvider()
+        page = b"<!DOCTYPE html>\n<html><body>Invalid passkey</body></html>"
+        provider._http_get = lambda url, timeout=15: page
+
+        for filename in ("Chernobyl.S01.en.zip", "Chernobyl.S01.gr.rar", "movie.en.srt"):
+            with self.subTest(filename=filename), self.assertRaisesRegex(RuntimeError, "HTML"):
+                provider.download(
+                    {"provider": "hdbits", "schema": 1, "subtitle_id": 501, "filename": filename},
+                    {"alpha3": "eng", "alpha2": "en"},
+                    {"username": "user", "passkey": "secret"},
+                )
 
     def test_content_payload_omits_guessed_encoding(self):
         body = "Zażółć gęślą jaźń".encode("cp1250")

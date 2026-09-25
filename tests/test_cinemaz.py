@@ -157,7 +157,7 @@ class CinemaZManifestTests(unittest.TestCase):
         requirements = manifest["dependencies"]["requirements"]
         names = {item["name"].lower() for item in requirements}
 
-        self.assertEqual(manifest["version"], "0.1.4")
+        self.assertEqual(manifest["version"], "0.1.5")
         self.assertTrue(names.isdisjoint({"py7zz", "py7zr", "rarfile"}))
 
 
@@ -325,6 +325,30 @@ class CinemaZSearchTests(unittest.TestCase):
             "https://cinemaz.to/subtitles/666/download",
         )
 
+    def test_search_returns_brazilian_row_for_generic_portuguese(self):
+        provider = self.mod.CinemaZProvider()
+
+        def get_bytes(url, headers, cookies, timeout=30, allow_redirects=True):
+            del headers, cookies, timeout, allow_redirects
+            if url.endswith("/rules"):
+                return self.mod.HttpResponse(200, b"<html>rules</html>", {})
+            return self.mod.HttpResponse(200, _unit3d_actions_release_page(), {})
+
+        provider._http_get = get_bytes
+        results = provider.search(
+            {
+                "kind": "movie",
+                "title": "The Cabinet of Dr Caligari",
+                "info_url": "https://cinemaz.to/torrent/123-caligari",
+            },
+            [{"alpha3": "por"}],
+            {"cookies": "cinemazx_session=valid"},
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["language"]["alpha3"], "por")
+        self.assertEqual(results[0]["language"]["country_alpha2"], "BR")
+
     def test_search_skips_forced_only_language_requests(self):
         provider = self.mod.CinemaZProvider()
         calls = []
@@ -378,6 +402,25 @@ class CinemaZDownloadTests(unittest.TestCase):
         self.assertNotIn("encoding", result)
         self.assertEqual(calls[0][0], "https://cinemaz.to/subtitles/222/download")
         self.assertFalse(calls[0][3])
+
+    def test_download_uses_response_filename_for_direct_format(self):
+        provider = self.mod.CinemaZProvider()
+        body = b"[Script Info]\nTitle: Caligari\n"
+        provider._http_get = lambda url, headers, cookies, timeout=30, allow_redirects=True: self.mod.HttpResponse(
+            200, body, {"Content-Disposition": 'attachment; filename="caligari.de.ass"'}
+        )
+
+        result = provider.download(
+            {
+                "download_url": "https://cinemaz.to/subtitles/222/download",
+                "filename": "download",
+            },
+            {"alpha3": "deu"},
+            {"cookies": "cinemazx_session=valid"},
+        )
+
+        self.assertEqual(result["format"], "ass")
+        self.assertEqual(result["content_type"], "text/x-ssa")
 
     def test_download_rejects_login_redirects_and_html(self):
         provider = self.mod.CinemaZProvider()
