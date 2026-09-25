@@ -597,6 +597,88 @@ class SubDLProviderDownloadTests(unittest.TestCase):
         self.assertEqual(result["format"], "srt")
         self.assertFalse(result["empty"])
 
+    def test_signed_row_urls_keep_the_key_out_of_candidates_and_errors(self):
+        provider = self.mod.SubDLProvider()
+        key = "sentinel-signing-key-0123456789"
+        movie_row = {
+            "language": "EN",
+            "name": "Movie.en.zip",
+            "url": f"/subtitle/3520378-8443030.zip?api_key={key}",
+            "subtitlePage": f"/subtitle/sd3520378/movie?api_key={key}",
+            "hi": False,
+        }
+        unnamed_row = dict(movie_row, name="", url=f"/subtitle/9-9.zip?api_key={key}")
+        pack = {
+            "language": "EN",
+            "name": "show.s01.zip",
+            "url": f"/subtitle/pack.zip?api_key={key}",
+            "season": 1,
+            "full_season": True,
+            "hi": False,
+            "unpack_files": [{
+                "file_n_id": "child-3",
+                "name": "Show.S01E03.srt",
+                "season": 1,
+                "episode": 3,
+                "language": "EN",
+                "hi": False,
+                "url": f"/subtitle/child-3.srt?api_key={key}&lang=en",
+            }],
+        }
+        provider._http_get_json = lambda params: _subdl_response(movie_row, unnamed_row)
+        movies = provider.search(
+            {"kind": "movie", "title": "Movie", "imdb_id": "tt1234567"},
+            [{"alpha3": "eng"}], {"api_key": key},
+        )
+        provider._http_get_json = lambda params: _subdl_response(pack)
+        episodes = provider.search(
+            {"kind": "episode", "series": "Show", "season": 1, "episode": 3},
+            [{"alpha3": "eng"}], {"api_key": key},
+        )
+
+        self.assertEqual(len(movies), 2)
+        self.assertEqual(len(episodes), 1)
+        self.assertNotIn(key, repr(movies + episodes))
+        self.assertEqual(movies[0]["provider_payload"]["download_url"], "/subtitle/3520378-8443030.zip")
+        self.assertIs(movies[0]["provider_payload"]["download_url_signed"], True)
+        self.assertEqual(movies[1]["id"], "/subtitle/9-9.zip")
+        self.assertEqual(episodes[0]["provider_payload"]["download_url"], "/subtitle/child-3.srt?lang=en")
+        self.assertEqual(episodes[0]["provider_payload"]["archive_download_url"], "/subtitle/pack.zip")
+
+        requested = []
+
+        def empty(url, timeout=30):
+            del timeout
+            requested.append(url)
+            return b""
+
+        provider._http_get_bytes = empty
+        other_key = "rotated-signing-key-9876543210"
+        with self.assertRaises(ValueError) as raised:
+            provider.download(movies[0]["provider_payload"], {"alpha3": "eng"}, {"api_key": other_key})
+        self.assertEqual(
+            requested,
+            [f"https://dl.subdl.com/subtitle/3520378-8443030.zip?api_key={other_key}"],
+        )
+        self.assertNotIn(other_key, str(raised.exception))
+
+        requested.clear()
+        legacy = {"provider": "subdl", "schema": 1, "download_url": f"/subtitle/1-1.zip?api_key={key}"}
+        with self.assertRaises(ValueError) as raised:
+            provider.download(legacy, {"alpha3": "eng"}, {"api_key": key})
+        self.assertEqual(requested, [f"https://dl.subdl.com/subtitle/1-1.zip?api_key={key}"])
+        self.assertNotIn(key, str(raised.exception))
+
+    def test_unsigned_download_url_is_fetched_without_a_key(self):
+        provider = self.mod.SubDLProvider()
+        requested = []
+        provider._http_get_bytes = lambda url, timeout=30: requested.append(url) or b"subtitle"
+        provider.download(
+            {"provider": "subdl", "schema": 1, "download_url": "/subtitle/2-2.srt", "format": "srt"},
+            {"alpha3": "eng"}, {"api_key": "unused-key"},
+        )
+        self.assertEqual(requested, ["https://dl.subdl.com/subtitle/2-2.srt"])
+
     def test_download_preserves_explicit_direct_format_without_extension(self):
         provider = self.mod.SubDLProvider()
         body = b"WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nDirect file\n"

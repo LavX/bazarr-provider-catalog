@@ -662,10 +662,41 @@ def _matches_for_item(video, item, child, is_pack):
     return sorted(matches)
 
 
+def _without_api_key(url):
+    """Return a row URL without any api_key query parameter, and whether one was there.
+
+    SubDL can sign the download URLs it returns with the caller's key. The key must
+    never travel in a candidate, a payload or an error message, so it is removed
+    here and added back from the configuration at download time.
+    """
+    value = _clean_text(url)
+    if "api_key" not in value.casefold():
+        return value, False
+    parts = urllib.parse.urlsplit(value)
+    query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+    kept = [(name, item) for name, item in query if name.casefold() != "api_key"]
+    if len(kept) == len(query):
+        return value, False
+    return urllib.parse.urlunsplit(parts._replace(query=urllib.parse.urlencode(kept))), True
+
+
+def _with_api_key(url, api_key):
+    parts = urllib.parse.urlsplit(url)
+    query = [
+        (name, item)
+        for name, item in urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+        if name.casefold() != "api_key"
+    ]
+    query.append(("api_key", api_key))
+    return urllib.parse.urlunsplit(parts._replace(query=urllib.parse.urlencode(query)))
+
+
 def _result_id(item, child=None):
     if child:
-        return _clean_text(child.get("file_n_id")) or _clean_text(child.get("name")) or _clean_text(child.get("url"))
-    return _clean_text(item.get("name")) or _clean_text(item.get("url"))
+        value = _clean_text(child.get("file_n_id")) or _clean_text(child.get("name")) or _clean_text(child.get("url"))
+    else:
+        value = _clean_text(item.get("name")) or _clean_text(item.get("url"))
+    return _without_api_key(value)[0]
 
 
 def _result_filename(item, child=None):
@@ -675,14 +706,16 @@ def _result_filename(item, child=None):
 
 
 def _payload_for_item(video, item, child, is_pack):
-    download_url = _clean_text((child or {}).get("url")) or _clean_text(item.get("url"))
-    archive_download_url = _clean_text(item.get("url")) if child else ""
+    download_url, download_signed = _without_api_key(
+        _clean_text((child or {}).get("url")) or _clean_text(item.get("url"))
+    )
+    archive_download_url = _without_api_key(item.get("url"))[0] if child else ""
     subtitle_id = _result_id(item, child)
     payload = {
         "provider": PROVIDER_ID,
         "schema": 1,
         "subtitle_id": subtitle_id,
-        "page_link": urllib.parse.urljoin("https://subdl.com", _clean_text(item.get("subtitlePage"))),
+        "page_link": urllib.parse.urljoin("https://subdl.com", _without_api_key(item.get("subtitlePage"))[0]),
         "download_url": download_url,
         "release_info": _release_info(item, child),
         "format": _format_from_name(download_url, _result_filename(item, child)),
@@ -694,6 +727,8 @@ def _payload_for_item(video, item, child, is_pack):
     }
     if archive_download_url:
         payload["archive_download_url"] = archive_download_url
+    if download_signed:
+        payload["download_url_signed"] = True
     return payload
 
 
@@ -1971,10 +2006,13 @@ class SubDLProvider:
             raise ValueError("SubDL download payload belongs to another provider")
         if payload.get("kind") == "ai_translation":
             return self._download_ai_translation(payload, config, api_key)
-        download_url = payload.get("download_url")
+        download_url, legacy_signed = _without_api_key(payload.get("download_url"))
         if not download_url:
             raise ValueError("SubDL download requires download_url")
-        body = self._http_get_bytes(_absolute_download_url(download_url), timeout=HTTP_TIMEOUT_SECONDS)
+        request_url = _absolute_download_url(download_url)
+        if payload.get("download_url_signed") is True or legacy_signed:
+            request_url = _with_api_key(request_url, api_key)
+        body = self._http_get_bytes(request_url, timeout=HTTP_TIMEOUT_SECONDS)
         if not body or not body.strip():
             raise ValueError(f"SubDL empty download for {download_url}")
         if _is_html_body(body):

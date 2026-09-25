@@ -13,6 +13,7 @@ Clean-room target for `subdl`.
 - Optional settings: `anime_mode`, `ai_translate`, `include_ai_translated`, and `ai_translate_timeout_seconds`.
 - API search supports text title, file name, SubDL id, IMDb id, TMDB id, season number, episode number, media type, release year, language codes, comments, releases, hearing-impaired metadata, full-season filters, and `unpack=1`.
 - Downloads are zip archives or direct raw subtitle files when `unpack=1` returns a saved unpacked file URL.
+- Search rows can carry download URLs signed with the caller's `api_key` query parameter (observed live on 2026-09-25). The provider removes the key from every URL it puts in a candidate or payload, records that the URL was signed, and adds the configured key back only when it sends the download request. Error messages name the unsigned URL.
 - AI translation is off by default and requires a SubDL Plus or Pro account. SubDL translates one of its existing subtitles, consumes the account's translation quota when the job is not reused, and publishes the result as a regular subtitle on subdl.com.
 - Search requests keep SubDL's Bazarr policy flag and also send the public API's documented `client=bazarr` integration identifier.
 

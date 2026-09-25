@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "c92af4437b0dc1083dd02f8ff36084630b6d5c246970cac982fda2ed4aa985a8",
+  "bundle_sha256": "63ae405944eec3df5f8cc6162986030b7c2390621aee74291f4c33831a2665b9",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -63,7 +63,7 @@
   "entry_class": "SubDLProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "f453120c1d3b24016a18d376474e8edec0a19619f6c02e057d21603084effaa8"
+    "provider.py": "0034436cee65a348f6ebfd68d553442e9f5b4bdb61a7960f03b43aae8c2d6e0c"
   },
   "languages": [
     "ara",
