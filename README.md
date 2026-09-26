@@ -49,7 +49,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`opensubtitles`](providers/opensubtitles_org/) | 0.1.13 | Scrapes OpenSubtitles.org natively with ai-cloudscraper, inline Anubis solving, and optional FlareSolverr fallback for Cloudflare challenges. |
 | [`opensubtitlescom`](providers/opensubtitlescom/) | 0.1.11 | Uses the official [OpenSubtitles.com](https://www.opensubtitles.com) API for movie and episode subtitles. Requires username, password, and API key. |
 | [`pipocas`](providers/pipocas/) | 0.1.6 | Scrapes [Pipocas.tv](https://pipocas.tv) for movie and episode subtitles in Portuguese, Brazilian Portuguese, English, and Spanish. Login required. |
-| [`prijevodionline`](providers/prijevodionline/) | 0.2.1 | Scrapes [Prijevodi-Online](https://www.prijevodi-online.org) for Croatian, Serbian, Montenegrin, and Serbo-Croatian episode subtitles. **The site has been offline since August 2026** after its host suspended it; the operators are moving to new hosting, so searches fail until it returns ([notes](docs/provider-notes/prijevodionline.md)). Needs a FlareSolverr URL when it is up. No login or API key. |
+| [`prijevodionline`](providers/prijevodionline/) | 0.3.0 | Uses the [Prijevodi-Online](https://www.prijevodi-online.org) API for Croatian, Serbian, Bosnian, Montenegrin, Macedonian, and Serbo-Croatian episode and movie subtitles. Works without an account. An optional account can spend download tokens, only when you turn that on and within a per-download limit ([notes](docs/provider-notes/prijevodionline.md)). |
 | [`regielive`](providers/regielive/) | 0.1.3 | Uses the RegieLive Bazarr API for Romanian movie and episode subtitles, with public HTML search fallback when the API rejects a request. No login or user API key. |
 | [`shooter`](providers/shooter/) | 0.1.3 | Queries [Shooter.cn](https://www.shooter.cn) hash-based subtitle API for English and Chinese movie and episode subtitles. No login or API key. |
 | [`soustitreseu`](providers/soustitreseu/) | 0.1.10 | Scrapes [Sous-Titres.eu](https://www.sous-titres.eu) for French and English movie and episode subtitles. No login or API key. |
@@ -130,7 +130,7 @@ Every provider here ships independently of Bazarr+ releases. [Contribute](#contr
 - `providers/nekur/`: scrapes Nekur Latvian movie subtitle listings and archive downloads.
 - `providers/opensubtitles_org/`: scrapes OpenSubtitles.org natively with ai-cloudscraper, inline Anubis solving, and optional FlareSolverr fallback.
 - `providers/opensubtitlescom/`: uses the official OpenSubtitles.com API for movie and episode subtitles.
-- `providers/prijevodionline/`: scrapes Prijevodi-Online episode subtitle listings and archive downloads.
+- `providers/prijevodionline/`: uses the Prijevodi-Online JSON API for episode and movie subtitles, with optional sign-in and opt-in token-priced downloads.
 - `providers/regielive/`: uses the RegieLive Bazarr API for Romanian movie and episode subtitles, with public HTML search fallback when the API rejects a request.
 - `providers/shooter/`: queries Shooter.cn's hash-based API for English and Chinese movie and episode subtitles.
 - `providers/smoke/`: deterministic no-network smoke provider for install and worker checks.
