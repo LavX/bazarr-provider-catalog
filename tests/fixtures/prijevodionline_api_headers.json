@@ -1,0 +1,12 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "server": "cloudflare",
+    "x-ratelimit-limit": "200",
+    "x-ratelimit-remaining": "199",
+    "x-ratelimit-reset": "54",
+    "cf-cache-status": "DYNAMIC"
+  },
+  "note": "Response headers of GET /api/v1/auth/me, anonymous. API GET answers set no cookies."
+}

@@ -1,0 +1,226 @@
+{
+  "translations": {
+    "items": [
+      {
+        "id": 120299,
+        "episodeId": 33946,
+        "seriesId": 935,
+        "seasonId": 3391,
+        "memberId": 1001,
+        "username": "translator_a",
+        "name": "Game of Thrones - 01x02 - The Kingsroad 720p.BluRay HR",
+        "description": "720p.BluRay.RELEASE.HR",
+        "fileName": "Game of Thrones - 01x02 - The Kingsroad 720p.BluRay HR.zip",
+        "status": "approved",
+        "languageId": 1,
+        "languageCode": "hr",
+        "languageName": "Hrvatski",
+        "languageCountryCode": "hr",
+        "releaseFormatId": null,
+        "releaseFormatName": null,
+        "subtitleType": 11,
+        "hearingImpaired": false,
+        "copyrightFree": true,
+        "machineTranslated": false,
+        "downloadCount": 6,
+        "createdAt": "2017-05-29T13:33:16.000Z",
+        "seriesTitle": "Game of Thrones",
+        "seriesOriginalTitle": "Game of Thrones",
+        "seriesSlug": "game-of-thrones",
+        "posterUrl": "https://www.prijevodi-online.org/api/v1/series/935/poster?v=225781",
+        "seasonName": "Season 1",
+        "episodeName": "The Kingsroad",
+        "episodeOriginalTitle": null,
+        "episodeNumber": 2,
+        "seasonNumber": 1,
+        "approvedAt": "2017-05-29T13:33:16.000Z",
+        "fileId": 139182,
+        "fileSize": 14036,
+        "isPublished": true,
+        "reviewedBy": null,
+        "reviewerName": null,
+        "reviewStartedAt": null,
+        "rejectionReasons": [],
+        "rejectionReason": null,
+        "price": 1,
+        "isPurchased": false,
+        "isRevoked": false
+      },
+      {
+        "id": 165016,
+        "episodeId": 33946,
+        "seriesId": 935,
+        "seasonId": 3391,
+        "memberId": 1001,
+        "username": "translator_a",
+        "name": "Game of Thrones - 01x02 - The Kingsroad 720p.BluRay SR.zip",
+        "description": "720p.BluRay.RELEASE.HR",
+        "fileName": "Game.Of.Thrones.S01E02.720p.BluRay.x264-DEMAND.cyr.zip",
+        "status": "approved",
+        "languageId": 2,
+        "languageCode": "sr",
+        "languageName": "Srpski",
+        "languageCountryCode": "rs",
+        "releaseFormatId": null,
+        "releaseFormatName": null,
+        "subtitleType": 11,
+        "hearingImpaired": false,
+        "copyrightFree": false,
+        "machineTranslated": false,
+        "downloadCount": 10,
+        "createdAt": "2012-04-05T21:07:03.000Z",
+        "seriesTitle": "Game of Thrones",
+        "seriesOriginalTitle": "Game of Thrones",
+        "seriesSlug": "game-of-thrones",
+        "posterUrl": "https://www.prijevodi-online.org/api/v1/series/935/poster?v=225781",
+        "seasonName": "Season 1",
+        "episodeName": "The Kingsroad",
+        "episodeOriginalTitle": null,
+        "episodeNumber": 2,
+        "seasonNumber": 1,
+        "approvedAt": "2012-04-05T21:07:03.000Z",
+        "fileId": 192087,
+        "fileSize": 14902,
+        "isPublished": true,
+        "reviewedBy": null,
+        "reviewerName": null,
+        "reviewStartedAt": null,
+        "rejectionReasons": [],
+        "rejectionReason": null,
+        "price": 1,
+        "isPurchased": false,
+        "isRevoked": false
+      },
+      {
+        "id": 37045,
+        "episodeId": 33946,
+        "seriesId": 935,
+        "seasonId": 3391,
+        "memberId": 1001,
+        "username": "translator_a",
+        "name": "Game of Thrones - 01x02 - The Kingsroad 720p.BluRay SR.zip",
+        "description": "720p.BluRay.RELEASE.HR",
+        "fileName": "Game of Thrones - 01x02 - The Kingsroad 720p.BluRay SR.zip",
+        "status": "approved",
+        "languageId": 2,
+        "languageCode": "sr",
+        "languageName": "Srpski",
+        "languageCountryCode": "rs",
+        "releaseFormatId": null,
+        "releaseFormatName": null,
+        "subtitleType": 11,
+        "hearingImpaired": false,
+        "copyrightFree": false,
+        "machineTranslated": false,
+        "downloadCount": 5,
+        "createdAt": "2012-04-05T21:07:03.000Z",
+        "seriesTitle": "Game of Thrones",
+        "seriesOriginalTitle": "Game of Thrones",
+        "seriesSlug": "game-of-thrones",
+        "posterUrl": "https://www.prijevodi-online.org/api/v1/series/935/poster?v=225781",
+        "seasonName": "Season 1",
+        "episodeName": "The Kingsroad",
+        "episodeOriginalTitle": null,
+        "episodeNumber": 2,
+        "seasonNumber": 1,
+        "approvedAt": "2012-04-05T21:07:03.000Z",
+        "fileId": 61458,
+        "fileSize": 14896,
+        "isPublished": true,
+        "reviewedBy": null,
+        "reviewerName": null,
+        "reviewStartedAt": null,
+        "rejectionReasons": [],
+        "rejectionReason": null,
+        "price": 1,
+        "isPurchased": false,
+        "isRevoked": false
+      }
+    ],
+    "total": 153
+  },
+  "languages": [
+    {
+      "id": 1,
+      "code": "hr",
+      "name": "Hrvatski",
+      "countryCode": "hr"
+    },
+    {
+      "id": 2,
+      "code": "sr",
+      "name": "Srpski",
+      "countryCode": "rs"
+    },
+    {
+      "id": 3,
+      "code": "bs",
+      "name": "Bosanski",
+      "countryCode": "ba"
+    },
+    {
+      "id": 4,
+      "code": "cnr",
+      "name": "Crnogorski",
+      "countryCode": "me"
+    },
+    {
+      "id": 5,
+      "code": "mk",
+      "name": "Makedonski",
+      "countryCode": "mk"
+    },
+    {
+      "id": 6,
+      "code": "sr-cyr",
+      "name": "Srpski (ćirilica)",
+      "countryCode": "rs"
+    },
+    {
+      "id": 7,
+      "code": "mix",
+      "name": "Mješovito",
+      "countryCode": null
+    },
+    {
+      "id": 8,
+      "code": "??",
+      "name": "Nepoznato",
+      "countryCode": null
+    },
+    {
+      "id": 21,
+      "code": "en",
+      "name": "Engleski",
+      "countryCode": "gb"
+    },
+    {
+      "id": 58,
+      "code": "sl",
+      "name": "Slovenski",
+      "countryCode": "si"
+    }
+  ],
+  "releaseFormats": [
+    {
+      "id": 11,
+      "name": "1080p"
+    },
+    {
+      "id": 10,
+      "name": "720p"
+    },
+    {
+      "id": 5,
+      "name": "720p.BluRay"
+    },
+    {
+      "id": 4,
+      "name": "720p.WEB-DL"
+    },
+    {
+      "id": 14,
+      "name": "WEB-DL"
+    }
+  ]
+}

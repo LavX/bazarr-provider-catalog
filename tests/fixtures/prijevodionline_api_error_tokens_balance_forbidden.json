@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "Auth/Forbidden",
+    "message": "Missing permission: account.tokens.read"
+  }
+}

@@ -1,0 +1,97 @@
+{
+  "seasons": {
+    "items": [
+      {
+        "id": 3391,
+        "seriesId": 935,
+        "title": "Season 1",
+        "slug": "season-1",
+        "description": null,
+        "seasonNumber": 1,
+        "sortOrder": 1,
+        "createdAt": "2026-09-18T10:20:18.000Z"
+      },
+      {
+        "id": 3392,
+        "seriesId": 935,
+        "title": "Season 2",
+        "slug": "season-2",
+        "description": null,
+        "seasonNumber": 2,
+        "sortOrder": 2,
+        "createdAt": "2026-09-18T10:20:18.000Z"
+      },
+      {
+        "id": 3393,
+        "seriesId": 935,
+        "title": "Season 3",
+        "slug": "season-3",
+        "description": null,
+        "seasonNumber": 3,
+        "sortOrder": 3,
+        "createdAt": "2026-09-18T10:20:18.000Z"
+      },
+      {
+        "id": 3394,
+        "seriesId": 935,
+        "title": "Season 4",
+        "slug": "season-4",
+        "description": null,
+        "seasonNumber": 4,
+        "sortOrder": 4,
+        "createdAt": "2026-09-18T10:20:18.000Z"
+      },
+      {
+        "id": 3395,
+        "seriesId": 935,
+        "title": "Season 5",
+        "slug": "season-5",
+        "description": null,
+        "seasonNumber": 5,
+        "sortOrder": 5,
+        "createdAt": "2026-09-18T10:20:18.000Z"
+      },
+      {
+        "id": 3396,
+        "seriesId": 935,
+        "title": "Season 6",
+        "slug": "season-6",
+        "description": null,
+        "seasonNumber": 6,
+        "sortOrder": 6,
+        "createdAt": "2026-09-18T10:20:18.000Z"
+      },
+      {
+        "id": 3397,
+        "seriesId": 935,
+        "title": "Season 7",
+        "slug": "season-7",
+        "description": null,
+        "seasonNumber": 7,
+        "sortOrder": 7,
+        "createdAt": "2026-09-18T10:20:18.000Z"
+      },
+      {
+        "id": 3398,
+        "seriesId": 935,
+        "title": "Season 8",
+        "slug": "season-8",
+        "description": null,
+        "seasonNumber": 8,
+        "sortOrder": 8,
+        "createdAt": "2026-09-18T10:20:18.000Z"
+      },
+      {
+        "id": 3399,
+        "seriesId": 935,
+        "title": "Season 99",
+        "slug": "season-99",
+        "description": null,
+        "seasonNumber": 99,
+        "sortOrder": 99,
+        "createdAt": "2026-09-18T10:20:18.000Z"
+      }
+    ],
+    "total": 9
+  }
+}
