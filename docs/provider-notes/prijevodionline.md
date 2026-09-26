@@ -99,7 +99,9 @@ search time.
   another worker or once a cache expired). The claim comes from a search that may have run as
   another account or before a refund, so the signed-in account's own translation list (cached
   for 10 minutes) must still show the row as bought; otherwise the download is refused before
-  any request for the file. Then the file is fetched directly. If the site still asks for tokens
+  any request for the file. A session that ended since the search reads the list as a visitor
+  sees it, so the session is checked once and signed in again before refusing. Then the file is
+  fetched directly. If the site still asks for tokens
   (402 or a `Tokens/` error), the download is refused. That nothing is spent then rests on the
   site answering this way rather than charging for the download, which has not been verified;
   it can only happen if the item was refunded between the list read and the download.

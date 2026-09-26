@@ -1945,6 +1945,13 @@ class PrijevodiOnlineProvider:
             # search that may have run as another account or before a refund,
             # so the signed-in account's own list must still show it as bought.
             if not self._owned_by_account(identity, payload, kind):
+                # A session that ended since the search reads the list as a
+                # visitor sees it. Check the session once, and after a fresh
+                # sign-in read the account's lists again.
+                if not self._call.rechecked and not self._ensure_member(identity.session, force=True):
+                    self._call.rechecked = True
+                    self._translations_cache.drop_where(lambda key: key[1] == identity.digest)
+                    self._renew(identity, config)
                 raise PaidDownloadRefused(
                     "Prijevodi-Online does not list this subtitle as bought by the signed-in account; "
                     "search again. Nothing was spent"
@@ -2144,6 +2151,9 @@ class PrijevodiOnlineProvider:
             if action == "download":
                 if self._ledger.get(ledger_key) == "uncertain":
                     self._ledger.pop(ledger_key)
+                if self._ledger.get(ledger_key) == "confirmed":
+                    # Bought by this worker, for example before a fresh sign-in.
+                    return self._download_bought(identity, payload, kind, config)
                 return self._download_member(identity, payload, kind, config)
             if action != "purchase":
                 raise PaidDownloadRefused(
@@ -2201,6 +2211,25 @@ class PrijevodiOnlineProvider:
             if self._remaining() < SPEND_MIN_SECONDS or (headroom is not None and headroom < SPEND_MIN_REQUESTS):
                 raise PaidDownloadRefused(BUDGET_MESSAGE)
             return self._confirm_and_download(identity, payload, kind, config, ledger_key, token, cost)
+
+    def _download_bought(self, identity, payload, kind, config, charged=None):
+        """Download a subtitle this worker bought. Every failure says tokens were spent.
+
+        The class stays, so the host still pauses the provider the same way.
+        """
+        try:
+            return self._download_member(identity, payload, kind, config, purchased=True)
+        except _SessionRenewed:
+            raise
+        except Exception as failure:
+            text = str(failure)
+            if "purchase went through" not in text:
+                amount = f" ({tokens_text(charged)})" if charged else ""
+                failure.args = (
+                    f"Prijevodi-Online: the purchase went through{amount}, but the download failed; "
+                    f"try it again later. Bazarr will not buy this subtitle again. {text}",
+                )
+            raise
 
     def _quote(self, identity, kind, translation_id, config):
         body = {"translationId": translation_id, "translationType": "series" if kind == "series" else "movie"}
@@ -2271,20 +2300,7 @@ class PrijevodiOnlineProvider:
             self._translations_cache.drop_where(lambda item: item[1] == identity.digest)
             # The subtitle is owned now. If this download fails, the next
             # attempt's quote answers "download" and nothing is spent again.
-            try:
-                return self._download_member(identity, payload, kind, config, purchased=True)
-            except _SessionRenewed:
-                raise
-            except Exception as failure:
-                # Tokens were spent, so every failure says so. The class stays,
-                # so the host still pauses the provider the same way.
-                text = str(failure)
-                if "purchase went through" not in text:
-                    failure.args = (
-                        f"Prijevodi-Online: the purchase went through ({tokens_text(charged)}), but the download "
-                        f"failed; try it again later. Bazarr will not buy this subtitle again. {text}",
-                    )
-                raise
+            return self._download_bought(identity, payload, kind, config, charged)
         if outcome in ("insufficient", "refused", "auth", "challenge", "not_sent"):
             self._ledger.pop(ledger_key)
         if outcome == "insufficient":

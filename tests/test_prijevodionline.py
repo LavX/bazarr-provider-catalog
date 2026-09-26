@@ -1185,6 +1185,16 @@ class PaidDownloadTests(ProviderTestCase):
                 self.provider(site).download(payload, HRV, self.CONFIG)
             self.assertEqual(site.count("GET", route), 0, parent_id)
             self.assertEqual(self.purchases(site), [], parent_id)
+        # A role holding downloadFree classes an unowned row as granted or free.
+        # It is still not bought, so it is still refused, with no download or quote.
+        for price in (1, 0):
+            unowned = with_variant(season_capture(), "translations", 0, price=price)
+            site = cookie_member_site(member=member_me(series_free=True), translations=unowned)
+            site.on("POST", API + "/purchases/intent", quote_download(120299))
+            with self.assertRaisesRegex(self.mod.PaidDownloadRefused, "does not list this subtitle as bought"):
+                self.provider(site).download(self.payload(access="owned", parent_id=3391), HRV, self.CONFIG)
+            self.assertEqual(site.count("GET", route), 0, price)
+            self.assertEqual(self.purchases(site), [], price)
         # A password fallback to another account: its own list decides too.
         site = anonymous_site(translations=season_capture())
         account = PasswordSite(site)
@@ -1670,6 +1680,52 @@ class AuthenticationTests(ProviderTestCase):
         with self.assertRaises(self.mod.AccountLoginFailed):
             provider.download(results[0]["provider_payload"], HRV, self.CONFIG)
         self.assertEqual(account.logins, 3)
+
+    def test_owned_download_signs_in_again_when_the_session_ended(self):
+        # The session ends after the search; the cached list has expired, so the
+        # list now reads as a visitor sees it. One fresh sign-in, then the
+        # account's own list, then the file. Never a quote.
+        site, account = self.password_site()
+        owned_list = with_variant(season_capture(), "translations", 0, isPurchased=True, isRevoked=False)
+
+        def translations(call):
+            cookie = call["headers"].get("Cookie", "")
+            live = any(f"PHPSESSID={value}" in cookie for value in account.valid)
+            return ok(owned_list if live else season_capture())
+
+        site.on("GET", API + "/translations/series", translations)
+        provider = self.provider(site)
+        results = provider.search(GOT_S01E02, [HRV], self.CONFIG)
+        self.assertEqual([item["provider_payload"]["access"] for item in results], ["owned"])
+        account.expire()
+        self.clock.advance(11 * 60)
+        result = provider.download(results[0]["provider_payload"], HRV, self.CONFIG)
+        self.assertIn("archive_b64", result)
+        self.assertEqual(account.logins, 2)
+        self.assertEqual(site.count("POST", API + "/purchases/intent"), 0)
+        self.assertEqual(site.count("GET", API + "/translations/series/120299/download"), 1)
+
+    def test_failure_after_a_purchase_and_a_fresh_sign_in_says_it_went_through(self):
+        site, account = self.password_site()
+        config = dict(self.CONFIG, allow_paid_downloads=True)
+        site.on("POST", API + "/purchases/intent", quote_purchase(120299), quote_download(120299))
+        site.on("POST", API + "/purchases/confirm", confirm_ok(120299))
+        route = API + "/translations/series/120299/download"
+
+        def download(call):
+            if site.count("GET", route) == 1:
+                account.expire()
+                return api_error(401, "Auth/Unauthorized", "Not signed in")
+            return 500, {}, b"oops"
+
+        site.on("GET", route, download)
+        with self.assertRaises(self.mod.ServiceUnavailable) as caught:
+            self.provider(site).download(self.payload(access="priced"), HRV, config)
+        self.assertIn("the purchase went through", str(caught.exception))
+        self.assertNotIn("nothing was spent", str(caught.exception))
+        self.assertEqual(site.count("POST", API + "/purchases/intent"), 2)
+        self.assertEqual(site.count("POST", API + "/purchases/confirm"), 1)
+        self.assertEqual(account.logins, 2)
 
     def test_confirm_auth_refusal_allows_one_fresh_quote_only(self):
         # The site checks the session before the purchase, so an auth refusal on
