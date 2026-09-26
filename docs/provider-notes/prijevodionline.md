@@ -95,9 +95,14 @@ Tokens are spent only when all of these hold: an account is signed in, `allow_pa
 on, and the live quoted price is at or below both the per-download cap and the price shown at
 search time.
 
-- An `owned` item is downloaded directly and is never quoted or bought, whatever the worker
-  remembers (after a restart, in another worker or once a cache expired). If the site then asks
-  for tokens, the download is refused and nothing is spent.
+- An `owned` item is never quoted or bought, whatever the worker remembers (after a restart, in
+  another worker or once a cache expired). The claim comes from a search that may have run as
+  another account or before a refund, so the signed-in account's own translation list (cached
+  for 10 minutes) must still show the row as bought; otherwise the download is refused before
+  any request for the file. Then the file is fetched directly. If the site still asks for tokens
+  (402 or a `Tokens/` error), the download is refused. That nothing is spent then rests on the
+  site answering this way rather than charging for the download, which has not been verified;
+  it can only happen if the item was refunded between the list read and the download.
 - A member's `free` download also skips the quote, so it needs the price 0 listed at search
   time; a download result without it is refused.
 - Every member download of a `granted` or `priced` item asks for a quote first. A quote whose
@@ -109,16 +114,24 @@ search time.
   controls come first so a refusal names them. A subtitle that was free at search time, or whose
   price at search time is not readable, and now wants tokens is refused.
 - The confirmation is sent once, outside the retry loop, never through FlareSolverr and never
-  replayed, and only with at least 12 seconds and 5 requests of rate budget left.
+  replayed, and only with at least 12 seconds and 5 requests of rate budget left. The one
+  exception: when the site answers a confirmation with an authentication error (it checks the
+  session before the purchase, so nothing was bought), the provider signs in again once and
+  sends one fresh quote and at most one more confirmation. A second authentication error ends
+  the download.
 - An unknown outcome (a timeout after sending, a 5xx, an unreadable success) blocks buying the
-  same subtitle again for 24 hours. A later quote that answers `download` clears the block.
+  same subtitle again for up to 24 hours. A later quote that answers `download` clears the block.
 - A purchase that the provider already confirmed is never paid again.
 - The purchase record is kept per site member id, so a freshly pasted cookie or a switch between
   the cookie and the password for the same account keeps it. It lives in the worker process.
-- A charge above the quote is logged as an error and stops purchases on that account for 24
-  hours; the refusal says why.
-- Every refusal before a purchase says that nothing was spent. A download that fails after a
-  successful purchase says the purchase went through.
+- A charge above the quote is logged as an error and stops purchases on that account for up to
+  24 hours; search hides the priced rows meanwhile, and a refusal says why. These blocks live in
+  the worker process, so a worker restart ends them early.
+- Every refusal before a purchase says that nothing was spent. Any download failure after a
+  successful purchase says the purchase went through, and keeps its error class.
+- The cap applies to each download. When a downloaded subtitle is rejected (for example an
+  archive without the wanted episode), Bazarr moves on to the next candidate, and a second priced
+  candidate may be bought in the same run, again within the cap. There is no daily limit.
 
 ### Languages (mapped by the site's language code, never its language id)
 
@@ -201,16 +214,18 @@ Each has a fallback in the provider:
 - Does a forum sign-in give a cookie the API accepts? Not used.
 - Does a pasted session cookie work from another address or User-Agent, and is `PHPSESSID`
   needed? Unknown cookies are kept, and an optional User-Agent setting can match the browser.
-- What does a member download of a priced, unowned translation do? Never called: a quote always
-  comes first.
+- What does a member download of a priced, unowned translation do? Not sent on purpose:
+  owned items are checked against the account's own list first, and everything else is quoted
+  first. Only a refund between that list read and the download could reach it.
 - Which error statuses can a confirmation return, how long does a quote token live, and is the
   token empty when the account cannot afford the price? One confirmation is sent right after the
   quote; a 4xx error envelope counts as a refusal, anything else as unknown for 24 hours.
 - Is the download always a ZIP, and can it hold several files or a RAR? The answer is sniffed.
 - Is the list price the same for every viewer? The member's own list is used, and the quote
   decides.
-- Is a download after a purchase free, and what exactly does `isRevoked` mean? The quote is
-  expected to answer `download` for an owned translation; `isRevoked` counts as not owned.
+- Is a download after a purchase free, and what exactly does `isRevoked` mean? An owned
+  translation is downloaded without a quote, and a quote right after a purchase is expected to
+  answer `download`; `isRevoked` counts as not owned.
 - Can members download movies? Read from the member's permissions.
 - Is the rate window per address or per session, what does a 429 look like, and could
   Cloudflare escalate? The provider keeps a reserve and pauses with the reset time.

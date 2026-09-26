@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "d2e766514961c675cd9c21a2c7c522ef8c5214f13e899048f9c80652321a61ea",
+  "bundle_sha256": "d1bca97a5b9b3d9222aa0a130f4ed4f9a3723e4966dfef21f0b917eccf814c26",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -26,7 +26,7 @@
       },
       "flaresolverr_timeout_ms": {
         "default": 25000,
-        "description": "Maximum time FlareSolverr may spend clearing a Cloudflare challenge.",
+        "description": "Maximum time FlareSolverr may spend clearing a Cloudflare challenge. Values over 25000 are used as 25000, so a solve fits in the time Bazarr gives each request.",
         "maximum": 30000,
         "minimum": 5000,
         "title": "FlareSolverr timeout (ms)",
@@ -82,7 +82,7 @@
   "entry_class": "PrijevodiOnlineProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "f24232b5acaef27cc7b7b8eedae8f2a85b8a20b0c72bd9a5bf00ae92f5dfe7ae"
+    "provider.py": "5210b4cbe57cc791d34bd62ac6984b8bd802495a30774e14b36fe16501339f77"
   },
   "flaresolverr": true,
   "languages": [

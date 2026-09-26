@@ -210,12 +210,12 @@ BUDGET_MESSAGE = (
 )
 OVERCHARGED_MESSAGE = (
     "Prijevodi-Online charged more than its quote on an earlier purchase, so Bazarr buys "
-    "nothing on this account for 24 hours; check Purchases on prijevodi-online.org; "
+    "nothing on this account for up to 24 hours; check Purchases on prijevodi-online.org; "
     "nothing was spent"
 )
 UNCERTAIN_MESSAGE = (
     "Prijevodi-Online: the purchase result is unknown; check Purchases on "
-    "prijevodi-online.org; Bazarr will not buy this subtitle again for 24 hours"
+    "prijevodi-online.org; Bazarr will not buy this subtitle again for up to 24 hours"
 )
 ANONYMOUS_REFUSED_MESSAGE = (
     "Prijevodi-Online does not let visitors download this subtitle. "
@@ -1844,7 +1844,11 @@ class PrijevodiOnlineProvider:
         member = identity.member
         snapshot = identity.snapshot
         learned = self._learned_kinds(identity)
-        spending_on = member and config.get("allow_paid_downloads") is True
+        # After an overcharge nothing is bought on the account for a while, so
+        # priced rows are hidden as if spending were off.
+        spending_on = (
+            member and config.get("allow_paid_downloads") is True and not self._overcharged.get(identity.account_key)
+        )
         cap = parse_cap(config.get("max_tokens_per_download", DEFAULT_CAP))
         balance = snapshot.get("token_balance") if member else None
         candidates = []
@@ -1914,6 +1918,9 @@ class PrijevodiOnlineProvider:
                 "script": language.get("script"),
                 "list_price": price,
                 "access": access,
+                # The season or movie whose list carried the row, so an owned
+                # claim can be checked against the signed-in account's own list.
+                "parent_id": _as_int(item.get("seasonId" if kind == "series" else "movieId")),
                 "mode": identity.mode,
                 "file_name": filename,
                 "releases": _payload_releases(item, kind, video),
@@ -1931,11 +1938,19 @@ class PrijevodiOnlineProvider:
             if identity.failure:
                 raise AccountLoginFailed(_login_message(identity.failure))
             raise AccountRequired(ACCOUNT_NEEDED_MESSAGE)
-        if access == "owned" or (access == "free" and _is_free_price(payload.get("list_price"))):
+        if access == "owned":
             # An owned subtitle is never quoted or bought, whatever this worker
             # remembers: after a restart, in another worker or once a cache has
-            # expired, it is still downloaded directly. If the site then says
-            # the account does not own it, the download is refused.
+            # expired, it is still downloaded directly. The claim comes from a
+            # search that may have run as another account or before a refund,
+            # so the signed-in account's own list must still show it as bought.
+            if not self._owned_by_account(identity, payload, kind):
+                raise PaidDownloadRefused(
+                    "Prijevodi-Online does not list this subtitle as bought by the signed-in account; "
+                    "search again. Nothing was spent"
+                )
+            return self._download_member(identity, payload, kind, config)
+        if access == "free" and _is_free_price(payload.get("list_price")):
             return self._download_member(identity, payload, kind, config)
         if access == "free":
             # A member's direct download skips the quote, so it needs the 0
@@ -1963,6 +1978,20 @@ class PrijevodiOnlineProvider:
         promoted = dict(payload)
         promoted["access"] = "granted" if f"{kind}.translations.downloadFree" in permissions else "priced"
         return self._spend_and_download(identity, promoted, kind, config)
+
+    def _owned_by_account(self, identity, payload, kind):
+        """Whether the signed-in account's own translation list shows the row as bought.
+
+        A member download of a priced subtitle the account does not own is
+        never sent, so a stale or foreign owned claim is refused instead.
+        """
+        parent_id = payload.get("parent_id")
+        if not _is_plain_int(parent_id) or parent_id <= 0:
+            return False
+        for item in self._translations(identity, kind, parent_id):
+            if isinstance(item, dict) and _as_int(item.get("id")) == payload["translation_id"]:
+                return classify_access(item, kind, identity.snapshot, ()) == "owned"
+        return False
 
     def _fetch_file(self, session, payload, kind):
         """GET the file and interpret the answer; raises _DownloadRefused on a refusal."""
@@ -2242,7 +2271,20 @@ class PrijevodiOnlineProvider:
             self._translations_cache.drop_where(lambda item: item[1] == identity.digest)
             # The subtitle is owned now. If this download fails, the next
             # attempt's quote answers "download" and nothing is spent again.
-            return self._download_member(identity, payload, kind, config, purchased=True)
+            try:
+                return self._download_member(identity, payload, kind, config, purchased=True)
+            except _SessionRenewed:
+                raise
+            except Exception as failure:
+                # Tokens were spent, so every failure says so. The class stays,
+                # so the host still pauses the provider the same way.
+                text = str(failure)
+                if "purchase went through" not in text:
+                    failure.args = (
+                        f"Prijevodi-Online: the purchase went through ({tokens_text(charged)}), but the download "
+                        f"failed; try it again later. Bazarr will not buy this subtitle again. {text}",
+                    )
+                raise
         if outcome in ("insufficient", "refused", "auth", "challenge", "not_sent"):
             self._ledger.pop(ledger_key)
         if outcome == "insufficient":

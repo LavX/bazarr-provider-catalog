@@ -816,7 +816,7 @@ class AnonymousSearchTests(ProviderTestCase):
             self.assertEqual(
                 set(payload),
                 {"v", "kind", "translation_id", "season", "episode", "language", "script",
-                 "list_price", "access", "mode", "file_name", "releases"},
+                 "list_price", "access", "parent_id", "mode", "file_name", "releases"},
             )
             self.assertNotIn("cookie", encoded.lower())
         # The same source check as tests.test_catalog.CandidateContractTests:
@@ -1066,6 +1066,14 @@ class PaidDownloadTests(ProviderTestCase):
         # The most common member path: a role holding downloadFree sees price-1
         # series rows as granted, shown with spending off. Only the gate after
         # the quote stops a purchase here.
+        for opt_in in ("true", 1, "True"):
+            site = cookie_member_site(member=member_me(series_free=True))
+            site.on("POST", API + "/purchases/intent", quote_purchase(120299))
+            site.on("POST", API + "/purchases/confirm", confirm_ok(120299))
+            config = {"session_cookie": COOKIE_HEADER, "allow_paid_downloads": opt_in}
+            with self.assertRaisesRegex(self.mod.PaidDownloadRefused, "Allow token-priced downloads"):
+                self.provider(site).download(self.payload(access="granted"), HRV, config)
+            self.assertEqual(site.count("POST", API + "/purchases/confirm"), 0, opt_in)
         site = cookie_member_site(member=member_me(series_free=True))
         site.on("POST", API + "/purchases/intent", quote_purchase(120299))
         site.on("POST", API + "/purchases/confirm", confirm_ok(120299))
@@ -1136,20 +1144,69 @@ class PaidDownloadTests(ProviderTestCase):
             self.assertEqual(site.count("GET", route), 1)
             self.assertEqual(self.purchases(site), [])
             clock.advance(31 * 60)
-        # The site no longer counts it as bought: refused, never quoted or bought.
+        self.assertEqual(owned[0]["provider_payload"]["parent_id"], 3391)
+        # The list says bought but the download asks for tokens: refused, never
+        # quoted or bought.
         for answer in (
             (402, {}, b""),
             api_error(402, "Tokens/PurchaseRequired", "buy it first"),
             api_error(400, "Tokens/InsufficientBalance", "not enough tokens"),
         ):
-            site = cookie_member_site()
+            site = cookie_member_site(translations=owned_list)
             site.on("POST", API + "/purchases/intent", quote_purchase(120299, cost=1))
             site.on("POST", API + "/purchases/confirm", confirm_ok(120299))
             site.on("GET", route, answer)
             with self.assertRaisesRegex(self.mod.PaidDownloadRefused, "listed this subtitle as bought.*nothing was spent"):
-                self.provider(site).download(self.payload(access="owned", list_price=1), HRV, config)
+                self.provider(site).download(self.payload(access="owned", parent_id=3391), HRV, config)
             self.assertEqual(self.purchases(site), [], answer)
             self.assertEqual(site.count("GET", route), 1, answer)
+
+    def test_owned_claim_must_match_the_signed_in_account(self):
+        # A result found by another account, refunded since, or with no list to
+        # check: the signed-in account's own list decides, and neither the file
+        # nor a quote is requested.
+        route = API + "/translations/series/120299/download"
+        bought = with_variant(season_capture(), "translations", 0, isPurchased=True, isRevoked=False)
+        cases = (
+            (season_capture(), 3391),
+            (with_variant(season_capture(), "translations", 0, isPurchased=True, isRevoked=True), 3391),
+            (with_variant(bought, "translations", 0, id=999), 3391),
+            (bought, None),
+            (bought, True),
+            (bought, "3391"),
+            (bought, 0),
+        )
+        for translations, parent_id in cases:
+            site = cookie_member_site(translations=translations)
+            site.on("POST", API + "/purchases/intent", quote_purchase(120299))
+            site.on("POST", API + "/purchases/confirm", confirm_ok(120299))
+            payload = self.payload(access="owned", parent_id=parent_id)
+            with self.assertRaisesRegex(self.mod.PaidDownloadRefused, "does not list this subtitle as bought.*Nothing was spent"):
+                self.provider(site).download(payload, HRV, self.CONFIG)
+            self.assertEqual(site.count("GET", route), 0, parent_id)
+            self.assertEqual(self.purchases(site), [], parent_id)
+        # A password fallback to another account: its own list decides too.
+        site = anonymous_site(translations=season_capture())
+        account = PasswordSite(site)
+        site.on("POST", API + "/purchases/intent", quote_purchase(120299))
+        config = {"account_name": USER, "account_password": PASSWORD, "allow_paid_downloads": True}
+        with self.assertRaisesRegex(self.mod.PaidDownloadRefused, "does not list this subtitle as bought"):
+            self.provider(site).download(self.payload(access="owned", parent_id=3391), HRV, config)
+        self.assertEqual(account.logins, 1)
+        self.assertEqual(site.count("GET", route), 0)
+        self.assertEqual(self.purchases(site), [])
+
+    def test_spend_path_takes_only_granted_or_priced_items(self):
+        site = cookie_member_site(member=member_me(series_free=True))
+        provider = self.provider(site)
+        with provider._call_scope(self.CONFIG):
+            identity = provider._identity(self.CONFIG, anonymous_snapshot=False)
+            self.assertTrue(identity.member)
+            site.reset()
+            for access in ("owned", "free", "account_required"):
+                with self.assertRaisesRegex(self.mod.PaidDownloadRefused, "only a granted or priced subtitle"):
+                    provider._spend_and_download(identity, self.payload(access=access), "series", self.CONFIG)
+        self.assertEqual(site.calls, [])
 
     def test_missing_price_is_never_free_for_a_member(self):
         route = API + "/translations/series/120299/download"
@@ -1196,6 +1253,22 @@ class PaidDownloadTests(ProviderTestCase):
             with self.assertRaisesRegex(error, text):
                 provider.download(self.payload(access="priced"), HRV, config)
             self.assertEqual(site.count("POST", API + "/purchases/confirm"), 0, quote)
+        # An unreadable quoted price, or an answer that is neither "download"
+        # nor "purchase", never buys and never downloads.
+        route = API + "/translations/series/120299/download"
+        answers = [(quote_purchase(120299, cost=cost), "not readable") for cost in (None, "1", True, 0, -1, 1.0)]
+        for action in (None, "blocked", "DOWNLOAD", ""):
+            intent = {"action": action, "translationId": 120299, "translationType": "series", "tokenCost": 1}
+            answers.append((ok({"intent": intent}), "unknown way"))
+        answers.append((ok({"intent": {"translationId": 120299, "tokenCost": 1, "token": "T"}}), "unknown way"))
+        for answer, text in answers:
+            site, provider, config = self.member_provider()
+            site.on("POST", API + "/purchases/intent", answer)
+            site.on("POST", API + "/purchases/confirm", confirm_ok(120299))
+            with self.assertRaisesRegex(self.mod.PaidDownloadRefused, text + ".*nothing was spent"):
+                provider.download(self.payload(access="priced"), HRV, config)
+            self.assertEqual(site.count("POST", API + "/purchases/confirm"), 0, answer)
+            self.assertEqual(site.count("GET", route), 0, answer)
 
     def test_limits_the_user_controls_are_named_before_the_balance(self):
         site, provider, config = self.member_provider()
@@ -1265,6 +1338,28 @@ class PaidDownloadTests(ProviderTestCase):
         self.assertIn("archive_b64", provider.download(self.payload(access="priced"), HRV, config))
         self.assertEqual(site.count("POST", API + "/purchases/confirm"), 1)
 
+    def test_every_failure_after_a_purchase_says_it_went_through(self):
+        route = API + "/translations/series/120299/download"
+        cases = (
+            ((500, {}, b"oops"), self.mod.ServiceUnavailable),
+            (api_error(404, "Translation/NotFound", "gone"), ValueError),
+            (api_error(451, "Copyright/InfringementNotice", "x", data={"title": "Notice"}), self.mod.DownloadBlocked),
+            ((200, {}, b""), ValueError),
+            (api_error(400, "Tokens/Other", "no"), ValueError),
+        )
+        for answer, error in cases:
+            site, provider, config = self.member_provider()
+            site.on("POST", API + "/purchases/intent", quote_purchase(120299))
+            site.on("POST", API + "/purchases/confirm", confirm_ok(120299))
+            site.on("GET", route, answer)
+            with self.assertRaises(error) as caught:
+                provider.download(self.payload(access="priced"), HRV, config)
+            text = str(caught.exception)
+            self.assertIn("the purchase went through (1 token)", text, answer)
+            self.assertIn("will not buy this subtitle again", text, answer)
+            self.assertNotIn("nothing was spent", text, answer)
+            self.assertEqual(site.count("POST", API + "/purchases/confirm"), 1, answer)
+
     def test_overcharge_stops_purchases_for_a_day(self):
         site, provider, config = self.member_provider()
         site.on("POST", API + "/purchases/intent", quote_purchase(120299, cost=1), quote_purchase(165016, cost=1))
@@ -1274,9 +1369,14 @@ class PaidDownloadTests(ProviderTestCase):
         with self.assertRaisesRegex(self.mod.PaidDownloadRefused, "charged more than its quote.*nothing was spent"):
             provider.download(self.payload(165016, access="priced"), SRP, config)
         self.assertEqual(site.count("POST", API + "/purchases/confirm"), 1)
+        # While stopped, search hides what it could not buy.
+        with self.assertLogs("prijevodionline", "INFO") as logs:
+            self.assertEqual(provider.search(GOT_S01E02, [HRV, SRP], config), [])
+        self.assertIn("spending_off=3", "\n".join(logs.output))
         self.clock.advance(24 * 60 * 60 + 1)
         provider.download(self.payload(165016, access="priced"), SRP, config)
         self.assertEqual(site.count("POST", API + "/purchases/confirm"), 2)
+        self.assertEqual(len(provider.search(GOT_S01E02, [HRV, SRP], config)), 3)
 
     def test_uncertain_purchase_survives_a_fresh_cookie_for_the_same_account(self):
         site = cookie_member_site()
@@ -1570,6 +1670,44 @@ class AuthenticationTests(ProviderTestCase):
         with self.assertRaises(self.mod.AccountLoginFailed):
             provider.download(results[0]["provider_payload"], HRV, self.CONFIG)
         self.assertEqual(account.logins, 3)
+
+    def test_confirm_auth_refusal_allows_one_fresh_quote_only(self):
+        # The site checks the session before the purchase, so an auth refusal on
+        # the confirmation bought nothing. One sign-in and one fresh quote follow.
+        config = dict(self.CONFIG, allow_paid_downloads=True)
+        site, account = self.password_site()
+        tokens = iter(("TOKEN1", "TOKEN2", "TOKEN3"))
+        site.on("POST", API + "/purchases/intent", lambda call: quote_purchase(120299, token=next(tokens)))
+        sent = []
+
+        def confirm(call):
+            sent.append(json.loads(call["body"])["token"])
+            if len(sent) == 1:
+                account.expire()
+                return api_error(401, "Auth/Unauthorized", "Not signed in")
+            return confirm_ok(120299)
+
+        site.on("POST", API + "/purchases/confirm", confirm)
+        result = self.provider(site).download(self.payload(access="priced"), HRV, config)
+        self.assertIn("archive_b64", result)
+        self.assertEqual(sent, ["TOKEN1", "TOKEN2"])
+        self.assertEqual(account.logins, 2)
+        # Refused again after the fresh sign-in: no third confirmation.
+        site, account = self.password_site()
+        tokens = iter(("TOKEN1", "TOKEN2", "TOKEN3"))
+        site.on("POST", API + "/purchases/intent", lambda call: quote_purchase(120299, token=next(tokens)))
+        sent = []
+
+        def refuse(call):
+            sent.append(json.loads(call["body"])["token"])
+            account.expire()
+            return api_error(401, "Auth/Unauthorized", "Not signed in")
+
+        site.on("POST", API + "/purchases/confirm", refuse)
+        with self.assertRaises(self.mod.AccountLoginFailed):
+            self.provider(site).download(self.payload(access="priced"), HRV, config)
+        self.assertEqual(sent, ["TOKEN1", "TOKEN2"])
+        self.assertEqual(account.logins, 2)
 
     def test_permission_403_with_live_session_does_not_relogin(self):
         site, account = self.password_site(member=member_me(series_free=True))
