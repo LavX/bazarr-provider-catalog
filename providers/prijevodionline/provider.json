@@ -1,12 +1,12 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "19170348c424941d1466923dc6c96d33be928df9f44d4ac177f2d308cf16bb0c",
+  "bundle_sha256": "a3dd367d2418ec50b150e57c13a06d53fd2f31c8b36191d804de4b19d4451b88",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
       "allow_paid_downloads": {
         "default": false,
-        "description": "Spends your account's download tokens. Off by default. When on, and an account is set up above, the provider may buy subtitles priced at or below the maximum below, for automatic and manual downloads alike. When off, token-priced subtitles are not offered and no tokens are ever spent.",
+        "description": "Spends your account's download tokens. Off by default. When on, and a username and password or a session cookie is set, the provider may buy subtitles that cost no more than the Maximum tokens per download setting, for automatic and manual downloads alike. When off, token-priced subtitles are not offered and no tokens are ever spent.",
         "title": "Allow token-priced downloads",
         "type": "boolean"
       },
@@ -39,7 +39,7 @@
       },
       "password": {
         "default": "",
-        "description": "Password for the username above.",
+        "description": "Password for your Prijevodi-Online username.",
         "secret": true,
         "title": "Password (optional)",
         "type": "string"
@@ -67,7 +67,7 @@
       },
       "username": {
         "default": "",
-        "description": "Optional. Leave empty to use the provider without an account: search and every download the site allows visitors keep working. With an account the provider can also download what the site keeps for members. The site protects its sign-in page with a Cloudflare Turnstile captcha. If Bazarr cannot sign in with a username and password, use the session cookie field instead.",
+        "description": "Optional. Leave empty to use the provider without an account: search and every download the site allows visitors keep working. Movie subtitles need an account, because the site does not let visitors download movies; without one, movie searches find nothing to download. With an account the provider can also download what the site keeps for members. The site protects its sign-in page with a Cloudflare Turnstile captcha. If Bazarr cannot sign in with a username and password, use the session cookie field instead.",
         "secret": true,
         "title": "Username (optional)",
         "type": "string"
@@ -78,11 +78,11 @@
   "dependencies": {
     "requirements": []
   },
-  "description": "Uses the Prijevodi-Online API for Croatian, Serbian (Latin and Cyrillic), Bosnian, Montenegrin, Macedonian, and Serbo-Croatian episode and movie subtitles. No account is needed: search always works, and downloads work wherever the site lets visitors download. An optional account, signed in with a username and password or a browser session cookie, adds member downloads and, only after you turn on token-priced downloads, spends the account's tokens up to the per-download limit you set. ZIP and RAR downloads are supported.",
+  "description": "Uses the Prijevodi-Online API for Croatian, Serbian (Latin and Cyrillic), Bosnian, Montenegrin, Macedonian, and Serbo-Croatian episode and movie subtitles. Series work without an account: search always works, and downloads work wherever the site lets visitors download. Movie subtitles need an account, because the site does not let visitors download movies. An optional account, signed in with a username and password or a browser session cookie, adds member downloads and, only after you turn on token-priced downloads, spends the account's tokens up to the per-download limit you set. ZIP and RAR downloads are supported.",
   "entry_class": "PrijevodiOnlineProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "08ecbf6141c74ee20150702b2a33039ad2d3b45a7194c63cbef4668ec1eb1aa6"
+    "provider.py": "6e1450dd2362f767ab4ae8bbf5ed59c8aa1af1dd7e2ae47f7e7e029a4b8288b5"
   },
   "flaresolverr": true,
   "languages": [

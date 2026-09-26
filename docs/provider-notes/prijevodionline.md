@@ -9,7 +9,9 @@ Clean-room target for `prijevodionline`.
 - Supported media: episodes and movies.
 - Redirects are refused. A redirect, an HTML answer (the app shell) or a `NOT_FOUND "Route not
   found"` answer on a known route raises `ServiceUnavailable` saying the API changed, instead of
-  returning an empty result.
+  returning an empty result. So does a translation list in which no row carries a `price` field.
+- Movie subtitles need an account: visitors hold no movie download permission, so a visitor's
+  movie search finds nothing to download.
 
 Routes used:
 
@@ -54,9 +56,11 @@ Each translation row is classified for the identity the search runs as:
 
 - `skip`: no file, not published, or not approved. Never shown.
 - `owned`: a member bought it (`isPurchased`, not `isRevoked`). Shown, tagged `owned`.
-- `free`: price 0 or empty. Shown.
+- `free`: price 0 or `null`. Shown. A row with no `price` field at all is unreadable and
+  skipped, never taken as free, because a free member row is downloaded without a price quote.
 - `granted`: priced, but the identity holds `<kind>.translations.downloadFree`, which the site's
-  own client treats as free. Shown.
+  own client treats as free. Shown. With spending on, a member's granted row within the cap is
+  tagged `may cost N tokens`, because its quote may still ask for them.
 - `priced`: priced, and the member holds `<kind>.translations.download`. Shown only when spending
   is on, the price is at or below the cap, and the known balance covers it. Tagged
   `costs N tokens`.
@@ -67,9 +71,15 @@ Candidates the current settings cannot download or pay for are hidden rather tha
 refused, because a refused download pauses the provider. Each search logs one line with the
 hidden counts by reason (`spending_off`, `over_cap`, `low_balance`, `needs_account`).
 
-If a visitor download of a `granted` item is refused, visitor grants are distrusted for 6 hours.
-If a member's quote for a `granted` item asks for tokens, that account's grants count as priced
-for 12 hours.
+If a visitor download of a `granted` item is refused with 401, 402 or 403, or with an `Auth/` or
+`Tokens/` error, visitor grants are distrusted for 6 hours. Other answers teach nothing: the app
+shell where the file belongs raises `ServiceUnavailable` (API changed), and any other error names
+its code. If a member's quote for a `granted` item asks for tokens, that account's grants count as
+priced for 12 hours.
+
+A series the site answers `404` for on `/series/<id>/seasons` (removed or merged since the lookup
+was cached) finds nothing for 30 minutes and its lookup is dropped, instead of failing and pausing
+the provider on every search for the show.
 
 ### Spending rules
 
@@ -78,16 +88,26 @@ on, and the live quoted price is at or below both the per-download cap and the p
 search time.
 
 - Every member download of a `granted`, `priced` or not-yet-seen `owned` item asks for a quote
-  first. A quote that answers `download` fetches the file directly.
-- A quote that answers `purchase` is checked before anything is bought: a readable token price
-  of at least 1, a purchase token, `canAfford`, the balance, the cap, and the price at search
-  time. A subtitle that was free at search time and now wants tokens is refused.
+  first. A quote whose `translationId` or `translationType` names a different subtitle is refused.
+  A quote that answers `download` fetches the file directly.
+- A quote that answers `purchase` for an item the site listed as owned is refused, whatever the
+  settings: an owned subtitle is never bought again.
+- Any other `purchase` answer is checked before anything is bought, in this order: spending on,
+  a valid cap, no overcharge in the last 24 hours, a readable token price of at least 1, the cap,
+  the price at search time, the balance, `canAfford`, and a purchase token. The settings the user
+  controls come first so a refusal names them. A subtitle that was free at search time and now
+  wants tokens is refused.
 - The confirmation is sent once, outside the retry loop, never through FlareSolverr and never
   replayed, and only with at least 12 seconds and 5 requests of rate budget left.
 - An unknown outcome (a timeout after sending, a 5xx, an unreadable success) blocks buying the
   same subtitle again for 24 hours. A later quote that answers `download` clears the block.
 - A purchase that the provider already confirmed is never paid again.
-- Every refusal says that nothing was spent.
+- The purchase record is kept per site member id, so a freshly pasted cookie or a switch between
+  the cookie and the password for the same account keeps it. It lives in the worker process.
+- A charge above the quote is logged as an error and stops purchases on that account for 24
+  hours; the refusal says why.
+- Every refusal before a purchase says that nothing was spent. A download that fails after a
+  successful purchase says the purchase went through.
 
 ### Languages (mapped by the site's language code, never its language id)
 

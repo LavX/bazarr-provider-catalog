@@ -22,6 +22,7 @@ import base64
 import contextlib
 import email.message
 import hashlib
+import hmac
 import http.client
 import io
 import json
@@ -29,6 +30,7 @@ import logging
 import math
 import os
 import re
+import secrets
 import socket
 import threading
 import time
@@ -172,6 +174,10 @@ CLOUDFLARE_COOKIE_RE = re.compile(r"^(__cf|_cfuvid|cf_)", re.I)
 COOKIE_NAME_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
 COOKIE_VALUE_RE = re.compile(r'^(?:[\x21\x23-\x2b\x2d-\x3a\x3c-\x5b\x5d-\x7e]*|"[\x21\x23-\x2b\x2d-\x3a\x3c-\x5b\x5d-\x7e]*")$')
 MAX_COOKIE_HEADER_CHARS = 4096
+# Cookie values shorter than this are not scrubbed from text: a real session
+# value is long, and short ones (a "theme=dark" preference pasted with the
+# header) would otherwise be starred out of public release names.
+MIN_COOKIE_SECRET_CHARS = 8
 MAX_USER_AGENT_CHARS = 512
 CAPTCHA_RE = re.compile(r"captcha|turnstile|robot", re.I)
 PERMISSION_RE = re.compile(r"^[A-Za-z.]+( or [A-Za-z.]+)*$")
@@ -191,13 +197,21 @@ CLOUDFLARE_BODY_MARKERS = (
     "checking your browser before accessing",
 )
 
-SPENDING_OFF_MESSAGE = "Prijevodi-Online: token-priced downloads are off; nothing was spent"
+SPENDING_OFF_MESSAGE = (
+    "Prijevodi-Online: token-priced downloads are off. Turn on 'Allow token-priced downloads' "
+    "in the provider settings to allow them; nothing was spent"
+)
 CAP_INVALID_MESSAGE = (
     "Prijevodi-Online: the maximum tokens per download setting is not valid, "
     "so no token-priced download is allowed; nothing was spent"
 )
 BUDGET_MESSAGE = (
     "Prijevodi-Online: not enough time or request budget left to buy safely; nothing was spent"
+)
+OVERCHARGED_MESSAGE = (
+    "Prijevodi-Online charged more than its quote on an earlier purchase, so Bazarr buys "
+    "nothing on this account for 24 hours; check Purchases on prijevodi-online.org; "
+    "nothing was spent"
 )
 UNCERTAIN_MESSAGE = (
     "Prijevodi-Online: the purchase result is unknown; check Purchases on "
@@ -357,6 +371,10 @@ class _TTLCache:
         for key in [key for key in self._items if predicate(key)]:
             self._items.pop(key, None)
 
+    def drop_values(self, predicate):
+        for key in [key for key, (_expires, value) in self._items.items() if predicate(value)]:
+            self._items.pop(key, None)
+
     def __len__(self):
         return len(self._items)
 
@@ -400,6 +418,13 @@ class _Identity:
     @property
     def digest(self):
         return self.session.digest
+
+    @property
+    def account_key(self):
+        """The site's member id, so that state about purchases outlives a fresh
+        cookie or a switch between the cookie and the password for one account."""
+        member_id = self.snapshot.get("member_id")
+        return ("member", member_id) if member_id else ("digest", self.digest)
 
     @property
     def mode(self):
@@ -595,7 +620,13 @@ def language_payload(key):
 
 
 def _item_price(item):
-    """(valid, price): price is None or 0 for free, an int >= 1 when priced."""
+    """(valid, price): price is None or 0 for free, an int >= 1 when priced.
+
+    A row without a price key is not readable, so it is skipped rather than
+    taken as free: a free member row is downloaded without a price quote.
+    """
+    if "price" not in item:
+        return False, None
     raw = item.get("price")
     if raw is None:
         return True, None
@@ -751,8 +782,12 @@ def tokens_text(count):
     return f"{count} token" if count == 1 else f"{count} tokens"
 
 
-def release_info_for(item, access, price, member=False, kind=None):
-    """The release line: name, extra description, format, flags and the access tag."""
+def release_info_for(item, access, price, member=False, kind=None, may_cost=None):
+    """The release line: name, extra description, format, flags and the access tag.
+
+    `may_cost` is set for a member's granted row when spending is on: its quote
+    may still ask for tokens, and the provider would then pay up to that price.
+    """
     item = item or {}
     if kind is None:
         kind = "series" if "seriesId" in item or "episodeNumber" in item else "movies"
@@ -772,6 +807,8 @@ def release_info_for(item, access, price, member=False, kind=None):
         parts.append("machine translated")
     if access == "priced" and price:
         parts.append(f"costs {tokens_text(price)}")
+    elif access == "granted" and may_cost:
+        parts.append(f"may cost {tokens_text(may_cost)}")
     elif access == "owned":
         parts.append("owned")
     elif access == "account_required":
@@ -969,6 +1006,7 @@ class PrijevodiOnlineProvider:
         self._grant_unreliable = _TTLCache(clock, 32)
         self._owned = _TTLCache(clock, 1024)
         self._ledger = _TTLCache(clock, LEDGER_MAX_ENTRIES)
+        self._overcharged = _TTLCache(clock, 16)
 
     # Entry points
 
@@ -1038,6 +1076,10 @@ class PrijevodiOnlineProvider:
         self._call = call
         try:
             yield call
+        except _DeadlineExceeded as exc:
+            # The host maps exceptions by class name, so the internal subclass
+            # would cross unmapped and lose the ServiceUnavailable pause.
+            raise ServiceUnavailable(self._scrub(str(exc))) from None
         except Exception as exc:
             self._scrub_exception(exc)
             raise
@@ -1050,7 +1092,7 @@ class PrijevodiOnlineProvider:
             values.update(self._call.secrets)
         for session in list(self._sessions.values()) + [self._anonymous]:
             for cookie in session.jar:
-                if cookie.value:
+                if cookie.value and len(str(cookie.value)) >= MIN_COOKIE_SECRET_CHARS:
                     values.add(str(cookie.value))
         return sorted((value for value in values if len(value) >= 3), key=len, reverse=True)
 
@@ -1061,13 +1103,26 @@ class PrijevodiOnlineProvider:
         return text[:limit] if limit else text
 
     def _scrub_exception(self, exc):
-        try:
-            text = str(exc)
-        except Exception:  # pragma: no cover, defensive
-            return
-        scrubbed = self._scrub(text, limit=None)
-        if scrubbed != text:
-            exc.args = (scrubbed[:300],)
+        """Scrub the exception and every exception chained to it.
+
+        The worker prints the whole traceback, chained causes included.
+        """
+        seen = set()
+        pending = [exc]
+        while pending:
+            current = pending.pop()
+            if current is None or id(current) in seen:
+                continue
+            seen.add(id(current))
+            try:
+                text = str(current)
+            except Exception:  # pragma: no cover, defensive
+                text = None
+            if text is not None:
+                scrubbed = self._scrub(text, limit=None)
+                if scrubbed != text:
+                    current.args = (scrubbed[:300],)
+            pending.extend((current.__cause__, current.__context__))
 
     def _log(self, level, message, *args):
         if LOGGER.isEnabledFor(level):
@@ -1210,6 +1265,7 @@ class PrijevodiOnlineProvider:
             "mode": session.mode,
             "digest": session.digest,
             "member": is_member,
+            "member_id": _as_int(user.get("id")) if is_member else None,
             "permissions": permissions,
             "token_balance": balance,
             "fetched_at": self._monotonic(),
@@ -1275,7 +1331,8 @@ class PrijevodiOnlineProvider:
             return cached
         try:
             data = self._api_get(self._anonymous, "/auth/captcha-config")
-        except (ServiceUnavailable, ApiError, ValueError, CloudflareBlockedError):
+        except (ServiceUnavailable, APIThrottled, ApiError, ValueError, CloudflareBlockedError):
+            # A failed sign-in never fails a search, so neither does this check.
             return None
         captcha = data.get("captcha")
         enabled = captcha.get("enabled") is True if isinstance(captcha, dict) else None
@@ -1556,6 +1613,9 @@ class PrijevodiOnlineProvider:
             value = cookie.get("value")
             if not name or value is None or not CLOUDFLARE_COOKIE_RE.match(name):
                 continue
+            # The same checks a pasted cookie gets.
+            if not COOKIE_NAME_RE.match(name) or not COOKIE_VALUE_RE.match(str(value)):
+                continue
             for existing in [item for item in session.jar if item.name == name]:
                 try:
                     session.jar.clear(existing.domain, existing.path, existing.name)
@@ -1626,7 +1686,17 @@ class PrijevodiOnlineProvider:
         cached = self._seasons_cache.get(series_id)
         if cached is not None:
             return cached
-        data = self._api_get(session, f"/series/{series_id}/seasons")
+        try:
+            data = self._api_get(session, f"/series/{series_id}/seasons")
+        except ApiError as error:
+            if error.status != 404:
+                raise
+            # The series was removed or merged on the site since the lookup was
+            # cached. Forget the lookup and find nothing for a while, instead of
+            # failing, and pausing the provider, on every search for the show.
+            self._series_cache.drop_values(lambda value: isinstance(value, dict) and value.get("id") == series_id)
+            self._seasons_cache.set(series_id, [], SERIES_MISS_TTL_SECONDS)
+            return []
         items, _total = _container(data, "seasons", "/series/seasons")
         self._seasons_cache.set(series_id, items, SEASONS_TTL_SECONDS)
         return items
@@ -1650,6 +1720,10 @@ class PrijevodiOnlineProvider:
                 {"movieId": parent_id, "perPage": MOVIE_TRANSLATIONS_PER_PAGE},
                 "movieTranslations",
             )
+        # Rows without a price are skipped. If none carries one, the list's
+        # shape changed, and an empty result would hide that from the user.
+        if items and not any(isinstance(item, dict) and "price" in item for item in items):
+            raise ServiceUnavailable(_api_changed(f"/translations/{kind}"))
         self._translations_cache.set(key, items, TRANSLATIONS_TTL_SECONDS)
         return items
 
@@ -1785,17 +1859,26 @@ class PrijevodiOnlineProvider:
             seen.add((translation_id, key))
             if access == "owned":
                 self._owned.set((identity.digest, kind, translation_id), True, SNAPSHOT_TTL_SECONDS)
+            may_cost = None
+            if access == "granted" and spending_on and cap is not None and price and price <= cap:
+                may_cost = price
             candidates.append(
-                self._candidate(video, item, kind, key, access, price, identity, year=year, verified=verified)
+                self._candidate(
+                    video, item, kind, key, access, price, identity,
+                    year=year, verified=verified, may_cost=may_cost,
+                )
             )
         return candidates, hidden
 
-    def _candidate(self, video, item, kind, key, access, price, identity, year=None, verified=False):
+    def _candidate(self, video, item, kind, key, access, price, identity, year=None, verified=False, may_cost=None):
         language = language_payload(key)
         language["hi"] = bool(item.get("hearingImpaired"))
         translation_id = _as_int(item.get("id"))
         matches = derive_matches(video, item, kind, verified=verified, year=year)
         score = score_for(matches, kind)
+        # The file name and release tokens are the site's public data and feed
+        # archive member selection, so they are not scrubbed: a configured
+        # username that also appears in a public file name is left as is.
         filename = _candidate_filename(item, kind, video, language)
         uploader = self._scrub(str(item.get("username") or "").strip(), limit=80)
         if access == "priced" and price:
@@ -1807,7 +1890,7 @@ class PrijevodiOnlineProvider:
                 f"{'-cyrl' if language.get('script') == 'Cyrl' else ''}"
             ),
             "language": language,
-            "release_info": self._scrub(release_info_for(item, access, price, identity.member, kind)),
+            "release_info": self._scrub(release_info_for(item, access, price, identity.member, kind, may_cost)),
             "filename": filename,
             "matches": matches,
             "score": score,
@@ -1908,14 +1991,24 @@ class PrijevodiOnlineProvider:
     def _download_anonymous(self, identity, payload, kind):
         try:
             return self._fetch_file(identity.session, payload, kind)
-        except _DownloadRefused:
+        except _DownloadRefused as refusal:
+            if refusal.html:
+                # The app shell where a file belongs is a changed route, not a
+                # refusal. Learning from it would hide every visitor result.
+                raise ServiceUnavailable(_api_changed(f"/translations/{kind}/download")) from None
+            code = refusal.code or ""
+            refused = refusal.status in (401, 402, 403) or code.startswith(("Auth/", "Tokens/"))
+            if not refused:
+                raise ValueError(
+                    f"Prijevodi-Online refused the download ({code or 'HTTP ' + str(refusal.status)})"
+                ) from None
             if payload["access"] == "granted":
                 self._anonymous_grant_refused.set(kind, True, ANONYMOUS_GRANT_REFUSED_TTL_SECONDS)
             if identity.failure:
                 raise AccountLoginFailed(_login_message(identity.failure)) from None
             raise AccountRequired(ANONYMOUS_REFUSED_MESSAGE) from None
 
-    def _download_member(self, identity, payload, kind, config):
+    def _download_member(self, identity, payload, kind, config, purchased=False):
         key = (identity.digest, kind, payload["translation_id"])
         try:
             return self._fetch_file(identity.session, payload, kind)
@@ -1923,6 +2016,11 @@ class PrijevodiOnlineProvider:
             if refusal.status in (401, 403) or (refusal.code or "").startswith("Auth/"):
                 self._after_auth_refusal(identity, config, refusal.message)
             self._owned.pop(key)
+            if refusal.status == 402 and purchased:
+                raise ValueError(
+                    "Prijevodi-Online: the purchase went through, but the site then asked for tokens "
+                    "to download it; try the download again later. Bazarr will not buy this subtitle again"
+                ) from None
             if refusal.status == 402:
                 raise PaidDownloadRefused(
                     "Prijevodi-Online asks for tokens for this subtitle; nothing was spent"
@@ -1980,17 +2078,38 @@ class PrijevodiOnlineProvider:
                     raise PaidDownloadRefused(
                         f"Prijevodi-Online: the price is {tokens_text(list_price)}, above your limit of {cap}; nothing was spent"
                     )
-            key = (identity.digest, kind, translation_id)
+            owned_key = (identity.digest, kind, translation_id)
+            ledger_key = (identity.account_key, kind, translation_id)
             intent = self._quote(identity, kind, translation_id, config)
+            # The echo must name the requested subtitle. The site's schema types
+            # translationType as a free string, so only a clear swap of the two
+            # request values counts as a mismatch.
+            echoed_id = intent.get("translationId")
+            echoed_type = intent.get("translationType")
+            if (echoed_id is not None and _as_int(echoed_id) != translation_id) or (
+                echoed_type in ("series", "movie") and echoed_type != ("series" if kind == "series" else "movie")
+            ):
+                raise PaidDownloadRefused(
+                    "Prijevodi-Online answered the price quote for a different subtitle; nothing was spent"
+                )
             action = intent.get("action")
             if action == "download":
-                if self._ledger.get(key) == "uncertain":
-                    self._ledger.pop(key)
-                self._owned.set(key, True, SNAPSHOT_TTL_SECONDS)
+                if self._ledger.get(ledger_key) == "uncertain":
+                    self._ledger.pop(ledger_key)
+                self._owned.set(owned_key, True, SNAPSHOT_TTL_SECONDS)
                 return self._download_member(identity, payload, kind, config)
             if action != "purchase":
                 raise PaidDownloadRefused(
                     "Prijevodi-Online answered the price quote in an unknown way; nothing was spent"
+                )
+            cost = intent.get("tokenCost")
+            cost = cost if _is_plain_int(cost) else None
+            if access == "owned":
+                # Never buy what the site lists as bought, whatever the settings.
+                asked = f" for {tokens_text(cost)}" if cost is not None and cost > 0 else ""
+                raise PaidDownloadRefused(
+                    "Prijevodi-Online lists this subtitle as already bought, but its price quote asks"
+                    f"{asked} again; nothing was spent. Check Purchases on prijevodi-online.org"
                 )
             if access == "granted":
                 self._grant_unreliable.set((identity.digest, kind), True, GRANT_UNRELIABLE_TTL_SECONDS)
@@ -1998,38 +2117,45 @@ class PrijevodiOnlineProvider:
                 raise PaidDownloadRefused(SPENDING_OFF_MESSAGE)
             if cap is None:
                 raise PaidDownloadRefused(CAP_INVALID_MESSAGE)
-            cost = intent.get("tokenCost")
+            if self._overcharged.get(identity.account_key):
+                raise PaidDownloadRefused(OVERCHARGED_MESSAGE)
             token = intent.get("token")
             balance = intent.get("balance")
             balance = balance if _is_plain_int(balance) else None
-            if not _is_plain_int(cost) or cost < 1:
+            if cost is None or cost < 1:
                 raise PaidDownloadRefused("Prijevodi-Online's price quote is not readable; nothing was spent")
-            if intent.get("canAfford") is not True or (balance is not None and balance < cost):
-                identity.session.snapshot = None
-                have = f"the account has {balance}" if balance is not None else "more than the account has"
-                raise InsufficientTokens(
-                    f"Prijevodi-Online: the subtitle needs {tokens_text(cost)}, {have}; nothing was spent"
-                )
-            if not isinstance(token, str) or not token.strip():
-                raise PaidDownloadRefused("Prijevodi-Online's price quote carries no purchase token; nothing was spent")
-            if list_price is None or list_price < 1:
-                raise PaidDownloadRefused(
-                    f"Prijevodi-Online: the price is now {tokens_text(cost)}, but the subtitle was free at search time; nothing was spent"
-                )
+            # The limits the user controls come first, so the refusal names them.
             if cost > cap:
                 raise PaidDownloadRefused(
                     f"Prijevodi-Online: the price is now {tokens_text(cost)}, above your limit of {cap}; nothing was spent"
+                )
+            if list_price is None or list_price < 1:
+                raise PaidDownloadRefused(
+                    f"Prijevodi-Online: the price is now {tokens_text(cost)}, but the subtitle was free at search time; nothing was spent"
                 )
             if cost > list_price:
                 raise PaidDownloadRefused(
                     f"Prijevodi-Online: the price is now {tokens_text(cost)}, above the {list_price} shown at search time; nothing was spent"
                 )
-            if self._ledger.get(key) in ("sending", "confirmed", "uncertain"):
+            if balance is not None and balance < cost:
+                identity.session.snapshot = None
+                raise InsufficientTokens(
+                    f"Prijevodi-Online: the subtitle needs {tokens_text(cost)}, the account has {balance}; nothing was spent"
+                )
+            if intent.get("canAfford") is not True:
+                identity.session.snapshot = None
+                raise InsufficientTokens(
+                    f"Prijevodi-Online says the account cannot buy this subtitle right now ({tokens_text(cost)}); "
+                    "nothing was spent"
+                )
+            if not isinstance(token, str) or not token.strip():
+                raise PaidDownloadRefused("Prijevodi-Online's price quote carries no purchase token; nothing was spent")
+            if self._ledger.get(ledger_key) in ("sending", "confirmed", "uncertain"):
                 raise PurchaseUncertain(UNCERTAIN_MESSAGE)
             headroom = self._rate_headroom()
             if self._remaining() < SPEND_MIN_SECONDS or (headroom is not None and headroom < SPEND_MIN_REQUESTS):
                 raise PaidDownloadRefused(BUDGET_MESSAGE)
-            return self._confirm_and_download(identity, payload, kind, config, key, token, cost)
+            return self._confirm_and_download(identity, payload, kind, config, owned_key, ledger_key, token, cost)
 
     def _quote(self, identity, kind, translation_id, config):
         body = {"translationId": translation_id, "translationType": "series" if kind == "series" else "movie"}
@@ -2062,10 +2188,11 @@ class PrijevodiOnlineProvider:
             raise PaidDownloadRefused("Prijevodi-Online's price quote is not readable; nothing was spent")
         return intent
 
-    def _confirm_and_download(self, identity, payload, kind, config, key, token, cost):
+    def _confirm_and_download(self, identity, payload, kind, config, owned_key, ledger_key, token, cost):
         """Send the one confirmation this call may send, then fetch the file."""
         session = identity.session
-        self._ledger.set(key, "sending", LEDGER_TTL_SECONDS)
+        account_key = identity.account_key
+        self._ledger.set(ledger_key, "sending", LEDGER_TTL_SECONDS)
         timeout = max(1.0, min(CONFIRM_TIMEOUT_SECONDS, self._remaining() - 5))
         status, headers, raw, error = None, None, b"", None
         try:
@@ -2080,8 +2207,8 @@ class PrijevodiOnlineProvider:
         outcome, detail = classify_confirm_outcome(status, raw, error, headers)
         noun = "series" if kind == "series" else "movie"
         if outcome == "bought":
-            self._ledger.set(key, "confirmed", LEDGER_TTL_SECONDS)
-            self._owned.set(key, True, SNAPSHOT_TTL_SECONDS)
+            self._ledger.set(ledger_key, "confirmed", LEDGER_TTL_SECONDS)
+            self._owned.set(owned_key, True, SNAPSHOT_TTL_SECONDS)
             charged = detail["tokenCost"]
             self._log(
                 logging.INFO, "Prijevodi-Online: spent %s on %s subtitle %d",
@@ -2093,13 +2220,16 @@ class PrijevodiOnlineProvider:
                     "Prijevodi-Online charged %s for %s subtitle %d, more than the %d quoted",
                     tokens_text(charged), noun, payload["translation_id"], cost,
                 )
+                # The log line is easy to miss, so the next purchase refusal
+                # tells the user instead, and nothing more is bought for a day.
+                self._overcharged.set(account_key, True, LEDGER_TTL_SECONDS)
             session.snapshot = None
             self._translations_cache.drop_where(lambda item: item[1] == identity.digest)
             # The subtitle is owned now. If this download fails, the next
             # attempt's quote answers "download" and nothing is spent again.
-            return self._download_member(identity, payload, kind, config)
+            return self._download_member(identity, payload, kind, config, purchased=True)
         if outcome in ("insufficient", "refused", "auth", "challenge", "not_sent"):
-            self._ledger.pop(key)
+            self._ledger.pop(ledger_key)
         if outcome == "insufficient":
             session.snapshot = None
             raise InsufficientTokens(
@@ -2119,7 +2249,7 @@ class PrijevodiOnlineProvider:
             raise ServiceUnavailable(
                 "Prijevodi-Online could not be reached to confirm the purchase; nothing was spent"
             )
-        self._ledger.set(key, "uncertain", LEDGER_TTL_SECONDS)
+        self._ledger.set(ledger_key, "uncertain", LEDGER_TTL_SECONDS)
         if outcome == "throttled":
             rate = parse_rate_headers(headers)
             wait = rate["retry_after"] if rate["retry_after"] is not None else rate["reset"]
@@ -2205,8 +2335,15 @@ def _container(data, key, route):
     return items, _as_int(container.get("total"))
 
 
+# A per-process key, so a digest of a password or a cookie seen in a state
+# dump cannot be checked against guesses offline. Everything keyed by a digest
+# lives only as long as the worker process.
+_DIGEST_KEY = secrets.token_bytes(32)
+
+
 def _digest(mode, material):
-    return hashlib.sha256(f"prijevodionline\0v1\0{mode}\0{material}".encode("utf-8")).hexdigest()
+    message = f"prijevodionline\0v1\0{mode}\0{material}".encode("utf-8")
+    return hmac.new(_DIGEST_KEY, message, hashlib.sha256).hexdigest()
 
 
 def _text(value):
@@ -2223,7 +2360,7 @@ def _config_secrets(config):
     for segment in _text(config.get("session_cookie")).replace("\r", ";").replace("\n", ";").split(";"):
         _name, _, value = segment.partition("=")
         value = value.strip().strip('"')
-        if value:
+        if len(value) >= MIN_COOKIE_SECRET_CHARS:
             values.add(value)
     return frozenset(value for value in values if value)
 
