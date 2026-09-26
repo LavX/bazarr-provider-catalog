@@ -212,6 +212,73 @@ class OpenSubtitlesComHelperTests(unittest.TestCase):
         )
         self.assertIn("year", matched)
 
+    def test_year_is_awarded_for_a_genuine_returned_imdb_match(self):
+        movie_matches = self.mod.derive_matches(
+            {"kind": "movie", "title": "Inception", "imdb_id": "tt1375666", "year": 2000},
+            {},
+            {"imdb_id": 1375666, "year": 2010},
+        )
+        series_matches = self.mod.derive_matches(
+            {
+                "kind": "episode",
+                "series": "Breaking Bad",
+                "series_imdb_id": "tt0903747",
+                "year": 2000,
+                "season": 3,
+                "episode": 13,
+            },
+            {},
+            {"parent_imdb_id": 903747, "year": 2010},
+        )
+        episode_matches = self.mod.derive_matches(
+            {
+                "kind": "episode",
+                "series": "Breaking Bad",
+                "imdb_id": "tt1628687",
+                "year": 2000,
+                "season": 3,
+                "episode": 13,
+            },
+            {},
+            {"imdb_id": 1628687, "year": 2010},
+        )
+
+        self.assertIn("year", movie_matches)
+        self.assertIn("year", series_matches)
+        self.assertIn("year", episode_matches)
+
+    def test_missing_or_conflicting_imdb_ids_do_not_create_year_credit(self):
+        cases = [
+            (
+                {"kind": "movie", "title": "Inception", "imdb_id": "tt1375666", "year": 2000},
+                {"imdb_id": None, "year": 2010},
+            ),
+            (
+                {"kind": "movie", "title": "Inception", "imdb_id": "tt1375666", "year": 2000},
+                {"imdb_id": 9999999, "year": 2010},
+            ),
+            (
+                {"kind": "movie", "title": "Inception"},
+                {"movie_name": "Inception"},
+            ),
+            (
+                {
+                    "kind": "episode",
+                    "series": "Breaking Bad",
+                    "series_imdb_id": "tt0903747",
+                    "year": 2000,
+                    "season": 3,
+                    "episode": 13,
+                },
+                {"parent_imdb_id": None, "year": 2010},
+            ),
+        ]
+
+        for video, feature in cases:
+            with self.subTest(video=video, feature=feature):
+                matches = self.mod.derive_matches(video, {}, feature)
+                self.assertNotIn("year", matches)
+
     def test_episode_imdb_id_match_is_scored(self):
         video = {
             "kind": "episode",
@@ -888,6 +955,79 @@ class OpenSubtitlesComSearchTests(unittest.TestCase):
 
         self.assertTrue(hashed["hash_verifiable"])
         self.assertFalse(plain["hash_verifiable"])
+
+    def _result_for(self, provider, item):
+        return provider._result(
+            {"kind": "episode", "series_imdb_id": "tt0903747", "season": 3, "episode": 13},
+            item,
+            item["attributes"],
+            item["attributes"]["files"][0],
+            forced=False,
+        )
+
+    def test_ai_translated_row_sets_top_level_flag_to_literal_true(self):
+        provider = self.mod.OpenSubtitlesComProvider()
+        result = self._result_for(provider, _subtitle_item(ai_translated=True))
+
+        # The host reads only the top-level field, and only the literal true.
+        self.assertIs(result.get("ai_translated"), True)
+        # Older hosts still read the display copy.
+        self.assertIs(result["display"]["ai_translated"], True)
+        self.assertIs(result["display"]["machine_translated"], False)
+
+    def test_machine_translated_row_is_not_marked_ai_translated(self):
+        provider = self.mod.OpenSubtitlesComProvider()
+        result = self._result_for(provider, _subtitle_item(machine_translated=True))
+
+        self.assertIsNot(result.get("ai_translated"), True)
+        self.assertIs(result["display"]["ai_translated"], False)
+        self.assertIs(result["display"]["machine_translated"], True)
+
+    def test_human_row_is_not_marked_ai_translated(self):
+        provider = self.mod.OpenSubtitlesComProvider()
+        result = self._result_for(provider, _subtitle_item())
+
+        self.assertIsNot(result.get("ai_translated"), True)
+        self.assertIs(result["display"]["ai_translated"], False)
+
+    def test_search_marks_included_ai_rows_at_the_top_level(self):
+        provider = self.mod.OpenSubtitlesComProvider()
+        provider._http_post_json = lambda path, payload, headers, timeout=30: {
+            "token": "jwt-token",
+            "base_url": "api.opensubtitles.com",
+            "status": 200,
+        }
+        provider._http_get_json = lambda path, params, headers, timeout=30: {
+            "data": [
+                _subtitle_item(subtitle_id="human", file_id=1),
+                _subtitle_item(subtitle_id="ai", file_id=2, ai_translated=True),
+                _subtitle_item(subtitle_id="machine", file_id=3, machine_translated=True),
+            ]
+        }
+
+        results = provider.search(
+            {
+                "kind": "episode",
+                "series": "Breaking Bad",
+                "season": 3,
+                "episode": 13,
+                "series_imdb_id": "tt0903747",
+            },
+            [{"alpha3": "eng", "alpha2": "en", "forced": False}],
+            {
+                "username": "user",
+                "password": "pass",
+                "use_hash": False,
+                "include_ai_translated": True,
+                "include_machine_translated": True,
+            },
+        )
+
+        flags = {item["provider_payload"]["file_id"]: item.get("ai_translated") for item in results}
+        self.assertEqual(set(flags), {1, 2, 3})
+        self.assertIs(flags[2], True)
+        self.assertIsNot(flags[1], True)
+        self.assertIsNot(flags[3], True)
 
     def test_score_without_hash_excludes_hash_points(self):
         provider = self.mod.OpenSubtitlesComProvider()

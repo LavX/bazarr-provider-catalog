@@ -1,7 +1,9 @@
+import ast
 import base64
 import hashlib
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import unittest
@@ -80,6 +82,37 @@ class CatalogStructureTests(unittest.TestCase):
 
 
 @unittest.skipUnless(importlib.util.find_spec("humanfriendly"), "requires smokehub provider dependencies")
+def _documented_candidate_fields():
+    guide = (ROOT / "docs/writing-a-scraper-provider.md").read_text(encoding="utf-8")
+    line = next(item for item in guide.splitlines() if item.startswith("- `search()` returns"))
+    return re.findall(r"`([a-z_]+)`", line.split("each dict has:", 1)[1])
+
+
+class CandidateContractTests(unittest.TestCase):
+    def test_every_provider_candidate_has_the_documented_fields(self):
+        # A real search needs the network, so check the source instead. Every
+        # provider builds its search() candidate as one dict literal with a
+        # provider_payload key; that literal must carry each documented field.
+        required = _documented_candidate_fields()
+        self.assertIn("hash_verifiable", required)
+        self.assertIn("hearing_impaired_verifiable", required)
+        self.assertIn("hearing_impaired", required)
+        for path in sorted((ROOT / "providers").glob("*/provider.py")):
+            with self.subTest(provider=path.parent.name):
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+                candidates = [
+                    node
+                    for node in ast.walk(tree)
+                    if isinstance(node, ast.Dict)
+                    and any(isinstance(key, ast.Constant) and key.value == "provider_payload" for key in node.keys)
+                ]
+                self.assertTrue(candidates, "no candidate dict with a provider_payload key")
+                for node in candidates:
+                    keys = {key.value for key in node.keys if isinstance(key, ast.Constant)}
+                    missing = [field for field in required if field not in keys]
+                    self.assertEqual(missing, [], f"candidate dict at line {node.lineno}")
+
+
 class SmokeProviderTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

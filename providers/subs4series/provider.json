@@ -1,7 +1,7 @@
 {
   "anti_captcha": true,
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "0d67ada10fdf553269d15539246c039cf51f0a33b0f73abf24b262d78779f5a5",
+  "bundle_sha256": "b6d4bca75c62645ad3cc4caedd16f8d11d72cff9162113d8cac95c8eb05100aa",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -334,7 +334,7 @@
   "entry_class": "Subs4SeriesProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "a29f744b266646a305223215d4af1b28676985784a401633b9224afee0e74aab"
+    "provider.py": "34dc974814adeb77dbf0eb8d47488f6034b44c535685191fe6feb9512bdaa15f"
   },
   "flaresolverr": true,
   "languages": [
@@ -360,5 +360,5 @@
   "supported_media": [
     "episode"
   ],
-  "version": "0.1.7"
+  "version": "0.1.8"
 }

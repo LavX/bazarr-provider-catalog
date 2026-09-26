@@ -658,6 +658,7 @@ def _candidate(item, video):
         "score": score,
         "score_without_hash": score,
         "score_out_of": 100,
+        "hash_verifiable": False,
         "hearing_impaired_verifiable": True,
         "hearing_impaired": bool(item["language"].get("hi")),
         "page_link": item["page_url"],

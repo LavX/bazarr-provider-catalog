@@ -30,6 +30,8 @@ search(video: dict, languages: list[dict], config: dict) -> list[dict]
 download(provider_payload: dict, language: dict, config: dict) -> dict | bytes | str | None
 # optional: only needed when download() returns {"archive_b64": ..., "select_member": true}
 select_archive_member(provider_payload: dict, language: dict, members: list[str], config: dict) -> dict
+# optional: reports bounded, transient provider status after successful operations
+drain_events() -> list[dict]
 ```
 
 `select_archive_member` is how a worker language-pins a member of an archive it cannot list
@@ -40,6 +42,39 @@ with their names; the worker runs its own language tagging and returns
 **defer** to the host's episode pick (safe for single-language archives), or **reject**
 (host fails loud, e.g. a multilingual archive missing the requested language). This keeps
 language selection identical for zip and rar/7z and avoids silent wrong-language downloads.
+
+### AI provenance and runtime events
+
+A search candidate may set the top-level field `ai_translated` to the literal boolean `true`
+when the subtitle was produced by large-model translation. Keep it at the top level, not under
+`display`. Missing values, `false`, strings, and numbers do not mark a candidate. This field is
+distinct from `machine_translated`, which the host does not read from Provider Hub candidates.
+Older hosts ignore the extra top-level field.
+
+A provider that has transient account status to report may implement `drain_events()`. The worker
+calls it after each successful `search` and `download`. Return a list of plain JSON objects. The
+worker accepts at most 8 events per operation and at most 4 KiB serialised across the accepted
+events. Events that cannot be serialised as strict JSON are dropped, including bytes, sets, non-finite
+numbers, or circular structures. A host that does not support events never calls this method.
+
+The `translation_quota` event has this shape:
+
+```json
+{
+  "type": "translation_quota",
+  "entitled": true,
+  "exhausted": false,
+  "remaining": 37,
+  "limit": 50,
+  "reset_at": "2026-10-01T00:00:00Z"
+}
+```
+
+All five status fields are nullable. `entitled` and `exhausted` must otherwise be booleans.
+`remaining` and `limit` must otherwise be integers from 0 through 10,000,000. `reset_at` must
+otherwise be a string of at most 64 characters. The host drops invalid fields, unknown event
+types, and an event whose five status fields are all null. Status is advisory and transient. It
+must not contain credentials, account identifiers, or other secrets.
 
 No wheels, sdists, native files, symlinks, vendored dependencies, or app-environment `pip install` are part of the bundle. Optional dependencies must be declared in `provider.json` under `dependencies.requirements` with exact versions and SHA256 wheel hashes.
 

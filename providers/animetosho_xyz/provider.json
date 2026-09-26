@@ -1,0 +1,83 @@
+{
+  "api_version": "bazarr.provider-hub.v1",
+  "bundle_sha256": "bd3ddddd9e406835d0a5dbaf46e27e92843560fb39de70a94f36846b6ef354c1",
+  "config_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "request_delay_ms": {
+        "default": 0,
+        "description": "Optional delay between AnimeTosho.xyz torrent detail requests.",
+        "maximum": 5000,
+        "minimum": 0,
+        "title": "Delay between requests (ms)",
+        "type": "integer"
+      },
+      "search_threshold": {
+        "default": 5,
+        "description": "Maximum number of completed AnimeTosho.xyz feed entries to inspect for one episode.",
+        "maximum": 50,
+        "minimum": 1,
+        "title": "Search threshold",
+        "type": "integer"
+      }
+    },
+    "type": "object"
+  },
+  "dependencies": {
+    "requirements": []
+  },
+  "description": "Searches the separate AnimeTosho.xyz JSON feeds for embedded anime episode subtitle attachments by AniDB episode id. No login or API key required.",
+  "entry_class": "AnimeToshoXYZProvider",
+  "entry_module": "provider",
+  "files": {
+    "provider.py": "50a8cf4bf5eeae19dc1480b42645e39c0099ea73f775b8b4acfbb261aa165d52"
+  },
+  "languages": [
+    "ara",
+    "ces",
+    "cym",
+    "deu",
+    "ell",
+    "eng",
+    "fin",
+    "fra",
+    "heb",
+    "ind",
+    "ita",
+    "jpn",
+    "nld",
+    "pol",
+    "por",
+    "por-BR",
+    "por-PT",
+    "ron",
+    "rus",
+    "spa",
+    "spa-ES",
+    "spa-MX",
+    "sqi",
+    "slk",
+    "swe",
+    "tha",
+    "tur",
+    "vie",
+    "zho"
+  ],
+  "name": "AnimeTosho.xyz",
+  "provider_id": "animetosho_xyz",
+  "schema_version": 1,
+  "secret_fields": [],
+  "source": {
+    "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+    "commit": "0000000000000000000000000000000000000000",
+    "path": "providers/animetosho_xyz",
+    "ref": "main",
+    "repo": "LavX/bazarr-provider-catalog",
+    "trusted": true,
+    "type": "github"
+  },
+  "supported_media": [
+    "episode"
+  ],
+  "version": "0.1.2"
+}
