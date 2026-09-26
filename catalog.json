@@ -4362,7 +4362,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "424b08e3fc255d0858ebbd4a3b1a6c6744a8ce465a595bc6db25369b11de0f57",
+        "bundle_sha256": "3d36aa74bdd8280090f4132152b1c49262faf13204f1642a8a4d9b47810fb21f",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -4440,11 +4440,11 @@
         "dependencies": {
           "requirements": []
         },
-        "description": "Uses the Prijevodi-Online API for Croatian, Serbian (Latin and Cyrillic), Bosnian, Montenegrin, Macedonian, and Serbo-Croatian episode and movie subtitles. No account is needed for series: search always works, and downloads work wherever the site lets visitors download. An account is optional and unlocks movies and token-priced subtitles. Movie subtitles need an account, because the site does not let visitors download movies. Sign in with a username and password or a browser session cookie. Tokens are spent only after you turn on token-priced downloads, and never for more than the per-download limit you set. ZIP and RAR downloads are supported.",
+        "description": "Uses the Prijevodi-Online API for Croatian, Serbian (Latin and Cyrillic), Bosnian, Montenegrin, Macedonian, and Serbo-Croatian episode and movie subtitles. No account is needed for series: search always works, and downloads work wherever the site lets visitors download. An account is optional and unlocks movies and token-priced subtitles. Movie subtitles need an account, because the site does not let visitors download movies. Sign in with a username and password or a browser session cookie. Tokens are spent only after you turn on token-priced downloads, and never for more than the per-download limit you set. Downloads arrive as ZIP archives (the site repacks older RAR uploads), and a RAR is still accepted.",
         "entry_class": "PrijevodiOnlineProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "b9de5756501ed6595fe7c1be94acb88413dbabc9aededf550cf7f2de05b5f384"
+          "provider.py": "59fe99db0ea56600b2d2dcc2b3075a3aff8c33f0c66fefda7ba16cf88741457e"
         },
         "flaresolverr": true,
         "languages": [

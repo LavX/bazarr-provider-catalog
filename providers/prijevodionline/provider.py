@@ -123,8 +123,9 @@ CAP_CHOICES = (1, 2, 3, 5, 10)
 DEFAULT_CAP = "1"
 # The site's own client treats a list-priced translation as free for anyone
 # holding <kind>.translations.downloadFree, and visitors hold it for series.
-# Visitors have no tokens, so such a download can never spend anything. Set
-# this to False to treat every list-priced item as paid for visitors.
+# Visitors have no tokens, so such a download can never spend anything. A live
+# visitor download of a 1-token series translation (2026-09-26) returned the
+# file. Set this to False to treat every list-priced item as paid for visitors.
 ANONYMOUS_TRUSTS_GRANT = True
 
 ACCESS_CLASSES = ("free", "granted", "priced", "owned", "account_required")

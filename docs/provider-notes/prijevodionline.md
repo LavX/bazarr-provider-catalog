@@ -161,6 +161,11 @@ movie archive's member only when it holds exactly one subtitle. A bare subtitle 
 content mode without an encoding guess. An empty body, HTML, an unexpected JSON answer or a
 damaged ZIP raise an error.
 
+Observed live on 2026-09-26 (one authorized visitor download, below): the site answered a ZIP
+with a single `.srt` member, named `S01E01 - Winter is Coming.srt` inside
+`S01E01 - Winter is Coming.srt.zip`. The translation was a legacy upload named `.rar`, so the
+site repacks older RAR uploads into ZIP. RAR stays accepted in case an item still arrives as one.
+
 ## Current live notes (2026-09-26)
 
 - The site relaunched as a browser app. The old HTML routes such as `/serije/index/<letter>`
@@ -183,7 +188,12 @@ damaged ZIP raise an error.
 
 Live verification covered anonymous use only. No Prijevodi-Online account was available, so sign-in with a username and password, the session cookie mode, token balance reads, purchase quotes and purchase confirmation were never exercised against the live site. Those paths are covered by unit tests with mocked responses shaped after the site's own web client, and their behaviour against the real service is unverified.
 
-Anonymous downloads were not exercised live either; they are unit-tested only.
+One visitor download was authorized and made on 2026-09-26, through a throwaway Bazarr+ 2.7.0
+host with no account and no cookie: Game of Thrones S01E01, Croatian, translation 21823, listed
+at 1 token. The site answered `200` with `application/zip` (14,936 bytes, one `.srt` member of
+34,727 bytes), so it does stream a list-priced series translation to a visitor holding
+`series.translations.downloadFree`, and a visitor spends nothing. The same host's search found 7
+Croatian candidates for that episode without an account.
 
 ## History
 
@@ -211,8 +221,8 @@ JSON API, and treats an HTML or redirected API answer as an error.
 Each has a fallback in the provider:
 
 - Does the server stream a list-priced series translation to a visitor who holds
-  `downloadFree`? The provider assumes it does, and hides those items for 6 hours after a
-  refusal.
+  `downloadFree`? Yes: one visitor download of a 1-token series translation on 2026-09-26 came
+  back as the file. If the site ever refuses, the provider hides those items for 6 hours.
 - Is the Turnstile captcha enforced on the API sign-in? The provider tries once without a
   captcha token and points to the session cookie field when the site asks for one.
 - Does a forum sign-in give a cookie the API accepts? Not used.
@@ -224,7 +234,8 @@ Each has a fallback in the provider:
 - Which error statuses can a confirmation return, how long does a quote token live, and is the
   token empty when the account cannot afford the price? One confirmation is sent right after the
   quote; a 4xx error envelope counts as a refusal, anything else as unknown for 24 hours.
-- Is the download always a ZIP, and can it hold several files or a RAR? The answer is sniffed.
+- Is the download always a ZIP, and can it hold several files or a RAR? The one live download
+  was a ZIP with one `.srt`, repacked from a legacy RAR upload. Answers are still sniffed.
 - Is the list price the same for every viewer? The member's own list is used, and the quote
   decides.
 - Is a download after a purchase free, and what exactly does `isRevoked` mean? An owned
