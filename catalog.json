@@ -4362,13 +4362,19 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "d2569692e2b5c73d3467d7b96d11dd3e4df1a479e8a1bceb502637a0ad3e75aa",
+        "bundle_sha256": "19170348c424941d1466923dc6c96d33be928df9f44d4ac177f2d308cf16bb0c",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
+            "allow_paid_downloads": {
+              "default": false,
+              "description": "Spends your account's download tokens. Off by default. When on, and an account is set up above, the provider may buy subtitles priced at or below the maximum below, for automatic and manual downloads alike. When off, token-priced subtitles are not offered and no tokens are ever spent.",
+              "title": "Allow token-priced downloads",
+              "type": "boolean"
+            },
             "flaresolverr_timeout_ms": {
               "default": 25000,
-              "description": "Maximum time FlareSolverr may spend fetching a page after a Cloudflare challenge.",
+              "description": "Maximum time FlareSolverr may spend clearing a Cloudflare challenge.",
               "maximum": 30000,
               "minimum": 5000,
               "title": "FlareSolverr timeout (ms)",
@@ -4376,17 +4382,57 @@
             },
             "flaresolverr_url": {
               "default": "",
-              "description": "FlareSolverr /v1 endpoint used when prijevodi-online.org answers with a Cloudflare challenge. The site fronts everything with one, so the provider needs this to work at all from most networks.",
+              "description": "Optional. FlareSolverr /v1 endpoint, used only if prijevodi-online.org starts answering with a Cloudflare challenge. The site does not challenge requests today, so leave it empty unless searches fail with a Cloudflare error. Sign-in details and session cookies are never sent to FlareSolverr.",
               "title": "FlareSolverr URL",
+              "type": "string"
+            },
+            "max_tokens_per_download": {
+              "default": "1",
+              "description": "The most the provider may pay for one subtitle when token-priced downloads are on. Prices fall with age: a series subtitle costs 5 tokens in its first week, 2 until day 14, then 1. A movie subtitle costs 5, 3 and 2 until days 7, 21 and 60, then 1. At 1, Bazarr's regular searches pick a subtitle up once its price has dropped to 1.",
+              "enum": [
+                "1",
+                "2",
+                "3",
+                "5",
+                "10"
+              ],
+              "title": "Maximum tokens per download",
+              "type": "string"
+            },
+            "password": {
+              "default": "",
+              "description": "Password for the username above.",
+              "secret": true,
+              "title": "Password (optional)",
               "type": "string"
             },
             "request_delay_ms": {
               "default": 0,
-              "description": "Optional politeness delay between HTTP calls to prijevodi-online.org.",
+              "description": "Optional pause between requests to prijevodi-online.org. The provider already slows down by itself when the site's rate limit runs low.",
               "maximum": 5000,
               "minimum": 0,
               "title": "Delay between requests (ms)",
               "type": "integer"
+            },
+            "session_cookie": {
+              "default": "",
+              "description": "Optional, instead of a username and password. Sign in on www.prijevodi-online.org in your browser, open the developer tools, pick any request to /api/v1/ in the Network tab and copy its whole Cookie request header here. It is used first when set. It stops working when that browser session ends, including when you sign out in the browser.",
+              "secret": true,
+              "title": "Session cookie (optional)",
+              "type": "string"
+            },
+            "session_user_agent": {
+              "default": "",
+              "description": "Only needed if the site rejects the session cookie from Bazarr. Paste the User-Agent of the browser the cookie came from.",
+              "title": "Browser User-Agent for the session cookie (optional)",
+              "type": "string"
+            },
+            "username": {
+              "default": "",
+              "description": "Optional. Leave empty to use the provider without an account: search and every download the site allows visitors keep working. With an account the provider can also download what the site keeps for members. The site protects its sign-in page with a Cloudflare Turnstile captcha. If Bazarr cannot sign in with a username and password, use the session cookie field instead.",
+              "secret": true,
+              "title": "Username (optional)",
+              "type": "string"
             }
           },
           "type": "object"
@@ -4394,23 +4440,30 @@
         "dependencies": {
           "requirements": []
         },
-        "description": "Scrapes Prijevodi-Online for Croatian, Serbian, Montenegrin, and Serbo-Croatian episode subtitles. ZIP and RAR downloads are supported. The site has been offline since August 2026, when its host suspended it over copyright complaints; the operators say the full site was backed up and are moving it to new hosting, so searches fail until it returns. When it is up it sits behind a Cloudflare managed challenge, which needs a FlareSolverr URL below.",
+        "description": "Uses the Prijevodi-Online API for Croatian, Serbian (Latin and Cyrillic), Bosnian, Montenegrin, Macedonian, and Serbo-Croatian episode and movie subtitles. No account is needed: search always works, and downloads work wherever the site lets visitors download. An optional account, signed in with a username and password or a browser session cookie, adds member downloads and, only after you turn on token-priced downloads, spends the account's tokens up to the per-download limit you set. ZIP and RAR downloads are supported.",
         "entry_class": "PrijevodiOnlineProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "7d7e276db3ad0dbd31099a07775cb51b1ac73c80b5639bced285b2e3b59a8b15"
+          "provider.py": "08ecbf6141c74ee20150702b2a33039ad2d3b45a7194c63cbef4668ec1eb1aa6"
         },
         "flaresolverr": true,
         "languages": [
+          "bos",
           "cnr",
           "hbs",
           "hrv",
+          "mkd",
+          "sr-Cyrl",
           "srp"
         ],
         "name": "Prijevodi-Online",
         "provider_id": "prijevodionline",
         "schema_version": 1,
-        "secret_fields": [],
+        "secret_fields": [
+          "password",
+          "session_cookie",
+          "username"
+        ],
         "source": {
           "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
           "commit": "0000000000000000000000000000000000000000",
@@ -4421,9 +4474,10 @@
           "type": "github"
         },
         "supported_media": [
-          "episode"
+          "episode",
+          "movie"
         ],
-        "version": "0.2.1"
+        "version": "0.3.0"
       }
     },
     {
