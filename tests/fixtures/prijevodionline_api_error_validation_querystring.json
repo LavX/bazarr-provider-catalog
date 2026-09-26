@@ -1,0 +1,17 @@
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Validation failed: querystring",
+    "validation": [
+      {
+        "expected": "number",
+        "code": "invalid_type",
+        "received": "NaN",
+        "path": [
+          "episodeId"
+        ],
+        "message": "Invalid input: expected number, received NaN"
+      }
+    ]
+  }
+}
