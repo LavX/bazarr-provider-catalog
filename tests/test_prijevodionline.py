@@ -1348,6 +1348,15 @@ class PaidDownloadTests(ProviderTestCase):
         self.assertIn("archive_b64", provider.download(self.payload(access="priced"), HRV, config))
         self.assertEqual(site.count("POST", API + "/purchases/confirm"), 1)
 
+    def test_download_quote_without_a_purchase_never_claims_one(self):
+        site, provider, config = self.member_provider()
+        site.on("POST", API + "/purchases/intent", quote_download(120299))
+        site.on("GET", API + "/translations/series/120299/download", (500, {}, b"oops"))
+        with self.assertRaises(self.mod.ServiceUnavailable) as caught:
+            provider.download(self.payload(access="priced"), HRV, config)
+        self.assertNotIn("purchase went through", str(caught.exception))
+        self.assertEqual(site.count("POST", API + "/purchases/confirm"), 0)
+
     def test_every_failure_after_a_purchase_says_it_went_through(self):
         route = API + "/translations/series/120299/download"
         cases = (
@@ -1704,6 +1713,47 @@ class AuthenticationTests(ProviderTestCase):
         self.assertEqual(account.logins, 2)
         self.assertEqual(site.count("POST", API + "/purchases/intent"), 0)
         self.assertEqual(site.count("GET", API + "/translations/series/120299/download"), 1)
+
+    def test_owned_download_signs_in_again_at_most_once(self):
+        # Every session ends the moment the list is read: one fresh sign-in,
+        # then a refusal, never a second sign-in, a quote or the file.
+        site, account = self.password_site()
+
+        def translations(call):
+            account.expire()
+            return ok(season_capture())
+
+        site.on("GET", API + "/translations/series", translations)
+        with self.assertRaisesRegex(self.mod.PaidDownloadRefused, "does not list this subtitle as bought"):
+            self.provider(site).download(self.payload(access="owned", parent_id=3391), HRV, self.CONFIG)
+        self.assertEqual(account.logins, 2)
+        self.assertEqual(site.count("GET", API + "/translations/series/120299/download"), 0)
+        self.assertEqual(site.count("POST", API + "/purchases/intent"), 0)
+
+    def test_repeat_purchase_quote_after_a_purchase_never_claims_nothing_was_spent(self):
+        # Bought, then the session ends before the file; after a fresh sign-in
+        # the site still asks for tokens (with no balance left). The purchase
+        # is not repeated, and the refusal does not say nothing was spent.
+        site, account = self.password_site()
+        config = dict(self.CONFIG, allow_paid_downloads=True)
+        site.on(
+            "POST", API + "/purchases/intent",
+            quote_purchase(120299), quote_purchase(120299, balance=0, can_afford=False),
+        )
+        site.on("POST", API + "/purchases/confirm", confirm_ok(120299))
+
+        def download(call):
+            account.expire()
+            return api_error(401, "Auth/Unauthorized", "Not signed in")
+
+        site.on("GET", API + "/translations/series/120299/download", download)
+        with self.assertRaises(self.mod.PurchaseUncertain) as caught:
+            self.provider(site).download(self.payload(access="priced"), HRV, config)
+        self.assertIn("already bought", str(caught.exception))
+        self.assertNotIn("nothing was spent", str(caught.exception))
+        self.assertEqual(site.count("POST", API + "/purchases/intent"), 2)
+        self.assertEqual(site.count("POST", API + "/purchases/confirm"), 1)
+        self.assertEqual(account.logins, 2)
 
     def test_failure_after_a_purchase_and_a_fresh_sign_in_says_it_went_through(self):
         site, account = self.password_site()

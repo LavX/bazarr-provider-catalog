@@ -110,8 +110,10 @@ search time.
 - Every member download of a `granted` or `priced` item asks for a quote first. A quote whose
   `translationId` or `translationType` names a different subtitle is refused. A quote that answers
   `download` fetches the file directly.
-- Any other `purchase` answer is checked before anything is bought, in this order: spending on,
-  a valid cap, no overcharge in the last 24 hours, a readable token price of at least 1, the cap,
+- Any other `purchase` answer is checked before anything is bought, in this order: no purchase
+  of it already sent by this worker (a confirmed one says it was already bought, so no later
+  refusal claims that nothing was spent), spending on, a valid cap, no overcharge in the last
+  24 hours, a readable token price of at least 1, the cap,
   the price at search time, the balance, `canAfford`, and a purchase token. The settings the user
   controls come first so a refusal names them. A subtitle that was free at search time, or whose
   price at search time is not readable, and now wants tokens is refused.

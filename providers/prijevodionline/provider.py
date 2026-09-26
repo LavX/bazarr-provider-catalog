@@ -213,6 +213,10 @@ OVERCHARGED_MESSAGE = (
     "nothing on this account for up to 24 hours; check Purchases on prijevodi-online.org; "
     "nothing was spent"
 )
+ALREADY_BOUGHT_MESSAGE = (
+    "Prijevodi-Online asks for tokens again for a subtitle Bazarr already bought; it is not "
+    "bought twice. Check Purchases on prijevodi-online.org"
+)
 UNCERTAIN_MESSAGE = (
     "Prijevodi-Online: the purchase result is unknown; check Purchases on "
     "prijevodi-online.org; Bazarr will not buy this subtitle again for up to 24 hours"
@@ -2163,6 +2167,13 @@ class PrijevodiOnlineProvider:
             cost = cost if _is_plain_int(cost) else None
             if access == "granted":
                 self._grant_unreliable.set((identity.digest, kind), True, GRANT_UNRELIABLE_TTL_SECONDS)
+            # A purchase this worker already sent comes first, so no later
+            # refusal claims that nothing was spent.
+            state = self._ledger.get(ledger_key)
+            if state == "confirmed":
+                raise PurchaseUncertain(ALREADY_BOUGHT_MESSAGE)
+            if state in ("sending", "uncertain"):
+                raise PurchaseUncertain(UNCERTAIN_MESSAGE)
             if not allow_paid:
                 raise PaidDownloadRefused(SPENDING_OFF_MESSAGE)
             if cap is None:
@@ -2205,8 +2216,6 @@ class PrijevodiOnlineProvider:
                 )
             if not isinstance(token, str) or not token.strip():
                 raise PaidDownloadRefused("Prijevodi-Online's price quote carries no purchase token; nothing was spent")
-            if self._ledger.get(ledger_key) in ("sending", "confirmed", "uncertain"):
-                raise PurchaseUncertain(UNCERTAIN_MESSAGE)
             headroom = self._rate_headroom()
             if self._remaining() < SPEND_MIN_SECONDS or (headroom is not None and headroom < SPEND_MIN_REQUESTS):
                 raise PaidDownloadRefused(BUDGET_MESSAGE)
