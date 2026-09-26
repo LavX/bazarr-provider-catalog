@@ -1,9 +1,23 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "a3dd367d2418ec50b150e57c13a06d53fd2f31c8b36191d804de4b19d4451b88",
+  "bundle_sha256": "d2e766514961c675cd9c21a2c7c522ef8c5214f13e899048f9c80652321a61ea",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
+      "account_name": {
+        "default": "",
+        "description": "Optional. Without an account the provider still searches series and movies and downloads every series subtitle the site lets visitors download. An account unlocks two more things. Movie subtitles need an account, because the site does not let visitors download movies; without one, movie searches find nothing to download. Token-priced subtitles need an account too, and are bought only after you turn on Allow token-priced downloads. Fill in this and the password, or paste a session cookie instead. The site protects its sign-in page with a Cloudflare Turnstile captcha, so if Bazarr cannot sign in with a username and password, use the session cookie field.",
+        "secret": true,
+        "title": "Username (optional)",
+        "type": "string"
+      },
+      "account_password": {
+        "default": "",
+        "description": "Optional. The password for your Prijevodi-Online username.",
+        "secret": true,
+        "title": "Password (optional)",
+        "type": "string"
+      },
       "allow_paid_downloads": {
         "default": false,
         "description": "Spends your account's download tokens. Off by default. When on, and a username and password or a session cookie is set, the provider may buy subtitles that cost no more than the Maximum tokens per download setting, for automatic and manual downloads alike. When off, token-priced subtitles are not offered and no tokens are ever spent.",
@@ -37,13 +51,6 @@
         "title": "Maximum tokens per download",
         "type": "string"
       },
-      "password": {
-        "default": "",
-        "description": "Password for your Prijevodi-Online username.",
-        "secret": true,
-        "title": "Password (optional)",
-        "type": "string"
-      },
       "request_delay_ms": {
         "default": 0,
         "description": "Optional pause between requests to prijevodi-online.org. The provider already slows down by itself when the site's rate limit runs low.",
@@ -64,13 +71,6 @@
         "description": "Only needed if the site rejects the session cookie from Bazarr. Paste the User-Agent of the browser the cookie came from.",
         "title": "Browser User-Agent for the session cookie (optional)",
         "type": "string"
-      },
-      "username": {
-        "default": "",
-        "description": "Optional. Leave empty to use the provider without an account: search and every download the site allows visitors keep working. Movie subtitles need an account, because the site does not let visitors download movies; without one, movie searches find nothing to download. With an account the provider can also download what the site keeps for members. The site protects its sign-in page with a Cloudflare Turnstile captcha. If Bazarr cannot sign in with a username and password, use the session cookie field instead.",
-        "secret": true,
-        "title": "Username (optional)",
-        "type": "string"
       }
     },
     "type": "object"
@@ -78,11 +78,11 @@
   "dependencies": {
     "requirements": []
   },
-  "description": "Uses the Prijevodi-Online API for Croatian, Serbian (Latin and Cyrillic), Bosnian, Montenegrin, Macedonian, and Serbo-Croatian episode and movie subtitles. Series work without an account: search always works, and downloads work wherever the site lets visitors download. Movie subtitles need an account, because the site does not let visitors download movies. An optional account, signed in with a username and password or a browser session cookie, adds member downloads and, only after you turn on token-priced downloads, spends the account's tokens up to the per-download limit you set. ZIP and RAR downloads are supported.",
+  "description": "Uses the Prijevodi-Online API for Croatian, Serbian (Latin and Cyrillic), Bosnian, Montenegrin, Macedonian, and Serbo-Croatian episode and movie subtitles. No account is needed for series: search always works, and downloads work wherever the site lets visitors download. An account is optional and unlocks movies and token-priced subtitles. Movie subtitles need an account, because the site does not let visitors download movies. Sign in with a username and password or a browser session cookie. Tokens are spent only after you turn on token-priced downloads, and never for more than the per-download limit you set. ZIP and RAR downloads are supported.",
   "entry_class": "PrijevodiOnlineProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "6e1450dd2362f767ab4ae8bbf5ed59c8aa1af1dd7e2ae47f7e7e029a4b8288b5"
+    "provider.py": "f24232b5acaef27cc7b7b8eedae8f2a85b8a20b0c72bd9a5bf00ae92f5dfe7ae"
   },
   "flaresolverr": true,
   "languages": [
@@ -98,9 +98,9 @@
   "provider_id": "prijevodionline",
   "schema_version": 1,
   "secret_fields": [
-    "password",
-    "session_cookie",
-    "username"
+    "account_name",
+    "account_password",
+    "session_cookie"
   ],
   "source": {
     "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",

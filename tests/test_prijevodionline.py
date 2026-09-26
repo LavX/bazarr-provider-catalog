@@ -179,7 +179,7 @@ def movie_items(extra_free=True):
     data = _fixture("api_translations_movies")
     if extra_free:
         free = dict(data["movieTranslations"]["items"][0])
-        free.update({"id": 580, "fileId": 904, "price": None, "title": "Inception.2010.1080p.BluRay.x264-FREE"})
+        free.update({"id": 580, "fileId": 904, "price": 0, "title": "Inception.2010.1080p.BluRay.x264-FREE"})
         data["movieTranslations"]["items"].append(free)
         data["movieTranslations"]["total"] += 1
     return data
@@ -452,27 +452,31 @@ class PureFunctionTests(ProviderTestCase):
 
         classify = mod.classify_access
         self.assertEqual(classify(series, "series", anonymous, ()), "granted")
-        self.assertEqual(classify(variant(series, price=None), "series", anonymous, ()), "free")
         self.assertEqual(classify(variant(series, price=0), "series", anonymous, ()), "free")
         self.assertEqual(classify(variant(series, price=5), "series", anonymous, ()), "granted")
         self.assertEqual(classify(series, "series", anonymous, {"series"}), "account_required")
         self.assertEqual(classify(variant(series, isPurchased=True), "series", anonymous, ()), "granted")
         self.assertEqual(classify(movie, "movies", anonymous, ()), "account_required")
-        self.assertEqual(classify(variant(movie, price=None), "movies", anonymous, ()), "account_required")
+        self.assertEqual(classify(variant(movie, price=0), "movies", anonymous, ()), "account_required")
         self.assertEqual(classify(series, "series", member_free, ()), "granted")
         self.assertEqual(classify(series, "series", member_free, {"series"}), "priced")
         self.assertEqual(classify(series, "series", member, ()), "priced")
-        self.assertEqual(classify(variant(series, price=None), "series", member, ()), "free")
+        self.assertEqual(classify(variant(series, price=0), "series", member, ()), "free")
         self.assertEqual(classify(variant(series, isPurchased=True), "series", member, ()), "owned")
         self.assertEqual(classify(variant(series, isPurchased=True, isRevoked=True), "series", member, ()), "priced")
         self.assertEqual(classify(movie, "movies", member, ()), "priced")
         for broken in ({"fileId": None}, {"isPublished": False}, {"status": "pending"}, {"price": "abc"}, {"price": -1}):
             self.assertEqual(classify(variant(series, **broken), "series", member, ()), "skip", broken)
-        # A row without a price key is unreadable, never free.
+        # A missing, null or unreadable price is unknown, never free.
         priceless = {key: value for key, value in series.items() if key != "price"}
-        for snapshot in (anonymous, member, member_free):
-            self.assertEqual(classify(priceless, "series", snapshot, ()), "skip")
-        self.assertEqual(self.mod._item_price(priceless), (False, None))
+        for item in (priceless, variant(series, price=None), variant(series, price="abc"), variant(series, price=True)):
+            for snapshot in (anonymous, member, member_free):
+                self.assertEqual(classify(item, "series", snapshot, ()), "skip", (item.get("price", "missing"), snapshot))
+            self.assertEqual(self.mod._item_price(item), (False, None))
+        self.assertEqual(classify(variant(movie, price=None), "movies", anonymous, ()), "skip")
+        # An owned row is never bought, so it stays owned whatever its price.
+        for item in (priceless, variant(series, price=None)):
+            self.assertEqual(classify(dict(item, isPurchased=True), "series", member, ()), "owned")
         for item in _fixture("api_translations_series_price_tiers")["translations"]["items"]:
             self.assertEqual(classify(item, "series", anonymous, ()), "granted")
             self.assertEqual(classify(item, "series", member, ()), "priced")
@@ -698,24 +702,44 @@ class AnonymousSearchTests(ProviderTestCase):
         self.assertEqual(site.count("GET", API + "/movies"), 0)
 
     def test_rows_without_price_are_skipped_and_a_priceless_list_is_an_api_change(self):
-        data = season_capture()
-        del data["translations"]["items"][0]["price"]
-        site = cookie_member_site(member=member_me(series_free=True), translations=data)
-        provider = self.provider(site)
-        config = {"session_cookie": COOKIE_HEADER}
-        results = provider.search(GOT_S01E02, [HRV, SRP], config)
-        self.assertEqual(sorted(item["id"] for item in results), ["prijevodionline-s165016-srp", "prijevodionline-s37045-srp"])
-        self.assertFalse([call for call in site.calls if call["path"].endswith("/download")])
+        for broken in ("missing", None, "abc"):
+            data = season_capture()
+            if broken == "missing":
+                del data["translations"]["items"][0]["price"]
+            else:
+                data["translations"]["items"][0]["price"] = broken
+            site = cookie_member_site(member=member_me(series_free=True), translations=data)
+            provider = self.provider(site)
+            config = {"session_cookie": COOKIE_HEADER}
+            results = provider.search(GOT_S01E02, [HRV, SRP], config)
+            self.assertEqual(
+                sorted(item["id"] for item in results),
+                ["prijevodionline-s165016-srp", "prijevodionline-s37045-srp"],
+                broken,
+            )
+            self.assertFalse([call for call in site.calls if call["path"].endswith("/download")])
 
         for rows in ("translations", "movieTranslations"):
-            data = season_capture() if rows == "translations" else movie_items()
-            for item in data[rows]["items"]:
-                del item["price"]
-            site = anonymous_site(translations=data) if rows == "translations" else anonymous_site(movies=data)
-            video = GOT_S01E02 if rows == "translations" else INCEPTION
-            route = "series" if rows == "translations" else "movies"
-            with self.assertRaisesRegex(self.mod.ServiceUnavailable, f"API changed \\(/translations/{route}\\)"):
-                self.provider(site).search(video, [HRV, SRP], {})
+            for broken in ("missing", None):
+                data = season_capture() if rows == "translations" else movie_items()
+                for item in data[rows]["items"]:
+                    if broken == "missing":
+                        del item["price"]
+                    else:
+                        item["price"] = broken
+                site = anonymous_site(translations=data) if rows == "translations" else anonymous_site(movies=data)
+                video = GOT_S01E02 if rows == "translations" else INCEPTION
+                route = "series" if rows == "translations" else "movies"
+                with self.assertRaisesRegex(self.mod.ServiceUnavailable, f"API changed \\(/translations/{route}\\)"):
+                    self.provider(site).search(video, [HRV, SRP], {})
+        # Owned rows are listed whatever their price, so a list of them is no API change.
+        data = season_capture()
+        for item in data["translations"]["items"]:
+            item.update(price=None, isPurchased=True, isRevoked=False)
+        site = cookie_member_site(translations=data)
+        results = self.provider(site).search(GOT_S01E02, [HRV, SRP], {"session_cookie": COOKIE_HEADER})
+        self.assertEqual({item["provider_payload"]["access"] for item in results}, {"owned"})
+        self.assertEqual(len(results), 3)
 
     def test_movie_multi_cd_rows_are_skipped(self):
         data = movie_items()
@@ -827,7 +851,7 @@ class AnonymousSearchTests(ProviderTestCase):
 
 class AnonymousDownloadTests(ProviderTestCase):
     def test_anonymous_free_download_returns_archive(self):
-        site = anonymous_site(translations=season_items(price=None))
+        site = anonymous_site(translations=season_items(price=0))
         provider = self.provider(site)
         results = provider.search(GOT_S01E02, [HRV], {})
         self.assertEqual(results[0]["provider_payload"]["access"], "free")
@@ -894,7 +918,7 @@ class AnonymousDownloadTests(ProviderTestCase):
     def test_free_movie_without_account_raises_account_required_without_request(self):
         site = anonymous_site()
         provider = self.provider(site)
-        payload = self.payload(580, kind="movie", access="account_required", list_price=None)
+        payload = self.payload(580, kind="movie", access="account_required", list_price=0)
         with self.assertRaises(self.mod.AccountRequired) as caught:
             provider.download(payload, HRV, {})
         self.assertIn("needs an account", str(caught.exception))
@@ -913,7 +937,7 @@ class AnonymousDownloadTests(ProviderTestCase):
             site.on("GET", route, answer if isinstance(answer, tuple) else (200, {}, answer))
             provider = self.provider(site)
             with self.assertRaisesRegex(error, text):
-                provider.download(self.payload(access="free", list_price=None), HRV, {})
+                provider.download(self.payload(access="free", list_price=0), HRV, {})
         # The app shell is a changed route for a visitor, never a learned
         # refusal, and a broken answer for a member.
         shell = b"<!doctype html><html><head><title>Prijevodi Online</title></head><body></body></html>"
@@ -926,12 +950,12 @@ class AnonymousDownloadTests(ProviderTestCase):
         site = cookie_member_site()
         site.on("GET", route, (200, {"content-type": "text/html"}, shell))
         with self.assertRaisesRegex(ValueError, "web page"):
-            self.provider(site).download(self.payload(access="free", list_price=None), HRV, {"session_cookie": COOKIE_HEADER})
+            self.provider(site).download(self.payload(access="free", list_price=0), HRV, {"session_cookie": COOKIE_HEADER})
         # A bare subtitle goes back in content mode, a RAR in archive mode.
         for body, key in ((SRT, "content_b64"), (b"Rar!\x1a\x07\x00rar-bytes", "archive_b64")):
             site = anonymous_site()
             site.on("GET", route, (200, {}, body))
-            result = self.provider(site).download(self.payload(access="free", list_price=None, file_name="x.srt"), HRV, {})
+            result = self.provider(site).download(self.payload(access="free", list_price=0, file_name="x.srt"), HRV, {})
             self.assertEqual(base64.b64decode(result[key]), body)
             self.assertNotIn("encoding", result)
         self.assertEqual(result["episode"], 2)
@@ -1061,20 +1085,16 @@ class PaidDownloadTests(ProviderTestCase):
             self.assertEqual(provider.search(GOT_S01E02, [HRV], config), [])
         self.assertIn("spending_off=1", "\n".join(logs.output))
 
-    def test_purchase_quote_for_an_owned_or_promoted_row_never_spends_with_spending_off(self):
+    def test_purchase_quote_for_a_promoted_row_never_spends_with_spending_off(self):
         config = {"session_cookie": COOKIE_HEADER}
-        for payload in (
-            self.payload(access="owned", list_price=1),
-            self.payload(access="account_required", list_price=1),
-        ):
-            site = cookie_member_site(member=member_me(series_free=True))
-            site.on("POST", API + "/purchases/intent", quote_purchase(120299))
-            site.on("POST", API + "/purchases/confirm", confirm_ok(120299))
-            provider = self.provider(site)
-            with self.assertRaisesRegex(self.mod.PaidDownloadRefused, "nothing was spent"):
-                provider.download(payload, HRV, config)
-            self.assertEqual(site.count("POST", API + "/purchases/intent"), 1, payload["access"])
-            self.assertEqual(site.count("POST", API + "/purchases/confirm"), 0, payload["access"])
+        site = cookie_member_site(member=member_me(series_free=True))
+        site.on("POST", API + "/purchases/intent", quote_purchase(120299))
+        site.on("POST", API + "/purchases/confirm", confirm_ok(120299))
+        provider = self.provider(site)
+        with self.assertRaisesRegex(self.mod.PaidDownloadRefused, "nothing was spent"):
+            provider.download(self.payload(access="account_required", list_price=1), HRV, config)
+        self.assertEqual(site.count("POST", API + "/purchases/intent"), 1)
+        self.assertEqual(site.count("POST", API + "/purchases/confirm"), 0)
         # Without downloadFree the promoted row is priced and refused before any quote.
         site = cookie_member_site()
         provider = self.provider(site)
@@ -1093,9 +1113,10 @@ class PaidDownloadTests(ProviderTestCase):
                 provider.download(self.payload(access="granted"), HRV, config)
             self.assertEqual(site.count("POST", API + "/purchases/confirm"), 0, cap)
 
-    def test_owned_subtitle_is_never_bought_again(self):
-        # A search lists the row as owned; a later worker (a restart, another
-        # pool, or the owned cache expired) gets a purchase quote for it.
+    def test_owned_subtitle_is_never_quoted_or_bought(self):
+        # A search lists the row as owned. A later worker (a restart, another
+        # pool, or an expired cache) must still download it directly, with
+        # spending on and a quote that would ask for tokens.
         owned_list = with_variant(season_capture(), "translations", 0, isPurchased=True, isRevoked=False)
         site = cookie_member_site(translations=owned_list)
         site.on("POST", API + "/purchases/intent", quote_purchase(120299, cost=1))
@@ -1107,19 +1128,58 @@ class PaidDownloadTests(ProviderTestCase):
         self.assertEqual(len(owned), 1)
         self.assertTrue(owned[0]["release_info"].endswith("owned"))
         self.assertEqual(owned[0]["provider_payload"]["list_price"], 1)
-        fresh = self.provider(site)
-        with self.assertRaisesRegex(self.mod.PaidDownloadRefused, "already bought.*nothing was spent"):
-            fresh.download(owned[0]["provider_payload"], HRV, config)
-        clock.advance(31 * 60)
-        with self.assertRaisesRegex(self.mod.PaidDownloadRefused, "already bought"):
-            searched.download(owned[0]["provider_payload"], HRV, config)
-        self.assertEqual(site.count("POST", API + "/purchases/confirm"), 0)
-        # Seen as owned by this worker's own search, it downloads without a quote.
-        site.reset()
-        searched.search(GOT_S01E02, [HRV], config)
-        site.reset()
-        searched.download(owned[0]["provider_payload"], HRV, config)
-        self.assertEqual(site.paths(), [("GET", API + "/translations/series/120299/download")])
+        route = API + "/translations/series/120299/download"
+        for provider in (self.provider(site), searched):
+            site.reset()
+            result = provider.download(owned[0]["provider_payload"], HRV, config)
+            self.assertEqual(base64.b64decode(result["archive_b64"]), GOT_ZIP)
+            self.assertEqual(site.count("GET", route), 1)
+            self.assertEqual(self.purchases(site), [])
+            clock.advance(31 * 60)
+        # The site no longer counts it as bought: refused, never quoted or bought.
+        for answer in (
+            (402, {}, b""),
+            api_error(402, "Tokens/PurchaseRequired", "buy it first"),
+            api_error(400, "Tokens/InsufficientBalance", "not enough tokens"),
+        ):
+            site = cookie_member_site()
+            site.on("POST", API + "/purchases/intent", quote_purchase(120299, cost=1))
+            site.on("POST", API + "/purchases/confirm", confirm_ok(120299))
+            site.on("GET", route, answer)
+            with self.assertRaisesRegex(self.mod.PaidDownloadRefused, "listed this subtitle as bought.*nothing was spent"):
+                self.provider(site).download(self.payload(access="owned", list_price=1), HRV, config)
+            self.assertEqual(self.purchases(site), [], answer)
+            self.assertEqual(site.count("GET", route), 1, answer)
+
+    def test_missing_price_is_never_free_for_a_member(self):
+        route = API + "/translations/series/120299/download"
+        config = dict(self.CONFIG, max_tokens_per_download="5")
+        # A null price at search time: the row is not offered at all.
+        nulled = with_variant(season_capture(), "translations", 0, price=None)
+        site = cookie_member_site(member=member_me(series_free=True), translations=nulled)
+        results = self.provider(site).search(GOT_S01E02, [HRV, SRP], config)
+        self.assertNotIn(120299, [item["provider_payload"]["translation_id"] for item in results])
+        self.assertEqual(len(results), 2)
+        # A free payload without its listed 0 is refused before any request.
+        for list_price in (None, "0", False, 0.0):
+            site = cookie_member_site(member=member_me(series_free=True))
+            site.on("POST", API + "/purchases/intent", quote_purchase(120299))
+            provider = self.provider(site)
+            with self.assertRaisesRegex(self.mod.PaidDownloadRefused, "not readable.*Nothing was spent"):
+                provider.download(self.payload(access="free", list_price=list_price), HRV, config)
+            self.assertEqual(site.count("GET", route), 0, list_price)
+            self.assertEqual(self.purchases(site), [], list_price)
+        # A promoted row with no readable price asks for a quote, never a direct
+        # download, and a purchase answer is refused even with spending on.
+        for list_price in (None, "1"):
+            site = cookie_member_site(member=member_me(series_free=True))
+            site.on("POST", API + "/purchases/intent", quote_purchase(120299, cost=1))
+            site.on("POST", API + "/purchases/confirm", confirm_ok(120299))
+            with self.assertRaisesRegex(self.mod.PaidDownloadRefused, "not readable; nothing was spent"):
+                self.provider(site).download(self.payload(access="account_required", list_price=list_price), HRV, config)
+            self.assertEqual(site.count("POST", API + "/purchases/intent"), 1, list_price)
+            self.assertEqual(site.count("POST", API + "/purchases/confirm"), 0, list_price)
+            self.assertEqual(site.count("GET", route), 0, list_price)
 
     def test_quote_guards_each_refuse_on_their_own(self):
         cases = (
@@ -1259,6 +1319,8 @@ class PaidDownloadTests(ProviderTestCase):
         with self.assertRaisesRegex(self.mod.PaidDownloadRefused, "above the 1 shown at search time"):
             provider.download(self.payload(access="priced", list_price=1), HRV, config)
         with self.assertRaisesRegex(self.mod.PaidDownloadRefused, "free at search time"):
+            provider.download(self.payload(access="granted", list_price=0), HRV, config)
+        with self.assertRaisesRegex(self.mod.PaidDownloadRefused, "shown at search time is not readable"):
             provider.download(self.payload(access="granted", list_price=None), HRV, config)
         self.assertEqual(site.count("POST", API + "/purchases/confirm"), 0)
 
@@ -1460,7 +1522,7 @@ class PaidDownloadTests(ProviderTestCase):
 
 
 class AuthenticationTests(ProviderTestCase):
-    CONFIG = {"username": USER, "password": PASSWORD}
+    CONFIG = {"account_name": USER, "account_password": PASSWORD}
 
     def password_site(self, **kwargs):
         site = anonymous_site()
@@ -1538,7 +1600,7 @@ class AuthenticationTests(ProviderTestCase):
         self.clock.advance(30 * 60)
         provider.search(GOT_S01E02, [HRV], self.CONFIG)
         self.assertEqual(account.logins, 1)
-        provider.search(GOT_S01E02, [HRV], dict(self.CONFIG, password="NEWPASSSENTINEL"))
+        provider.search(GOT_S01E02, [HRV], dict(self.CONFIG, account_password="NEWPASSSENTINEL"))
         self.assertEqual(account.logins, 2)
         self.clock.advance(61 * 60)
         provider.search(GOT_S01E02, [HRV], self.CONFIG)
@@ -1575,8 +1637,8 @@ class AuthenticationTests(ProviderTestCase):
         config = {
             "session_cookie": COOKIE_HEADER,
             "session_user_agent": "Mozilla/5.0 TestBrowser",
-            "username": USER,
-            "password": PASSWORD,
+            "account_name": USER,
+            "account_password": PASSWORD,
         }
         results = provider.search(GOT_S01E02, [HRV], config)
         self.assertEqual(results[0]["provider_payload"]["mode"], "cookie")
@@ -1615,7 +1677,7 @@ class AuthenticationTests(ProviderTestCase):
         self.assertEqual(len(old_sessions), 1)
         self.assertTrue(list(old_sessions[0].jar))
         site.reset()
-        provider.search(GOT_S01E02, [HRV], dict(self.CONFIG, password="SECONDPASSSENTINEL"))
+        provider.search(GOT_S01E02, [HRV], dict(self.CONFIG, account_password="SECONDPASSSENTINEL"))
         self.assertEqual(account.logins, 2)
         self.assertEqual(list(old_sessions[0].jar), [])
         self.assertEqual(len(provider._sessions), 1)
@@ -1645,10 +1707,10 @@ class AuthenticationTests(ProviderTestCase):
         site = anonymous_site()
         provider = self.provider(site)
         with self.assertLogs("prijevodionline", "WARNING") as logs:
-            self.assertEqual(len(provider.search(GOT_S01E02, [HRV], {"username": USER})), 1)
+            self.assertEqual(len(provider.search(GOT_S01E02, [HRV], {"account_name": USER})), 1)
         self.assertIn("both a username and a password", "\n".join(logs.output))
         with self.assertRaisesRegex(self.mod.AccountLoginFailed, "both a username and a password"):
-            provider.download(self.payload(access="priced"), HRV, {"username": USER})
+            provider.download(self.payload(access="priced"), HRV, {"account_name": USER})
 
 
 # F. Site down, rate limits, Cloudflare
@@ -1885,9 +1947,9 @@ class SecretTests(ProviderTestCase):
             site, account = anonymous_site(), None
             PasswordSite(site, login=api_error(401, "Auth/InvalidCredentials", f"Unknown user {USER} {PASSWORD}"))
             provider = self.provider(site)
-            outputs.append(provider.search(GOT_S01E02, [HRV], {"username": USER, "password": PASSWORD}))
+            outputs.append(provider.search(GOT_S01E02, [HRV], {"account_name": USER, "account_password": PASSWORD}))
             try:
-                provider.download(self.payload(access="priced"), HRV, {"username": USER, "password": PASSWORD})
+                provider.download(self.payload(access="priced"), HRV, {"account_name": USER, "account_password": PASSWORD})
             except Exception as error:  # noqa: BLE001, collected for inspection
                 errors.append(error)
             providers.append(provider)
@@ -1903,11 +1965,11 @@ class SecretTests(ProviderTestCase):
                 api_error(451, "Copyright/InfringementNotice", "x", data={"title": f"{USER} {LOGIN_COOKIE}1"}),
             )
             provider = self.provider(site)
-            config = {"username": USER, "password": PASSWORD, "allow_paid_downloads": True}
+            config = {"account_name": USER, "account_password": PASSWORD, "allow_paid_downloads": True}
             results = provider.search(GOT_S01E02, [HRV, SRP], config)
             outputs.append(results)
             outputs.append(provider.download(self.payload(access="priced"), HRV, config))
-            for payload in (self.payload(165016, access="priced"), self.payload(165016, access="free", list_price=None)):
+            for payload in (self.payload(165016, access="priced"), self.payload(165016, access="free", list_price=0)):
                 try:
                     provider.download(payload, SRP, config)
                 except Exception as error:  # noqa: BLE001, collected for inspection
@@ -1958,7 +2020,7 @@ class SecretTests(ProviderTestCase):
 class ScrubbingTests(ProviderTestCase):
     def test_chained_exceptions_are_scrubbed(self):
         provider = self.provider(anonymous_site())
-        config = {"username": USER, "password": PASSWORD}
+        config = {"account_name": USER, "account_password": PASSWORD}
         with self.assertRaises(ValueError) as caught:
             with provider._call_scope(config):
                 try:
@@ -2024,7 +2086,7 @@ class ManifestTests(ProviderTestCase):
         schema = manifest["config_schema"]
         properties = schema["properties"]
         self.assertNotIn("required", schema)
-        self.assertEqual(manifest["secret_fields"], ["password", "session_cookie", "username"])
+        self.assertEqual(manifest["secret_fields"], ["account_name", "account_password", "session_cookie"])
         for key in manifest["secret_fields"]:
             self.assertIs(properties[key].get("secret"), True, key)
             self.assertEqual(properties[key]["type"], "string")
@@ -2042,6 +2104,24 @@ class ManifestTests(ProviderTestCase):
         self.assertEqual(manifest["supported_media"], ["episode", "movie"])
         self.assertEqual(manifest["version"], "0.3.0")
 
+    def test_manifest_declares_no_account_requirement(self):
+        # The Provider Hub derives its sign-up badge from the setting keys: a
+        # non-boolean key named username, password or email shows "Account"
+        # (and passkey, token, api_key, apikey or cookies other badges). An
+        # account is optional here, so no key may trigger one.
+        manifest = self.manifest()
+        credential_keys = {"username", "password", "email", "passkey", "token", "api_key", "apikey", "cookies"}
+        for key, schema in manifest["config_schema"]["properties"].items():
+            if schema.get("type") == "boolean":
+                continue
+            self.assertNotIn(key.lower(), credential_keys, key)
+        self.assertNotIn("required", manifest["config_schema"])
+        help_text = manifest["config_schema"]["properties"]["account_name"]["description"]
+        self.assertTrue(help_text.startswith("Optional."), help_text)
+        for needed in ("Movie subtitles need an account", "Token-priced subtitles need an account too"):
+            self.assertIn(needed, help_text)
+        self.assertIn("An account is optional and unlocks movies and token-priced subtitles", manifest["description"])
+
     def test_manifest_text_is_current(self):
         text = (PROVIDER_DIR / "provider.json").read_text("utf-8")
         self.assertNotIn("offline since", text.lower())
@@ -2055,7 +2135,7 @@ class ManifestTests(ProviderTestCase):
             self.assertIsNone(re.search(r"\b(above|below)\b", description, re.I), description)
         movie_note = "the site does not let visitors download movies"
         self.assertIn(movie_note, manifest["description"])
-        self.assertIn(movie_note, manifest["config_schema"]["properties"]["username"]["description"])
+        self.assertIn(movie_note, manifest["config_schema"]["properties"]["account_name"]["description"])
         self.assertNotIn("\u2014", text)
         self.assertNotIn("\u2014", (PROVIDER_DIR / "provider.py").read_text("utf-8"))
 

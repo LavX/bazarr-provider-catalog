@@ -9,7 +9,8 @@ Clean-room target for `prijevodionline`.
 - Supported media: episodes and movies.
 - Redirects are refused. A redirect, an HTML answer (the app shell) or a `NOT_FOUND "Route not
   found"` answer on a known route raises `ServiceUnavailable` saying the API changed, instead of
-  returning an empty result. So does a translation list in which no row carries a `price` field.
+  returning an empty result. So does a translation list in which no row carries a readable `price`
+  (owned rows aside).
 - Movie subtitles need an account: visitors hold no movie download permission, so a visitor's
   movie search finds nothing to download.
 
@@ -40,8 +41,8 @@ magic-link, Google OAuth and forum sign-in routes.
 
 | Mode | Settings | Search | Downloads |
 |---|---|---|---|
-| Visitor (default) | none | series and movies | Free items (price 0 or empty), and list-priced series items the site grants visitors through `series.translations.downloadFree`. Never movies: visitors hold no movie download permission |
-| Account, spending off | `username` and `password`, or `session_cookie` | Same, as the member sees it | Free, owned, and anything the site's price quote says needs no purchase |
+| Visitor (default) | none | series and movies | Free items (price 0), and list-priced series items the site grants visitors through `series.translations.downloadFree`. Never movies: visitors hold no movie download permission |
+| Account, spending off | `account_name` and `account_password`, or `session_cookie` | Same, as the member sees it | Free, owned, and anything the site's price quote says needs no purchase |
 | Account, spending on | also `allow_paid_downloads` and `max_tokens_per_download` | Also priced items within the cap and the known balance | Also buys priced items within the cap, once each |
 
 A pasted session cookie is tried first, then the username and password, then visitor mode. A
@@ -50,14 +51,21 @@ logged as a warning. The failure is remembered per set of credentials (a captcha
 hours, rejected credentials for an hour, an unreachable site for 5 minutes), and changing the
 credentials retries at once. Only a download that needs the account reports the failure.
 
+The account settings are named `account_name` and `account_password` on purpose. The Provider
+Hub labels a provider "Account" when a setting is named `username`, `password` or `email`, and
+an account is optional here, so the card shows no account badge. No setting is required. The
+only spending limit is the per-download cap; there is no daily or rolling limit.
+
 ### Access classes and what search shows
 
 Each translation row is classified for the identity the search runs as:
 
 - `skip`: no file, not published, or not approved. Never shown.
-- `owned`: a member bought it (`isPurchased`, not `isRevoked`). Shown, tagged `owned`.
-- `free`: price 0 or `null`. Shown. A row with no `price` field at all is unreadable and
-  skipped, never taken as free, because a free member row is downloaded without a price quote.
+- `owned`: a member bought it (`isPurchased`, not `isRevoked`). Shown, tagged `owned`, whatever
+  its price, because an owned row is never quoted or bought.
+- `free`: price 0. Shown. Only an explicit 0 is free. A missing, `null` or unreadable price is
+  unknown, so the row is skipped, never taken as free, because a free member row is downloaded
+  without a price quote (the site's detail route answers `null` for rows its lists price at 1).
 - `granted`: priced, but the identity holds `<kind>.translations.downloadFree`, which the site's
   own client treats as free. Shown. With spending on, a member's granted row within the cap is
   tagged `may cost N tokens`, because its quote may still ask for them.
@@ -87,16 +95,19 @@ Tokens are spent only when all of these hold: an account is signed in, `allow_pa
 on, and the live quoted price is at or below both the per-download cap and the price shown at
 search time.
 
-- Every member download of a `granted`, `priced` or not-yet-seen `owned` item asks for a quote
-  first. A quote whose `translationId` or `translationType` names a different subtitle is refused.
-  A quote that answers `download` fetches the file directly.
-- A quote that answers `purchase` for an item the site listed as owned is refused, whatever the
-  settings: an owned subtitle is never bought again.
+- An `owned` item is downloaded directly and is never quoted or bought, whatever the worker
+  remembers (after a restart, in another worker or once a cache expired). If the site then asks
+  for tokens, the download is refused and nothing is spent.
+- A member's `free` download also skips the quote, so it needs the price 0 listed at search
+  time; a download result without it is refused.
+- Every member download of a `granted` or `priced` item asks for a quote first. A quote whose
+  `translationId` or `translationType` names a different subtitle is refused. A quote that answers
+  `download` fetches the file directly.
 - Any other `purchase` answer is checked before anything is bought, in this order: spending on,
   a valid cap, no overcharge in the last 24 hours, a readable token price of at least 1, the cap,
   the price at search time, the balance, `canAfford`, and a purchase token. The settings the user
-  controls come first so a refusal names them. A subtitle that was free at search time and now
-  wants tokens is refused.
+  controls come first so a refusal names them. A subtitle that was free at search time, or whose
+  price at search time is not readable, and now wants tokens is refused.
 - The confirmation is sent once, outside the retry loop, never through FlareSolverr and never
   replayed, and only with at least 12 seconds and 5 requests of rate budget left.
 - An unknown outcome (a timeout after sending, a 5xx, an unreadable success) blocks buying the

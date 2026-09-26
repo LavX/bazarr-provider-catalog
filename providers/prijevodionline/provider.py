@@ -620,16 +620,18 @@ def language_payload(key):
 
 
 def _item_price(item):
-    """(valid, price): price is None or 0 for free, an int >= 1 when priced.
+    """(valid, price): price is 0 for free, an int >= 1 when priced.
 
-    A row without a price key is not readable, so it is skipped rather than
-    taken as free: a free member row is downloaded without a price quote.
+    Only an explicit 0 is free. A missing, null or unreadable price is unknown,
+    so the row is not valid and never taken as free: a free member row is
+    downloaded without a price quote. The site's detail route answers null for
+    rows its lists price at 1.
     """
-    if "price" not in item:
+    if not isinstance(item, dict) or "price" not in item:
         return False, None
     raw = item.get("price")
     if raw is None:
-        return True, None
+        return False, None
     price = _as_int(raw)
     if price is None or price < 0:
         return False, None
@@ -646,13 +648,15 @@ def classify_access(item, kind, snapshot, learned=()):
     snapshot = snapshot or {}
     if item.get("fileId") is None or item.get("isPublished") is not True or item.get("status") != "approved":
         return "skip"
+    member = bool(snapshot.get("member"))
+    permissions = snapshot.get("permissions") or frozenset()
+    # Owned comes before the price: an owned row is downloaded directly and is
+    # never quoted or bought, so an unreadable price cannot make it spend.
+    if member and item.get("isPurchased") is True and item.get("isRevoked") is not True:
+        return "owned"
     valid, price = _item_price(item)
     if not valid:
         return "skip"
-    member = bool(snapshot.get("member"))
-    permissions = snapshot.get("permissions") or frozenset()
-    if member and item.get("isPurchased") is True and item.get("isRevoked") is not True:
-        return "owned"
     can_download = f"{kind}.translations.download" in permissions
     can_download_free = f"{kind}.translations.downloadFree" in permissions
     if not can_download and not can_download_free:
@@ -1004,7 +1008,6 @@ class PrijevodiOnlineProvider:
         self._warned = _TTLCache(clock, 64)
         self._anonymous_grant_refused = _TTLCache(clock, 4)
         self._grant_unreliable = _TTLCache(clock, 32)
-        self._owned = _TTLCache(clock, 1024)
         self._ledger = _TTLCache(clock, LEDGER_MAX_ENTRIES)
         self._overcharged = _TTLCache(clock, 16)
 
@@ -1139,8 +1142,8 @@ class PrijevodiOnlineProvider:
     def _identity(self, config, anonymous_snapshot=True):
         cookie_text = _text(config.get("session_cookie"))
         user_agent_setting = _text(config.get("session_user_agent")).strip()
-        username = _text(config.get("username")).strip()
-        password = _text(config.get("password"))
+        username = _text(config.get("account_name")).strip()
+        password = _text(config.get("account_password"))
         self._reset_on_credential_change(
             _digest("config", "\0".join((cookie_text, user_agent_setting, username, password)))
         )
@@ -1175,7 +1178,6 @@ class PrijevodiOnlineProvider:
             session.jar.clear()
         self._sessions.clear()
         self._translations_cache.clear()
-        self._owned.clear()
         self._anonymous_grant_refused.clear()
         self._grant_unreliable.clear()
 
@@ -1720,9 +1722,13 @@ class PrijevodiOnlineProvider:
                 {"movieId": parent_id, "perPage": MOVIE_TRANSLATIONS_PER_PAGE},
                 "movieTranslations",
             )
-        # Rows without a price are skipped. If none carries one, the list's
-        # shape changed, and an empty result would hide that from the user.
-        if items and not any(isinstance(item, dict) and "price" in item for item in items):
+        # Rows without a readable price are skipped, owned rows aside. If no row
+        # carries one, the list's shape changed, and an empty result would hide
+        # that from the user.
+        if items and not any(
+            _item_price(item)[0] or (isinstance(item, dict) and item.get("isPurchased") is True)
+            for item in items
+        ):
             raise ServiceUnavailable(_api_changed(f"/translations/{kind}"))
         self._translations_cache.set(key, items, TRANSLATIONS_TTL_SECONDS)
         return items
@@ -1857,8 +1863,6 @@ class PrijevodiOnlineProvider:
                 hidden[reason] += 1
                 continue
             seen.add((translation_id, key))
-            if access == "owned":
-                self._owned.set((identity.digest, kind, translation_id), True, SNAPSHOT_TTL_SECONDS)
             may_cost = None
             if access == "granted" and spending_on and cap is not None and price and price <= cap:
                 may_cost = price
@@ -1921,20 +1925,25 @@ class PrijevodiOnlineProvider:
     def _dispatch(self, identity, payload, config):
         kind = "series" if payload["kind"] == "series" else "movies"
         access = payload["access"]
-        translation_id = payload["translation_id"]
         if not identity.member:
             if access in ("free", "granted"):
                 return self._download_anonymous(identity, payload, kind)
             if identity.failure:
                 raise AccountLoginFailed(_login_message(identity.failure))
             raise AccountRequired(ACCOUNT_NEEDED_MESSAGE)
-        key = (identity.digest, kind, translation_id)
-        if access == "free" or (access == "owned" and self._owned.get(key)):
+        if access == "owned" or (access == "free" and _is_free_price(payload.get("list_price"))):
+            # An owned subtitle is never quoted or bought, whatever this worker
+            # remembers: after a restart, in another worker or once a cache has
+            # expired, it is still downloaded directly. If the site then says
+            # the account does not own it, the download is refused.
             return self._download_member(identity, payload, kind, config)
-        if access in ("granted", "priced", "owned"):
-            # An "owned" payload this identity's own search did not see as owned
-            # (another account, a restart) takes the quote path: the site's
-            # quote answers "download" for an owned subtitle.
+        if access == "free":
+            # A member's direct download skips the quote, so it needs the 0
+            # listed at search time; a missing price is never taken as free.
+            raise PaidDownloadRefused(
+                "Prijevodi-Online: the price shown at search time is not readable; search again. Nothing was spent"
+            )
+        if access in ("granted", "priced"):
             return self._spend_and_download(identity, payload, kind, config)
         # account_required: re-check the permissions once before giving up.
         snapshot = self._ensure_snapshot(identity.session, force=True)
@@ -1949,7 +1958,7 @@ class PrijevodiOnlineProvider:
             raise AccountRequired(
                 f"Prijevodi-Online refused the download for this account. Missing permission: {needed}"
             )
-        if not payload.get("list_price"):
+        if _is_free_price(payload.get("list_price")):
             return self._download_member(identity, payload, kind, config)
         promoted = dict(payload)
         promoted["access"] = "granted" if f"{kind}.translations.downloadFree" in permissions else "priced"
@@ -2009,13 +2018,19 @@ class PrijevodiOnlineProvider:
             raise AccountRequired(ANONYMOUS_REFUSED_MESSAGE) from None
 
     def _download_member(self, identity, payload, kind, config, purchased=False):
-        key = (identity.digest, kind, payload["translation_id"])
         try:
             return self._fetch_file(identity.session, payload, kind)
         except _DownloadRefused as refusal:
             if refusal.status in (401, 403) or (refusal.code or "").startswith("Auth/"):
                 self._after_auth_refusal(identity, config, refusal.message)
-            self._owned.pop(key)
+            asks_tokens = refusal.status == 402 or (refusal.code or "").startswith("Tokens/")
+            if asks_tokens and payload["access"] == "owned" and not purchased:
+                # Listed as bought, yet the site wants tokens. Owned items are
+                # never bought, so this is refused rather than quoted.
+                raise PaidDownloadRefused(
+                    "Prijevodi-Online listed this subtitle as bought, but asked for tokens to download it; "
+                    "nothing was spent. Check Purchases on prijevodi-online.org"
+                ) from None
             if refusal.status == 402 and purchased:
                 raise ValueError(
                     "Prijevodi-Online: the purchase went through, but the site then asked for tokens "
@@ -2060,6 +2075,11 @@ class PrijevodiOnlineProvider:
     def _spend_and_download(self, identity, payload, kind, config):
         with self._spend_lock:
             access = payload["access"]
+            if access not in ("granted", "priced"):
+                # Free and owned items are downloaded directly, never quoted or bought.
+                raise PaidDownloadRefused(
+                    "Prijevodi-Online: only a granted or priced subtitle may be quoted; nothing was spent"
+                )
             translation_id = payload["translation_id"]
             allow_paid = config.get("allow_paid_downloads") is True
             cap = parse_cap(config.get("max_tokens_per_download", DEFAULT_CAP))
@@ -2078,7 +2098,6 @@ class PrijevodiOnlineProvider:
                     raise PaidDownloadRefused(
                         f"Prijevodi-Online: the price is {tokens_text(list_price)}, above your limit of {cap}; nothing was spent"
                     )
-            owned_key = (identity.digest, kind, translation_id)
             ledger_key = (identity.account_key, kind, translation_id)
             intent = self._quote(identity, kind, translation_id, config)
             # The echo must name the requested subtitle. The site's schema types
@@ -2096,7 +2115,6 @@ class PrijevodiOnlineProvider:
             if action == "download":
                 if self._ledger.get(ledger_key) == "uncertain":
                     self._ledger.pop(ledger_key)
-                self._owned.set(owned_key, True, SNAPSHOT_TTL_SECONDS)
                 return self._download_member(identity, payload, kind, config)
             if action != "purchase":
                 raise PaidDownloadRefused(
@@ -2104,13 +2122,6 @@ class PrijevodiOnlineProvider:
                 )
             cost = intent.get("tokenCost")
             cost = cost if _is_plain_int(cost) else None
-            if access == "owned":
-                # Never buy what the site lists as bought, whatever the settings.
-                asked = f" for {tokens_text(cost)}" if cost is not None and cost > 0 else ""
-                raise PaidDownloadRefused(
-                    "Prijevodi-Online lists this subtitle as already bought, but its price quote asks"
-                    f"{asked} again; nothing was spent. Check Purchases on prijevodi-online.org"
-                )
             if access == "granted":
                 self._grant_unreliable.set((identity.digest, kind), True, GRANT_UNRELIABLE_TTL_SECONDS)
             if not allow_paid:
@@ -2129,7 +2140,12 @@ class PrijevodiOnlineProvider:
                 raise PaidDownloadRefused(
                     f"Prijevodi-Online: the price is now {tokens_text(cost)}, above your limit of {cap}; nothing was spent"
                 )
-            if list_price is None or list_price < 1:
+            if list_price is None:
+                raise PaidDownloadRefused(
+                    f"Prijevodi-Online: the price is now {tokens_text(cost)}, but the price shown at search time "
+                    "is not readable; nothing was spent"
+                )
+            if list_price < 1:
                 raise PaidDownloadRefused(
                     f"Prijevodi-Online: the price is now {tokens_text(cost)}, but the subtitle was free at search time; nothing was spent"
                 )
@@ -2155,7 +2171,7 @@ class PrijevodiOnlineProvider:
             headroom = self._rate_headroom()
             if self._remaining() < SPEND_MIN_SECONDS or (headroom is not None and headroom < SPEND_MIN_REQUESTS):
                 raise PaidDownloadRefused(BUDGET_MESSAGE)
-            return self._confirm_and_download(identity, payload, kind, config, owned_key, ledger_key, token, cost)
+            return self._confirm_and_download(identity, payload, kind, config, ledger_key, token, cost)
 
     def _quote(self, identity, kind, translation_id, config):
         body = {"translationId": translation_id, "translationType": "series" if kind == "series" else "movie"}
@@ -2188,7 +2204,7 @@ class PrijevodiOnlineProvider:
             raise PaidDownloadRefused("Prijevodi-Online's price quote is not readable; nothing was spent")
         return intent
 
-    def _confirm_and_download(self, identity, payload, kind, config, owned_key, ledger_key, token, cost):
+    def _confirm_and_download(self, identity, payload, kind, config, ledger_key, token, cost):
         """Send the one confirmation this call may send, then fetch the file."""
         session = identity.session
         account_key = identity.account_key
@@ -2208,7 +2224,6 @@ class PrijevodiOnlineProvider:
         noun = "series" if kind == "series" else "movie"
         if outcome == "bought":
             self._ledger.set(ledger_key, "confirmed", LEDGER_TTL_SECONDS)
-            self._owned.set(owned_key, True, SNAPSHOT_TTL_SECONDS)
             charged = detail["tokenCost"]
             self._log(
                 logging.INFO, "Prijevodi-Online: spent %s on %s subtitle %d",
@@ -2352,7 +2367,7 @@ def _text(value):
 
 def _config_secrets(config):
     values = set()
-    for key in ("username", "password", "session_cookie"):
+    for key in ("account_name", "account_password", "session_cookie"):
         value = _text(config.get(key))
         if value:
             values.add(value)
@@ -2448,6 +2463,11 @@ def _payload_releases(item, kind, video):
 
 def _is_plain_int(value):
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_free_price(value):
+    """Only an explicit 0 is free; a missing or unreadable price is unknown."""
+    return _is_plain_int(value) and value == 0
 
 
 def _as_int(value):
