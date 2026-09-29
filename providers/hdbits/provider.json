@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "4ba73040e9941d330721f72b6c48df526d5d14b802ffba33c322ae9764f79cdb",
+  "bundle_sha256": "7fb2198c060b83c9cb6545c862ca0346f28928cdc3a782592b3309038280a071",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -38,7 +38,7 @@
   "entry_class": "HDBitsProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "3f65f860302834e6cc54fd18d33344aa394aea115693268db36c013ba3524f13"
+    "provider.py": "2cfe31738b98be429fcece9ccc92820ffb90685eaa9758e0d2dcb436889eb1ca"
   },
   "languages": [
     "aar",

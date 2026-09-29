@@ -34,6 +34,10 @@ LOOSE_EPISODE_RE = re.compile(r"(?<![a-z0-9])e(\d{1,3})(?![a-z0-9])", re.I)
 # A range such as "S01E01-02", "1x01-02" or "E01-02" normalizes to an episode
 # marker followed by the bare number that ends it.
 EPISODE_RANGE_RE = re.compile(r"(?:(?<![a-z])(?:episode|ep|e)\s*|\dx)(\d{1,3})\s+(\d{1,3})(?=\s|$)", re.I)
+# "E01-E10" is a range just as "E01-10" is, but it normalizes to the same text
+# as the "E01E10" multi-episode tag. Dropping the second marker while the
+# hyphen is still there keeps the two apart.
+HYPHEN_RANGE_RE = re.compile(r"((?<![a-z])(?:episode|ep|e)\s*\d{1,3}\s*-\s*)(?:episode|ep|e)\s*(?=\d)", re.I)
 # Audio layouts ("DDP5.1", "TrueHD 7.1") and codecs ("H.264") leave bare numbers
 # behind after _normalize(), and none of them is an episode.
 AUDIO_OR_CODEC_NUMBER_RE = re.compile(r"(?<![0-9])[1-9]\s[01](?=\s|$)|\b[hx]\s26[45]\b", re.I)
@@ -463,29 +467,28 @@ def _names_episode(markers, season, episode):
 def _spans_episode(name, season, episode, between=True):
     """True when a name gives the episode for the season.
 
-    A range such as "S01E01-02", "1x01-10" or "S01E01-E10" gives its first and
-    last episode. With ``between`` the episodes between them count too, since a
-    torrent or an archive holds each of them. One subtitle file answers only
-    the episodes it lists.
+    A multi-episode tag such as "S01E01E02" gives each episode it lists and no
+    other. A range such as "S01E01-02", "1x01-10" or "S01E01-E10" gives its
+    first and last episode. With ``between`` the episodes between them count
+    too, since a torrent or an archive holds each of them. One subtitle file
+    answers only the episodes it lists.
     """
     if episode is None:
         return False
     markers = _episode_markers(name)
-    listed = {}
-    for marker_season, marker_episode in markers:
-        listed.setdefault(marker_season, set()).add(marker_episode)
+    if _names_episode(markers, season, episode):
+        return True
     for first, last in EPISODE_RANGE_RE.findall(_loose_episode_text(name)):
         first, last = int(first), int(last)
         if first >= last:
             continue
         seasons = {marker_season for marker_season, marker_episode in markers if marker_episode == first}
         for marker_season in seasons or {marker_season for marker_season, _episode in markers} or {None}:
-            listed.setdefault(marker_season, set()).update((first, last))
-    return any(
-        (marker_season is None or season is None or marker_season == season)
-        and (min(episodes) <= episode <= max(episodes) if between else episode in episodes)
-        for marker_season, episodes in listed.items()
-    )
+            if marker_season is not None and season is not None and marker_season != season:
+                continue
+            if first <= episode <= last if between else episode in (first, last):
+                return True
+    return False
 
 
 def derive_matches(video, release_info, base_matches=None):
@@ -889,14 +892,25 @@ def _member_episode_score(name, season, episode):
                 listed = _listed_episodes(folder)
                 first, last = min(listed), max(listed)
                 pack = last - first + 1 > len(listed)
+                # A range with no gap ("Show.S01E01-E02/") is a pack of those
+                # episodes or one double-episode video, since some tools name a
+                # single multi-episode file that way too.
+                paired = not pack and any(
+                    int(start) < int(end) for start, end in EPISODE_RANGE_RE.findall(_loose_episode_text(folder))
+                )
                 # Every episode of a pack would reuse the same track index, so
                 # there a leading number names the episode ("05_English.srt").
-                name_text = basename if pack else TRACK_INDEX_RE.sub("", basename)
+                name_text = basename if pack or paired else TRACK_INDEX_RE.sub("", basename)
                 numbers = {int(token) for token in _loose_episode_text(name_text).split() if token.isdigit()}
                 # A file name number among the folder's episodes picks one.
                 picked = {number for number in numbers if first <= number <= last}
                 if picked:
-                    return 85 if episode in picked else 0
+                    if episode in picked:
+                        return 85
+                    # In one double-episode video the number is a track index,
+                    # so the member ranks below the one naming the episode but
+                    # still answers it.
+                    return 80 if paired and first <= episode <= last else 0
                 if pack:
                     return 0
                 # Otherwise the folder decides, because a bare number in the file
@@ -918,9 +932,12 @@ def _loose_episode_text(value):
     """Normalize a name without the bare numbers that are never an episode.
 
     Season tags ("Season 1"), audio layouts ("DDP5.1") and codecs ("H.264")
-    all leave such numbers behind.
+    all leave such numbers behind. A range keeps its shape, so "E01-E10" reads
+    as "e01 10", the same as "E01-10".
     """
-    return AUDIO_OR_CODEC_NUMBER_RE.sub(" ", SEASON_TAG_RE.sub(" ", _normalize(value)))
+    text = re.sub(r"[^a-z0-9-]+", " ", (_coerce_text(value) or "").lower())
+    text = HYPHEN_RANGE_RE.sub(r"\1", text)
+    return AUDIO_OR_CODEC_NUMBER_RE.sub(" ", SEASON_TAG_RE.sub(" ", _normalize(text)))
 
 
 def _listed_episodes(value):
@@ -971,10 +988,11 @@ def _variant_ranker(payload):
     alpha3 = _language_details(language)[0]
 
     def rank(name):
-        # Packs may keep each variant in its own folder ("SDH/Show.S01E01.srt").
+        # Packs may keep each variant in its own folder ("SDH/Show.S01E01.srt"),
+        # and not always the nearest one ("Forced/Season 1/Show.S01E01.srt").
         parts = [part for part in re.split(r"[\\/]", name) if part]
-        folder = parts[-2] if len(parts) > 1 else ""
-        hearing_impaired, forced = _subtitle_flags({"title": folder, "filename": parts[-1]}, alpha3)
+        folders = " ".join(parts[:-1])
+        hearing_impaired, forced = _subtitle_flags({"title": folders, "filename": parts[-1]}, alpha3)
         hearing_impaired = hearing_impaired or _has_trailing_cc_tag(parts[-1])
         # A forced file carries only part of the dialogue, so matching the
         # forced flag counts before matching the hearing-impaired one.
