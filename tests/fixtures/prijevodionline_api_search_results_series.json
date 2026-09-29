@@ -1,0 +1,25 @@
+{
+  "results": {
+    "items": [
+      {
+        "type": "series",
+        "id": 935,
+        "slug": "game-of-thrones",
+        "title": "Game of Thrones",
+        "originalTitle": "Game of Thrones",
+        "posterUrl": "https://www.prijevodi-online.org/api/v1/series/935/poster?v=225781",
+        "premiereYear": 2011,
+        "finaleYear": 2019,
+        "seasonCount": 9,
+        "episodeCount": 84,
+        "genres": [
+          "Akcija i avantura",
+          "Drama",
+          "Znanstvena fantastika i fantazija"
+        ],
+        "translationCount": 806
+      }
+    ],
+    "total": 1
+  }
+}

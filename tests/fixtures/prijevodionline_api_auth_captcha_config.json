@@ -1,0 +1,7 @@
+{
+  "captcha": {
+    "enabled": true,
+    "provider": "turnstile",
+    "siteKey": "0x4AAAAAAA_SITEKEY_REDACTED"
+  }
+}
