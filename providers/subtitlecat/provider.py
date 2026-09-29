@@ -9,6 +9,7 @@ import hashlib as _hashlib
 import re
 import time
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -20,6 +21,14 @@ USER_AGENT = (
 )
 HTTP_TIMEOUT_SECONDS = 15
 MAX_CANDIDATES_PER_QUERY = 10
+# Wall clock for one whole search, every query and detail page included. It
+# applies to every search, scheduled and manual ones as well as Discover.
+# Discover calls a provider slow after 24 of its default 40 seconds, and
+# stops waiting at 20 on an install set to the older 20 second limit. A real
+# request runs a second or two past its socket timeout, because DNS, connect
+# and TLS are timed separately, so the budget leaves that room. Past it the
+# search starts no new request and returns what it already found.
+SEARCH_BUDGET_SECONDS = 15
 
 
 def build_queries(video):
@@ -660,10 +669,21 @@ def _alpha3_for(alpha2):
     return _ALPHA2_TO_ALPHA3.get(alpha2)
 
 
-def _sleep(config):
+def _sleep(config, max_seconds=None):
     delay_ms = (config or {}).get("request_delay_ms", 0) or 0
     if delay_ms > 0:
-        time.sleep(min(delay_ms, 5000) / 1000.0)
+        delay = min(delay_ms, 5000) / 1000.0
+        if max_seconds is not None:
+            delay = min(delay, max_seconds)
+        if delay > 0:
+            time.sleep(delay)
+
+
+def _timed_out(error):
+    """True for a read timeout, or a connect timeout that urllib wraps in URLError."""
+    if isinstance(error, urllib.error.URLError):
+        error = error.reason
+    return isinstance(error, TimeoutError)
 
 
 def _matches_for(video):
@@ -689,6 +709,22 @@ class SubtitlecatProvider:
     language, config)`` for each chosen result. All HTTP is funneled through
     :py:meth:`_http_get` so tests can monkeypatch it without touching urllib.
     """
+
+    def __init__(self):
+        # The search budget reads this clock, so tests can move time by hand.
+        self._monotonic = time.monotonic
+
+    def _next_request_timeout(self, config, deadline):
+        """Wait out the configured delay, then size the next request to the budget.
+
+        Returns None once the budget is spent, so the search stops starting
+        requests and keeps what it has.
+        """
+        _sleep(config, deadline - self._monotonic())
+        remaining = deadline - self._monotonic()
+        if remaining <= 0:
+            return None
+        return min(HTTP_TIMEOUT_SECONDS, remaining)
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS):
         request = urllib.request.Request(
@@ -716,15 +752,29 @@ class SubtitlecatProvider:
             return []
 
         include_mt = config.get("include_machine_translated", True)
+        deadline = self._monotonic() + SEARCH_BUDGET_SECONDS
         results = []
         seen_ids = set()
+        searched = False
         for query in queries:
             url = (
                 f"{BASE_URL}/index.php?search="
                 + urllib.parse.quote(query, safe="")
             )
-            _sleep(config)
-            html = self._http_get(url)
+            timeout = self._next_request_timeout(config, deadline)
+            if timeout is None:
+                break
+            try:
+                html = self._http_get(url, timeout=timeout)
+            except Exception as error:
+                # The first search page failing means the site failed. The
+                # loose query runs only when the precise one found nothing
+                # usable, so its page running out of time ends the search
+                # with nothing found rather than an error.
+                if searched and _timed_out(error):
+                    break
+                raise
+            searched = True
             # Apply MAX_CANDIDATES_PER_QUERY after dedup, otherwise the
             # precise query can fill the first ``N`` slots with IDs that
             # appear again in the loose page and starve the fallback of
@@ -738,9 +788,15 @@ class SubtitlecatProvider:
                 if len(new_candidates) >= MAX_CANDIDATES_PER_QUERY:
                     break
             for candidate in new_candidates:
-                _sleep(config)
+                timeout = self._next_request_timeout(config, deadline)
+                if timeout is None:
+                    # Out of budget: keep what the finished detail pages
+                    # produced rather than run past the host's wait.
+                    return results
                 try:
-                    detail_html = self._http_get(candidate["detail_url"])
+                    detail_html = self._http_get(
+                        candidate["detail_url"], timeout=timeout
+                    )
                 except Exception:
                     # A transient HTTP/timeout error on one detail page must
                     # not poison the whole search; skip it and try the next

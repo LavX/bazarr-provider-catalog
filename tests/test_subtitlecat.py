@@ -1,8 +1,11 @@
 import base64
 import hashlib
 import importlib.util
+import socket
 import unittest
+import urllib.error
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "subtitlecat"
@@ -825,6 +828,229 @@ class SubtitlecatProviderSearchTests(unittest.TestCase):
         # Both precise and loose search URLs must have been called.
         self.assertIn(precise_url, called)
         self.assertIn(loose_url, called)
+
+
+class _FakeClock:
+    """A monotonic clock the tests move by hand."""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
+class _TimedSite:
+    """Serves canned pages, each one taking a set time on the fake clock.
+
+    A page slower than the request's timeout spends the whole timeout and then
+    raises, the way a socket read does. A URL mapped to an exception raises it.
+    """
+
+    def __init__(self, clock, pages, latency=None, default_latency=1.0):
+        self.clock = clock
+        self.pages = pages
+        self.latency = latency or {}
+        self.default_latency = default_latency
+        self.calls = []
+
+    def get(self, url, timeout=15):
+        self.calls.append({"url": url, "timeout": timeout, "started": self.clock()})
+        seconds = self.latency.get(url, self.default_latency)
+        if seconds > timeout:
+            self.clock.advance(timeout)
+            raise TimeoutError("timed out")
+        self.clock.advance(seconds)
+        if url not in self.pages:
+            raise AssertionError(f"unexpected URL: {url}")
+        page = self.pages[url]
+        if isinstance(page, Exception):
+            raise page
+        return page
+
+    def urls(self):
+        return [call["url"] for call in self.calls]
+
+
+def _search_page(prefix, first_id, count):
+    rows = b"".join(
+        f'<a href="/subs/{first_id + n}/{prefix}_{n}.html">{prefix} {n}</a>'.encode()
+        for n in range(count)
+    )
+    return b"<html><body>" + rows + b"</body></html>"
+
+
+def _detail_page(detail_id, alpha2):
+    if alpha2 is None:
+        return b"<html><body></body></html>"
+    return (
+        f'<html><body><a id="download_{alpha2}" '
+        f'href="/subs/{detail_id}/sub-{alpha2}.srt">{alpha2}</a>'
+        f"English-orig.srt</body></html>"
+    ).encode()
+
+
+class SubtitlecatSearchBudgetTests(unittest.TestCase):
+    EPISODE = {"kind": "episode", "series": "Lioness", "season": 3, "episode": 8}
+    PRECISE = "https://www.subtitlecat.com/index.php?search=Lioness%20S03E08"
+    LOOSE = "https://www.subtitlecat.com/index.php?search=Lioness"
+    ENGLISH = [{"alpha3": "eng", "alpha2": "en"}]
+    CONFIG = {"include_machine_translated": True, "request_delay_ms": 0}
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.clock = _FakeClock()
+        self.started = self.clock()
+        self.deadline = self.started + self.mod.SEARCH_BUDGET_SECONDS
+
+    def _site(self, precise_count, precise_alpha2, loose_count=0, loose_alpha2="en", **kwargs):
+        pages = {
+            self.PRECISE: _search_page("Lioness_S03E08", 100, precise_count),
+            self.LOOSE: _search_page("Lioness", 200, loose_count),
+        }
+        for n in range(precise_count):
+            url = f"https://www.subtitlecat.com/subs/{100 + n}/Lioness_S03E08_{n}.html"
+            pages[url] = _detail_page(100 + n, precise_alpha2)
+        for n in range(loose_count):
+            url = f"https://www.subtitlecat.com/subs/{200 + n}/Lioness_{n}.html"
+            pages[url] = _detail_page(200 + n, loose_alpha2)
+        return _TimedSite(self.clock, pages, **kwargs)
+
+    def _provider(self, site):
+        provider = self.mod.SubtitlecatProvider()
+        provider._monotonic = self.clock  # noqa: SLF001 - test clock
+        provider._http_get = site.get  # noqa: SLF001 - test override
+        return provider
+
+    def _assert_requests_fit_the_budget(self, site):
+        self.assertLessEqual(self.clock() - self.started, self.mod.SEARCH_BUDGET_SECONDS)
+        for call in site.calls:
+            remaining = self.deadline - call["started"]
+            self.assertGreater(remaining, 0, call["url"])
+            self.assertGreater(call["timeout"], 0, call["url"])
+            self.assertLessEqual(call["timeout"], remaining, call["url"])
+            self.assertLessEqual(call["timeout"], self.mod.HTTP_TIMEOUT_SECONDS, call["url"])
+
+    def test_budget_ends_inside_the_hosts_per_provider_limit(self):
+        # Discover stops waiting at 20 seconds on an install set to the older
+        # limit, and a real request runs a second or two past its socket
+        # timeout because DNS, connect and TLS are timed separately.
+        self.assertLessEqual(self.mod.SEARCH_BUDGET_SECONDS, 15)
+
+    def test_timed_out_covers_read_and_connect_timeouts_only(self):
+        timed_out = self.mod._timed_out  # noqa: SLF001
+        self.assertTrue(timed_out(TimeoutError("timed out")))
+        self.assertTrue(timed_out(socket.timeout("timed out")))
+        self.assertTrue(timed_out(urllib.error.URLError(TimeoutError("timed out"))))
+        self.assertFalse(timed_out(urllib.error.URLError(ConnectionRefusedError())))
+        self.assertFalse(
+            timed_out(urllib.error.HTTPError("https://x", 503, "Busy", None, None))
+        )
+        self.assertFalse(timed_out(ValueError("bad page")))
+
+    def test_search_stops_at_the_budget_and_returns_partial_results(self):
+        site = self._site(precise_count=10, precise_alpha2="en", default_latency=2.0)
+        results = self._provider(site).search(self.EPISODE, self.ENGLISH, self.CONFIG)
+
+        self._assert_requests_fit_the_budget(site)
+        detail_calls = site.calls[1:]
+        answered = [
+            call["url"] for call in detail_calls if call["timeout"] >= 2.0
+        ]
+        # Every page that answered in time produced its result, and the search
+        # stopped before reaching the last candidates.
+        self.assertTrue(results)
+        self.assertLess(len(detail_calls), 10)
+        self.assertEqual([item["page_link"] for item in results], answered)
+        self.assertNotIn(self.LOOSE, site.urls())
+
+    def test_search_skips_the_loose_query_when_the_budget_is_spent(self):
+        site = self._site(precise_count=10, precise_alpha2="de", loose_count=3, default_latency=2.0)
+        results = self._provider(site).search(self.EPISODE, self.ENGLISH, self.CONFIG)
+
+        self.assertEqual(results, [])
+        self.assertNotIn(self.LOOSE, site.urls())
+        self._assert_requests_fit_the_budget(site)
+
+    def test_measured_lioness_search_returns_inside_the_budget(self):
+        # Latencies measured against the live site: three precise hits without
+        # the requested language, then a loose page that fills the cap.
+        latency = {
+            self.PRECISE: 0.51,
+            self.LOOSE: 1.68,
+            "https://www.subtitlecat.com/subs/100/Lioness_S03E08_0.html": 2.40,
+            "https://www.subtitlecat.com/subs/101/Lioness_S03E08_1.html": 0.67,
+            "https://www.subtitlecat.com/subs/102/Lioness_S03E08_2.html": 0.57,
+        }
+        site = self._site(
+            precise_count=3,
+            precise_alpha2="de",
+            loose_count=self.mod.MAX_CANDIDATES_PER_QUERY,
+            latency=latency,
+            default_latency=1.21,
+        )
+        results = self._provider(site).search(self.EPISODE, self.ENGLISH, self.CONFIG)
+
+        self._assert_requests_fit_the_budget(site)
+        self.assertIn(self.LOOSE, site.urls())
+        self.assertTrue(results)
+        self.assertTrue(all(item["language"]["alpha2"] == "en" for item in results))
+
+    def test_loose_search_page_timing_out_ends_with_nothing_found(self):
+        site = self._site(
+            precise_count=2,
+            precise_alpha2="de",
+            loose_count=2,
+            latency={self.LOOSE: 60.0},
+        )
+        results = self._provider(site).search(self.EPISODE, self.ENGLISH, self.CONFIG)
+
+        self.assertEqual(results, [])
+        self.assertEqual(site.urls()[-1], self.LOOSE)
+        self._assert_requests_fit_the_budget(site)
+
+    def test_loose_search_page_failing_another_way_still_raises(self):
+        # Only running out of time ends the loose query quietly. A server
+        # error or a refused connection there is still the site failing.
+        for error in (
+            urllib.error.HTTPError(self.LOOSE, 500, "Server Error", None, None),
+            urllib.error.URLError(ConnectionRefusedError()),
+        ):
+            with self.subTest(error=error):
+                site = self._site(precise_count=2, precise_alpha2="de", loose_count=2)
+                site.pages[self.LOOSE] = error
+
+                with self.assertRaises(type(error)):
+                    self._provider(site).search(self.EPISODE, self.ENGLISH, self.CONFIG)
+                self.assertEqual(site.urls()[-1], self.LOOSE)
+
+    def test_first_search_page_timing_out_still_raises(self):
+        site = self._site(precise_count=2, precise_alpha2="en", latency={self.PRECISE: 60.0})
+
+        with self.assertRaises(TimeoutError):
+            self._provider(site).search(self.EPISODE, self.ENGLISH, self.CONFIG)
+        self.assertEqual(site.urls(), [self.PRECISE])
+        self._assert_requests_fit_the_budget(site)
+
+    def test_request_delay_never_sleeps_past_the_budget(self):
+        site = self._site(precise_count=10, precise_alpha2="en", default_latency=1.0)
+        provider = self._provider(site)
+        sleeps = []
+
+        def fake_sleep(seconds):
+            sleeps.append(seconds)
+            self.clock.advance(seconds)
+
+        config = dict(self.CONFIG, request_delay_ms=5000)
+        with mock.patch.object(self.mod.time, "sleep", side_effect=fake_sleep):
+            results = provider.search(self.EPISODE, self.ENGLISH, config)
+
+        self.assertTrue(results)
+        self.assertTrue(sleeps)
+        self._assert_requests_fit_the_budget(site)
 
 
 class SubtitlecatProviderDownloadTests(unittest.TestCase):

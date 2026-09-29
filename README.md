@@ -32,7 +32,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`fansubs`](providers/fansubs/) | 0.1.6 | Scrapes [fansubs.ru](http://fansubs.ru) for Russian anime and Asian cinema subtitles. No login or API key. |
 | [`gestdown`](providers/gestdown/) | 0.1.4 | Uses the public Gestdown API for episode subtitles by TVDB show id, season, episode, and language. No login or API key. |
 | [`greeksubs`](providers/greeksubs/) | 0.1.2 | Scrapes [GreekSubs](https://greeksubs.net) for Greek movie and episode subtitles by IMDb id. No login or API key. |
-| [`greeksubtitles`](providers/greeksubtitles/) | 0.1.3 | Scrapes [GreekSubtitles](https://gr.greek-subtitles.com) for Greek and English movie and episode subtitles. ZIP and RAR downloads are supported. |
+| [`greeksubtitles`](providers/greeksubtitles/) | 0.1.4 | Scrapes [GreekSubtitles](https://gr.greek-subtitles.com) for Greek and English movie and episode subtitles. ZIP and RAR downloads are supported. |
 | [`hdbits`](providers/hdbits/) | 0.1.8 | Uses authenticated [HDBits](https://hdbits.org) JSON APIs for movie and episode subtitles. Requires username and passkey. |
 | [`isubtitles`](providers/isubtitles/) | 0.1.4 | Scrapes [iSubtitles.org](https://isubtitles.org) for movie and episode subtitles in broad multilingual coverage. No login or API key. |
 | [`jimaku`](providers/jimaku/) | 0.1.4 | Uses the [Jimaku](https://jimaku.cc) API for Japanese movie and episode subtitles. Requires API key. |
@@ -73,7 +73,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`subssabbz`](providers/subssabbz/) | 0.1.6 | Scrapes [subs.sab.bz](http://subs.sab.bz) for Bulgarian and English movie and episode subtitles. ZIP and RAR downloads are supported. |
 | [`subsunacs`](providers/subsunacs/) | 0.1.5 | Scrapes [subsunacs.net](https://subsunacs.net) for Bulgarian and English movie and episode subtitles. Direct entry pages plus ZIP, RAR, and 7Z downloads are supported. |
 | [`subx`](providers/subx/) | 0.1.2 | Uses the [SubX](https://subx-api.duckdns.org/docs/getting-started/quickstart/) API for Spanish movie and episode subtitles. Requires an API key. ZIP and RAR downloads are supported. |
-| [`subtitlecat`](providers/subtitlecat/) | 0.1.5 | Scrapes [subtitlecat.com](https://www.subtitlecat.com) (no login, no API key). Worked example for the [scraper authoring guide](docs/writing-a-scraper-provider.md). |
+| [`subtitlecat`](providers/subtitlecat/) | 0.1.6 | Scrapes [subtitlecat.com](https://www.subtitlecat.com) (no login, no API key). Worked example for the [scraper authoring guide](docs/writing-a-scraper-provider.md). |
 | [`yavkanet`](providers/yavkanet/) | 0.1.10 | Scrapes [Yavka.net](https://yavka.net) for Bulgarian, English, Russian, Spanish, and Italian subtitles by IMDb id. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback. |
 | [`supersubtitles`](providers/supersubtitles/) | 0.1.5 | Scrapes [feliratok.eu](https://feliratok.eu) for Hungarian and English movie and episode subtitles. No login or API key. |
 | [`titrari`](providers/titrari/) | 0.1.5 | Scrapes [Titrari.ro](https://www.titrari.ro) for Romanian and English movie and episode subtitles. No login or API key. |
