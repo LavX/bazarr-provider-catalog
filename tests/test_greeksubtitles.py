@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import io
 import socket
+import types
 import unittest
 import urllib.error
 import urllib.request
@@ -412,7 +413,8 @@ class _TimedHost(urllib.request.BaseHandler):
     """Answers https requests on the fake clock, behind urllib's own redirects.
 
     Added to the provider's real opener, ahead of its HTTPS handler. A route is
-    (seconds, status, value): value is a redirect's Location or a 200's body.
+    (seconds, status, value): value is a redirect's Location or a 200's body,
+    or a _Drip for a 200 whose body arrives in timed pieces.
     A route slower than the request's timeout spends the whole timeout and then
     raises, the way a socket read does.
     """
@@ -433,17 +435,82 @@ class _TimedHost(urllib.request.BaseHandler):
             raise socket.timeout("timed out")
         self.clock.advance(seconds)
         headers = email.message.Message()
-        body = value
-        if status != 200:
+        if isinstance(value, _Drip):
+            body = _DrippingBody(self.clock, value, request.timeout)
+        elif status != 200:
             headers["Location"] = value
-            body = b""
-        response = urllib.response.addinfourl(io.BytesIO(body), headers, url, status)
+            body = io.BytesIO(b"")
+        else:
+            body = io.BytesIO(value)
+        response = urllib.response.addinfourl(body, headers, url, status)
         response.msg = "OK" if status == 200 else "Found"
         return response
 
     def urls(self):
         return [call["url"] for call in self.calls]
 
+
+
+class _Drip:
+    """A 200 body sent in `pieces` parts, each arriving `seconds` after the last."""
+
+    def __init__(self, body, pieces, seconds):
+        size = max(1, -(-len(body) // pieces))
+        self.pieces = [body[start:start + size] for start in range(0, len(body), size)]
+        self.seconds = seconds
+
+
+class _FakeSocket:
+    """The socket behind a response, keeping the read timeout set on it."""
+
+    def __init__(self, timeout):
+        self.timeout = timeout
+
+    def gettimeout(self):
+        return self.timeout
+
+    def settimeout(self, value):
+        self.timeout = value
+
+
+class _DrippingBody:
+    """A response body that arrives one piece at a time on the fake clock.
+
+    Each piece comes inside the socket's read timeout, so no single read times
+    out however long the whole body takes, the way a server trickling bytes
+    behaves. A piece slower than the socket's current timeout spends that
+    timeout and raises, as a real socket read does. The socket sits where
+    http.client keeps it, behind the response's file.
+    """
+
+    closed = False
+
+    def __init__(self, clock, drip, timeout):
+        self.clock = clock
+        self.pieces = list(drip.pieces)
+        self.seconds = drip.seconds
+        self.raw = types.SimpleNamespace(_sock=_FakeSocket(timeout))
+
+    def read1(self, size=-1):
+        if not self.pieces:
+            return b""
+        sock = self.raw._sock
+        if sock.timeout is not None and self.seconds > sock.timeout:
+            self.clock.advance(sock.timeout)
+            raise socket.timeout("timed out")
+        self.clock.advance(self.seconds)
+        return self.pieces.pop(0)
+
+    def read(self, size=-1):
+        body = b""
+        piece = self.read1()
+        while piece:
+            body += piece
+            piece = self.read1()
+        return body
+
+    def close(self):
+        self.closed = True
 
 def _result_page(subtitle_id, next_page=None):
     row = (
@@ -653,6 +720,55 @@ class GreekSubtitlesTimeBudgetTests(unittest.TestCase):
 
         self.assertEqual(host.urls(), [url, target])
         self._assert_requests_fit_the_budget(host)
+
+    def test_search_page_trickling_in_ends_by_the_deadline(self):
+        # A socket timeout bounds each read, not the body, so a page whose
+        # bytes keep arriving inside it must still end at the budget.
+        url = self.mod.search_url_for("Slow Show S01E01")
+        host = _TimedHost(self.clock, {url: (1.0, 200, _Drip(_result_page(9000), 30, 4.0))})
+
+        with self.assertRaises(TimeoutError):
+            self._provider_behind(host).search(self.EPISODE, self.GREEK, self.CONFIG)
+
+        self.assertEqual(host.urls(), [url])
+        self.assertLessEqual(self.clock() - self.started, self.mod.SEARCH_BUDGET_SECONDS)
+
+    def test_later_page_trickling_in_keeps_the_earlier_pages(self):
+        url = self.mod.search_url_for("Slow Show S01E01")
+        first = _result_page(9000, next_page=1)
+        second_url = self.mod.parse_search_page(first, url)["next_url"]
+        host = _TimedHost(
+            self.clock,
+            {
+                url: (1.0, 200, first),
+                second_url: (1.0, 200, _Drip(_result_page(9001), 30, 4.0)),
+            },
+        )
+
+        results = self._provider_behind(host).search(self.EPISODE, self.GREEK, self.CONFIG)
+
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["9000"])
+        self.assertEqual(host.urls(), [url, second_url])
+        self.assertLessEqual(self.clock() - self.started, self.mod.SEARCH_BUDGET_SECONDS)
+
+    def test_page_sent_in_pieces_inside_the_budget_is_read_whole(self):
+        url = self.mod.search_url_for("Slow Show S01E01")
+        host = _TimedHost(self.clock, {url: (1.0, 200, _Drip(_result_page(9000), 4, 1.0))})
+
+        results = self._provider_behind(host).search(self.EPISODE, self.GREEK, self.CONFIG)
+
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["9000"])
+
+    def test_download_trickling_in_ends_by_its_deadline(self):
+        url = self.DOWNLOAD["download_url"]
+        body = b"1\n00:00:01,000 --> 00:00:02,000\nLine\n" * 20
+        host = _TimedHost(self.clock, {url: (1.0, 200, _Drip(body, 40, 10.0))})
+
+        with self.assertRaises(TimeoutError):
+            self._provider_behind(host).download(self.DOWNLOAD, self.GREEK[0], {})
+
+        self.assertEqual(host.urls(), [url])
+        self.assertLessEqual(self.clock() - self.started, self.mod.DOWNLOAD_TIMEOUT_SECONDS)
 
     def test_search_stops_paging_at_the_deadline_and_keeps_earlier_pages(self):
         opener = self._paged_site(self.mod.MAX_PAGES, default_latency=7.0)

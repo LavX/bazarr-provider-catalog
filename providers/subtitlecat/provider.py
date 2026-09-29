@@ -21,6 +21,9 @@ USER_AGENT = (
 )
 HTTP_TIMEOUT_SECONDS = 15
 MAX_CANDIDATES_PER_QUERY = 10
+# A body is read in pieces of up to this size, so a deadline is checked
+# between them.
+READ_PIECE_BYTES = 64 * 1024
 # Wall clock for one whole search, every query and detail page included. It
 # applies to every search, scheduled and manual ones as well as Discover.
 # Discover calls a provider slow after 24 of its default 40 seconds, and
@@ -679,6 +682,71 @@ def _sleep(config, max_seconds=None):
             time.sleep(delay)
 
 
+class _DeadlineRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect only inside the time left before the request's deadline.
+
+    urllib opens a redirect's target with the first request's timeout, so
+    without this a slow redirect followed by a silent page would wait out a
+    second full timeout.
+    """
+
+    def __init__(self, clock):
+        super().__init__()
+        self._clock = clock
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        deadline = getattr(req, "deadline", None)
+        if new is None or deadline is None:
+            return new
+        remaining = deadline - self._clock()
+        if remaining <= 0:
+            fp.close()
+            raise TimeoutError("subtitlecat redirect ran out of its time budget")
+        new.deadline = deadline
+        # urllib opens the new request with req.timeout, not new.timeout.
+        req.timeout = min(req.timeout, remaining)
+        return new
+
+
+def _read_by_deadline(response, deadline, clock):
+    """Read a response body, giving up once its deadline passes.
+
+    A socket timeout bounds each read, not the whole body, so a server that
+    keeps sending a few bytes at a time could hold one read() past any
+    deadline. The body is read a piece at a time instead, each read allowed
+    only what is left.
+    """
+    read1 = getattr(response, "read1", None)
+    if read1 is None:
+        return response.read()
+    pieces = []
+    while True:
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise TimeoutError("subtitlecat response ran out of its time budget")
+        _limit_read_wait(response, remaining)
+        piece = read1(READ_PIECE_BYTES)
+        if not piece:
+            return b"".join(pieces)
+        pieces.append(piece)
+
+
+def _limit_read_wait(response, seconds):
+    """Hold the next socket read to the time left.
+
+    http.client keeps the socket only behind the response's file, so reach it
+    there. A response without one keeps its own timeout, which the request
+    already sized to the deadline.
+    """
+    sock = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
+    if sock is None or not hasattr(sock, "settimeout"):
+        return
+    current = sock.gettimeout()
+    if current is None or seconds < current:
+        sock.settimeout(seconds)
+
+
 def _timed_out(error):
     """True for a read timeout, or a connect timeout that urllib wraps in URLError."""
     if isinstance(error, urllib.error.URLError):
@@ -713,6 +781,9 @@ class SubtitlecatProvider:
     def __init__(self):
         # The search budget reads this clock, so tests can move time by hand.
         self._monotonic = time.monotonic
+        self._opener = urllib.request.build_opener(
+            _DeadlineRedirectHandler(lambda: self._monotonic())
+        )
 
     def _next_request_timeout(self, config, deadline):
         """Wait out the configured delay, then size the next request to the budget.
@@ -727,6 +798,14 @@ class SubtitlecatProvider:
         return min(HTTP_TIMEOUT_SECONDS, remaining)
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS):
+        """Fetch ``url`` within ``timeout`` seconds of wall clock.
+
+        The timeout covers the whole request, redirect hops and the body
+        included, so a search that sizes it to what is left of its budget
+        cannot be held past the budget by a slow redirect or a trickling
+        body.
+        """
+        deadline = self._monotonic() + timeout
         request = urllib.request.Request(
             url,
             headers={
@@ -734,8 +813,11 @@ class SubtitlecatProvider:
                 "Accept-Language": "en-US,en;q=0.9",
             },
         )
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.read()
+        # Read by the redirect handler, so a redirect hop gets only what is
+        # left before the deadline.
+        request.deadline = deadline
+        with self._opener.open(request, timeout=timeout) as response:
+            return _read_by_deadline(response, deadline, self._monotonic)
 
     def search(self, video, languages, config):
         config = dict(config or {})

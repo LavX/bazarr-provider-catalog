@@ -29,6 +29,9 @@ HTTP_RETRIES = 1
 # up to this long, which leaves room for the host's own work.
 DOWNLOAD_TIMEOUT_SECONDS = 50
 MAX_PAGES = 6
+# A body is read in pieces of up to this size, so a deadline is checked
+# between them.
+READ_PIECE_BYTES = 64 * 1024
 # Wall clock for one whole search, every title, page and retry included. It
 # applies to every search, scheduled and manual ones as well as Discover.
 # Discover calls a provider slow after 24 of its default 40 seconds, and stops
@@ -201,7 +204,9 @@ class GreekSubtitlesProvider:
                     raise TimeoutError("greeksubtitles request ran out of its time budget")
             try:
                 with self._opener.open(request, timeout=attempt_timeout) as response:
-                    return response.read()
+                    if deadline is None:
+                        return response.read()
+                    return _read_by_deadline(response, deadline, self._monotonic)
             except urllib.error.HTTPError:
                 raise
             except (TimeoutError, socket.timeout, urllib.error.URLError):
@@ -452,6 +457,44 @@ def _sleep(config, max_seconds=None):
             delay = min(delay, max_seconds)
         if delay > 0:
             time.sleep(delay)
+
+
+def _read_by_deadline(response, deadline, clock):
+    """Read a response body, giving up once its deadline passes.
+
+    A socket timeout bounds each read, not the whole body, so a server that
+    keeps sending a few bytes at a time could hold one read() past any
+    deadline. The body is read a piece at a time instead, each read allowed
+    only what is left.
+    """
+    read1 = getattr(response, "read1", None)
+    if read1 is None:
+        return response.read()
+    pieces = []
+    while True:
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise TimeoutError("greeksubtitles response ran out of its time budget")
+        _limit_read_wait(response, remaining)
+        piece = read1(READ_PIECE_BYTES)
+        if not piece:
+            return b"".join(pieces)
+        pieces.append(piece)
+
+
+def _limit_read_wait(response, seconds):
+    """Hold the next socket read to the time left.
+
+    http.client keeps the socket only behind the response's file, so reach it
+    there. A response without one keeps its own timeout, which the request
+    already sized to the deadline.
+    """
+    sock = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
+    if sock is None or not hasattr(sock, "settimeout"):
+        return
+    current = sock.gettimeout()
+    if current is None or seconds < current:
+        sock.settimeout(seconds)
 
 
 def _timed_out(error):

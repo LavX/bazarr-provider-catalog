@@ -1,9 +1,14 @@
 import base64
+import email.message
 import hashlib
 import importlib.util
+import io
 import socket
+import types
 import unittest
 import urllib.error
+import urllib.request
+import urllib.response
 from pathlib import Path
 from unittest import mock
 
@@ -875,6 +880,109 @@ class _TimedSite:
         return [call["url"] for call in self.calls]
 
 
+
+class _Drip:
+    """A 200 body sent in `pieces` parts, each arriving `seconds` after the last."""
+
+    def __init__(self, body, pieces, seconds):
+        size = max(1, -(-len(body) // pieces))
+        self.pieces = [body[start:start + size] for start in range(0, len(body), size)]
+        self.seconds = seconds
+
+
+class _FakeSocket:
+    """The socket behind a response, keeping the read timeout set on it."""
+
+    def __init__(self, timeout):
+        self.timeout = timeout
+
+    def gettimeout(self):
+        return self.timeout
+
+    def settimeout(self, value):
+        self.timeout = value
+
+
+class _DrippingBody:
+    """A response body that arrives one piece at a time on the fake clock.
+
+    Each piece comes inside the socket's read timeout, so no single read times
+    out however long the whole body takes, the way a server trickling bytes
+    behaves. A piece slower than the socket's current timeout spends that
+    timeout and raises, as a real socket read does. The socket sits where
+    http.client keeps it, behind the response's file.
+    """
+
+    closed = False
+
+    def __init__(self, clock, drip, timeout):
+        self.clock = clock
+        self.pieces = list(drip.pieces)
+        self.seconds = drip.seconds
+        self.raw = types.SimpleNamespace(_sock=_FakeSocket(timeout))
+
+    def read1(self, size=-1):
+        if not self.pieces:
+            return b""
+        sock = self.raw._sock
+        if sock.timeout is not None and self.seconds > sock.timeout:
+            self.clock.advance(sock.timeout)
+            raise socket.timeout("timed out")
+        self.clock.advance(self.seconds)
+        return self.pieces.pop(0)
+
+    def read(self, size=-1):
+        body = b""
+        piece = self.read1()
+        while piece:
+            body += piece
+            piece = self.read1()
+        return body
+
+    def close(self):
+        self.closed = True
+
+
+class _TimedHost(urllib.request.BaseHandler):
+    """Answers https requests on the fake clock, behind urllib's own redirects.
+
+    Added to the provider's real opener, ahead of its HTTPS handler. A route is
+    (seconds, status, value): value is a redirect's Location, a 200's body, or
+    a _Drip for a 200 whose body arrives in timed pieces. A route slower than
+    the request's timeout spends the whole timeout and then raises, the way a
+    socket read does.
+    """
+
+    handler_order = 100
+
+    def __init__(self, clock, routes):
+        self.clock = clock
+        self.routes = routes
+        self.calls = []
+
+    def https_open(self, request):
+        url = request.full_url
+        self.calls.append({"url": url, "timeout": request.timeout, "started": self.clock()})
+        seconds, status, value = self.routes[url]
+        if seconds > request.timeout:
+            self.clock.advance(request.timeout)
+            raise socket.timeout("timed out")
+        self.clock.advance(seconds)
+        headers = email.message.Message()
+        if isinstance(value, _Drip):
+            body = _DrippingBody(self.clock, value, request.timeout)
+        elif status != 200:
+            headers["Location"] = value
+            body = io.BytesIO(b"")
+        else:
+            body = io.BytesIO(value)
+        response = urllib.response.addinfourl(body, headers, url, status)
+        response.msg = "OK" if status == 200 else "Moved"
+        return response
+
+    def urls(self):
+        return [call["url"] for call in self.calls]
+
 def _search_page(prefix, first_id, count):
     rows = b"".join(
         f'<a href="/subs/{first_id + n}/{prefix}_{n}.html">{prefix} {n}</a>'.encode()
@@ -1051,6 +1159,111 @@ class SubtitlecatSearchBudgetTests(unittest.TestCase):
         self.assertTrue(results)
         self.assertTrue(sleeps)
         self._assert_requests_fit_the_budget(site)
+
+
+class SubtitlecatResponseDeadlineTests(unittest.TestCase):
+    """The real _http_get, behind urllib's redirects, on the fake clock."""
+
+    EPISODE = {"kind": "episode", "series": "Lioness", "season": 3, "episode": 8}
+    PRECISE = "https://www.subtitlecat.com/index.php?search=Lioness%20S03E08"
+    ENGLISH = [{"alpha3": "eng", "alpha2": "en"}]
+    CONFIG = {"include_machine_translated": True, "request_delay_ms": 0}
+    SUBTITLE = "1\n00:00:01,000 --> 00:00:02,500\nHello world.\n".encode("utf-8")
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.clock = _FakeClock()
+        self.started = self.clock()
+
+    def _provider_behind(self, host):
+        provider = self.mod.SubtitlecatProvider()
+        provider._monotonic = self.clock  # noqa: SLF001 - test clock
+        provider._opener.add_handler(host)  # noqa: SLF001 - fake site
+        return provider
+
+    def _detail_url(self, n):
+        return f"https://www.subtitlecat.com/subs/{100 + n}/Lioness_S03E08_{n}.html"
+
+    def _assert_inside_the_budget(self):
+        self.assertLessEqual(self.clock() - self.started, self.mod.SEARCH_BUDGET_SECONDS)
+
+    def test_search_page_trickling_in_ends_by_the_deadline(self):
+        # A socket timeout bounds each read, not the body, so a page whose
+        # bytes keep arriving inside it must still end at the budget.
+        page = _search_page("Lioness_S03E08", 100, 2)
+        host = _TimedHost(self.clock, {self.PRECISE: (1.0, 200, _Drip(page, 30, 4.0))})
+
+        with self.assertRaises(TimeoutError):
+            self._provider_behind(host).search(self.EPISODE, self.ENGLISH, self.CONFIG)
+
+        self.assertEqual(host.urls(), [self.PRECISE])
+        self._assert_inside_the_budget()
+
+    def test_detail_page_trickling_in_keeps_the_finished_results(self):
+        host = _TimedHost(
+            self.clock,
+            {
+                self.PRECISE: (0.5, 200, _search_page("Lioness_S03E08", 100, 2)),
+                self._detail_url(0): (1.0, 200, _detail_page(100, "en")),
+                self._detail_url(1): (1.0, 200, _Drip(_detail_page(101, "en"), 30, 4.0)),
+            },
+        )
+
+        results = self._provider_behind(host).search(self.EPISODE, self.ENGLISH, self.CONFIG)
+
+        self.assertEqual([item["page_link"] for item in results], [self._detail_url(0)])
+        self.assertEqual(host.urls(), [self.PRECISE, self._detail_url(0), self._detail_url(1)])
+        self._assert_inside_the_budget()
+
+    def test_search_redirect_hop_stays_inside_the_budget(self):
+        # urllib opens a redirect's target with the first hop's timeout, so a
+        # slow redirect followed by a silent page must not get a second full
+        # wait.
+        target = "https://www.subtitlecat.com/index.php?search=Lioness+S03E08"
+        host = _TimedHost(
+            self.clock,
+            {self.PRECISE: (10.0, 301, target), target: (600.0, 200, b"")},
+        )
+
+        with self.assertRaises(TimeoutError):
+            self._provider_behind(host).search(self.EPISODE, self.ENGLISH, self.CONFIG)
+
+        self.assertEqual(host.urls(), [self.PRECISE, target])
+        deadline = self.started + self.mod.SEARCH_BUDGET_SECONDS
+        self.assertLessEqual(host.calls[1]["timeout"], deadline - host.calls[1]["started"])
+        self._assert_inside_the_budget()
+
+    def test_page_sent_in_pieces_inside_the_budget_is_read_whole(self):
+        host = _TimedHost(
+            self.clock,
+            {
+                self.PRECISE: (0.5, 200, _Drip(_search_page("Lioness_S03E08", 100, 1), 4, 1.0)),
+                self._detail_url(0): (0.5, 200, _Drip(_detail_page(100, "en"), 3, 1.0)),
+            },
+        )
+
+        results = self._provider_behind(host).search(self.EPISODE, self.ENGLISH, self.CONFIG)
+
+        self.assertEqual([item["page_link"] for item in results], [self._detail_url(0)])
+
+    def test_download_trickling_in_ends_inside_its_timeout(self):
+        url = "https://www.subtitlecat.com/subs/1/x-en.srt"
+        host = _TimedHost(self.clock, {url: (1.0, 200, _Drip(self.SUBTITLE * 20, 40, 5.0))})
+        payload = {"provider": "subtitlecat", "schema": 1, "subtitle_url": url, "language": "eng"}
+
+        with self.assertRaises(TimeoutError):
+            self._provider_behind(host).download(payload, self.ENGLISH[0], {})
+
+        self.assertLessEqual(self.clock() - self.started, self.mod.HTTP_TIMEOUT_SECONDS)
+
+    def test_download_reads_the_whole_file(self):
+        url = "https://www.subtitlecat.com/subs/1/x-en.srt"
+        host = _TimedHost(self.clock, {url: (0.5, 200, _Drip(self.SUBTITLE, 3, 0.5))})
+        payload = {"provider": "subtitlecat", "schema": 1, "subtitle_url": url, "language": "eng"}
+
+        result = self._provider_behind(host).download(payload, self.ENGLISH[0], {})
+
+        self.assertEqual(base64.b64decode(result["content_b64"]), self.SUBTITLE)
 
 
 class SubtitlecatProviderDownloadTests(unittest.TestCase):
