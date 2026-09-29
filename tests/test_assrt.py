@@ -655,6 +655,18 @@ class AssrtProviderTests(unittest.TestCase):
             ("Show.S01E01\N{EM DASH}E05.1080p.WEB", 3, True),
             ("Show.S01E01\N{EN DASH}E05.1080p.WEB", 6, False),
             ("Show.S01E05 \N{EN DASH} 10 Things I Hate", 7, False),
+            # A bit depth after a hyphen is not the end of a range either.
+            ("Show.S01E05-10-bit.1080p", 5, True),
+            ("Show.S01E05-10-bit.1080p", 7, False),
+            ("Show.S01E05-8-bit.1080p", 6, False),
+            ("Show.S01E05-10.Bit.1080p", 7, False),
+            # A range can repeat its season at the far end, but only the same season.
+            ("Show.S01E01-S01E03.1080p.WEB", 2, True),
+            ("Show.S01E01-S01E03.1080p.WEB", 4, False),
+            ("Show.S01E01 - S01E03.1080p.WEB", 2, True),
+            ("Show.S01E01~S1E03.1080p.WEB", 2, True),
+            ("剧集S01E01至S01E05中字", 4, True),
+            ("Show.S01E09-S02E02.1080p.WEB", 10, False),
         )
         for name, episode, kept in cases:
             with self.subTest(name=name, episode=episode):
@@ -793,6 +805,29 @@ class AssrtProviderTests(unittest.TestCase):
                 else:
                     self.assertEqual(selected["url"], f"https://file0.assrt.net/{url}")
         self.assertIsNone(self.mod.select_download_file(detail, {"season": 2, "episode": 2, "language_code": "eng"}))
+
+    def test_download_reads_a_pack_member_range_that_repeats_its_season(self):
+        files = [
+            {"f": "Show.S01E01-S01E03.eng.srt", "url": "https://file0.assrt.net/s01e01-s01e03"},
+            {"f": "Show.S01E04.eng.srt", "url": "https://file0.assrt.net/s01e04"},
+        ]
+        detail = {"sub": {"subs": [{"filelist": files}]}}
+        expected = {1: "s01e01-s01e03", 2: "s01e01-s01e03", 3: "s01e01-s01e03", 4: "s01e04", 5: None}
+        for episode, url in expected.items():
+            with self.subTest(episode=episode):
+                selected = self.mod.select_download_file(detail, {"season": 1, "episode": episode, "language_code": "eng"})
+                if url is None:
+                    self.assertIsNone(selected)
+                else:
+                    self.assertEqual(selected["url"], f"https://file0.assrt.net/{url}")
+
+    def test_download_does_not_read_a_bit_depth_as_a_pack_member_range(self):
+        files = [{"f": "Show.S01E05-10-bit.eng.srt", "url": "https://file0.assrt.net/s01e05-10bit"}]
+        detail = {"sub": {"subs": [{"filelist": files}]}}
+
+        selected = self.mod.select_download_file(detail, {"season": 1, "episode": 5, "language_code": "eng"})
+        self.assertEqual(selected["url"], "https://file0.assrt.net/s01e05-10bit")
+        self.assertIsNone(self.mod.select_download_file(detail, {"season": 1, "episode": 7, "language_code": "eng"}))
 
     def test_download_prefers_a_member_naming_the_episode_over_a_range_spanning_it(self):
         files = [

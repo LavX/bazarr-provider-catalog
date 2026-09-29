@@ -50,27 +50,41 @@ _LANGLIST_RE = re.compile(r"^lang(?P<code>\w+)$")
 # "E01+E02", "E01,E02") or a range ("E01-E03", "E01-03"). A tilde marks a range
 # too: NFKD folds the full-width one into "~", and the Japanese wave dash is
 # listed as itself. So do an en or em dash, and the "至" and "到" ("to") of
-# Chinese names ("S01E01至E05"). Only a range mark right after the tag may lead
-# a bare number, so "S01E05 - 10 Things" stays one episode, and the tag's
-# closing guard keeps "-720p" and "-1080p" from reading as the end of a range.
+# Chinese names ("S01E01至E05"). A range can also repeat its season at the far
+# end ("S01E01-S01E03"), when it is the same season. Only a range mark right
+# after the tag may lead a bare number, so "S01E05 - 10 Things" stays one
+# episode. The tag's closing guard keeps "-720p" and "-1080p" from reading as
+# the end of a range, and a bit depth ("-10-bit") is ruled out by name.
 # Each continuation matches one way only: a "0*" before the digits would let
 # "E001E001..." split many ways, and a long crafted name would then backtrack
 # for minutes.
 _RANGE_MARKS = frozenset("-~\N{WAVE DASH}\N{EN DASH}\N{EM DASH}至到")
 _RANGE_MARK = "".join(re.escape(mark) for mark in sorted(_RANGE_MARKS))
-_MORE_EPISODES = (
-    r"(?P<more>(?:[\s._&+,]*e\d{1,3}|\s*[" + _RANGE_MARK + r"]\s*e\d{1,3}|[" + _RANGE_MARK + r"]\d{1,3})*)"
+
+
+def _more_episodes(repeat_season):
+    continuations = [
+        r"[\s._&+,]*e\d{1,3}",
+        r"\s*[" + _RANGE_MARK + r"]\s*e\d{1,3}",
+        r"[" + _RANGE_MARK + r"]\d{1,3}(?![\s._-]*bit)",
+    ]
+    if repeat_season:
+        continuations.append(r"\s*[" + _RANGE_MARK + r"]\s*s0*(?P=season)[\s._-]*e\d{1,3}")
+    return r"(?P<more>(?:" + "|".join(continuations) + r")*)"
+
+
+_MORE_EPISODE_RE = re.compile(
+    r"(?P<separator>[\s._&+," + _RANGE_MARK + r"]*)(?:s\d+[\s._-]*)?e?0*(?P<episode>\d{1,3})", re.I
 )
-_MORE_EPISODE_RE = re.compile(r"(?P<separator>[\s._&+," + _RANGE_MARK + r"]*)e?0*(?P<episode>\d{1,3})", re.I)
 # An Assrt name can run a Chinese title straight into the tag ("剧集S01E02中英").
 # \b finds no boundary there, so the guards check for an ASCII letter or digit.
 # The season and episode can also sit apart ("S01.E02", "S01 - E02").
 _SXXEYY_RE = re.compile(
-    r"(?<![a-z0-9])s0*(?P<season>\d{1,2})[\s._-]*e0*(?P<episode>\d{1,3})" + _MORE_EPISODES + r"(?![a-z0-9])",
+    r"(?<![a-z0-9])s0*(?P<season>\d{1,2})[\s._-]*e0*(?P<episode>\d{1,3})" + _more_episodes(True) + r"(?![a-z0-9])",
     re.I,
 )
 _EPISODE_RE = re.compile(
-    r"(?<![a-z0-9])(?:episode|ep|e)[\W_]*0*(?P<episode>\d{1,3})" + _MORE_EPISODES + r"(?![a-z0-9])",
+    r"(?<![a-z0-9])(?:episode|ep|e)[\W_]*0*(?P<episode>\d{1,3})" + _more_episodes(False) + r"(?![a-z0-9])",
     re.I,
 )
 # A season on its own ("S01", "S01.E02", "Season 1"). A contiguous tag gives its
