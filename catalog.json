@@ -1544,7 +1544,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "ec2213f8c7645322da08ee0f0dd452e46d0cc06c8bf6fd9c3f54faf94b6162f0",
+        "bundle_sha256": "d9422d6886729db90ccb99147db190d8eff749e1befe4a327eb63721414861c7",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1566,7 +1566,7 @@
         "entry_class": "GreekSubtitlesProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "de6ff8b477aa896bae089e49d5f1ac8139a72f3798415d529e7fcbe2f8c7b535"
+          "provider.py": "164768990163741a3fd3cf15785af6e878055f1930b5b62174c889f0b46a2ef0"
         },
         "languages": [
           "ell",
@@ -1589,7 +1589,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.3"
+        "version": "0.1.4"
       }
     },
     {
@@ -6446,7 +6446,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "94e3744f5daac8effa567393bb19d7c7b97eb3a094e1ac85bac0ba82566b6376",
+        "bundle_sha256": "922cebc17c785707e69955e11c26040821182811b49a203117ab52dfc5f2a781",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -6474,7 +6474,7 @@
         "entry_class": "SubtitlecatProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "188d9e192f70a10e73bbb36c5f02cbea0e9a4a73d7d3874e5778d70398872bec"
+          "provider.py": "755a8a199a972c8414bd8c6f1af0ac217795d1545d199348b8b292367dbf8a50"
         },
         "languages": [
           "eng",
@@ -6547,7 +6547,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.5"
+        "version": "0.1.6"
       }
     },
     {
