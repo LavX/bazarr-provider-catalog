@@ -3,6 +3,7 @@
 import base64 as _base64
 import hashlib as _hashlib
 import html
+import http.client
 import io
 import re
 import socket
@@ -146,6 +147,85 @@ def derive_matches(video, release):
     return _dedupe(matches)
 
 
+def _time_left(deadline, clock, step):
+    """Seconds left before ``deadline``, raising TimeoutError once none are."""
+    remaining = deadline - clock()
+    if remaining <= 0:
+        raise TimeoutError(f"greeksubtitles {step} ran out of its time budget")
+    return remaining
+
+
+def _deadline_connection(base, deadline, clock):
+    """An http.client connection class whose waits all end by ``deadline``.
+
+    urllib gives each blocking socket operation the request's timeout afresh,
+    so connecting, a proxy tunnel, the TLS handshake and the wait for the
+    response could each take a full timeout in turn. This class cuts the
+    socket's timeout to the time left before each of those steps.
+    """
+
+    class DeadlineConnection(base):
+        def connect(self):
+            self.timeout = _time_left(deadline, clock, "connection")
+            create = self._create_connection
+
+            def create_then_cut(address, timeout=None, source_address=None):
+                sock = create(address, timeout, source_address)
+                # A proxy tunnel or the TLS handshake runs on this socket next.
+                try:
+                    sock.settimeout(_time_left(deadline, clock, "connection"))
+                except BaseException:
+                    sock.close()
+                    raise
+                return sock
+
+            self._create_connection = create_then_cut
+            super().connect()
+
+        def _tunnel(self):
+            # Through a proxy, the CONNECT tunnel runs between connecting and
+            # the TLS handshake, so the handshake gets what the tunnel left.
+            super()._tunnel()
+            self.sock.settimeout(_time_left(deadline, clock, "connection"))
+
+        def getresponse(self):
+            if self.sock is not None:
+                self.sock.settimeout(_time_left(deadline, clock, "response"))
+            return super().getresponse()
+
+    return DeadlineConnection
+
+
+class _DeadlineHTTPHandler(urllib.request.HTTPHandler):
+    """Opens a request that carries a deadline on a deadline connection."""
+
+    def __init__(self, clock):
+        super().__init__()
+        self._clock = clock
+
+    def http_open(self, req):
+        deadline = getattr(req, "deadline", None)
+        if deadline is None:
+            return super().http_open(req)
+        connection = _deadline_connection(http.client.HTTPConnection, deadline, self._clock)
+        return self.do_open(connection, req)
+
+
+class _DeadlineHTTPSHandler(urllib.request.HTTPSHandler):
+    """Opens a request that carries a deadline on a deadline connection."""
+
+    def __init__(self, clock):
+        super().__init__()
+        self._clock = clock
+
+    def https_open(self, req):
+        deadline = getattr(req, "deadline", None)
+        if deadline is None:
+            return super().https_open(req)
+        connection = _deadline_connection(http.client.HTTPSConnection, deadline, self._clock)
+        return self.do_open(connection, req, context=self._context)
+
+
 class _DeadlineRedirectHandler(urllib.request.HTTPRedirectHandler):
     """Follows a redirect only inside the time left before the request's deadline.
 
@@ -184,9 +264,16 @@ class _DeadlineRedirectHandler(urllib.request.HTTPRedirectHandler):
 class GreekSubtitlesProvider:
     def __init__(self):
         cookie_jar = CookieJar()
+
+        def clock():
+            # Read at call time, so a test that swaps _monotonic moves it too.
+            return self._monotonic()
+
         self._opener = urllib.request.build_opener(
             urllib.request.HTTPCookieProcessor(cookie_jar),
-            _DeadlineRedirectHandler(lambda: self._monotonic()),
+            _DeadlineRedirectHandler(clock),
+            _DeadlineHTTPHandler(clock),
+            _DeadlineHTTPSHandler(clock),
         )
         # The search and download deadlines read this clock, so tests can
         # move time by hand.
