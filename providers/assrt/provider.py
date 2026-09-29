@@ -46,9 +46,61 @@ for _key, _meta in LANGUAGE_CODES.items():
         ASSRT_TO_LANGUAGE[_alias] = _meta
 
 _LANGLIST_RE = re.compile(r"^lang(?P<code>\w+)$")
-_SXXEYY_RE = re.compile(r"\bs0*(?P<season>\d{1,2})\s*e0*(?P<episode>\d{1,3})\b", re.I)
-_EPISODE_RE = re.compile(r"(?<![a-z0-9])(?:episode|ep|e)[\W_]*0*(?P<episode>\d{1,3})(?![a-z0-9])", re.I)
-_SEASON_RE = re.compile(r"\bs0*(?P<season>\d{1,2})\b|\bseason[\W_]+0*(?P<season_word>\d{1,2})\b", re.I)
+# Further episodes after the first one of a tag: chained ("E01E02", "E01.E02",
+# "E01+E02", "E01,E02") or a range ("E01-E03", "E01-03"). A tilde marks a range
+# too: NFKD folds the full-width one into "~", and the Japanese wave dash is
+# listed as itself. So do an en or em dash, and the "至" and "到" ("to") of
+# Chinese names ("S01E01至E05"). A range can also repeat its season at the far
+# end ("S01E01-S01E03"), when it is the same season. Only a range mark right
+# after the tag may lead a bare number, so "S01E05 - 10 Things" stays one
+# episode. The tag's closing guard keeps "-720p" and "-1080p" from reading as
+# the end of a range, and a bit depth ("-10-bit") is ruled out by name.
+# Each continuation matches one way only: a "0*" before the digits would let
+# "E001E001..." split many ways, and a long crafted name would then backtrack
+# for minutes.
+_RANGE_MARKS = frozenset("-~\N{WAVE DASH}\N{EN DASH}\N{EM DASH}至到")
+_RANGE_MARK = "".join(re.escape(mark) for mark in sorted(_RANGE_MARKS))
+
+
+def _more_episodes(repeat_season):
+    continuations = [
+        r"[\s._&+,]*e\d{1,3}",
+        r"\s*[" + _RANGE_MARK + r"]\s*e\d{1,3}",
+        r"[" + _RANGE_MARK + r"]\d{1,3}(?![\s._-]*bit)",
+    ]
+    if repeat_season:
+        continuations.append(r"\s*[" + _RANGE_MARK + r"]\s*s0*(?P=season)[\s._-]*e\d{1,3}")
+    return r"(?P<more>(?:" + "|".join(continuations) + r")*)"
+
+
+_MORE_EPISODE_RE = re.compile(
+    r"(?P<separator>[\s._&+," + _RANGE_MARK + r"]*)(?:s\d+[\s._-]*)?e?0*(?P<episode>\d{1,3})", re.I
+)
+# An Assrt name can run a Chinese title straight into the tag ("剧集S01E02中英").
+# \b finds no boundary there, so the guards check for an ASCII letter or digit.
+# The season and episode can also sit apart ("S01.E02", "S01 - E02").
+_SXXEYY_RE = re.compile(
+    r"(?<![a-z0-9])s0*(?P<season>\d{1,2})[\s._-]*e0*(?P<episode>\d{1,3})" + _more_episodes(True) + r"(?![a-z0-9])",
+    re.I,
+)
+_EPISODE_RE = re.compile(
+    r"(?<![a-z0-9])(?:episode|ep|e)[\W_]*0*(?P<episode>\d{1,3})" + _more_episodes(False) + r"(?![a-z0-9])",
+    re.I,
+)
+# A season on its own ("S01", "S01.E02", "Season 1"). A contiguous tag gives its
+# season only once it parses, so "S01E01v2" names no season at all.
+_SEASON_RE = re.compile(
+    r"(?<![a-z0-9])s0*(?P<season>\d{1,2})(?![a-z0-9])"
+    r"|(?<![a-z0-9])season[\W_]+0*(?P<season_word>\d{1,2})(?![a-z0-9])",
+    re.I,
+)
+# Any SxxEyy-shaped tag, including one the parser cannot read ("S01E01v2",
+# "S01.E01HDTV"). A name carrying one is about an episode, not a season pack.
+_EPISODE_TAG_RE = re.compile(r"(?<![a-z0-9])s\d+[\s._-]*e\d", re.I)
+_PATH_SEPARATOR_RE = re.compile(r"[/\\]")
+# A range wider than this gives only its two ends, so one misread number cannot
+# spread a release over a whole season.
+MAX_EPISODE_RANGE = 100
 _WS_RE = re.compile(r"\s+")
 _NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
 
@@ -291,9 +343,14 @@ def select_download_file(detail, payload):
     files = [item for item in files if item.get("url")]
     if not files:
         return None
-    files = _filter_download_files_by_episode(files, payload)
-    if not files:
-        return None
+    for episode_files in _episode_file_tiers(files, payload):
+        selected = _select_language_file(episode_files, payload)
+        if selected:
+            return selected
+    return None
+
+
+def _select_language_file(files, payload):
     language_code = str((payload or {}).get("language_code") or "").lower()
     if language_code:
         requested = ASSRT_TO_LANGUAGE.get(language_code, {}).get("assrt", language_code)
@@ -311,32 +368,40 @@ def select_download_file(detail, payload):
     return files[0]
 
 
-def _filter_download_files_by_episode(files, payload):
+def _episode_file_tiers(files, payload):
+    """The pack members that hold the requested episode, most specific first.
+
+    A member made for that episode alone comes first. A combined subtitle is
+    timed for the joined video, so a member listing the episode among others
+    ("S01E01E02", or either end of "S01E01-E03") only follows it. A member whose
+    range spans the episode comes last, since search offered the subtitle for
+    every episode of that range. Each group gets its own language pick.
+    """
     target_episode = _safe_int((payload or {}).get("episode"))
     if target_episode is None:
-        return files
+        return [files]
     target_season = _safe_int((payload or {}).get("season"))
-    episode_files = []
+
+    def holds(season_episode):
+        season, episode = season_episode
+        return episode == target_episode and (target_season is None or season is None or season == target_season)
+
+    alone, listed, spanned = [], [], []
     has_structured_episodes = False
     for item in files:
-        season_episode = _file_season_episode(item.get("f"))
-        if season_episode:
-            has_structured_episodes = True
-            season, episode = season_episode
-            if episode == target_episode:
-                if target_season is None or season == target_season:
-                    episode_files.append(item)
-        else:
-            episode = _file_episode(item.get("f"))
-            if episode is not None:
-                has_structured_episodes = True
-                if episode == target_episode:
-                    episode_files.append(item)
-    if episode_files:
-        return episode_files
-    if has_structured_episodes:
-        return []
-    return files
+        file_episodes = _file_episodes(item.get("f"))
+        if not file_episodes:
+            continue
+        has_structured_episodes = True
+        if all(map(holds, file_episodes)):
+            alone.append(item)
+        elif any(map(holds, file_episodes)):
+            listed.append(item)
+        elif any(map(holds, _file_episodes(item.get("f"), between=True))):
+            spanned.append(item)
+    if not has_structured_episodes:
+        return [files]
+    return [tier for tier in (alone, listed, spanned) if tier]
 
 
 def _requested_languages(languages):
@@ -468,17 +533,17 @@ def _names_other_episode(video, video_name):
     episode = _safe_int(video.get("episode"))
     if video.get("kind") != "episode" or season is None or episode is None:
         return False
-    return _any_episode(video_name) and not _text_has_episode(video_name, season, episode)
+    episodes = _episode_set(video_name)
+    return bool(episodes) and (season, episode) not in episodes
 
 
 def _text_has_episode(text, season, episode):
-    for match in _SXXEYY_RE.finditer(_normalize(text)):
-        if _safe_int(match.group("season")) == season and _safe_int(match.group("episode")) == episode:
-            return True
-    return False
+    return (season, episode) in _episode_set(text)
 
 
 def _text_has_season(text, season):
+    if any(tag_season == season for tag_season, _ in _episode_set(text)):
+        return True
     for match in _SEASON_RE.finditer(_normalize(text)):
         if _safe_int(match.group("season") or match.group("season_word")) == season:
             return True
@@ -486,27 +551,68 @@ def _text_has_season(text, season):
 
 
 def _any_episode(text):
-    return bool(_SXXEYY_RE.search(_normalize(text)))
+    return bool(_EPISODE_TAG_RE.search(_normalize(text)))
 
 
-def _file_episode(filename):
-    name = _normalize(filename).replace("_", " ")
-    match = _SXXEYY_RE.search(name) or _EPISODE_RE.search(name)
-    if not match:
-        return None
-    return _safe_int(match.group("episode"))
+def _episode_set(text, between=True):
+    """Every (season, episode) pair the SxxEyy tags in a name give.
+
+    A chained tag such as "S01E01E02" gives each episode it lists and no other.
+    A range such as "S01E01-E03" or "S01E01-03" gives its first and last
+    episode, and with ``between`` the ones between them too, since a release
+    or a pack holds each of them.
+    """
+    episodes = set()
+    for match in _SXXEYY_RE.finditer(_normalize(text)):
+        season = int(match.group("season"))
+        episodes.update((season, episode) for episode in _tag_episodes(match, between))
+    return episodes
 
 
-def _file_season_episode(filename):
-    name = _normalize(filename).replace("_", " ")
-    match = _SXXEYY_RE.search(name)
-    if match:
-        return _safe_int(match.group("season")), _safe_int(match.group("episode"))
-    season = _SEASON_RE.search(name)
-    episode = _file_episode(filename)
-    if season and episode is not None:
-        return _safe_int(season.group("season") or season.group("season_word")), episode
-    return None
+def _tag_episodes(match, between):
+    previous = int(match.group("episode"))
+    episodes = {previous}
+    for more in _MORE_EPISODE_RE.finditer(match.group("more")):
+        episode = int(more.group("episode"))
+        if _RANGE_MARKS.isdisjoint(more.group("separator")):
+            episodes.add(episode)
+        elif episode > previous:
+            episodes.add(episode)
+            if between and episode - previous < MAX_EPISODE_RANGE:
+                episodes.update(range(previous + 1, episode))
+        previous = episode
+    return episodes
+
+
+def _file_episodes(filename, between=False):
+    """The (season, episode) pairs a pack member names, with season None when it names none.
+
+    The member's own name answers before its folder does: a folder can tag a
+    whole range ("Show.S01E01-E10/Show.S01E05.srt"), which would name the same
+    episodes for every member inside it.
+    """
+    path = _normalize(filename).replace("_", " ")
+    name = _PATH_SEPARATOR_RE.split(path)[-1]
+    for text in (name,) if name == path else (name, path):
+        episodes = _episode_set(text, between)
+        if episodes:
+            return episodes
+        match = _EPISODE_RE.search(text)
+        if match:
+            season = _member_season(text, path)
+            return {(season, episode) for episode in _tag_episodes(match, between)}
+    return set()
+
+
+def _member_season(text, path):
+    """The season beside a pack member's bare episode tag, or None when it gives none."""
+    season = _SEASON_RE.search(text) or _SEASON_RE.search(path)
+    if season:
+        return _safe_int(season.group("season") or season.group("season_word"))
+    # A folder can give it only in a full tag ("Show.S02E05/Show.E05.srt" or
+    # "Show.S01E01-E10/Show.E05.srt"), which _SEASON_RE leaves to the tag parser.
+    seasons = {tag_season for tag_season, _ in _episode_set(path, between=False)}
+    return seasons.pop() if len(seasons) == 1 else None
 
 
 def _looks_like_html(body):

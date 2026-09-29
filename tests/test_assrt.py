@@ -2,6 +2,7 @@ import base64
 import hashlib
 import importlib.util
 import json
+import time
 import urllib.parse
 import urllib.request
 import unittest
@@ -583,6 +584,356 @@ class AssrtProviderTests(unittest.TestCase):
         )
 
         self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["74002"])
+
+    def _search_release_names(self, names, season, episode):
+        search = {
+            "sub": {
+                "subs": [
+                    {"id": 75000 + index, "videoname": name, "lang": {"langlist": {"langeng": 1}}}
+                    for index, name in enumerate(names)
+                ]
+            }
+        }
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else search
+        provider._sleep = lambda seconds: None
+        results = provider.search(
+            {"kind": "episode", "series": "Show", "season": season, "episode": episode},
+            [{"alpha3": "eng"}],
+            {"token": "secret-token"},
+        )
+        return [item["release_info"] for item in results]
+
+    def test_search_keeps_multi_episode_rows_only_for_the_episodes_they_give(self):
+        cases = (
+            ("Show.S01E01-E02.1080p.WEB", 2, True),
+            ("Show.S01E01-02.1080p.WEB", 2, True),
+            ("Show.S01E01.E02.1080p.WEB", 2, True),
+            ("Show.S01E01E02.1080p.WEB", 1, True),
+            ("Show.S01E01E02.1080p.WEB", 2, True),
+            ("Show.S01E01E02.1080p.WEB", 3, False),
+            ("Show.S01E01+E02.1080p.WEB", 2, True),
+            # A range covers the episodes between its ends; a chained tag lists only its own.
+            ("Show.S01E01-E03.1080p.WEB", 2, True),
+            ("Show.S01E01E03.1080p.WEB", 2, False),
+            ("Show.S01E01-E24.1080p.WEB", 12, True),
+            ("Show.S01E01-E24.1080p.WEB", 25, False),
+            # A resolution after a hyphen is not the end of a range.
+            ("Show.S01E01-720p.WEB", 2, False),
+            ("Show.S01E01-1080p.WEB", 2, False),
+            ("Show.S01E02-720p.WEB", 2, True),
+            ("Show.S02E01-E02.1080p.WEB", 2, False),
+            # A spaced hyphen is a title separator unless an E follows it.
+            ("Show.S01E05 - 10 Things I Hate", 5, True),
+            ("Show.S01E05 - 10 Things I Hate", 7, False),
+            ("Show.S01E01 - E03.1080p.WEB", 2, True),
+            # Tags that touch a Chinese title, an underscore or a split season still count.
+            ("剧集S01E01E02中英字幕", 2, True),
+            ("剧集S01E01E02中英字幕", 3, False),
+            ("Show_S01E03_1080p", 2, False),
+            ("Show.S01.E03.1080p.WEB", 2, False),
+            ("Show.S01.E02.1080p.WEB", 2, True),
+            ("Show.S01-E03.1080p.WEB", 2, False),
+            ("Show.S01 - E02 - Title", 2, True),
+            # A tilde reads as a hyphen, in its ASCII, full-width and wave-dash
+            # forms, and a comma chains like a dot.
+            ("Show.S01E01~E03.1080p.WEB", 2, True),
+            ("Show.S01E01~03.1080p.WEB", 2, True),
+            ("Show.S01E01～E02.1080p.WEB", 2, True),
+            ("剧集S01E01〜E03中字", 2, True),
+            ("剧集S01E01〜E03中字", 4, False),
+            ("Show.S01E05 ~ 10 Things I Hate", 7, False),
+            ("Show.S01E01,E02.1080p.WEB", 2, True),
+            ("Show.S01E01,E03.1080p.WEB", 2, False),
+            # Chinese names join a range with "至" or "到" ("to"), and some use
+            # an en or em dash.
+            ("剧集S01E01至E05中字", 3, True),
+            ("剧集S01E01至E05中字", 6, False),
+            ("剧集S01E01到E05", 5, True),
+            ("剧集S01E01至05中字", 4, True),
+            ("Show.S01E01\N{EN DASH}E05.1080p.WEB", 3, True),
+            ("Show.S01E01\N{EM DASH}E05.1080p.WEB", 3, True),
+            ("Show.S01E01\N{EN DASH}E05.1080p.WEB", 6, False),
+            ("Show.S01E05 \N{EN DASH} 10 Things I Hate", 7, False),
+            # A bit depth after a hyphen is not the end of a range either.
+            ("Show.S01E05-10-bit.1080p", 5, True),
+            ("Show.S01E05-10-bit.1080p", 7, False),
+            ("Show.S01E05-8-bit.1080p", 6, False),
+            ("Show.S01E05-10.Bit.1080p", 7, False),
+            # A range can repeat its season at the far end, but only the same season.
+            ("Show.S01E01-S01E03.1080p.WEB", 2, True),
+            ("Show.S01E01-S01E03.1080p.WEB", 4, False),
+            ("Show.S01E01 - S01E03.1080p.WEB", 2, True),
+            ("Show.S01E01~S1E03.1080p.WEB", 2, True),
+            ("剧集S01E01至S01E05中字", 4, True),
+            ("Show.S01E09-S02E02.1080p.WEB", 10, False),
+        )
+        for name, episode, kept in cases:
+            with self.subTest(name=name, episode=episode):
+                self.assertEqual(self._search_release_names([name], 1, episode), [name] if kept else [])
+
+    def test_search_reads_only_the_ends_of_a_very_long_range(self):
+        name = "Show.S01E01-E150.WEB"
+
+        self.assertEqual(self._search_release_names([name], 1, 150), [name])
+        self.assertEqual(self._search_release_names([name], 1, 75), [])
+
+    def test_long_chained_tags_from_uploaders_are_read_quickly(self):
+        # Zero-padded continuations must each parse one way. When they did not,
+        # every extra "E001" tripled the time, and names this long took most of
+        # a minute, past the host's worker deadline.
+        chain = "E001" * 14
+        detail = {"sub": {"subs": [{"filelist": [{"f": f"Ep01{chain.lower()}x.srt", "url": "https://file0.assrt.net/x"}]}]}}
+
+        started = time.perf_counter()
+        self._search_release_names([f"Show.S01E01{chain}x"], 1, 2)
+        self.mod.select_download_file(detail, {"season": 1, "episode": 2, "language_code": "eng"})
+
+        self.assertLess(time.perf_counter() - started, 1.0)
+
+    def test_derive_matches_reads_the_season_from_contiguous_tags(self):
+        video = {"kind": "episode", "series": "Rick and Morty", "season": 6, "episode": 2}
+        for name in (
+            "Rick.and.Morty.S06E02.1080p.WEB",
+            "Rick.and.Morty.S06E01E02.1080p.WEB",
+            "Rick.and.Morty.S06E01-E02.1080p.WEB",
+            "瑞克和莫蒂S06E02中英",
+        ):
+            with self.subTest(name=name):
+                matches = self.mod.derive_matches(video, name)
+                self.assertIn("season", matches)
+                self.assertIn("episode", matches)
+        self.assertNotIn("season", self.mod.derive_matches(video, "Rick.and.Morty.S16E02.1080p.WEB"))
+
+    def test_derive_matches_gives_no_episode_to_a_tag_it_cannot_read(self):
+        # These tags still name one episode, so they must not pass as a season
+        # pack that fits every episode of the season.
+        video = {"kind": "episode", "series": "Show", "season": 1, "episode": 5}
+        for name in (
+            "Show.S01E01v2.1080p",
+            "Show.S01E01E02v2.1080p",
+            "Show.S01E01a.1080p",
+            "Show.S01E01HDTV",
+        ):
+            with self.subTest(name=name):
+                self.assertEqual(self.mod.derive_matches(video, name), ["series"])
+        self.assertEqual(self.mod.derive_matches(video, "Show.S01.E01v2.1080p"), ["series", "season"])
+        self.assertEqual(self.mod.derive_matches(video, "Show.S01-E01.1080p"), ["series", "season"])
+        self.assertEqual(self.mod.derive_matches(video, "Show.S01-E05.1080p"), ["series", "season", "episode"])
+        for name in ("Show.S01.1080p.WEB", "Show.Season.1.Complete", "Show.S01中英字幕"):
+            with self.subTest(name=name):
+                self.assertEqual(self.mod.derive_matches(video, name), ["series", "season", "episode"])
+
+    def test_download_reads_a_pack_member_by_its_own_name_before_its_folder(self):
+        for separator in ("/", "\\"):
+            files = [
+                {
+                    "f": f"Show.S01E01-E10{separator}Show.S01E{episode:02d}.eng.srt",
+                    "url": f"https://file0.assrt.net/e{episode:02d}",
+                }
+                for episode in range(1, 11)
+            ]
+            detail = {"sub": {"subs": [{"filelist": files}]}}
+            for episode in (1, 5, 10):
+                with self.subTest(separator=separator, episode=episode):
+                    selected = self.mod.select_download_file(detail, {"season": 1, "episode": episode, "language_code": "eng"})
+                    self.assertEqual(selected["url"], f"https://file0.assrt.net/e{episode:02d}")
+        # A member whose own name gives no episode is read by its folder.
+        files = [
+            {"f": "Show.S01E03/Show.eng.srt", "url": "https://file0.assrt.net/folder-e03"},
+            {"f": "Show.S01E04/Show.eng.srt", "url": "https://file0.assrt.net/folder-e04"},
+            {"f": "Season 1/Show.E06.eng.srt", "url": "https://file0.assrt.net/season1-e06"},
+            {"f": "Season 2/Show.E06.eng.srt", "url": "https://file0.assrt.net/season2-e06"},
+        ]
+        detail = {"sub": {"subs": [{"filelist": files}]}}
+        expected = {(1, 4): "folder-e04", (1, 6): "season1-e06", (2, 6): "season2-e06", (1, 5): None}
+        for (season, episode), url in expected.items():
+            with self.subTest(season=season, episode=episode):
+                selected = self.mod.select_download_file(detail, {"season": season, "episode": episode, "language_code": "eng"})
+                if url is None:
+                    self.assertIsNone(selected)
+                else:
+                    self.assertEqual(selected["url"], f"https://file0.assrt.net/{url}")
+        # A member named only by its episode takes the season from the tag on
+        # its folder, whether that tag names one episode or a range.
+        files = [
+            {"f": "Show.S02E05/Show.E05.eng.srt", "url": "https://file0.assrt.net/s02-e05"},
+            {"f": "Show.S01E05/Show.E05.eng.srt", "url": "https://file0.assrt.net/s01-e05"},
+            {"f": "Show.S04E01-E10/Show.E07.eng.srt", "url": "https://file0.assrt.net/s04-e07"},
+            {"f": "Show.S03E01-E10/Show.E07.eng.srt", "url": "https://file0.assrt.net/s03-e07"},
+        ]
+        detail = {"sub": {"subs": [{"filelist": files}]}}
+        expected = {(1, 5): "s01-e05", (2, 5): "s02-e05", (3, 7): "s03-e07", (4, 7): "s04-e07", (3, 5): None}
+        for (season, episode), url in expected.items():
+            with self.subTest(season=season, episode=episode):
+                selected = self.mod.select_download_file(detail, {"season": season, "episode": episode, "language_code": "eng"})
+                if url is None:
+                    self.assertIsNone(selected)
+                else:
+                    self.assertEqual(selected["url"], f"https://file0.assrt.net/{url}")
+
+    def test_download_picks_a_multi_episode_pack_member_for_each_episode_it_lists(self):
+        files = [
+            {"f": "Show.S01E01E02.eng.srt", "url": "https://file0.assrt.net/s01e01e02"},
+            {"f": "Show.S01E03-E04.eng.srt", "url": "https://file0.assrt.net/s01e03-e04"},
+            {"f": "Show.E05E06.eng.srt", "url": "https://file0.assrt.net/e05e06"},
+            {"f": "Show_Ep07-08_eng.srt", "url": "https://file0.assrt.net/ep07-08"},
+            # No member names E10, so the one whose range spans it answers, as
+            # search already offered this subtitle for E10.
+            {"f": "Show.S01E09-E11.eng.srt", "url": "https://file0.assrt.net/s01e09-e11"},
+        ]
+        detail = {"sub": {"subs": [{"filelist": files}]}}
+        expected = {
+            1: "s01e01e02",
+            2: "s01e01e02",
+            3: "s01e03-e04",
+            4: "s01e03-e04",
+            5: "e05e06",
+            6: "e05e06",
+            7: "ep07-08",
+            8: "ep07-08",
+            9: "s01e09-e11",
+            10: "s01e09-e11",
+            11: "s01e09-e11",
+            12: None,
+        }
+        for episode, url in expected.items():
+            with self.subTest(episode=episode):
+                selected = self.mod.select_download_file(detail, {"season": 1, "episode": episode, "language_code": "eng"})
+                if url is None:
+                    self.assertIsNone(selected)
+                else:
+                    self.assertEqual(selected["url"], f"https://file0.assrt.net/{url}")
+        self.assertIsNone(self.mod.select_download_file(detail, {"season": 2, "episode": 2, "language_code": "eng"}))
+
+    def test_download_reads_a_pack_member_range_that_repeats_its_season(self):
+        files = [
+            {"f": "Show.S01E01-S01E03.eng.srt", "url": "https://file0.assrt.net/s01e01-s01e03"},
+            {"f": "Show.S01E04.eng.srt", "url": "https://file0.assrt.net/s01e04"},
+        ]
+        detail = {"sub": {"subs": [{"filelist": files}]}}
+        expected = {1: "s01e01-s01e03", 2: "s01e01-s01e03", 3: "s01e01-s01e03", 4: "s01e04", 5: None}
+        for episode, url in expected.items():
+            with self.subTest(episode=episode):
+                selected = self.mod.select_download_file(detail, {"season": 1, "episode": episode, "language_code": "eng"})
+                if url is None:
+                    self.assertIsNone(selected)
+                else:
+                    self.assertEqual(selected["url"], f"https://file0.assrt.net/{url}")
+
+    def test_download_does_not_read_a_bit_depth_as_a_pack_member_range(self):
+        files = [{"f": "Show.S01E05-10-bit.eng.srt", "url": "https://file0.assrt.net/s01e05-10bit"}]
+        detail = {"sub": {"subs": [{"filelist": files}]}}
+
+        selected = self.mod.select_download_file(detail, {"season": 1, "episode": 5, "language_code": "eng"})
+        self.assertEqual(selected["url"], "https://file0.assrt.net/s01e05-10bit")
+        self.assertIsNone(self.mod.select_download_file(detail, {"season": 1, "episode": 7, "language_code": "eng"}))
+
+    def test_download_prefers_a_member_naming_the_episode_over_a_range_spanning_it(self):
+        files = [
+            {"f": "Show.S01E01-E03.eng.srt", "url": "https://file0.assrt.net/s01e01-e03"},
+            {"f": "Show.S01E02.eng.srt", "url": "https://file0.assrt.net/s01e02"},
+        ]
+        detail = {"sub": {"subs": [{"filelist": files}]}}
+
+        selected = self.mod.select_download_file(detail, {"season": 1, "episode": 2, "language_code": "eng"})
+
+        self.assertEqual(selected["url"], "https://file0.assrt.net/s01e02")
+
+    def test_download_prefers_a_member_made_for_the_episode_alone_over_a_combined_one(self):
+        # A combined subtitle is timed for the joined video, so it only answers
+        # when no member was made for the episode alone.
+        packs = (
+            (
+                ["Show.S01E01E02.eng.srt", "Show.S01E01.eng.srt", "Show.S01E02.eng.srt"],
+                {1: "Show.S01E01.eng.srt", 2: "Show.S01E02.eng.srt", 3: None},
+            ),
+            (
+                ["Show.S01E01-E03.eng.srt", "Show.S01E03.eng.srt"],
+                {1: "Show.S01E01-E03.eng.srt", 2: "Show.S01E01-E03.eng.srt", 3: "Show.S01E03.eng.srt"},
+            ),
+            (
+                ["Show.S01E01-E03.eng.srt", "Show.S01E01E02.eng.srt", "Show.S01E03.eng.srt"],
+                {1: "Show.S01E01-E03.eng.srt", 2: "Show.S01E01E02.eng.srt", 3: "Show.S01E03.eng.srt"},
+            ),
+        )
+        for names, expected in packs:
+            detail = {"sub": {"subs": [{"filelist": [{"f": name, "url": f"https://file0.assrt.net/{name}"} for name in names]}]}}
+            for episode, name in expected.items():
+                with self.subTest(names=names, episode=episode):
+                    selected = self.mod.select_download_file(detail, {"season": 1, "episode": episode, "language_code": "eng"})
+                    if name is None:
+                        self.assertIsNone(selected)
+                    else:
+                        self.assertEqual(selected["f"], name)
+
+    def test_download_falls_back_to_a_wider_member_in_the_requested_language(self):
+        files = [
+            {"f": "Show.S01E01-E03.eng.srt", "url": "https://file0.assrt.net/s01e01-e03-eng"},
+            {"f": "Show.S01E01E02.cht.srt", "url": "https://file0.assrt.net/s01e01e02-cht"},
+            {"f": "Show.S01E02.chs.srt", "url": "https://file0.assrt.net/s01e02-chs"},
+        ]
+        detail = {"sub": {"subs": [{"filelist": files}]}}
+        expected = {"eng": "s01e01-e03-eng", "cht": "s01e01e02-cht", "chs": "s01e02-chs"}
+        for language_code, url in expected.items():
+            with self.subTest(language_code=language_code):
+                selected = self.mod.select_download_file(detail, {"season": 1, "episode": 2, "language_code": language_code})
+                self.assertEqual(selected["url"], f"https://file0.assrt.net/{url}")
+
+    def test_download_fetches_a_lone_range_member_for_an_episode_inside_it(self):
+        detail = {
+            "sub": {
+                "subs": [
+                    {
+                        "id": 75102,
+                        "filelist": [
+                            {"f": "Show.S01E09-E11.eng.srt", "url": "https://file0.assrt.net/download/s01e09-e11-eng.srt"},
+                        ],
+                    }
+                ]
+            }
+        }
+        provider = self.mod.AssrtProvider()
+        fetched = []
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else detail
+        provider._http_get_bytes = lambda url, timeout=15, config=None: fetched.append(url) or b"1\n00:00:01,000 --> 00:00:02,000\nTen\n"
+        provider._sleep = lambda seconds: None
+
+        provider.download(
+            {"subtitle_id": "75102", "language_code": "eng", "season": 1, "episode": 10, "filename": "show.srt"},
+            {"alpha3": "eng"},
+            {"token": "secret-token"},
+        )
+
+        self.assertEqual(fetched, ["https://file0.assrt.net/download/s01e09-e11-eng.srt"])
+
+    def test_download_fetches_the_two_episode_member_for_its_second_episode(self):
+        detail = {
+            "sub": {
+                "subs": [
+                    {
+                        "id": 75101,
+                        "filelist": [
+                            {"f": "Show.S01E01E02.eng.srt", "url": "https://file0.assrt.net/download/s01e01e02-eng.srt"},
+                            {"f": "Show.S01E03.eng.srt", "url": "https://file0.assrt.net/download/s01e03-eng.srt"},
+                        ],
+                    }
+                ]
+            }
+        }
+        provider = self.mod.AssrtProvider()
+        fetched = []
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else detail
+        provider._http_get_bytes = lambda url, timeout=15, config=None: fetched.append(url) or b"1\n00:00:01,000 --> 00:00:02,000\nTwo\n"
+        provider._sleep = lambda seconds: None
+
+        provider.download(
+            {"subtitle_id": "75101", "language_code": "eng", "season": 1, "episode": 2, "filename": "show.srt"},
+            {"alpha3": "eng"},
+            {"token": "secret-token"},
+        )
+
+        self.assertEqual(fetched, ["https://file0.assrt.net/download/s01e01e02-eng.srt"])
 
     def test_search_skips_forced_only_and_hi_only_requests(self):
         provider = self.mod.AssrtProvider()
