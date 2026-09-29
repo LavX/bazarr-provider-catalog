@@ -2,6 +2,7 @@ import base64
 import hashlib
 import importlib.util
 import io
+import itertools
 import json
 import unittest
 import zipfile
@@ -326,6 +327,79 @@ class HDBitsLanguageAndFilterTests(unittest.TestCase):
         # S02E01 is not S01E01. A bare E01 carries no season and still counts.
         self.assertEqual([row["subtitle_id"] for row in parsed], [733, 734])
 
+    def test_parse_subtitles_reads_the_season_of_split_and_nxnn_markers(self):
+        rows = [
+            {"filename": "Chernobyl.S02.E01.en.srt", "id": 741, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.2x01.en.srt", "id": 742, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.Season.2.Episode.1.en.srt", "id": 743, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.S01.E01.en.srt", "id": 744, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.1x01.en.srt", "id": 745, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.Season.1.Episode.1.en.srt", "id": 746, "language": "uk", "title": "Chernobyl"},
+        ]
+
+        parsed = self.mod.parse_subtitles(
+            rows,
+            requested_alpha3=[{"alpha3": "eng", "alpha2": "en"}],
+            video=EPISODE_VIDEO,
+            base_matches=["tvdb_id", "imdb_id", "series", "title", "season", "episode"],
+            episode=1,
+        )
+
+        # A separator between the season and the episode does not drop the season.
+        self.assertEqual([row["subtitle_id"] for row in parsed], [744, 745, 746])
+
+    def test_parse_subtitles_keeps_every_episode_of_a_multi_episode_file(self):
+        rows = [
+            {"filename": "Chernobyl.S01E01-E02.en.srt", "id": 751, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.S01E01E02.en.srt", "id": 752, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.S01E03-E04.en.srt", "id": 753, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.E01-E02.en.srt", "id": 754, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.E01.E02.en.srt", "id": 755, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.E03.E04.en.srt", "id": 756, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.S01E01-02.en.srt", "id": 757, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.1x01-02.en.srt", "id": 758, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.Season.1.Episode.1-2.en.srt", "id": 759, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.S02E01-02.en.srt", "id": 760, "language": "uk", "title": "Chernobyl"},
+        ]
+
+        parsed = self.mod.parse_subtitles(
+            rows,
+            requested_alpha3=[{"alpha3": "eng", "alpha2": "en"}],
+            video={**EPISODE_VIDEO, "episode": 2},
+            base_matches=["tvdb_id", "imdb_id", "series", "title", "season", "episode"],
+            episode=2,
+        )
+
+        self.assertEqual([row["subtitle_id"] for row in parsed], [751, 752, 754, 755, 757, 758, 759])
+
+    def test_parse_subtitles_keeps_an_archive_whose_range_spans_the_episode(self):
+        rows = [
+            {"filename": "Chernobyl.1x01-10.en.zip", "id": 761, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.Season.1.Episode.1-10.en.zip", "id": 762, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.S01E01-E10.en.zip", "id": 763, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.S01E01-10.en.rar", "id": 764, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.E01-E12.en.zip", "id": 765, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.2x01-10.en.zip", "id": 766, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.S02E01-E10.en.zip", "id": 767, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.S01E06-E10.en.zip", "id": 768, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.S01E01-E10.en.srt", "id": 769, "language": "uk", "title": "Chernobyl"},
+            {"filename": "Chernobyl.1x01-10.en.srt", "id": 770, "language": "uk", "title": "Chernobyl"},
+            # A number below the episode after it is no range.
+            {"filename": "Chernobyl.S01E08.2.en.zip", "id": 771, "language": "uk", "title": "Chernobyl"},
+        ]
+
+        parsed = self.mod.parse_subtitles(
+            rows,
+            requested_alpha3=[{"alpha3": "eng", "alpha2": "en"}],
+            video={**EPISODE_VIDEO, "episode": 5},
+            base_matches=["tvdb_id", "imdb_id", "series", "title", "season", "episode"],
+            episode=5,
+        )
+
+        # The archive member is picked at download, while one subtitle file only
+        # answers the episodes it lists.
+        self.assertEqual([row["subtitle_id"] for row in parsed], [761, 762, 763, 764, 765])
+
 
 class HDBitsSearchTests(unittest.TestCase):
     def setUp(self):
@@ -469,6 +543,80 @@ class HDBitsSearchTests(unittest.TestCase):
         )
 
         self.assertEqual(results, [])
+
+    def test_episode_search_skips_torrent_with_split_marker_for_another_season(self):
+        provider = self.mod.HDBitsProvider()
+        torrents = {"data": [{"id": 3102, "name": "Chernobyl S02.E01 1080p WEB-DL-GROUP"}]}
+
+        def post_stub(url, payload, timeout=15):
+            del timeout
+            if url == self.mod.TORRENTS_URL:
+                return torrents
+            raise AssertionError("a torrent for another season must not be scanned")
+
+        provider._post_json = post_stub
+        results = provider.search(
+            EPISODE_VIDEO,
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"username": "user", "passkey": "secret", "request_delay_ms": 0},
+        )
+
+        self.assertEqual(results, [])
+
+    def test_episode_search_scans_a_torrent_whose_range_spans_the_episode(self):
+        provider = self.mod.HDBitsProvider()
+        torrents = {
+            "data": [
+                {"id": 3111, "name": "Chernobyl 1x01-10 1080p WEB-DL-GROUP"},
+                {"id": 3112, "name": "Chernobyl Season 1 Episode 1-10 1080p WEB-DL-GROUP"},
+                {"id": 3113, "name": "Chernobyl S01E01-E10 1080p WEB-DL-GROUP"},
+                {"id": 3114, "name": "Chernobyl S01E06-E10 1080p WEB-DL-GROUP"},
+                {"id": 3115, "name": "Chernobyl 2x01-10 1080p WEB-DL-GROUP"},
+            ]
+        }
+        scanned = []
+
+        def post_stub(url, payload, timeout=15):
+            del timeout
+            if url == self.mod.TORRENTS_URL:
+                return torrents
+            torrent_id = payload["torrent_id"]
+            scanned.append(torrent_id)
+            return {
+                "data": [
+                    {"filename": "Chernobyl.en.zip", "id": torrent_id * 10, "language": "uk", "title": "Chernobyl"},
+                    {"filename": "Chernobyl.en.srt", "id": torrent_id * 10 + 1, "language": "uk", "title": "Chernobyl"},
+                ]
+            }
+
+        provider._post_json = post_stub
+        results = provider.search(
+            {**EPISODE_VIDEO, "episode": 5},
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"username": "user", "passkey": "secret", "request_delay_ms": 0},
+        )
+
+        # A pack torrent is scanned, but it does not verify an unnumbered direct
+        # subtitle, which may hold any of its episodes.
+        self.assertEqual(scanned, [3111, 3112, 3113])
+        self.assertEqual(
+            sorted(item["provider_payload"]["subtitle_id"] for item in results), [31110, 31120, 31130]
+        )
+
+    def test_episode_search_does_not_read_a_codec_as_an_episode(self):
+        provider = self.mod.HDBitsProvider()
+        torrents = {"data": [{"id": 3103, "name": "Chernobyl S01 1080p BluRay DDP5.1x265-GROUP"}]}
+        subtitles = {"data": [{"filename": "Chernobyl.S01.en.zip", "id": 921, "language": "uk", "title": "Chernobyl.S01"}]}
+        provider._post_json = lambda url, payload, timeout=15: torrents if url == self.mod.TORRENTS_URL else subtitles
+
+        results = provider.search(
+            EPISODE_VIDEO,
+            [{"alpha3": "eng", "alpha2": "en"}],
+            {"username": "user", "passkey": "secret", "request_delay_ms": 0},
+        )
+
+        # "5.1x265" is audio channels and a codec, not season 1 episode 265.
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], [921])
 
     def test_episode_scores_leave_room_for_release_matches(self):
         provider = self.mod.HDBitsProvider()
@@ -669,6 +817,417 @@ class HDBitsDownloadTests(unittest.TestCase):
         )
 
         self.assertEqual(result, {"decision": "reject"})
+
+    def test_archive_selector_rejects_members_from_another_season(self):
+        provider = self.mod.HDBitsProvider()
+        for name in (
+            "Show.S02.E01.en.srt",
+            "Show.2x01.en.srt",
+            "Show.Season.2.Episode.01.en.srt",
+            "Season 2/Show.E01.en.srt",
+            "Show.S02/01.en.srt",
+            "Show.S02E01/Show.E01.en.srt",
+        ):
+            with self.subTest(name=name):
+                result = provider.select_archive_member(
+                    {"season": 1, "episode": 1}, {"alpha3": "eng", "alpha2": "en"}, [name], {}
+                )
+                self.assertEqual(result, {"decision": "reject"})
+
+    def test_archive_selector_pins_the_requested_season_in_either_member_order(self):
+        provider = self.mod.HDBitsProvider()
+        archives = (
+            {1: "Show.S01.E01.en.srt", 2: "Show.S02.E01.en.srt"},
+            {1: "Show.1x01.en.srt", 2: "Show.2x01.en.srt"},
+            {1: "Show.Season.1.Episode.1.en.srt", 2: "Show.Season.2.Episode.1.en.srt"},
+            {1: "Season 1/Show.E01.en.srt", 2: "Season 2/Show.E01.en.srt"},
+            {1: "Season 1/01.en.srt", 2: "Season 2/01.en.srt"},
+        )
+
+        for members_by_season in archives:
+            members = [members_by_season[2], members_by_season[1]]
+            for season in (1, 2):
+                for ordered_members in (members, list(reversed(members))):
+                    with self.subTest(season=season, members=ordered_members):
+                        result = provider.select_archive_member(
+                            {"season": season, "episode": 1},
+                            {"alpha3": "eng", "alpha2": "en"},
+                            ordered_members,
+                            {},
+                        )
+                        self.assertEqual(result, {"decision": "pin", "member": members_by_season[season]})
+
+        # A folder that names two seasons gives no season, so it rejects neither.
+        for season in (1, 2):
+            with self.subTest(season=season):
+                result = provider.select_archive_member(
+                    {"season": season, "episode": 5}, {"alpha3": "eng", "alpha2": "en"}, ["Show.S01-S02/05.srt"], {}
+                )
+                self.assertEqual(result, {"decision": "pin", "member": "Show.S01-S02/05.srt"})
+
+    def test_archive_selector_reads_the_episode_from_the_member_folder(self):
+        provider = self.mod.HDBitsProvider()
+        by_episode = {
+            1: "Subs/Show.S01E01.1080p/2_English.srt",
+            2: "Subs/Show.S01E02.1080p/2_English.srt",
+        }
+        members = [by_episode[2], by_episode[1]]
+        for episode in (1, 2):
+            for ordered_members in (members, list(reversed(members))):
+                with self.subTest(episode=episode, members=ordered_members):
+                    result = provider.select_archive_member(
+                        {"season": 1, "episode": episode}, {"alpha3": "eng", "alpha2": "en"}, ordered_members, {}
+                    )
+                    self.assertEqual(result, {"decision": "pin", "member": by_episode[episode]})
+
+        # The "2" in the file name is a track index, not episode 2.
+        result = provider.select_archive_member(
+            {"season": 1, "episode": 2}, {"alpha3": "eng", "alpha2": "en"}, [by_episode[1]], {}
+        )
+        self.assertEqual(result, {"decision": "reject"})
+
+    def test_archive_selector_lets_the_file_name_pick_within_a_multi_episode_folder(self):
+        provider = self.mod.HDBitsProvider()
+        packs = (
+            {episode: f"Show.S01E01-E10/{episode:02d}.srt" for episode in range(1, 11)},
+            {episode: f"Show.S01E01-10/{episode:02d}.srt" for episode in range(1, 11)},
+            {1: "Show.S01E01E02/01.en.srt", 2: "Show.S01E01E02/02.en.srt"},
+            {episode: f"Show.E01-E10/{episode:02d}.srt" for episode in range(1, 11)},
+            {1: "Show.E01.E02/01.en.srt", 2: "Show.E01.E02/02.en.srt"},
+            # In a pack a leading number names the episode, since every episode
+            # would reuse the same track index.
+            {episode: f"Show.S01E01-E10/{episode:02d}_English.srt" for episode in range(1, 11)},
+            # A track index is never zero-padded, so "02_" names episode 2.
+            {1: "Show.S01E01E02/01_English.srt", 2: "Show.S01E01E02/02_English.srt"},
+            {1: "Show.S01E01-E02/01_English.srt", 2: "Show.S01E01-E02/02_English.srt"},
+            # A per-episode folder inside a pack names the episode, whatever
+            # track index its file name carries.
+            {
+                episode: f"Show.S01E01-E10/Show.S01E{episode:02d}.1080p/2_English.srt"
+                for episode in (2, 5, 10)
+            },
+        )
+        for by_episode in packs:
+            members = list(by_episode.values())
+            for episode in sorted({1, 2, 5, 10} & set(by_episode)):
+                for ordered_members in (members, list(reversed(members))):
+                    with self.subTest(episode=episode, members=ordered_members):
+                        result = provider.select_archive_member(
+                            {"season": 1, "episode": episode}, {"alpha3": "eng", "alpha2": "en"}, ordered_members, {}
+                        )
+                        self.assertEqual(result, {"decision": "pin", "member": by_episode[episode]})
+
+        # A lone member still answers only the episode its file name gives.
+        for episode, expected in ((5, "pin"), (6, "reject")):
+            with self.subTest(episode=episode):
+                result = provider.select_archive_member(
+                    {"season": 1, "episode": episode},
+                    {"alpha3": "eng", "alpha2": "en"},
+                    ["Show.S01E01-E10/05.srt"],
+                    {},
+                )
+                self.assertEqual(result["decision"], expected)
+
+        # A folder for one double-episode video decides for both episodes, and a
+        # track index such as "2_" there never picks one of them.
+        for name in (
+            "Show.S01E01E02/English.srt",
+            "Show.S01E01E02/1_English.srt",
+            "Show.S01E01E02/2_English.srt",
+            "Show.S01E01E02/3_English.srt",
+            "Subs/Show.S01E01E02.1080p.BluRay.x264-GRP/2_English.srt",
+            "Show.S01E01-02/English.srt",
+            "Show.E01.E02/English.srt",
+        ):
+            for episode in (1, 2):
+                with self.subTest(name=name, episode=episode):
+                    result = provider.select_archive_member(
+                        {"season": 1, "episode": episode}, {"alpha3": "eng", "alpha2": "en"}, [name], {}
+                    )
+                    self.assertEqual(result, {"decision": "pin", "member": name})
+
+        # A pack folder names only its first and last episode, so a member whose
+        # file name picks none of them is not pinned for any episode.
+        members = [
+            "Show.S01E01-E10/Show.Pilot.en.srt",
+            "Show.S01E01-E10/Show.The.Return.en.srt",
+            "Show.S01E01-E10/Show.Finale.en.srt",
+        ]
+        for episode in (1, 5, 10):
+            for ordered_members in (members, list(reversed(members))):
+                with self.subTest(episode=episode, members=ordered_members):
+                    result = provider.select_archive_member(
+                        {"season": 1, "episode": episode}, {"alpha3": "eng", "alpha2": "en"}, ordered_members, {}
+                    )
+                    self.assertEqual(result, {"decision": "reject"})
+
+    def test_archive_selector_prefers_the_file_name_marker_over_its_folder(self):
+        provider = self.mod.HDBitsProvider()
+        members = ["Show.S01E01/notes.srt", "Show.S01E01/Show.S01E01.srt"]
+        for ordered_members in (members, list(reversed(members))):
+            with self.subTest(members=ordered_members):
+                result = provider.select_archive_member(
+                    {"season": 1, "episode": 1}, {"alpha3": "eng", "alpha2": "en"}, ordered_members, {}
+                )
+                self.assertEqual(result, {"decision": "pin", "member": "Show.S01E01/Show.S01E01.srt"})
+
+    def test_archive_selector_does_not_read_the_season_number_as_the_episode(self):
+        provider = self.mod.HDBitsProvider()
+        for name in ("Show.Season.1.Episode.05.en.srt", "Show.Season.1.05.en.srt"):
+            with self.subTest(name=name):
+                wrong = provider.select_archive_member(
+                    {"season": 1, "episode": 1}, {"alpha3": "eng", "alpha2": "en"}, [name], {}
+                )
+                right = provider.select_archive_member(
+                    {"season": 1, "episode": 5}, {"alpha3": "eng", "alpha2": "en"}, [name], {}
+                )
+                self.assertEqual(wrong, {"decision": "reject"})
+                self.assertEqual(right, {"decision": "pin", "member": name})
+
+    def test_archive_selector_keeps_every_episode_of_a_multi_episode_member(self):
+        provider = self.mod.HDBitsProvider()
+        for name in (
+            "Show.S01E01-E02.en.srt",
+            "Show.S01E01E02.en.srt",
+            "Show.S01.E01.E02.en.srt",
+            "Show.S01E01-02.en.srt",
+            "Show.E01-02.en.srt",
+            "Show.1x01-02.en.srt",
+            "Show.Season.1.Episode.1-2.en.srt",
+            "Show.E01-E02.en.srt",
+            "Show.E01.E02.en.srt",
+            "Show.E01.E02.E03.en.srt",
+        ):
+            for episode in (1, 2):
+                with self.subTest(name=name, episode=episode):
+                    result = provider.select_archive_member(
+                        {"season": 1, "episode": episode}, {"alpha3": "eng", "alpha2": "en"}, [name], {}
+                    )
+                    self.assertEqual(result, {"decision": "pin", "member": name})
+
+    def test_archive_selector_prefers_the_requested_variant_in_any_member_order(self):
+        provider = self.mod.HDBitsProvider()
+        archives = (
+            (
+                {"season": 1, "episode": 1, "language": "eng"},
+                {
+                    (False, False): "Show.S01E01.en.srt",
+                    (True, False): "Show.S01E01.en.sdh.srt",
+                    (False, True): "Show.S01E01.en.forced.srt",
+                },
+            ),
+            (
+                {"season": 1, "episode": 1, "language": "eng"},
+                {
+                    (False, False): "Show.S01E01.en.srt",
+                    (True, False): "Show.S01E01.en.hi.srt",
+                    (False, True): "Show.S01E01.en.forced.srt",
+                },
+            ),
+            (
+                {"language": "eng"},
+                {
+                    (False, False): "Movie.2021.en.srt",
+                    (True, False): "Movie.2021.en.SDH.srt",
+                    (False, True): "Movie.2021.en.Forced.srt",
+                },
+            ),
+        )
+
+        for payload, members_by_variant in archives:
+            for ordered_members in itertools.permutations(members_by_variant.values()):
+                for (hi, forced), expected in members_by_variant.items():
+                    language = {"alpha3": "eng", "alpha2": "en", "hi": hi, "forced": forced}
+                    with self.subTest(members=ordered_members, hi=hi, forced=forced):
+                        result = provider.select_archive_member(payload, language, list(ordered_members), {})
+                        self.assertEqual(result, {"decision": "pin", "member": expected})
+
+    def test_archive_selector_reads_the_variant_from_the_provider_payload(self):
+        provider = self.mod.HDBitsProvider()
+        members = ["Show.S01E01.en.srt", "Show.S01E01.en.sdh.srt", "Show.S01E01.en.forced.srt"]
+        for flags, expected in (
+            ({"hi": True, "forced": False}, "Show.S01E01.en.sdh.srt"),
+            ({"hi": False, "forced": True}, "Show.S01E01.en.forced.srt"),
+        ):
+            with self.subTest(flags=flags):
+                result = provider.select_archive_member(
+                    {"season": 1, "episode": 1, "language": "eng", **flags},
+                    {"alpha3": "eng", "alpha2": "en"},
+                    members,
+                    {},
+                )
+                self.assertEqual(result, {"decision": "pin", "member": expected})
+
+        # A flag the host sends wins over the one stored at search time.
+        result = provider.select_archive_member(
+            {"season": 1, "episode": 1, "language": "eng", "hi": True, "forced": False},
+            {"alpha3": "eng", "alpha2": "en", "hi": False},
+            members,
+            {},
+        )
+        self.assertEqual(result, {"decision": "pin", "member": "Show.S01E01.en.srt"})
+
+    def test_archive_selector_prefers_a_full_hi_file_over_a_forced_one_for_a_plain_request(self):
+        provider = self.mod.HDBitsProvider()
+        members = ["Show.S01E01.en.forced.srt", "Show.S01E01.en.sdh.srt"]
+        for ordered_members in (members, list(reversed(members))):
+            with self.subTest(members=ordered_members):
+                result = provider.select_archive_member(
+                    {"season": 1, "episode": 1},
+                    {"alpha3": "eng", "alpha2": "en", "hi": False, "forced": False},
+                    ordered_members,
+                    {},
+                )
+                self.assertEqual(result, {"decision": "pin", "member": "Show.S01E01.en.sdh.srt"})
+
+    def test_archive_selector_keeps_hindi_hi_as_a_language_when_ranking_variants(self):
+        provider = self.mod.HDBitsProvider()
+        members = ["Show.S01E01.hi.sdh.srt", "Show.S01E01.hi.srt"]
+        for hi, expected in ((False, "Show.S01E01.hi.srt"), (True, "Show.S01E01.hi.sdh.srt")):
+            for ordered_members in (members, list(reversed(members))):
+                with self.subTest(hi=hi, members=ordered_members):
+                    result = provider.select_archive_member(
+                        {"season": 1, "episode": 1},
+                        {"alpha3": "hin", "alpha2": "hi", "hi": hi, "forced": False},
+                        ordered_members,
+                        {},
+                    )
+                    self.assertEqual(result, {"decision": "pin", "member": expected})
+
+    def test_archive_selector_variant_never_overrides_episode_or_language(self):
+        provider = self.mod.HDBitsProvider()
+        hi_english = {"alpha3": "eng", "alpha2": "en", "hi": True, "forced": False}
+        forced_english = {"alpha3": "eng", "alpha2": "en", "hi": False, "forced": True}
+        for episode, language, members, expected in (
+            (1, hi_english, ["Show.S01E02.en.sdh.srt", "Show.S01E01.en.srt"], "Show.S01E01.en.srt"),
+            (1, hi_english, ["Show.S01E01.fr.sdh.srt", "Show.S01E01.en.srt"], "Show.S01E01.en.srt"),
+            (1, forced_english, ["Show.S01E01.en.srt"], "Show.S01E01.en.srt"),
+            # Both members hold the episode, so the surer episode match beats the tag.
+            (1, hi_english, ["Show.E01.en.sdh.srt", "Show.S01E01.en.srt"], "Show.S01E01.en.srt"),
+            (1, forced_english, ["Show.E01.en.forced.srt", "Show.S01E01.en.srt"], "Show.S01E01.en.srt"),
+            (2, hi_english, ["Show.S01E01-02.en.sdh.srt", "Show.S01E02.en.srt"], "Show.S01E02.en.srt"),
+        ):
+            for ordered_members in (members, list(reversed(members))):
+                with self.subTest(episode=episode, language=language, members=ordered_members):
+                    result = provider.select_archive_member(
+                        {"season": 1, "episode": episode}, language, ordered_members, {}
+                    )
+                    self.assertEqual(result, {"decision": "pin", "member": expected})
+
+    def test_archive_selector_does_not_read_audio_or_codec_numbers_as_the_episode(self):
+        provider = self.mod.HDBitsProvider()
+        english = {"alpha3": "eng", "alpha2": "en"}
+        for episode, members in (
+            (
+                1,
+                [
+                    "Show.S01E02.1080p.WEB.DDP5.1.H.264-GRP.en.srt",
+                    "Show.S01E03.1080p.WEB.DDP5.1.H.264-GRP.en.srt",
+                ],
+            ),
+            (
+                1,
+                [
+                    "Show.S01E01.1080p.WEB.DDP5.1.H.264-GRP.fr.srt",
+                    "Show.S01E02.1080p.WEB.DDP5.1.H.264-GRP.en.srt",
+                ],
+            ),
+            (7, ["Show.S01E02.1080p.BluRay.TrueHD.7.1.x264-GRP.srt"]),
+            (5, ["Show.S01E02.1080p.BluRay.DTS-HD.MA.5.1.x264-GRP.srt"]),
+            (1, ["Show.E02.1080p.WEB.DDP5.1.en.srt"]),
+            (1, ["Show.S01E02.1.en.srt"]),
+            (5, ["Show.1080p.BluRay.DTS-HD.MA.5.1.x264-GRP.en.srt"]),
+            (1, ["Show.1080p.BluRay.DTS-HD.MA.5.1.x264-GRP.en.srt"]),
+            (2, ["Show.1080p.WEB.AAC.2.0.en.srt"]),
+            (1, ["05.1080p.WEB.DDP5.1.en.srt"]),
+        ):
+            with self.subTest(episode=episode, members=members):
+                result = provider.select_archive_member({"season": 1, "episode": episode}, english, members, {})
+                self.assertEqual(result, {"decision": "reject"})
+
+        for episode, members, expected in (
+            (
+                2,
+                [
+                    "Show.S01E01.1080p.WEB.DDP5.1.H.264-GRP.en.srt",
+                    "Show.S01E02.1080p.WEB.DDP5.1.H.264-GRP.en.srt",
+                ],
+                "Show.S01E02.1080p.WEB.DDP5.1.H.264-GRP.en.srt",
+            ),
+            (2, ["Show.S01E01-02.1080p.WEB.DDP5.1.en.srt"], "Show.S01E01-02.1080p.WEB.DDP5.1.en.srt"),
+            (5, ["05.1080p.WEB.DDP5.1.en.srt"], "05.1080p.WEB.DDP5.1.en.srt"),
+        ):
+            with self.subTest(episode=episode, members=members):
+                result = provider.select_archive_member({"season": 1, "episode": episode}, english, members, {})
+                self.assertEqual(result, {"decision": "pin", "member": expected})
+
+    def test_archive_selector_reads_hi_after_a_spelled_out_language_as_the_variant(self):
+        provider = self.mod.HDBitsProvider()
+        members = ["Show.S01E01.English.srt", "Show.S01E01.English.HI.srt"]
+        for hi, expected in ((True, "Show.S01E01.English.HI.srt"), (False, "Show.S01E01.English.srt")):
+            for ordered_members in (members, list(reversed(members))):
+                with self.subTest(hi=hi, members=ordered_members):
+                    result = provider.select_archive_member(
+                        {"season": 1, "episode": 1},
+                        {"alpha3": "eng", "alpha2": "en", "hi": hi, "forced": False},
+                        ordered_members,
+                        {},
+                    )
+                    self.assertEqual(result, {"decision": "pin", "member": expected})
+
+        members = ["Show.S01E01.English.HI.srt", "Show.S01E01.hi.srt"]
+        for ordered_members in (members, list(reversed(members))):
+            with self.subTest(members=ordered_members):
+                result = provider.select_archive_member(
+                    {"season": 1, "episode": 1}, {"alpha3": "hin", "alpha2": "hi"}, ordered_members, {}
+                )
+                self.assertEqual(result, {"decision": "pin", "member": "Show.S01E01.hi.srt"})
+
+    def test_archive_selector_counts_a_trailing_cc_tag_as_hearing_impaired(self):
+        provider = self.mod.HDBitsProvider()
+        for payload, members, hi_member, plain_member in (
+            (
+                {"season": 1, "episode": 1},
+                ["Show.S01E01.en.srt", "Show.S01E01.en.cc.srt"],
+                "Show.S01E01.en.cc.srt",
+                "Show.S01E01.en.srt",
+            ),
+            # Inside a release name "CC" marks a Criterion release, not captions.
+            (
+                {},
+                ["Movie.1998.CC.1080p.BluRay.x264-GRP.en.srt", "Movie.1998.CC.1080p.BluRay.x264-GRP.en.sdh.srt"],
+                "Movie.1998.CC.1080p.BluRay.x264-GRP.en.sdh.srt",
+                "Movie.1998.CC.1080p.BluRay.x264-GRP.en.srt",
+            ),
+        ):
+            for hi, expected in ((True, hi_member), (False, plain_member)):
+                for ordered_members in (members, list(reversed(members))):
+                    with self.subTest(hi=hi, members=ordered_members):
+                        result = provider.select_archive_member(
+                            payload,
+                            {"alpha3": "eng", "alpha2": "en", "hi": hi, "forced": False},
+                            ordered_members,
+                            {},
+                        )
+                        self.assertEqual(result, {"decision": "pin", "member": expected})
+
+    def test_archive_selector_reads_variant_tags_from_the_member_folder(self):
+        provider = self.mod.HDBitsProvider()
+        members_by_variant = {
+            (False, False): "Subs/Show.S01E01.en.srt",
+            (True, False): "Subs/SDH/Show.S01E01.en.srt",
+            (False, True): "Subs/Forced/Show.S01E01.en.srt",
+        }
+        for ordered_members in itertools.permutations(members_by_variant.values()):
+            for (hi, forced), expected in members_by_variant.items():
+                with self.subTest(members=ordered_members, hi=hi, forced=forced):
+                    result = provider.select_archive_member(
+                        {"season": 1, "episode": 1},
+                        {"alpha3": "eng", "alpha2": "en", "hi": hi, "forced": forced},
+                        list(ordered_members),
+                        {},
+                    )
+                    self.assertEqual(result, {"decision": "pin", "member": expected})
 
     def test_archive_selector_rejects_only_explicit_other_languages(self):
         provider = self.mod.HDBitsProvider()

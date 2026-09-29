@@ -21,8 +21,37 @@ ALLOWED_EXTENSIONS = (".ass", ".srt", ".ssa", ".sub", ".vtt", ".zip", ".rar")
 SUBTITLE_EXTENSIONS = (".ass", ".srt", ".ssa", ".sub", ".vtt")
 BLOCKED_TOKENS = frozenset({"extra", "extras", "commentary", "lyrics"})
 IDENTITY_MATCHES = frozenset({"tvdb_id", "imdb_id", "series", "title", "year", "season", "episode"})
-SEASON_EPISODE_TAG_RE = re.compile(r"\bs(\d{1,3})e(\d{1,3})\b", re.I)
-LOOSE_EPISODE_RE = re.compile(r"(?:^|[^a-z0-9])e(\d{1,3})(?:[^a-z0-9]|$)", re.I)
+# Matched against _normalize() output, so "S01.E01" arrives as "s01 e01". The
+# second group keeps every episode of a multi-episode tag such as S01E01E02.
+SEASON_EPISODE_TAG_RE = re.compile(
+    r"\b(?:season\s*|s)(\d{1,3})((?:\s*(?:episode|ep|e)\s*\d{1,3})+)\b", re.I
+)
+# "5.1x265" normalizes to "5 1x265", so the x264 and x265 codecs are not episodes.
+SEASON_X_EPISODE_RE = re.compile(r"\b(\d{1,2})x(?!26[45]\b)(\d{2,3})\b", re.I)
+SEASON_TAG_RE = re.compile(r"\b(?:season\s*|s)(\d{1,3})\b", re.I)
+# Lookarounds leave the separator between "e01 e02" free for the next marker.
+LOOSE_EPISODE_RE = re.compile(r"(?<![a-z0-9])e(\d{1,3})(?![a-z0-9])", re.I)
+# A range such as "S01E01-02", "1x01-02" or "E01-02" normalizes to an episode
+# marker followed by the bare number that ends it.
+EPISODE_RANGE_RE = re.compile(r"(?:(?<![a-z])(?:episode|ep|e)\s*|\dx)(\d{1,3})\s+(\d{1,3})(?=\s|$)", re.I)
+# Audio layouts ("DDP5.1", "TrueHD 7.1") and codecs ("H.264") leave bare numbers
+# behind after _normalize(), and none of them is an episode.
+AUDIO_OR_CODEC_NUMBER_RE = re.compile(r"(?<![0-9])[1-9]\s[01](?=\s|$)|\b[hx]\s26[45]\b", re.I)
+# Extracted tracks are named by their index ("2_English.srt"), which is never
+# zero-padded, so "02_English.srt" still names episode 2.
+TRACK_INDEX_RE = re.compile(r"^[1-9]\d?_")
+# Disc rips name tracks by language ("3_English.HI.srt"), so a trailing "hi"
+# after one of these words is the hearing-impaired tag, not Hindi.
+SPELLED_LANGUAGE_NAMES = frozenset(
+    {
+        "arabic", "bulgarian", "catalan", "chinese", "croatian", "czech", "danish", "dutch",
+        "english", "estonian", "finnish", "french", "german", "greek", "hebrew", "hungarian",
+        "icelandic", "indonesian", "italian", "japanese", "korean", "latvian", "lithuanian",
+        "malay", "norwegian", "persian", "polish", "portuguese", "romanian", "russian",
+        "serbian", "slovak", "slovenian", "spanish", "swedish", "thai", "turkish",
+        "ukrainian", "vietnamese",
+    }
+)
 
 
 ALPHA2_TO_ALPHA3 = {
@@ -405,13 +434,19 @@ def _format_from_filename(filename):
 def _episode_markers(title):
     """Return the ``(season, episode)`` markers in a name.
 
+    ``S01E01``, ``S01.E01``, ``1x01`` and ``Season 1 Episode 1`` name a season.
     A loose ``E01`` marker carries no season, so its season is ``None``.
     """
     normalized = _normalize(title)
     markers = {
-        (int(match.group(1)), int(match.group(2)))
+        (int(match.group(1)), int(episode))
         for match in SEASON_EPISODE_TAG_RE.finditer(normalized)
+        for episode in re.findall(r"\d+", match.group(2))
     }
+    markers.update(
+        (int(match.group(1)), int(match.group(2)))
+        for match in SEASON_X_EPISODE_RE.finditer(normalized)
+    )
     if markers:
         return markers
     return {(None, int(match.group(1))) for match in LOOSE_EPISODE_RE.finditer(normalized)}
@@ -422,6 +457,34 @@ def _names_episode(markers, season, episode):
         marker_episode == episode
         and (marker_season is None or season is None or marker_season == season)
         for marker_season, marker_episode in markers or ()
+    )
+
+
+def _spans_episode(name, season, episode, between=True):
+    """True when a name gives the episode for the season.
+
+    A range such as "S01E01-02", "1x01-10" or "S01E01-E10" gives its first and
+    last episode. With ``between`` the episodes between them count too, since a
+    torrent or an archive holds each of them. One subtitle file answers only
+    the episodes it lists.
+    """
+    if episode is None:
+        return False
+    markers = _episode_markers(name)
+    listed = {}
+    for marker_season, marker_episode in markers:
+        listed.setdefault(marker_season, set()).add(marker_episode)
+    for first, last in EPISODE_RANGE_RE.findall(_loose_episode_text(name)):
+        first, last = int(first), int(last)
+        if first >= last:
+            continue
+        seasons = {marker_season for marker_season, marker_episode in markers if marker_episode == first}
+        for marker_season in seasons or {marker_season for marker_season, _episode in markers} or {None}:
+            listed.setdefault(marker_season, set()).update((first, last))
+    return any(
+        (marker_season is None or season is None or marker_season == season)
+        and (min(episodes) <= episode <= max(episodes) if between else episode in episodes)
+        for marker_season, episodes in listed.items()
     )
 
 
@@ -483,19 +546,21 @@ def parse_subtitles(rows, requested_alpha3, video, base_matches, episode=None, t
         if (hearing_impaired, forced) not in variants:
             continue
         if episode is not None:
-            markers = _episode_markers(f"{row.get('title') or ''} {filename}")
+            name = f"{row.get('title') or ''} {filename}"
+            markers = _episode_markers(name)
             try:
                 wanted_episode = int(episode)
             except (TypeError, ValueError):
                 wanted_episode = None
-            if markers and not _names_episode(markers, wanted_season, wanted_episode):
+            archive = filename.lower().endswith((".zip", ".rar"))
+            if markers and not _spans_episode(name, wanted_season, wanted_episode, between=archive):
                 continue
             # An unnumbered row is only trusted when its torrent names the episode;
             # an archive is checked again when the host selects its member.
             if (
                 not markers
                 and not _names_episode(torrent_markers, wanted_season, wanted_episode)
-                and not filename.lower().endswith((".zip", ".rar"))
+                and not archive
             ):
                 continue
         release_info = str(row.get("title") or filename)
@@ -585,8 +650,8 @@ class HDBitsProvider:
             if (
                 episode is not None
                 and torrent_markers
-                and not _names_episode(
-                    torrent_markers,
+                and not _spans_episode(
+                    item.get("name"),
                     _safe_nonnegative_int((video or {}).get("season")),
                     _safe_nonnegative_int(episode),
                 )
@@ -764,43 +829,178 @@ def select_subtitle_file(names, payload):
         episode = int((payload or {}).get("episode"))
     except (TypeError, ValueError):
         episode = None
+    variant_rank = _variant_ranker(payload)
     if episode is None:
-        return _best_language_candidate(candidates, payload)
+        return _best_language_candidate(candidates, payload, variant_rank)
 
     hints = _language_hints((payload or {}).get("language"))
 
-    def episode_score(name):
-        normalized = _normalize(os.path.basename(name))
-        if season is not None and re.search(rf"\bs0*{season}e0*{episode}\b", normalized):
-            return 100
-        if re.search(rf"\be0*{episode}\b", normalized):
-            return 90
-        # Loose fallback: a standalone episode-number token (for example
-        # "Show 1 en srt"). It must be its own token so the season digits in
-        # "s01e02" never satisfy an S01E01 request.
-        if re.search(rf"(?:^|\s)0*{episode}(?:\s|$)", normalized):
-            return 80
-        return 0
-
     def score(name):
-        value = episode_score(name)
+        value = _member_episode_score(name, season, episode)
         if hints & set(_tokens(name)):
             value += 20
         return value
 
     # Only keep files that actually carry the requested episode so a season pack
     # missing that episode raises instead of returning an arbitrary wrong file.
-    matching = [name for name in candidates if episode_score(name) > 0]
+    matching = [name for name in candidates if _member_episode_score(name, season, episode) > 0]
     if not matching:
         raise ValueError(
             f"hdbits archive does not contain the requested episode {episode}"
         )
 
-    return max(_language_candidates(matching, payload), key=score)
+    return max(
+        _language_candidates(matching, payload),
+        key=lambda name: (score(name), variant_rank(name)),
+    )
 
 
-def _best_language_candidate(candidates, payload):
-    return _language_candidates(candidates, payload)[0]
+def _member_episode_score(name, season, episode):
+    """Score how surely an archive member holds the requested episode, 0 if not.
+
+    The file name decides first. Folders only fill in what it leaves out, as in
+    "Season 2/Show.E01.srt" or "Subs/Show.S01E01/2_English.srt". Another season
+    always rejects the member. A file name that names another episode only holds
+    the requested one through a range such as "S01E01-02".
+    """
+    parts = [part for part in re.split(r"[\\/]", name) if part]
+    basename, folders = parts[-1], parts[-2::-1]
+    markers = _episode_markers(basename)
+    marker_seasons = {marker_season for marker_season, _episode in markers} - {None}
+    if marker_seasons:
+        if _names_episode(markers, season, episode):
+            # Without a requested season the marker is no surer than a bare E01.
+            return 100 if season is not None else 90
+        if season is not None and season not in marker_seasons:
+            return 0
+    else:
+        member_season = _stated_season([basename, *folders])
+        if season is not None and member_season is not None and member_season != season:
+            return 0
+        if markers:
+            if _names_episode(markers, season, episode):
+                return 90
+        else:
+            folder = next((part for part in folders if _episode_markers(part)), None)
+            if folder is not None:
+                # A folder for one video lists every episode it holds
+                # ("Show.S01E01E02/"), while a pack names only its first and
+                # last ("Show.S01E01-E10/").
+                listed = _listed_episodes(folder)
+                first, last = min(listed), max(listed)
+                pack = last - first + 1 > len(listed)
+                # Every episode of a pack would reuse the same track index, so
+                # there a leading number names the episode ("05_English.srt").
+                name_text = basename if pack else TRACK_INDEX_RE.sub("", basename)
+                numbers = {int(token) for token in _loose_episode_text(name_text).split() if token.isdigit()}
+                # A file name number among the folder's episodes picks one.
+                picked = {number for number in numbers if first <= number <= last}
+                if picked:
+                    return 85 if episode in picked else 0
+                if pack:
+                    return 0
+                # Otherwise the folder decides, because a bare number in the file
+                # name is usually a track index ("Show.S01E01/2_English.srt").
+                folder_names_episode = _names_episode(_episode_markers(folder), season, episode)
+                return 85 if folder_names_episode or _range_reaches(_loose_episode_text(folder), episode) else 0
+    loose = _loose_episode_text(basename)
+    if markers:
+        return 80 if _range_reaches(loose, episode) else 0
+    # Loose fallback: a standalone episode-number token (for example
+    # "Show 1 en srt"). It must be its own token so the season digits in
+    # "s01e02" never satisfy an S01E01 request.
+    if re.search(rf"(?:^|\s)0*{episode}(?:\s|$)", loose):
+        return 80
+    return 0
+
+
+def _loose_episode_text(value):
+    """Normalize a name without the bare numbers that are never an episode.
+
+    Season tags ("Season 1"), audio layouts ("DDP5.1") and codecs ("H.264")
+    all leave such numbers behind.
+    """
+    return AUDIO_OR_CODEC_NUMBER_RE.sub(" ", SEASON_TAG_RE.sub(" ", _normalize(value)))
+
+
+def _listed_episodes(value):
+    """Return the episodes a name gives, both ends of a range such as "S01E01-10" included."""
+    episodes = {marker_episode for _season, marker_episode in _episode_markers(value)}
+    for first, last in EPISODE_RANGE_RE.findall(_loose_episode_text(value)):
+        episodes.update((int(first), int(last)))
+    return episodes
+
+
+def _range_reaches(normalized, episode):
+    """True when a range such as "s01e01 02" runs on to the episode."""
+    return any(int(first) < episode == int(last) for first, last in EPISODE_RANGE_RE.findall(normalized))
+
+
+def _stated_season(parts):
+    """Return the season named by the first part that names one.
+
+    A part that names more than one season is ambiguous and gives no season.
+    """
+    for part in parts:
+        seasons = {int(value) for value in SEASON_TAG_RE.findall(_normalize(part))}
+        seasons.update(
+            marker_season
+            for marker_season, _episode in _episode_markers(part)
+            if marker_season is not None
+        )
+        if seasons:
+            return seasons.pop() if len(seasons) == 1 else None
+    return None
+
+
+def _variant_ranker(payload):
+    """Rank archive members by how well their HI and forced tags fit the request.
+
+    The rank only breaks ties between members that already match the episode
+    and language, so an archive without variant tags still answers every
+    request. The host language wins over the flags stored at search time.
+    """
+    payload = payload or {}
+    language = payload.get("language")
+    requested = language if isinstance(language, dict) else {}
+    wanted = []
+    for key in ("hi", "forced"):
+        value = requested.get(key)
+        wanted.append(bool(payload.get(key) if value is None else value))
+    wanted_hi, wanted_forced = wanted
+    alpha3 = _language_details(language)[0]
+
+    def rank(name):
+        # Packs may keep each variant in its own folder ("SDH/Show.S01E01.srt").
+        parts = [part for part in re.split(r"[\\/]", name) if part]
+        folder = parts[-2] if len(parts) > 1 else ""
+        hearing_impaired, forced = _subtitle_flags({"title": folder, "filename": parts[-1]}, alpha3)
+        hearing_impaired = hearing_impaired or _has_trailing_cc_tag(parts[-1])
+        # A forced file carries only part of the dialogue, so matching the
+        # forced flag counts before matching the hearing-impaired one.
+        return (forced == wanted_forced, hearing_impaired == wanted_hi)
+
+    return rank
+
+
+def _has_trailing_cc_tag(name):
+    """True when "cc" (closed captions) sits among the trailing tags of a name.
+
+    Only the tags after the title count, because "CC" inside a release name
+    usually marks a Criterion release.
+    """
+    tokens = _tokens(os.path.splitext(os.path.basename(name))[0])
+    known = set(ALPHA2_TO_ALPHA3) | set(ALPHA3_TO_ALPHA2) | set(SPECIAL_HDBITS_LANGUAGE) | SPELLED_LANGUAGE_NAMES
+    for token in reversed(tokens[1:]):
+        if token == "cc":
+            return True
+        if token not in known and token not in {"forced", "sdh"}:
+            return False
+    return False
+
+
+def _best_language_candidate(candidates, payload, variant_rank):
+    return max(_language_candidates(candidates, payload), key=variant_rank)
 
 
 def _language_candidates(candidates, payload):
@@ -871,7 +1071,7 @@ def _filename_language_codes(name):
             previous = index - 1
             while previous > 0 and tokens[previous] in {"forced", "sdh", "cc"}:
                 previous -= 1
-            if previous > 0 and tokens[previous] in known and tokens[previous] != "hi":
+            if previous > 0 and (tokens[previous] in known or tokens[previous] in SPELLED_LANGUAGE_NAMES) and tokens[previous] != "hi":
                 continue
         if token not in known:
             break
@@ -892,7 +1092,7 @@ def _filename_language_region(name):
         previous = end - 2
         while previous > 0 and tokens[previous] in variants:
             previous -= 1
-        if previous > 0 and tokens[previous] in known and tokens[previous] != "hi":
+        if previous > 0 and (tokens[previous] in known or tokens[previous] in SPELLED_LANGUAGE_NAMES) and tokens[previous] != "hi":
             end -= 1
             while end > 1 and tokens[end - 1] in variants:
                 end -= 1
