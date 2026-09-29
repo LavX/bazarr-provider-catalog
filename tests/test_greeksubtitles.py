@@ -1,9 +1,13 @@
 import base64
 import email.message
 import hashlib
+import http.client
+import http.server
 import importlib.util
 import io
 import socket
+import threading
+import time
 import types
 import unittest
 import urllib.error
@@ -517,6 +521,110 @@ class _DrippingBody:
     def close(self):
         self.closed = True
 
+class _FakeConnectedSocket:
+    """A connected socket on the fake clock, keeping the timeout set on it.
+
+    The response's first bytes take `response_seconds` to arrive. A wait
+    longer than the socket's timeout spends the timeout and raises, as a
+    real socket read does.
+    """
+
+    def __init__(self, clock, timeout, response_seconds):
+        self.clock = clock
+        self.timeout = timeout
+        self.response_seconds = response_seconds
+        self.timeout_when_read = None
+
+    def settimeout(self, value):
+        self.timeout = value
+
+    def gettimeout(self):
+        return self.timeout
+
+    def setsockopt(self, *args):
+        pass
+
+    def sendall(self, data):
+        pass
+
+    def makefile(self, mode):
+        return _FirstByteWait(self, b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+
+    def close(self):
+        pass
+
+
+
+class _FirstByteWait(io.BytesIO):
+    """A response file whose first line waits on its socket's timeout."""
+
+    def __init__(self, sock, body):
+        super().__init__(body)
+        self.sock = sock
+        self.waited = False
+
+    def readline(self, size=-1):
+        if not self.waited:
+            self.waited = True
+            sock = self.sock
+            sock.timeout_when_read = sock.timeout
+            if sock.timeout is not None and sock.response_seconds > sock.timeout:
+                sock.clock.advance(sock.timeout)
+                raise socket.timeout("timed out")
+            sock.clock.advance(sock.response_seconds)
+        return super().readline(size)
+
+class _FakeTLSContext:
+    """Stands in for ssl.SSLContext: the handshake takes `seconds` on the fake clock."""
+
+    def __init__(self, clock, seconds):
+        self.clock = clock
+        self.seconds = seconds
+        self.handshake_timeouts = []
+
+    def wrap_socket(self, sock, server_hostname=None):
+        timeout = sock.gettimeout()
+        self.handshake_timeouts.append(timeout)
+        if timeout is not None and self.seconds > timeout:
+            self.clock.advance(timeout)
+            raise socket.timeout("_ssl.c: The handshake operation timed out")
+        self.clock.advance(self.seconds)
+        return sock
+
+
+class _StallingServer:
+    """A local HTTP server: /fast answers at once, /slow holds the request."""
+
+    def __init__(self):
+        release = self.release = threading.Event()
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == "/slow":
+                    release.wait(5)
+                body = b"<html>ok</html>"
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass  # The client gave up at its deadline.
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server.daemon_threads = True
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def close(self):
+        self.release.set()
+        self.server.shutdown()
+        self.server.server_close()
+
 def _result_page(subtitle_id, next_page=None):
     row = (
         '<tr><td class="latest_name">1</td><td class="latest_name">'
@@ -528,6 +636,112 @@ def _result_page(subtitle_id, next_page=None):
     if next_page is not None:
         nav = f'<a href = "search.php?page={next_page}&name=Slow Show S01E01&sort=name"> Next >> </a>'
     return f"<html><body><table>{row}</table>{nav}</body></html>".encode()
+
+
+class GreekSubtitlesConnectionDeadlineTests(unittest.TestCase):
+    """Connecting, the TLS handshake and the wait for the response each get
+    only what is left before the deadline, not a fresh full timeout."""
+
+    HOST = "gr.greek-subtitles.com"
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.clock = _FakeClock()
+        self.started = self.clock()
+        self.deadline = self.started + 15.0
+
+    def _connection(self, connect_seconds, handshake_seconds, response_seconds):
+        cls = self.mod._deadline_connection(http.client.HTTPSConnection, self.deadline, self.clock)
+        self.tls = _FakeTLSContext(self.clock, handshake_seconds)
+        connection = cls(self.HOST, timeout=15.0, context=self.tls)
+        self.connect_timeouts = []
+        self.sockets = []
+
+        def fake_create_connection(address, timeout=None, source_address=None):
+            self.connect_timeouts.append(timeout)
+            if connect_seconds > timeout:
+                self.clock.advance(timeout)
+                raise socket.timeout("timed out")
+            self.clock.advance(connect_seconds)
+            sock = _FakeConnectedSocket(self.clock, timeout, response_seconds)
+            self.sockets.append(sock)
+            return sock
+
+        connection._create_connection = fake_create_connection
+        return connection
+
+    def _get(self, connection):
+        connection.request("GET", "/search")
+        return connection.getresponse().read()
+
+    def test_each_step_gets_only_the_time_left(self):
+        connection = self._connection(2.0, 5.0, 6.0)
+
+        self.assertEqual(self._get(connection), b"ok")
+
+        self.assertEqual(self.connect_timeouts, [15.0])
+        self.assertEqual(self.tls.handshake_timeouts, [13.0])
+        self.assertEqual(self.sockets[0].timeout_when_read, 8.0)
+
+    def test_slow_handshake_then_slow_response_ends_by_the_deadline(self):
+        # Measured on the GreekSubtitles origin: a TLS handshake of five to
+        # six seconds, before the page itself. Each wait fits a 15 second
+        # timeout, but together they ran past the deadline.
+        connection = self._connection(1.0, 6.0, 10.0)
+
+        with self.assertRaises(TimeoutError):
+            self._get(connection)
+
+        self.assertLessEqual(self.clock() - self.started, 15.0)
+
+    def test_no_time_left_after_connecting_stops_before_the_handshake(self):
+        connection = self._connection(15.0, 1.0, 1.0)
+
+        with self.assertRaises(TimeoutError):
+            self._get(connection)
+
+        self.assertEqual(self.tls.handshake_timeouts, [])
+
+    def test_requests_with_a_deadline_open_deadline_connections(self):
+        provider = self.mod.GreekSubtitlesProvider()
+        for scheme, base in (("https", http.client.HTTPSConnection), ("http", http.client.HTTPConnection)):
+            with self.subTest(scheme=scheme):
+                handler = next(
+                    item for item in provider._opener.handlers if hasattr(item, scheme + "_open")
+                )
+                request = urllib.request.Request(f"{scheme}://{self.HOST}/")
+                with mock.patch.object(handler, "do_open", return_value="response") as do_open:
+                    getattr(handler, scheme + "_open")(request)
+                    self.assertIs(do_open.call_args.args[0], base)
+                    request.deadline = self.deadline
+                    getattr(handler, scheme + "_open")(request)
+                    opened = do_open.call_args.args[0]
+                self.assertTrue(issubclass(opened, base))
+                self.assertIsNot(opened, base)
+
+
+class GreekSubtitlesLocalServerDeadlineTests(unittest.TestCase):
+    """The real opener and http.client against a local server."""
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.server = _StallingServer()
+        self.addCleanup(self.server.close)
+
+    def test_answer_inside_the_deadline_is_read(self):
+        provider = self.mod.GreekSubtitlesProvider()
+
+        self.assertEqual(provider._http_get(self.server.url + "/fast", deadline=time.monotonic() + 5), b"<html>ok</html>")
+
+    def test_held_request_ends_at_the_deadline(self):
+        provider = self.mod.GreekSubtitlesProvider()
+        started = time.monotonic()
+
+        with self.assertRaises((TimeoutError, urllib.error.URLError)) as caught:
+            provider._http_get(self.server.url + "/slow", deadline=time.monotonic() + 0.3)
+
+        self.assertTrue(self.mod._timed_out(caught.exception))
+        self.assertLess(time.monotonic() - started, 2.0)
 
 
 class GreekSubtitlesTimeBudgetTests(unittest.TestCase):
