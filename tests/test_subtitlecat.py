@@ -948,7 +948,8 @@ class _TimedHost(urllib.request.BaseHandler):
 
     Added to the provider's real opener, ahead of its HTTPS handler. A route is
     (seconds, status, value): value is a redirect's Location, a 200's body, or
-    a _Drip for a 200 whose body arrives in timed pieces. A route slower than
+    a _Drip for a 200 whose body arrives in timed pieces. A redirect whose own
+    body trickles in takes (Location, _Drip). A route slower than
     the request's timeout spends the whole timeout and then raises, the way a
     socket read does.
     """
@@ -971,6 +972,10 @@ class _TimedHost(urllib.request.BaseHandler):
         headers = email.message.Message()
         if isinstance(value, _Drip):
             body = _DrippingBody(self.clock, value, request.timeout)
+        elif status != 200 and isinstance(value, tuple):
+            # A redirect whose own body trickles in: (Location, _Drip).
+            headers["Location"] = value[0]
+            body = _DrippingBody(self.clock, value[1], request.timeout)
         elif status != 200:
             headers["Location"] = value
             body = io.BytesIO(b"")
@@ -1232,6 +1237,40 @@ class SubtitlecatResponseDeadlineTests(unittest.TestCase):
         deadline = self.started + self.mod.SEARCH_BUDGET_SECONDS
         self.assertLessEqual(host.calls[1]["timeout"], deadline - host.calls[1]["started"])
         self._assert_inside_the_budget()
+
+    def test_redirect_body_trickling_in_ends_by_the_deadline(self):
+        # urllib reads a redirect's own body before following it, with the
+        # first hop's socket timeout, so that body must end at the budget too.
+        target = "https://www.subtitlecat.com/index.php?search=Lioness+S03E08"
+        host = _TimedHost(
+            self.clock,
+            {
+                self.PRECISE: (1.0, 301, (target, _Drip(b"<html>moved</html>" * 20, 30, 4.0))),
+                target: (0.5, 200, _search_page("Lioness_S03E08", 100, 1)),
+            },
+        )
+
+        with self.assertRaises(TimeoutError):
+            self._provider_behind(host).search(self.EPISODE, self.ENGLISH, self.CONFIG)
+
+        self.assertEqual(host.urls(), [self.PRECISE])
+        self._assert_inside_the_budget()
+
+    def test_redirect_body_inside_the_budget_is_followed(self):
+        target = "https://www.subtitlecat.com/index.php?search=Lioness+S03E08"
+        host = _TimedHost(
+            self.clock,
+            {
+                self.PRECISE: (0.5, 301, (target, _Drip(b"<html>moved</html>", 3, 0.5))),
+                target: (0.5, 200, _search_page("Lioness_S03E08", 100, 1)),
+                self._detail_url(0): (0.5, 200, _detail_page(100, "en")),
+            },
+        )
+
+        results = self._provider_behind(host).search(self.EPISODE, self.ENGLISH, self.CONFIG)
+
+        self.assertEqual([item["page_link"] for item in results], [self._detail_url(0)])
+        self.assertEqual(host.urls(), [self.PRECISE, target, self._detail_url(0)])
 
     def test_page_sent_in_pieces_inside_the_budget_is_read_whole(self):
         host = _TimedHost(

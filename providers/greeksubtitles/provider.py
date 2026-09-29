@@ -163,6 +163,14 @@ class _DeadlineRedirectHandler(urllib.request.HTTPRedirectHandler):
         deadline = getattr(req, "deadline", None)
         if new is None or deadline is None:
             return new
+        # urllib reads the redirect's own body after this returns, with the
+        # first hop's socket timeout, so read it here against the deadline.
+        # urllib's read then finds nothing left.
+        try:
+            _read_by_deadline(fp, deadline, self._clock)
+        except BaseException:
+            fp.close()
+            raise
         remaining = deadline - self._clock()
         if remaining <= 0:
             fp.close()

@@ -414,7 +414,8 @@ class _TimedHost(urllib.request.BaseHandler):
 
     Added to the provider's real opener, ahead of its HTTPS handler. A route is
     (seconds, status, value): value is a redirect's Location or a 200's body,
-    or a _Drip for a 200 whose body arrives in timed pieces.
+    or a _Drip for a 200 whose body arrives in timed pieces. A redirect whose
+    own body trickles in takes (Location, _Drip).
     A route slower than the request's timeout spends the whole timeout and then
     raises, the way a socket read does.
     """
@@ -437,6 +438,10 @@ class _TimedHost(urllib.request.BaseHandler):
         headers = email.message.Message()
         if isinstance(value, _Drip):
             body = _DrippingBody(self.clock, value, request.timeout)
+        elif status != 200 and isinstance(value, tuple):
+            # A redirect whose own body trickles in: (Location, _Drip).
+            headers["Location"] = value[0]
+            body = _DrippingBody(self.clock, value[1], request.timeout)
         elif status != 200:
             headers["Location"] = value
             body = io.BytesIO(b"")
@@ -750,6 +755,58 @@ class GreekSubtitlesTimeBudgetTests(unittest.TestCase):
         self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["9000"])
         self.assertEqual(host.urls(), [url, second_url])
         self.assertLessEqual(self.clock() - self.started, self.mod.SEARCH_BUDGET_SECONDS)
+
+    def test_search_redirect_body_trickling_in_ends_by_the_deadline(self):
+        # urllib reads a redirect's own body before following it, with the
+        # first hop's socket timeout, so that body must end at the budget too.
+        url = self.mod.search_url_for("Slow Show S01E01")
+        target = f"{self.mod.BASE_URL}/search.php?page=0&name=Slow+Show+S01E01"
+        host = _TimedHost(
+            self.clock,
+            {
+                url: (1.0, 301, (target, _Drip(b"<html>moved</html>" * 20, 30, 4.0))),
+                target: (0.5, 200, _result_page(9000)),
+            },
+        )
+
+        with self.assertRaises(TimeoutError):
+            self._provider_behind(host).search(self.EPISODE, self.GREEK, self.CONFIG)
+
+        self.assertEqual(host.urls(), [url])
+        self.assertLessEqual(self.clock() - self.started, self.mod.SEARCH_BUDGET_SECONDS)
+
+    def test_download_redirect_body_trickling_in_ends_by_its_deadline(self):
+        url = self.DOWNLOAD["download_url"]
+        target = "https://www.greeksubtitles.info/files/1.srt"
+        host = _TimedHost(
+            self.clock,
+            {
+                url: (1.0, 302, (target, _Drip(b"<html>moved</html>" * 20, 30, 10.0))),
+                target: (0.4, 200, b"1\n00:00:01,000 --> 00:00:02,000\nLine\n"),
+            },
+        )
+
+        with self.assertRaises(TimeoutError):
+            self._provider_behind(host).download(self.DOWNLOAD, self.GREEK[0], {})
+
+        self.assertEqual(host.urls(), [url])
+        self.assertLessEqual(self.clock() - self.started, self.mod.DOWNLOAD_TIMEOUT_SECONDS)
+
+    def test_redirect_body_inside_the_budget_is_followed(self):
+        url = self.mod.search_url_for("Slow Show S01E01")
+        target = f"{self.mod.BASE_URL}/search.php?page=0&name=Slow+Show+S01E01"
+        host = _TimedHost(
+            self.clock,
+            {
+                url: (0.5, 301, (target, _Drip(b"<html>moved</html>", 3, 0.5))),
+                target: (0.5, 200, _result_page(9000)),
+            },
+        )
+
+        results = self._provider_behind(host).search(self.EPISODE, self.GREEK, self.CONFIG)
+
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["9000"])
+        self.assertEqual(host.urls(), [url, target])
 
     def test_page_sent_in_pieces_inside_the_budget_is_read_whole(self):
         url = self.mod.search_url_for("Slow Show S01E01")
