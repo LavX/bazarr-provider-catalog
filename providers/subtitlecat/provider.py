@@ -695,9 +695,9 @@ def _deadline_connection(base, deadline, clock):
     """An http.client connection class whose waits all end by ``deadline``.
 
     urllib gives each blocking socket operation the request's timeout afresh,
-    so connecting, the TLS handshake and the wait for the response could each
-    take a full timeout in turn. This class cuts the socket's timeout to the
-    time left before each of those steps.
+    so connecting, a proxy tunnel, the TLS handshake and the wait for the
+    response could each take a full timeout in turn. This class cuts the
+    socket's timeout to the time left before each of those steps.
     """
 
     class DeadlineConnection(base):
@@ -707,7 +707,7 @@ def _deadline_connection(base, deadline, clock):
 
             def create_then_cut(address, timeout=None, source_address=None):
                 sock = create(address, timeout, source_address)
-                # The TLS handshake, or a proxy tunnel, runs on this socket next.
+                # A proxy tunnel or the TLS handshake runs on this socket next.
                 try:
                     sock.settimeout(_time_left(deadline, clock, "connection"))
                 except BaseException:
@@ -717,6 +717,12 @@ def _deadline_connection(base, deadline, clock):
 
             self._create_connection = create_then_cut
             super().connect()
+
+        def _tunnel(self):
+            # Through a proxy, the CONNECT tunnel runs between connecting and
+            # the TLS handshake, so the handshake gets what the tunnel left.
+            super()._tunnel()
+            self.sock.settimeout(_time_left(deadline, clock, "connection"))
 
         def getresponse(self):
             if self.sock is not None:

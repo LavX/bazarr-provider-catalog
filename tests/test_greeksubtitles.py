@@ -524,16 +524,17 @@ class _DrippingBody:
 class _FakeConnectedSocket:
     """A connected socket on the fake clock, keeping the timeout set on it.
 
-    The response's first bytes take `response_seconds` to arrive. A wait
-    longer than the socket's timeout spends the timeout and raises, as a
-    real socket read does.
+    Each response read from it, a proxy's CONNECT reply first when there is
+    one, waits the next of `waits` seconds for its first bytes. A wait longer
+    than the socket's timeout spends the timeout and raises, as a real socket
+    read does.
     """
 
-    def __init__(self, clock, timeout, response_seconds):
+    def __init__(self, clock, timeout, waits):
         self.clock = clock
         self.timeout = timeout
-        self.response_seconds = response_seconds
-        self.timeout_when_read = None
+        self.waits = list(waits)
+        self.read_timeouts = []
 
     def settimeout(self, value):
         self.timeout = value
@@ -548,7 +549,7 @@ class _FakeConnectedSocket:
         pass
 
     def makefile(self, mode):
-        return _FirstByteWait(self, b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+        return _FirstByteWait(self, self.waits.pop(0), b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
 
     def close(self):
         pass
@@ -558,20 +559,21 @@ class _FakeConnectedSocket:
 class _FirstByteWait(io.BytesIO):
     """A response file whose first line waits on its socket's timeout."""
 
-    def __init__(self, sock, body):
+    def __init__(self, sock, seconds, body):
         super().__init__(body)
         self.sock = sock
+        self.seconds = seconds
         self.waited = False
 
     def readline(self, size=-1):
         if not self.waited:
             self.waited = True
             sock = self.sock
-            sock.timeout_when_read = sock.timeout
-            if sock.timeout is not None and sock.response_seconds > sock.timeout:
+            sock.read_timeouts.append(sock.timeout)
+            if sock.timeout is not None and self.seconds > sock.timeout:
                 sock.clock.advance(sock.timeout)
                 raise socket.timeout("timed out")
-            sock.clock.advance(sock.response_seconds)
+            sock.clock.advance(self.seconds)
         return super().readline(size)
 
 class _FakeTLSContext:
@@ -650,7 +652,7 @@ class GreekSubtitlesConnectionDeadlineTests(unittest.TestCase):
         self.started = self.clock()
         self.deadline = self.started + 15.0
 
-    def _connection(self, connect_seconds, handshake_seconds, response_seconds):
+    def _connection(self, connect_seconds, handshake_seconds, response_seconds, tunnel_seconds=None):
         cls = self.mod._deadline_connection(http.client.HTTPSConnection, self.deadline, self.clock)
         self.tls = _FakeTLSContext(self.clock, handshake_seconds)
         connection = cls(self.HOST, timeout=15.0, context=self.tls)
@@ -663,11 +665,14 @@ class GreekSubtitlesConnectionDeadlineTests(unittest.TestCase):
                 self.clock.advance(timeout)
                 raise socket.timeout("timed out")
             self.clock.advance(connect_seconds)
-            sock = _FakeConnectedSocket(self.clock, timeout, response_seconds)
+            waits = [response_seconds] if tunnel_seconds is None else [tunnel_seconds, response_seconds]
+            sock = _FakeConnectedSocket(self.clock, timeout, waits)
             self.sockets.append(sock)
             return sock
 
         connection._create_connection = fake_create_connection
+        if tunnel_seconds is not None:
+            connection.set_tunnel(self.HOST)
         return connection
 
     def _get(self, connection):
@@ -681,7 +686,17 @@ class GreekSubtitlesConnectionDeadlineTests(unittest.TestCase):
 
         self.assertEqual(self.connect_timeouts, [15.0])
         self.assertEqual(self.tls.handshake_timeouts, [13.0])
-        self.assertEqual(self.sockets[0].timeout_when_read, 8.0)
+        self.assertEqual(self.sockets[0].read_timeouts, [8.0])
+
+    def test_proxy_tunnel_time_is_taken_from_the_handshake(self):
+        # Through an HTTP proxy the CONNECT tunnel runs between connecting
+        # and the TLS handshake, on the same socket.
+        connection = self._connection(1.0, 3.0, 1.0, tunnel_seconds=6.0)
+
+        self.assertEqual(self._get(connection), b"ok")
+
+        self.assertEqual(self.sockets[0].read_timeouts, [14.0, 5.0])
+        self.assertEqual(self.tls.handshake_timeouts, [8.0])
 
     def test_slow_handshake_then_slow_response_ends_by_the_deadline(self):
         # Measured on the GreekSubtitles origin: a TLS handshake of five to
@@ -706,9 +721,10 @@ class GreekSubtitlesConnectionDeadlineTests(unittest.TestCase):
         provider = self.mod.GreekSubtitlesProvider()
         for scheme, base in (("https", http.client.HTTPSConnection), ("http", http.client.HTTPConnection)):
             with self.subTest(scheme=scheme):
-                handler = next(
-                    item for item in provider._opener.handlers if hasattr(item, scheme + "_open")
-                )
+                # A ProxyHandler, installed when a proxy is configured, has
+                # the same open methods, so pick the handler by type.
+                handler_class = {"https": self.mod._DeadlineHTTPSHandler, "http": self.mod._DeadlineHTTPHandler}[scheme]
+                handler = next(item for item in provider._opener.handlers if isinstance(item, handler_class))
                 request = urllib.request.Request(f"{scheme}://{self.HOST}/")
                 with mock.patch.object(handler, "do_open", return_value="response") as do_open:
                     getattr(handler, scheme + "_open")(request)
