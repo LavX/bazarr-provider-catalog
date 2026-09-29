@@ -57,6 +57,21 @@ _NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
 _YEAR_RE = re.compile(r"\((?P<year>\d{4})\)\s*$")
 _EPISODE_LABEL_RE = re.compile(r"(?P<season>\d{1,2})\s*(?:x|×)\s*(?P<episode>\d{1,3})", re.I)
 _SEASON_LABEL_RE = re.compile(r"\bS(?P<season>\d{1,2})\b", re.I)
+# Language tags in subtitle and archive names. Soustitres.eu writes English as VO or EN
+# and French as VF or FR, and a bilingual archive as ENFR. VO, VF, ENFR and the
+# three-letter codes are never ordinary words, so they count in any case. The bare
+# two-letter en/fr collide with French words ("Asterix.en.Bretagne"), so they count only
+# in capitals, or in any case as the last token before the extension.
+_LANGUAGE_TAGS = {
+    "vo": ("eng",),
+    "eng": ("eng",),
+    "vf": ("fra",),
+    "fre": ("fra",),
+    "enfr": ("eng", "fra"),
+}
+_TWO_LETTER_TAGS = {"en": "eng", "fr": "fra"}
+_NAME_EXTENSIONS = frozenset(extension[1:] for extension in SUBTITLE_EXTENSIONS) | {"zip", "rar", "7z"}
+_NAME_TOKEN_SPLIT_RE = re.compile(r"[^0-9A-Za-z]+")
 
 
 def parse_search_results(body):
@@ -380,14 +395,19 @@ def _pick_archive_member(members, payload):
     ]
     tagged = {name: _language_from_subtitle_filename(name) for name in subs}
     present = {lang for lang in tagged.values() if lang}
-    # Single-language or untagged archive: nothing to disambiguate, so the host's episode
-    # pick is safe. A multilingual archive missing the requested language must NOT defer
-    # (the host would pick another language), so reject and let Bazarr fall back.
-    if not language or len(present) < 2:
+    # Untagged archive: nothing to go on, so the host's episode pick decides.
+    if not language or not present:
         return None, "defer"
+    # Members are tagged, but none with the requested language (a French-only archive
+    # asked for English, say). Deferring would let the host hand over another language,
+    # so reject and let Bazarr fall back.
     if language not in present:
         return None, "reject"
     pool = [name for name in subs if tagged[name] == language]
+    # Every member carries the requested language: the host's episode pick is safe. With
+    # other or untagged members beside them, pin from the tagged ones below instead.
+    if len(pool) == len(subs):
+        return None, "defer"
     # A season pack carries several episodes per language; resolve the episode here too
     # before pinning, since the host cannot combine episode and language.
     season = _safe_int(payload.get("season"))
@@ -400,8 +420,8 @@ def _pick_archive_member(members, payload):
         ]
         if episode_pool:
             return episode_pool[0], "pin"
-        # Episode markers present but none matches: can't pin safely in a multilingual
-        # archive (episode-only defer would risk another language), so reject.
+        # Episode markers present but none matches: can't pin safely when other or untagged
+        # languages sit beside the pool (episode-only defer would risk them), so reject.
         if any(
             _file_has_episode_marker(_normalize_release(os.path.basename(name)))
             for name in pool
@@ -411,15 +431,30 @@ def _pick_archive_member(members, payload):
 
 
 def _language_from_subtitle_filename(name):
-    # Soustitres.eu tags English as VO and French as VF. Match those and the explicit
-    # three-letter ISO codes only: the bare two-letter ".en."/".fr." tokens collide with
-    # ordinary French words (e.g. "Asterix.en.Bretagne") and would mislabel the language.
-    compact = "." + _normalize_release(name) + "."
-    if ".vo." in compact or ".eng." in compact:
-        return "eng"
-    if ".vf." in compact or ".fre." in compact:
-        return "fra"
-    return None
+    # One subtitle file holds one language, so a name tagged with both cannot be pinned.
+    languages = _name_languages(name)
+    return next(iter(languages)) if len(languages) == 1 else None
+
+
+def _name_languages(name):
+    # The languages a subtitle or archive name is tagged with (see _LANGUAGE_TAGS). The
+    # raw name is read with its case intact, since before the last token only capitals
+    # make a bare EN or FR a tag. VO/VF-style tags outrank EN/FR, so a capitalised title
+    # word such as the EN in "ASTERIX.EN.BRETAGNE.VF" cannot add a language.
+    decomposed = unicodedata.normalize("NFKD", str(name or ""))
+    folded = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    tokens = [token for token in _NAME_TOKEN_SPLIT_RE.split(folded) if token]
+    if tokens and tokens[-1].lower() in _NAME_EXTENSIONS:
+        tokens = tokens[:-1]
+    languages = set()
+    for token in tokens:
+        languages.update(_LANGUAGE_TAGS.get(token.lower(), ()))
+    if languages:
+        return languages
+    languages.update(_TWO_LETTER_TAGS[token.lower()] for token in tokens if token in ("EN", "FR"))
+    if tokens and tokens[-1].lower() in _TWO_LETTER_TAGS:
+        languages.add(_TWO_LETTER_TAGS[tokens[-1].lower()])
+    return languages
 
 
 def _file_matches_episode(normalized_name, season, episode):
@@ -550,12 +585,9 @@ def _season_episode_from_label(label):
 
 
 def _languages_from_archive(filename, block):
-    normalized = "." + _normalize_release(filename) + "."
-    languages = set()
-    if "enfr" in normalized or ".en." in normalized or ".eng." in normalized or ".vo." in normalized:
-        languages.add("eng")
-    if "enfr" in normalized or ".fr." in normalized or ".fre." in normalized or ".vf." in normalized:
-        languages.add("fra")
+    # The same name tagging as member selection, so the row's declared languages and the
+    # member choice at download read a name the same way.
+    languages = set(_name_languages(filename))
     for match in _IMG_LANG_RE.finditer(block or ""):
         language = ALPHA2_TO_ALPHA3.get((match.group("lang") or "").lower())
         if language:
