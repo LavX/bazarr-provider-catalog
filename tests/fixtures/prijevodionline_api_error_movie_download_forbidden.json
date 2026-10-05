@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "Auth/Forbidden",
+    "message": "Missing permission: movies.translations.download or movies.translations.downloadFree"
+  }
+}

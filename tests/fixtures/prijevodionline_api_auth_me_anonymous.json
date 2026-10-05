@@ -1,0 +1,41 @@
+{
+  "user": {
+    "id": 0,
+    "name": "anonymous",
+    "displayName": "Anonymous",
+    "email": "",
+    "isAnonymous": true,
+    "isPremium": false,
+    "hasUnreadForumMessages": false,
+    "permissions": [
+      "auth.login",
+      "calendar.read",
+      "pages.cookies.read",
+      "pages.donations.read",
+      "files.public",
+      "lookups.genres.read",
+      "system.health.read",
+      "lookups.languages.read",
+      "movies.translations.read",
+      "movies.read",
+      "news.read",
+      "news.categories.read",
+      "pages.pricing.read",
+      "pages.privacy.read",
+      "pages.rules.read",
+      "series.read",
+      "series.translations.read",
+      "pages.statistics.read",
+      "lookups.subtitleFps.read",
+      "pages.terms.read",
+      "lookups.releaseFormats.read",
+      "series.translations.download",
+      "series.translations.downloadFree",
+      "pages.legacyLinks.read",
+      "briefs.read"
+    ],
+    "tokenBalance": 0,
+    "impersonator": null,
+    "canImpersonate": false
+  }
+}

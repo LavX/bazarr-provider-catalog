@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "Translation/NotFound",
+    "message": "Translation with ID 999999999 not found"
+  }
+}

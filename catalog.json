@@ -386,7 +386,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "7a5b7aaa2be7ea01283474f04832481af60ef736a231cf490085f67b37b81381",
+        "bundle_sha256": "441ceb7cdd8a509a4c15b9295173f83526c8db6f1f213632339175e39b508a51",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -408,7 +408,7 @@
         "entry_class": "AssrtProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "96bc6490dc4cbf90444d0d231aed4787a754258f842ad07c133505d9a2b89c72"
+          "provider.py": "ec71c390149cff1e0de96f9c67e53ed430e0e80505c55c6ab5fe30bc795bb33d"
         },
         "languages": [
           "eng",
@@ -435,7 +435,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.5"
+        "version": "0.1.6"
       }
     },
     {
@@ -1544,7 +1544,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "ec2213f8c7645322da08ee0f0dd452e46d0cc06c8bf6fd9c3f54faf94b6162f0",
+        "bundle_sha256": "f7c9fba58827e4b5d4d0921a025bf29b3a40f2f40dfbca87866ae5cfe1b7d922",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1566,7 +1566,7 @@
         "entry_class": "GreekSubtitlesProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "de6ff8b477aa896bae089e49d5f1ac8139a72f3798415d529e7fcbe2f8c7b535"
+          "provider.py": "bfe2c03aca6f2e422409eaa3a85d73efcb66b054698de86f9e141d994f95f65b"
         },
         "languages": [
           "ell",
@@ -1589,13 +1589,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.3"
+        "version": "0.1.6"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "94654f2a707b482ef5452f38ec94c97f77eb5f1d13254c506e9658c4a75fa06c",
+        "bundle_sha256": "7fb2198c060b83c9cb6545c862ca0346f28928cdc3a782592b3309038280a071",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1633,7 +1633,7 @@
         "entry_class": "HDBitsProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "f9d437836ecc89f0f5184ddc60251b93084b1be050a330c113faee12504ff069"
+          "provider.py": "2cfe31738b98be429fcece9ccc92820ffb90685eaa9758e0d2dcb436889eb1ca"
         },
         "languages": [
           "aar",
@@ -1839,7 +1839,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.7"
+        "version": "0.1.8"
       }
     },
     {
@@ -4362,13 +4362,33 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "d2569692e2b5c73d3467d7b96d11dd3e4df1a479e8a1bceb502637a0ad3e75aa",
+        "bundle_sha256": "3d36aa74bdd8280090f4132152b1c49262faf13204f1642a8a4d9b47810fb21f",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
+            "account_name": {
+              "default": "",
+              "description": "Optional. Without an account the provider still searches series and movies and downloads every series subtitle the site lets visitors download. An account unlocks two more things. Movie subtitles need an account, because the site does not let visitors download movies; without one, movie searches find nothing to download. Token-priced subtitles need an account too, and are bought only after you turn on Allow token-priced downloads. Fill in this and the password, or paste a session cookie instead. The site protects its sign-in page with a Cloudflare Turnstile captcha, so if Bazarr cannot sign in with a username and password, use the session cookie field.",
+              "secret": true,
+              "title": "Username (optional)",
+              "type": "string"
+            },
+            "account_password": {
+              "default": "",
+              "description": "Optional. The password for your Prijevodi-Online username.",
+              "secret": true,
+              "title": "Password (optional)",
+              "type": "string"
+            },
+            "allow_paid_downloads": {
+              "default": false,
+              "description": "Spends your account's download tokens. Off by default. When on, and a username and password or a session cookie is set, the provider may buy subtitles that cost no more than the Maximum tokens per download setting, for automatic and manual downloads alike. When off, token-priced subtitles are not offered and no tokens are ever spent.",
+              "title": "Allow token-priced downloads",
+              "type": "boolean"
+            },
             "flaresolverr_timeout_ms": {
               "default": 25000,
-              "description": "Maximum time FlareSolverr may spend fetching a page after a Cloudflare challenge.",
+              "description": "Maximum time FlareSolverr may spend clearing a Cloudflare challenge. Values over 25000 are used as 25000, so a solve fits in the time Bazarr gives each request.",
               "maximum": 30000,
               "minimum": 5000,
               "title": "FlareSolverr timeout (ms)",
@@ -4376,17 +4396,43 @@
             },
             "flaresolverr_url": {
               "default": "",
-              "description": "FlareSolverr /v1 endpoint used when prijevodi-online.org answers with a Cloudflare challenge. The site fronts everything with one, so the provider needs this to work at all from most networks.",
+              "description": "Optional. FlareSolverr /v1 endpoint, used only if prijevodi-online.org starts answering with a Cloudflare challenge. The site does not challenge requests today, so leave it empty unless searches fail with a Cloudflare error. Sign-in details and session cookies are never sent to FlareSolverr.",
               "title": "FlareSolverr URL",
+              "type": "string"
+            },
+            "max_tokens_per_download": {
+              "default": "1",
+              "description": "The most the provider may pay for one subtitle when token-priced downloads are on. Prices fall with age: a series subtitle costs 5 tokens in its first week, 2 until day 14, then 1. A movie subtitle costs 5, 3 and 2 until days 7, 21 and 60, then 1. At 1, Bazarr's regular searches pick a subtitle up once its price has dropped to 1.",
+              "enum": [
+                "1",
+                "2",
+                "3",
+                "5",
+                "10"
+              ],
+              "title": "Maximum tokens per download",
               "type": "string"
             },
             "request_delay_ms": {
               "default": 0,
-              "description": "Optional politeness delay between HTTP calls to prijevodi-online.org.",
+              "description": "Optional pause between requests to prijevodi-online.org. The provider already slows down by itself when the site's rate limit runs low.",
               "maximum": 5000,
               "minimum": 0,
               "title": "Delay between requests (ms)",
               "type": "integer"
+            },
+            "session_cookie": {
+              "default": "",
+              "description": "Optional, instead of a username and password. Sign in on www.prijevodi-online.org in your browser, open the developer tools, pick any request to /api/v1/ in the Network tab and copy its whole Cookie request header here. It is used first when set. It stops working when that browser session ends, including when you sign out in the browser.",
+              "secret": true,
+              "title": "Session cookie (optional)",
+              "type": "string"
+            },
+            "session_user_agent": {
+              "default": "",
+              "description": "Only needed if the site rejects the session cookie from Bazarr. Paste the User-Agent of the browser the cookie came from.",
+              "title": "Browser User-Agent for the session cookie (optional)",
+              "type": "string"
             }
           },
           "type": "object"
@@ -4394,23 +4440,30 @@
         "dependencies": {
           "requirements": []
         },
-        "description": "Scrapes Prijevodi-Online for Croatian, Serbian, Montenegrin, and Serbo-Croatian episode subtitles. ZIP and RAR downloads are supported. The site has been offline since August 2026, when its host suspended it over copyright complaints; the operators say the full site was backed up and are moving it to new hosting, so searches fail until it returns. When it is up it sits behind a Cloudflare managed challenge, which needs a FlareSolverr URL below.",
+        "description": "Uses the Prijevodi-Online API for Croatian, Serbian (Latin and Cyrillic), Bosnian, Montenegrin, Macedonian, and Serbo-Croatian episode and movie subtitles. No account is needed for series: search always works, and downloads work wherever the site lets visitors download. An account is optional and unlocks movies and token-priced subtitles. Movie subtitles need an account, because the site does not let visitors download movies. Sign in with a username and password or a browser session cookie. Tokens are spent only after you turn on token-priced downloads, and never for more than the per-download limit you set. Downloads arrive as ZIP archives (the site repacks older RAR uploads), and a RAR is still accepted.",
         "entry_class": "PrijevodiOnlineProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "7d7e276db3ad0dbd31099a07775cb51b1ac73c80b5639bced285b2e3b59a8b15"
+          "provider.py": "59fe99db0ea56600b2d2dcc2b3075a3aff8c33f0c66fefda7ba16cf88741457e"
         },
         "flaresolverr": true,
         "languages": [
+          "bos",
           "cnr",
           "hbs",
           "hrv",
+          "mkd",
+          "sr-Cyrl",
           "srp"
         ],
         "name": "Prijevodi-Online",
         "provider_id": "prijevodionline",
         "schema_version": 1,
-        "secret_fields": [],
+        "secret_fields": [
+          "account_name",
+          "account_password",
+          "session_cookie"
+        ],
         "source": {
           "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
           "commit": "0000000000000000000000000000000000000000",
@@ -4421,9 +4474,10 @@
           "type": "github"
         },
         "supported_media": [
-          "episode"
+          "episode",
+          "movie"
         ],
-        "version": "0.2.1"
+        "version": "0.3.0"
       }
     },
     {
@@ -4591,7 +4645,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "a9fd767d3bfd29914d0ec77b72cbde31240f1852e7640c8fcbb84fe0ac19edcd",
+        "bundle_sha256": "719200ded2962660f0c23c629c7f2cda7230327185495e274638de1596ccb0fa",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -4613,7 +4667,7 @@
         "entry_class": "SoustitreseuProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "a8ebd2bd098e4d91c9c8d97789a8b0c7320f0e2ab434efac8fa2ac2a0be08490"
+          "provider.py": "5a7f596fd886e9b56e0823a5b377b9e18d6280c17c5e94b812cddeea4bff6cf8"
         },
         "languages": [
           "eng",
@@ -4636,7 +4690,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.10"
+        "version": "0.1.11"
       }
     },
     {
@@ -6392,7 +6446,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "94e3744f5daac8effa567393bb19d7c7b97eb3a094e1ac85bac0ba82566b6376",
+        "bundle_sha256": "adb5c41a9f98732033cf3e26a7750be2b7c3405d82dd8fe9382651d580c79f69",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -6420,7 +6474,7 @@
         "entry_class": "SubtitlecatProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "188d9e192f70a10e73bbb36c5f02cbea0e9a4a73d7d3874e5778d70398872bec"
+          "provider.py": "38a64c5dc624ab334a5a0abe828d423cb9ddc82fe9069d9fc1e2e0c6458df418"
         },
         "languages": [
           "eng",
@@ -6493,7 +6547,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.5"
+        "version": "0.1.8"
       }
     },
     {

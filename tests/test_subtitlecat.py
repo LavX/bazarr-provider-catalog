@@ -1,8 +1,20 @@
 import base64
+import email.message
 import hashlib
+import http.client
+import http.server
 import importlib.util
+import io
+import socket
+import threading
+import time
+import types
 import unittest
+import urllib.error
+import urllib.request
+import urllib.response
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "subtitlecat"
@@ -825,6 +837,702 @@ class SubtitlecatProviderSearchTests(unittest.TestCase):
         # Both precise and loose search URLs must have been called.
         self.assertIn(precise_url, called)
         self.assertIn(loose_url, called)
+
+
+class _FakeClock:
+    """A monotonic clock the tests move by hand."""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
+class _TimedSite:
+    """Serves canned pages, each one taking a set time on the fake clock.
+
+    A page slower than the request's timeout spends the whole timeout and then
+    raises, the way a socket read does. A URL mapped to an exception raises it.
+    """
+
+    def __init__(self, clock, pages, latency=None, default_latency=1.0):
+        self.clock = clock
+        self.pages = pages
+        self.latency = latency or {}
+        self.default_latency = default_latency
+        self.calls = []
+
+    def get(self, url, timeout=15):
+        self.calls.append({"url": url, "timeout": timeout, "started": self.clock()})
+        seconds = self.latency.get(url, self.default_latency)
+        if seconds > timeout:
+            self.clock.advance(timeout)
+            raise TimeoutError("timed out")
+        self.clock.advance(seconds)
+        if url not in self.pages:
+            raise AssertionError(f"unexpected URL: {url}")
+        page = self.pages[url]
+        if isinstance(page, Exception):
+            raise page
+        return page
+
+    def urls(self):
+        return [call["url"] for call in self.calls]
+
+
+
+class _Drip:
+    """A 200 body sent in `pieces` parts, each arriving `seconds` after the last."""
+
+    def __init__(self, body, pieces, seconds):
+        size = max(1, -(-len(body) // pieces))
+        self.pieces = [body[start:start + size] for start in range(0, len(body), size)]
+        self.seconds = seconds
+
+
+class _FakeSocket:
+    """The socket behind a response, keeping the read timeout set on it."""
+
+    def __init__(self, timeout):
+        self.timeout = timeout
+
+    def gettimeout(self):
+        return self.timeout
+
+    def settimeout(self, value):
+        self.timeout = value
+
+
+class _DrippingBody:
+    """A response body that arrives one piece at a time on the fake clock.
+
+    Each piece comes inside the socket's read timeout, so no single read times
+    out however long the whole body takes, the way a server trickling bytes
+    behaves. A piece slower than the socket's current timeout spends that
+    timeout and raises, as a real socket read does. The socket sits where
+    http.client keeps it, behind the response's file.
+    """
+
+    closed = False
+
+    def __init__(self, clock, drip, timeout):
+        self.clock = clock
+        self.pieces = list(drip.pieces)
+        self.seconds = drip.seconds
+        self.raw = types.SimpleNamespace(_sock=_FakeSocket(timeout))
+
+    def read1(self, size=-1):
+        if not self.pieces:
+            return b""
+        sock = self.raw._sock
+        if sock.timeout is not None and self.seconds > sock.timeout:
+            self.clock.advance(sock.timeout)
+            raise socket.timeout("timed out")
+        self.clock.advance(self.seconds)
+        return self.pieces.pop(0)
+
+    def read(self, size=-1):
+        body = b""
+        piece = self.read1()
+        while piece:
+            body += piece
+            piece = self.read1()
+        return body
+
+    def close(self):
+        self.closed = True
+
+
+class _TimedHost(urllib.request.BaseHandler):
+    """Answers https requests on the fake clock, behind urllib's own redirects.
+
+    Added to the provider's real opener, ahead of its HTTPS handler. A route is
+    (seconds, status, value): value is a redirect's Location, a 200's body, or
+    a _Drip for a 200 whose body arrives in timed pieces. A redirect whose own
+    body trickles in takes (Location, _Drip). A route slower than
+    the request's timeout spends the whole timeout and then raises, the way a
+    socket read does.
+    """
+
+    handler_order = 100
+
+    def __init__(self, clock, routes):
+        self.clock = clock
+        self.routes = routes
+        self.calls = []
+
+    def https_open(self, request):
+        url = request.full_url
+        self.calls.append({"url": url, "timeout": request.timeout, "started": self.clock()})
+        seconds, status, value = self.routes[url]
+        if seconds > request.timeout:
+            self.clock.advance(request.timeout)
+            raise socket.timeout("timed out")
+        self.clock.advance(seconds)
+        headers = email.message.Message()
+        if isinstance(value, _Drip):
+            body = _DrippingBody(self.clock, value, request.timeout)
+        elif status != 200 and isinstance(value, tuple):
+            # A redirect whose own body trickles in: (Location, _Drip).
+            headers["Location"] = value[0]
+            body = _DrippingBody(self.clock, value[1], request.timeout)
+        elif status != 200:
+            headers["Location"] = value
+            body = io.BytesIO(b"")
+        else:
+            body = io.BytesIO(value)
+        response = urllib.response.addinfourl(body, headers, url, status)
+        response.msg = "OK" if status == 200 else "Moved"
+        return response
+
+    def urls(self):
+        return [call["url"] for call in self.calls]
+
+class _FakeConnectedSocket:
+    """A connected socket on the fake clock, keeping the timeout set on it.
+
+    Each response read from it, a proxy's CONNECT reply first when there is
+    one, waits the next of `waits` seconds for its first bytes. A wait longer
+    than the socket's timeout spends the timeout and raises, as a real socket
+    read does.
+    """
+
+    def __init__(self, clock, timeout, waits):
+        self.clock = clock
+        self.timeout = timeout
+        self.waits = list(waits)
+        self.read_timeouts = []
+
+    def settimeout(self, value):
+        self.timeout = value
+
+    def gettimeout(self):
+        return self.timeout
+
+    def setsockopt(self, *args):
+        pass
+
+    def sendall(self, data):
+        pass
+
+    def makefile(self, mode):
+        return _FirstByteWait(self, self.waits.pop(0), b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+
+    def close(self):
+        pass
+
+
+
+class _FirstByteWait(io.BytesIO):
+    """A response file whose first line waits on its socket's timeout."""
+
+    def __init__(self, sock, seconds, body):
+        super().__init__(body)
+        self.sock = sock
+        self.seconds = seconds
+        self.waited = False
+
+    def readline(self, size=-1):
+        if not self.waited:
+            self.waited = True
+            sock = self.sock
+            sock.read_timeouts.append(sock.timeout)
+            if sock.timeout is not None and self.seconds > sock.timeout:
+                sock.clock.advance(sock.timeout)
+                raise socket.timeout("timed out")
+            sock.clock.advance(self.seconds)
+        return super().readline(size)
+
+class _FakeTLSContext:
+    """Stands in for ssl.SSLContext: the handshake takes `seconds` on the fake clock."""
+
+    def __init__(self, clock, seconds):
+        self.clock = clock
+        self.seconds = seconds
+        self.handshake_timeouts = []
+
+    def wrap_socket(self, sock, server_hostname=None):
+        timeout = sock.gettimeout()
+        self.handshake_timeouts.append(timeout)
+        if timeout is not None and self.seconds > timeout:
+            self.clock.advance(timeout)
+            raise socket.timeout("_ssl.c: The handshake operation timed out")
+        self.clock.advance(self.seconds)
+        return sock
+
+
+class _StallingServer:
+    """A local HTTP server: /fast answers at once, /slow holds the request."""
+
+    def __init__(self):
+        release = self.release = threading.Event()
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == "/slow":
+                    release.wait(5)
+                body = b"<html>ok</html>"
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass  # The client gave up at its deadline.
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server.daemon_threads = True
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def close(self):
+        self.release.set()
+        self.server.shutdown()
+        self.server.server_close()
+
+def _search_page(prefix, first_id, count):
+    rows = b"".join(
+        f'<a href="/subs/{first_id + n}/{prefix}_{n}.html">{prefix} {n}</a>'.encode()
+        for n in range(count)
+    )
+    return b"<html><body>" + rows + b"</body></html>"
+
+
+def _detail_page(detail_id, alpha2):
+    if alpha2 is None:
+        return b"<html><body></body></html>"
+    return (
+        f'<html><body><a id="download_{alpha2}" '
+        f'href="/subs/{detail_id}/sub-{alpha2}.srt">{alpha2}</a>'
+        f"English-orig.srt</body></html>"
+    ).encode()
+
+
+class SubtitlecatSearchBudgetTests(unittest.TestCase):
+    EPISODE = {"kind": "episode", "series": "Lioness", "season": 3, "episode": 8}
+    PRECISE = "https://www.subtitlecat.com/index.php?search=Lioness%20S03E08"
+    LOOSE = "https://www.subtitlecat.com/index.php?search=Lioness"
+    ENGLISH = [{"alpha3": "eng", "alpha2": "en"}]
+    CONFIG = {"include_machine_translated": True, "request_delay_ms": 0}
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.clock = _FakeClock()
+        self.started = self.clock()
+        self.deadline = self.started + self.mod.SEARCH_BUDGET_SECONDS
+
+    def _site(self, precise_count, precise_alpha2, loose_count=0, loose_alpha2="en", **kwargs):
+        pages = {
+            self.PRECISE: _search_page("Lioness_S03E08", 100, precise_count),
+            self.LOOSE: _search_page("Lioness", 200, loose_count),
+        }
+        for n in range(precise_count):
+            url = f"https://www.subtitlecat.com/subs/{100 + n}/Lioness_S03E08_{n}.html"
+            pages[url] = _detail_page(100 + n, precise_alpha2)
+        for n in range(loose_count):
+            url = f"https://www.subtitlecat.com/subs/{200 + n}/Lioness_{n}.html"
+            pages[url] = _detail_page(200 + n, loose_alpha2)
+        return _TimedSite(self.clock, pages, **kwargs)
+
+    def _provider(self, site):
+        provider = self.mod.SubtitlecatProvider()
+        provider._monotonic = self.clock  # noqa: SLF001 - test clock
+        provider._http_get = site.get  # noqa: SLF001 - test override
+        return provider
+
+    def _assert_requests_fit_the_budget(self, site):
+        self.assertLessEqual(self.clock() - self.started, self.mod.SEARCH_BUDGET_SECONDS)
+        for call in site.calls:
+            remaining = self.deadline - call["started"]
+            self.assertGreater(remaining, 0, call["url"])
+            self.assertGreater(call["timeout"], 0, call["url"])
+            self.assertLessEqual(call["timeout"], remaining, call["url"])
+            self.assertLessEqual(call["timeout"], self.mod.HTTP_TIMEOUT_SECONDS, call["url"])
+
+    def test_budget_ends_inside_the_hosts_per_provider_limit(self):
+        # Discover stops waiting at 20 seconds on an install set to the older
+        # limit, and a real request runs a second or two past its socket
+        # timeout because DNS, connect and TLS are timed separately.
+        self.assertLessEqual(self.mod.SEARCH_BUDGET_SECONDS, 15)
+
+    def test_timed_out_covers_read_and_connect_timeouts_only(self):
+        timed_out = self.mod._timed_out  # noqa: SLF001
+        self.assertTrue(timed_out(TimeoutError("timed out")))
+        self.assertTrue(timed_out(socket.timeout("timed out")))
+        self.assertTrue(timed_out(urllib.error.URLError(TimeoutError("timed out"))))
+        self.assertFalse(timed_out(urllib.error.URLError(ConnectionRefusedError())))
+        self.assertFalse(
+            timed_out(urllib.error.HTTPError("https://x", 503, "Busy", None, None))
+        )
+        self.assertFalse(timed_out(ValueError("bad page")))
+
+    def test_search_stops_at_the_budget_and_returns_partial_results(self):
+        site = self._site(precise_count=10, precise_alpha2="en", default_latency=2.0)
+        results = self._provider(site).search(self.EPISODE, self.ENGLISH, self.CONFIG)
+
+        self._assert_requests_fit_the_budget(site)
+        detail_calls = site.calls[1:]
+        answered = [
+            call["url"] for call in detail_calls if call["timeout"] >= 2.0
+        ]
+        # Every page that answered in time produced its result, and the search
+        # stopped before reaching the last candidates.
+        self.assertTrue(results)
+        self.assertLess(len(detail_calls), 10)
+        self.assertEqual([item["page_link"] for item in results], answered)
+        self.assertNotIn(self.LOOSE, site.urls())
+
+    def test_search_skips_the_loose_query_when_the_budget_is_spent(self):
+        site = self._site(precise_count=10, precise_alpha2="de", loose_count=3, default_latency=2.0)
+        results = self._provider(site).search(self.EPISODE, self.ENGLISH, self.CONFIG)
+
+        self.assertEqual(results, [])
+        self.assertNotIn(self.LOOSE, site.urls())
+        self._assert_requests_fit_the_budget(site)
+
+    def test_measured_lioness_search_returns_inside_the_budget(self):
+        # Latencies measured against the live site: three precise hits without
+        # the requested language, then a loose page that fills the cap.
+        latency = {
+            self.PRECISE: 0.51,
+            self.LOOSE: 1.68,
+            "https://www.subtitlecat.com/subs/100/Lioness_S03E08_0.html": 2.40,
+            "https://www.subtitlecat.com/subs/101/Lioness_S03E08_1.html": 0.67,
+            "https://www.subtitlecat.com/subs/102/Lioness_S03E08_2.html": 0.57,
+        }
+        site = self._site(
+            precise_count=3,
+            precise_alpha2="de",
+            loose_count=self.mod.MAX_CANDIDATES_PER_QUERY,
+            latency=latency,
+            default_latency=1.21,
+        )
+        results = self._provider(site).search(self.EPISODE, self.ENGLISH, self.CONFIG)
+
+        self._assert_requests_fit_the_budget(site)
+        self.assertIn(self.LOOSE, site.urls())
+        self.assertTrue(results)
+        self.assertTrue(all(item["language"]["alpha2"] == "en" for item in results))
+
+    def test_loose_search_page_timing_out_ends_with_nothing_found(self):
+        site = self._site(
+            precise_count=2,
+            precise_alpha2="de",
+            loose_count=2,
+            latency={self.LOOSE: 60.0},
+        )
+        results = self._provider(site).search(self.EPISODE, self.ENGLISH, self.CONFIG)
+
+        self.assertEqual(results, [])
+        self.assertEqual(site.urls()[-1], self.LOOSE)
+        self._assert_requests_fit_the_budget(site)
+
+    def test_loose_search_page_failing_another_way_still_raises(self):
+        # Only running out of time ends the loose query quietly. A server
+        # error or a refused connection there is still the site failing.
+        for error in (
+            urllib.error.HTTPError(self.LOOSE, 500, "Server Error", None, None),
+            urllib.error.URLError(ConnectionRefusedError()),
+        ):
+            with self.subTest(error=error):
+                site = self._site(precise_count=2, precise_alpha2="de", loose_count=2)
+                site.pages[self.LOOSE] = error
+
+                with self.assertRaises(type(error)):
+                    self._provider(site).search(self.EPISODE, self.ENGLISH, self.CONFIG)
+                self.assertEqual(site.urls()[-1], self.LOOSE)
+
+    def test_first_search_page_timing_out_still_raises(self):
+        site = self._site(precise_count=2, precise_alpha2="en", latency={self.PRECISE: 60.0})
+
+        with self.assertRaises(TimeoutError):
+            self._provider(site).search(self.EPISODE, self.ENGLISH, self.CONFIG)
+        self.assertEqual(site.urls(), [self.PRECISE])
+        self._assert_requests_fit_the_budget(site)
+
+    def test_request_delay_never_sleeps_past_the_budget(self):
+        site = self._site(precise_count=10, precise_alpha2="en", default_latency=1.0)
+        provider = self._provider(site)
+        sleeps = []
+
+        def fake_sleep(seconds):
+            sleeps.append(seconds)
+            self.clock.advance(seconds)
+
+        config = dict(self.CONFIG, request_delay_ms=5000)
+        with mock.patch.object(self.mod.time, "sleep", side_effect=fake_sleep):
+            results = provider.search(self.EPISODE, self.ENGLISH, config)
+
+        self.assertTrue(results)
+        self.assertTrue(sleeps)
+        self._assert_requests_fit_the_budget(site)
+
+
+class SubtitlecatResponseDeadlineTests(unittest.TestCase):
+    """The real _http_get, behind urllib's redirects, on the fake clock."""
+
+    EPISODE = {"kind": "episode", "series": "Lioness", "season": 3, "episode": 8}
+    PRECISE = "https://www.subtitlecat.com/index.php?search=Lioness%20S03E08"
+    ENGLISH = [{"alpha3": "eng", "alpha2": "en"}]
+    CONFIG = {"include_machine_translated": True, "request_delay_ms": 0}
+    SUBTITLE = "1\n00:00:01,000 --> 00:00:02,500\nHello world.\n".encode("utf-8")
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.clock = _FakeClock()
+        self.started = self.clock()
+
+    def _provider_behind(self, host):
+        provider = self.mod.SubtitlecatProvider()
+        provider._monotonic = self.clock  # noqa: SLF001 - test clock
+        provider._opener.add_handler(host)  # noqa: SLF001 - fake site
+        return provider
+
+    def _detail_url(self, n):
+        return f"https://www.subtitlecat.com/subs/{100 + n}/Lioness_S03E08_{n}.html"
+
+    def _assert_inside_the_budget(self):
+        self.assertLessEqual(self.clock() - self.started, self.mod.SEARCH_BUDGET_SECONDS)
+
+    def test_search_page_trickling_in_ends_by_the_deadline(self):
+        # A socket timeout bounds each read, not the body, so a page whose
+        # bytes keep arriving inside it must still end at the budget.
+        page = _search_page("Lioness_S03E08", 100, 2)
+        host = _TimedHost(self.clock, {self.PRECISE: (1.0, 200, _Drip(page, 30, 4.0))})
+
+        with self.assertRaises(TimeoutError):
+            self._provider_behind(host).search(self.EPISODE, self.ENGLISH, self.CONFIG)
+
+        self.assertEqual(host.urls(), [self.PRECISE])
+        self._assert_inside_the_budget()
+
+    def test_detail_page_trickling_in_keeps_the_finished_results(self):
+        host = _TimedHost(
+            self.clock,
+            {
+                self.PRECISE: (0.5, 200, _search_page("Lioness_S03E08", 100, 2)),
+                self._detail_url(0): (1.0, 200, _detail_page(100, "en")),
+                self._detail_url(1): (1.0, 200, _Drip(_detail_page(101, "en"), 30, 4.0)),
+            },
+        )
+
+        results = self._provider_behind(host).search(self.EPISODE, self.ENGLISH, self.CONFIG)
+
+        self.assertEqual([item["page_link"] for item in results], [self._detail_url(0)])
+        self.assertEqual(host.urls(), [self.PRECISE, self._detail_url(0), self._detail_url(1)])
+        self._assert_inside_the_budget()
+
+    def test_search_redirect_hop_stays_inside_the_budget(self):
+        # urllib opens a redirect's target with the first hop's timeout, so a
+        # slow redirect followed by a silent page must not get a second full
+        # wait.
+        target = "https://www.subtitlecat.com/index.php?search=Lioness+S03E08"
+        host = _TimedHost(
+            self.clock,
+            {self.PRECISE: (10.0, 301, target), target: (600.0, 200, b"")},
+        )
+
+        with self.assertRaises(TimeoutError):
+            self._provider_behind(host).search(self.EPISODE, self.ENGLISH, self.CONFIG)
+
+        self.assertEqual(host.urls(), [self.PRECISE, target])
+        deadline = self.started + self.mod.SEARCH_BUDGET_SECONDS
+        self.assertLessEqual(host.calls[1]["timeout"], deadline - host.calls[1]["started"])
+        self._assert_inside_the_budget()
+
+    def test_redirect_body_trickling_in_ends_by_the_deadline(self):
+        # urllib reads a redirect's own body before following it, with the
+        # first hop's socket timeout, so that body must end at the budget too.
+        target = "https://www.subtitlecat.com/index.php?search=Lioness+S03E08"
+        host = _TimedHost(
+            self.clock,
+            {
+                self.PRECISE: (1.0, 301, (target, _Drip(b"<html>moved</html>" * 20, 30, 4.0))),
+                target: (0.5, 200, _search_page("Lioness_S03E08", 100, 1)),
+            },
+        )
+
+        with self.assertRaises(TimeoutError):
+            self._provider_behind(host).search(self.EPISODE, self.ENGLISH, self.CONFIG)
+
+        self.assertEqual(host.urls(), [self.PRECISE])
+        self._assert_inside_the_budget()
+
+    def test_redirect_body_inside_the_budget_is_followed(self):
+        target = "https://www.subtitlecat.com/index.php?search=Lioness+S03E08"
+        host = _TimedHost(
+            self.clock,
+            {
+                self.PRECISE: (0.5, 301, (target, _Drip(b"<html>moved</html>", 3, 0.5))),
+                target: (0.5, 200, _search_page("Lioness_S03E08", 100, 1)),
+                self._detail_url(0): (0.5, 200, _detail_page(100, "en")),
+            },
+        )
+
+        results = self._provider_behind(host).search(self.EPISODE, self.ENGLISH, self.CONFIG)
+
+        self.assertEqual([item["page_link"] for item in results], [self._detail_url(0)])
+        self.assertEqual(host.urls(), [self.PRECISE, target, self._detail_url(0)])
+
+    def test_page_sent_in_pieces_inside_the_budget_is_read_whole(self):
+        host = _TimedHost(
+            self.clock,
+            {
+                self.PRECISE: (0.5, 200, _Drip(_search_page("Lioness_S03E08", 100, 1), 4, 1.0)),
+                self._detail_url(0): (0.5, 200, _Drip(_detail_page(100, "en"), 3, 1.0)),
+            },
+        )
+
+        results = self._provider_behind(host).search(self.EPISODE, self.ENGLISH, self.CONFIG)
+
+        self.assertEqual([item["page_link"] for item in results], [self._detail_url(0)])
+
+    def test_download_trickling_in_ends_inside_its_timeout(self):
+        url = "https://www.subtitlecat.com/subs/1/x-en.srt"
+        host = _TimedHost(self.clock, {url: (1.0, 200, _Drip(self.SUBTITLE * 20, 40, 5.0))})
+        payload = {"provider": "subtitlecat", "schema": 1, "subtitle_url": url, "language": "eng"}
+
+        with self.assertRaises(TimeoutError):
+            self._provider_behind(host).download(payload, self.ENGLISH[0], {})
+
+        self.assertLessEqual(self.clock() - self.started, self.mod.HTTP_TIMEOUT_SECONDS)
+
+    def test_download_reads_the_whole_file(self):
+        url = "https://www.subtitlecat.com/subs/1/x-en.srt"
+        host = _TimedHost(self.clock, {url: (0.5, 200, _Drip(self.SUBTITLE, 3, 0.5))})
+        payload = {"provider": "subtitlecat", "schema": 1, "subtitle_url": url, "language": "eng"}
+
+        result = self._provider_behind(host).download(payload, self.ENGLISH[0], {})
+
+        self.assertEqual(base64.b64decode(result["content_b64"]), self.SUBTITLE)
+
+
+class SubtitlecatConnectionDeadlineTests(unittest.TestCase):
+    """Connecting, the TLS handshake and the wait for the response each get
+    only what is left before the deadline, not a fresh full timeout."""
+
+    HOST = "www.subtitlecat.com"
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.clock = _FakeClock()
+        self.started = self.clock()
+        self.deadline = self.started + 15.0
+
+    def _connection(self, connect_seconds, handshake_seconds, response_seconds, tunnel_seconds=None):
+        cls = self.mod._deadline_connection(http.client.HTTPSConnection, self.deadline, self.clock)
+        self.tls = _FakeTLSContext(self.clock, handshake_seconds)
+        connection = cls(self.HOST, timeout=15.0, context=self.tls)
+        self.connect_timeouts = []
+        self.sockets = []
+
+        def fake_create_connection(address, timeout=None, source_address=None):
+            self.connect_timeouts.append(timeout)
+            if connect_seconds > timeout:
+                self.clock.advance(timeout)
+                raise socket.timeout("timed out")
+            self.clock.advance(connect_seconds)
+            waits = [response_seconds] if tunnel_seconds is None else [tunnel_seconds, response_seconds]
+            sock = _FakeConnectedSocket(self.clock, timeout, waits)
+            self.sockets.append(sock)
+            return sock
+
+        connection._create_connection = fake_create_connection
+        if tunnel_seconds is not None:
+            connection.set_tunnel(self.HOST)
+        return connection
+
+    def _get(self, connection):
+        connection.request("GET", "/search")
+        return connection.getresponse().read()
+
+    def test_each_step_gets_only_the_time_left(self):
+        connection = self._connection(2.0, 5.0, 6.0)
+
+        self.assertEqual(self._get(connection), b"ok")
+
+        self.assertEqual(self.connect_timeouts, [15.0])
+        self.assertEqual(self.tls.handshake_timeouts, [13.0])
+        self.assertEqual(self.sockets[0].read_timeouts, [8.0])
+
+    def test_proxy_tunnel_time_is_taken_from_the_handshake(self):
+        # Through an HTTP proxy the CONNECT tunnel runs between connecting
+        # and the TLS handshake, on the same socket.
+        connection = self._connection(1.0, 3.0, 1.0, tunnel_seconds=6.0)
+
+        self.assertEqual(self._get(connection), b"ok")
+
+        self.assertEqual(self.sockets[0].read_timeouts, [14.0, 5.0])
+        self.assertEqual(self.tls.handshake_timeouts, [8.0])
+
+    def test_slow_handshake_then_slow_response_ends_by_the_deadline(self):
+        # Measured on the GreekSubtitles origin: a TLS handshake of five to
+        # six seconds, before the page itself. Each wait fits a 15 second
+        # timeout, but together they ran past the deadline.
+        connection = self._connection(1.0, 6.0, 10.0)
+
+        with self.assertRaises(TimeoutError):
+            self._get(connection)
+
+        self.assertLessEqual(self.clock() - self.started, 15.0)
+
+    def test_no_time_left_after_connecting_stops_before_the_handshake(self):
+        connection = self._connection(15.0, 1.0, 1.0)
+
+        with self.assertRaises(TimeoutError):
+            self._get(connection)
+
+        self.assertEqual(self.tls.handshake_timeouts, [])
+
+    def test_requests_with_a_deadline_open_deadline_connections(self):
+        provider = self.mod.SubtitlecatProvider()
+        for scheme, base in (("https", http.client.HTTPSConnection), ("http", http.client.HTTPConnection)):
+            with self.subTest(scheme=scheme):
+                # A ProxyHandler, installed when a proxy is configured, has
+                # the same open methods, so pick the handler by type.
+                handler_class = {"https": self.mod._DeadlineHTTPSHandler, "http": self.mod._DeadlineHTTPHandler}[scheme]
+                handler = next(item for item in provider._opener.handlers if isinstance(item, handler_class))
+                request = urllib.request.Request(f"{scheme}://{self.HOST}/")
+                with mock.patch.object(handler, "do_open", return_value="response") as do_open:
+                    getattr(handler, scheme + "_open")(request)
+                    self.assertIs(do_open.call_args.args[0], base)
+                    request.deadline = self.deadline
+                    getattr(handler, scheme + "_open")(request)
+                    opened = do_open.call_args.args[0]
+                self.assertTrue(issubclass(opened, base))
+                self.assertIsNot(opened, base)
+
+
+class SubtitlecatLocalServerDeadlineTests(unittest.TestCase):
+    """The real opener and http.client against a local server."""
+
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.server = _StallingServer()
+        self.addCleanup(self.server.close)
+
+    def test_answer_inside_the_deadline_is_read(self):
+        provider = self.mod.SubtitlecatProvider()
+
+        self.assertEqual(provider._http_get(self.server.url + "/fast", timeout=5), b"<html>ok</html>")
+
+    def test_held_request_ends_at_the_deadline(self):
+        provider = self.mod.SubtitlecatProvider()
+        started = time.monotonic()
+
+        with self.assertRaises((TimeoutError, urllib.error.URLError)) as caught:
+            provider._http_get(self.server.url + "/slow", timeout=0.3)
+
+        self.assertTrue(self.mod._timed_out(caught.exception))
+        self.assertLess(time.monotonic() - started, 2.0)
 
 
 class SubtitlecatProviderDownloadTests(unittest.TestCase):

@@ -6,9 +6,11 @@ the Python standard library; no third-party imports are permitted here.
 
 import base64 as _base64
 import hashlib as _hashlib
+import http.client
 import re
 import time
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -20,6 +22,17 @@ USER_AGENT = (
 )
 HTTP_TIMEOUT_SECONDS = 15
 MAX_CANDIDATES_PER_QUERY = 10
+# A body is read in pieces of up to this size, so a deadline is checked
+# between them.
+READ_PIECE_BYTES = 64 * 1024
+# Wall clock for one whole search, every query and detail page included. It
+# applies to every search, scheduled and manual ones as well as Discover.
+# Discover calls a provider slow after 24 of its default 40 seconds, and
+# stops waiting at 20 on an install set to the older 20 second limit. A real
+# request runs a second or two past its socket timeout, because DNS, connect
+# and TLS are timed separately, so the budget leaves that room. Past it the
+# search starts no new request and returns what it already found.
+SEARCH_BUDGET_SECONDS = 15
 
 
 def build_queries(video):
@@ -660,10 +673,173 @@ def _alpha3_for(alpha2):
     return _ALPHA2_TO_ALPHA3.get(alpha2)
 
 
-def _sleep(config):
+def _sleep(config, max_seconds=None):
     delay_ms = (config or {}).get("request_delay_ms", 0) or 0
     if delay_ms > 0:
-        time.sleep(min(delay_ms, 5000) / 1000.0)
+        delay = min(delay_ms, 5000) / 1000.0
+        if max_seconds is not None:
+            delay = min(delay, max_seconds)
+        if delay > 0:
+            time.sleep(delay)
+
+
+def _time_left(deadline, clock, step):
+    """Seconds left before ``deadline``, raising TimeoutError once none are."""
+    remaining = deadline - clock()
+    if remaining <= 0:
+        raise TimeoutError(f"subtitlecat {step} ran out of its time budget")
+    return remaining
+
+
+def _deadline_connection(base, deadline, clock):
+    """An http.client connection class whose waits all end by ``deadline``.
+
+    urllib gives each blocking socket operation the request's timeout afresh,
+    so connecting, a proxy tunnel, the TLS handshake and the wait for the
+    response could each take a full timeout in turn. This class cuts the
+    socket's timeout to the time left before each of those steps.
+    """
+
+    class DeadlineConnection(base):
+        def connect(self):
+            self.timeout = _time_left(deadline, clock, "connection")
+            create = self._create_connection
+
+            def create_then_cut(address, timeout=None, source_address=None):
+                sock = create(address, timeout, source_address)
+                # A proxy tunnel or the TLS handshake runs on this socket next.
+                try:
+                    sock.settimeout(_time_left(deadline, clock, "connection"))
+                except BaseException:
+                    sock.close()
+                    raise
+                return sock
+
+            self._create_connection = create_then_cut
+            super().connect()
+
+        def _tunnel(self):
+            # Through a proxy, the CONNECT tunnel runs between connecting and
+            # the TLS handshake, so the handshake gets what the tunnel left.
+            super()._tunnel()
+            self.sock.settimeout(_time_left(deadline, clock, "connection"))
+
+        def getresponse(self):
+            if self.sock is not None:
+                self.sock.settimeout(_time_left(deadline, clock, "response"))
+            return super().getresponse()
+
+    return DeadlineConnection
+
+
+class _DeadlineHTTPHandler(urllib.request.HTTPHandler):
+    """Opens a request that carries a deadline on a deadline connection."""
+
+    def __init__(self, clock):
+        super().__init__()
+        self._clock = clock
+
+    def http_open(self, req):
+        deadline = getattr(req, "deadline", None)
+        if deadline is None:
+            return super().http_open(req)
+        connection = _deadline_connection(http.client.HTTPConnection, deadline, self._clock)
+        return self.do_open(connection, req)
+
+
+class _DeadlineHTTPSHandler(urllib.request.HTTPSHandler):
+    """Opens a request that carries a deadline on a deadline connection."""
+
+    def __init__(self, clock):
+        super().__init__()
+        self._clock = clock
+
+    def https_open(self, req):
+        deadline = getattr(req, "deadline", None)
+        if deadline is None:
+            return super().https_open(req)
+        connection = _deadline_connection(http.client.HTTPSConnection, deadline, self._clock)
+        return self.do_open(connection, req, context=self._context)
+
+
+class _DeadlineRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect only inside the time left before the request's deadline.
+
+    urllib opens a redirect's target with the first request's timeout, so
+    without this a slow redirect followed by a silent page would wait out a
+    second full timeout.
+    """
+
+    def __init__(self, clock):
+        super().__init__()
+        self._clock = clock
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        deadline = getattr(req, "deadline", None)
+        if new is None or deadline is None:
+            return new
+        # urllib reads the redirect's own body after this returns, with the
+        # first hop's socket timeout, so read it here against the deadline.
+        # urllib's read then finds nothing left.
+        try:
+            _read_by_deadline(fp, deadline, self._clock)
+        except BaseException:
+            fp.close()
+            raise
+        remaining = deadline - self._clock()
+        if remaining <= 0:
+            fp.close()
+            raise TimeoutError("subtitlecat redirect ran out of its time budget")
+        new.deadline = deadline
+        # urllib opens the new request with req.timeout, not new.timeout.
+        req.timeout = min(req.timeout, remaining)
+        return new
+
+
+def _read_by_deadline(response, deadline, clock):
+    """Read a response body, giving up once its deadline passes.
+
+    A socket timeout bounds each read, not the whole body, so a server that
+    keeps sending a few bytes at a time could hold one read() past any
+    deadline. The body is read a piece at a time instead, each read allowed
+    only what is left.
+    """
+    read1 = getattr(response, "read1", None)
+    if read1 is None:
+        return response.read()
+    pieces = []
+    while True:
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise TimeoutError("subtitlecat response ran out of its time budget")
+        _limit_read_wait(response, remaining)
+        piece = read1(READ_PIECE_BYTES)
+        if not piece:
+            return b"".join(pieces)
+        pieces.append(piece)
+
+
+def _limit_read_wait(response, seconds):
+    """Hold the next socket read to the time left.
+
+    http.client keeps the socket only behind the response's file, so reach it
+    there. A response without one keeps its own timeout, which the request
+    already sized to the deadline.
+    """
+    sock = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
+    if sock is None or not hasattr(sock, "settimeout"):
+        return
+    current = sock.gettimeout()
+    if current is None or seconds < current:
+        sock.settimeout(seconds)
+
+
+def _timed_out(error):
+    """True for a read timeout, or a connect timeout that urllib wraps in URLError."""
+    if isinstance(error, urllib.error.URLError):
+        error = error.reason
+    return isinstance(error, TimeoutError)
 
 
 def _matches_for(video):
@@ -690,7 +866,40 @@ class SubtitlecatProvider:
     :py:meth:`_http_get` so tests can monkeypatch it without touching urllib.
     """
 
+    def __init__(self):
+        # The search budget reads this clock, so tests can move time by hand.
+        self._monotonic = time.monotonic
+
+        def clock():
+            # Read at call time, so a test that swaps _monotonic moves it too.
+            return self._monotonic()
+
+        self._opener = urllib.request.build_opener(
+            _DeadlineRedirectHandler(clock),
+            _DeadlineHTTPHandler(clock),
+            _DeadlineHTTPSHandler(clock),
+        )
+
+    def _next_request_timeout(self, config, deadline):
+        """Wait out the configured delay, then size the next request to the budget.
+
+        Returns None once the budget is spent, so the search stops starting
+        requests and keeps what it has.
+        """
+        _sleep(config, deadline - self._monotonic())
+        remaining = deadline - self._monotonic()
+        if remaining <= 0:
+            return None
+        return min(HTTP_TIMEOUT_SECONDS, remaining)
+
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS):
+        """Fetch ``url`` within ``timeout`` seconds of wall clock.
+
+        The timeout covers the whole request, connecting, the TLS handshake,
+        redirect hops and the body included, so a search that sizes it to what
+        is left of its budget cannot be held past the budget by a slow step.
+        """
+        deadline = self._monotonic() + timeout
         request = urllib.request.Request(
             url,
             headers={
@@ -698,8 +907,11 @@ class SubtitlecatProvider:
                 "Accept-Language": "en-US,en;q=0.9",
             },
         )
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.read()
+        # Read by the redirect handler, so a redirect hop gets only what is
+        # left before the deadline.
+        request.deadline = deadline
+        with self._opener.open(request, timeout=timeout) as response:
+            return _read_by_deadline(response, deadline, self._monotonic)
 
     def search(self, video, languages, config):
         config = dict(config or {})
@@ -716,15 +928,29 @@ class SubtitlecatProvider:
             return []
 
         include_mt = config.get("include_machine_translated", True)
+        deadline = self._monotonic() + SEARCH_BUDGET_SECONDS
         results = []
         seen_ids = set()
+        searched = False
         for query in queries:
             url = (
                 f"{BASE_URL}/index.php?search="
                 + urllib.parse.quote(query, safe="")
             )
-            _sleep(config)
-            html = self._http_get(url)
+            timeout = self._next_request_timeout(config, deadline)
+            if timeout is None:
+                break
+            try:
+                html = self._http_get(url, timeout=timeout)
+            except Exception as error:
+                # The first search page failing means the site failed. The
+                # loose query runs only when the precise one found nothing
+                # usable, so its page running out of time ends the search
+                # with nothing found rather than an error.
+                if searched and _timed_out(error):
+                    break
+                raise
+            searched = True
             # Apply MAX_CANDIDATES_PER_QUERY after dedup, otherwise the
             # precise query can fill the first ``N`` slots with IDs that
             # appear again in the loose page and starve the fallback of
@@ -738,9 +964,15 @@ class SubtitlecatProvider:
                 if len(new_candidates) >= MAX_CANDIDATES_PER_QUERY:
                     break
             for candidate in new_candidates:
-                _sleep(config)
+                timeout = self._next_request_timeout(config, deadline)
+                if timeout is None:
+                    # Out of budget: keep what the finished detail pages
+                    # produced rather than run past the host's wait.
+                    return results
                 try:
-                    detail_html = self._http_get(candidate["detail_url"])
+                    detail_html = self._http_get(
+                        candidate["detail_url"], timeout=timeout
+                    )
                 except Exception:
                     # A transient HTTP/timeout error on one detail page must
                     # not poison the whole search; skip it and try the next

@@ -36,6 +36,55 @@ def _zip_body(files):
     return stream.getvalue()
 
 
+# The members of The.Walking.Dead.1x01.ENFR.STAYIN.zip in the order the archive
+# downloaded from sous-titres.eu lists them. Every member carries a bare .EN. or
+# .FR. tag and nothing else that names its language.
+TWD_1X01_ENFR_MEMBERS = [
+    "The.Walking.Dead.101.CTU.EN.TAG.srt",
+    "The.Walking.Dead.101.CTU.FR.NOTAG.srt",
+    "The.Walking.Dead.101.CTU.EN.ass",
+    "The.Walking.Dead.101.FQM.FR.TAG.srt",
+    "The.Walking.Dead.101.CTU.FR.TAG.srt",
+    "The.Walking.Dead.101.FQM.EN.TAG.srt",
+    "The.Walking.Dead.101.FQM.EN.ass",
+    "The.Walking.Dead.101.FQM.EN.NOTAG.srt",
+    "The.Walking.Dead.101.FQM.FR.ass",
+    "The.Walking.Dead.101.CTU.EN.NOTAG.srt",
+    "The.Walking.Dead.101.CTU.FR.ass",
+    "The.Walking.Dead.101.FQM.FR.NOTAG.srt",
+    "The.Walking.Dead.101.ETP.EN.ass",
+    "The.Walking.Dead.101.ETP.EN.NOTAG.srt",
+    "The.Walking.Dead.101.ETP.EN.TAG.srt",
+    "The.Walking.Dead.101.ETP.FR.ass",
+    "The.Walking.Dead.101.ETP.FR.NOTAG.srt",
+    "The.Walking.Dead.101.ETP.FR.TAG.srt",
+]
+
+# Two rows of the live The Walking Dead series page: the bilingual 1x01 archive and
+# the French-only 1x02 one, each with its flag images.
+TWD_ARCHIVE_ROWS_HTML = """
+<a href="download/e6cjutmal0lap2c/The.Walking.Dead.1x01.ENFR.STAYIN.zip" class="subList">
+  <span class="episodenum">1&times;01</span>
+  <span class="lang"><img src="../img/uk.jpg" width="16" height="11" alt="en" title="en" /> <img src="../img/fr.jpg" width="16" height="11" alt="fr" title="fr" /></span>
+  <span class="filenameSerie">The.Walking.Dead.1x01.ENFR.STAYIN.zip</span>
+  <span class="team">Stayin' alive&nbsp;</span>
+  <span class="update">04/05/11</span>
+</a>
+<a href="download/486ffy0n9ac2i3z/The.Walking.Dead.1x02.FR.STAYIN.zip" class="subList">
+  <span class="episodenum">1&times;02</span>
+  <span class="lang"> <img src="../img/fr.jpg" width="16" height="11" alt="fr" title="fr" /></span>
+  <span class="filenameSerie">The.Walking.Dead.1x02.FR.STAYIN.zip</span>
+  <span class="team">Stayin' alive&nbsp;</span>
+  <span class="update">02/12/10</span>
+</a>
+"""
+
+
+def _member_language_text(name):
+    # Stand-in subtitle bytes that say which language the member really holds.
+    return "English dialogue" if ".EN." in name else "Dialogue en francais"
+
+
 class SoustitreseuParserTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
@@ -124,6 +173,81 @@ class SoustitreseuParserTests(unittest.TestCase):
             rows[0]["url"],
             "https://www.sous-titres.eu/series/download/abc/Game.Of.Thrones.1x01.ENFR.zip",
         )
+
+    def test_member_language_reads_two_letter_en_fr_tags(self):
+        tag = self.mod._language_from_subtitle_filename
+        self.assertEqual(tag("The.Walking.Dead.101.CTU.EN.TAG.srt"), "eng")
+        self.assertEqual(tag("The.Walking.Dead.101.FQM.FR.ass"), "fra")
+        self.assertEqual(tag("English/The.Walking.Dead.101.EN.srt"), "eng")
+        # Other than in capitals, two-letter tags count only as the last token before the
+        # extension. The Interstellar name is the member of a live sous-titres.eu archive.
+        self.assertEqual(tag("the.walking.dead.101.en.srt"), "eng")
+        self.assertEqual(tag("the.walking.dead.101.fr.srt"), "fra")
+        self.assertEqual(tag("Interstellar.2014.1080p.BluRay.FRA.AVC.DTS-HD.MA.5.1-WiHD.Fr.srt"), "fra")
+        # Every member of the real bilingual archive is tagged, and with the right language.
+        for name in TWD_1X01_ENFR_MEMBERS:
+            self.assertEqual(tag(name), "eng" if ".EN." in name else "fra", name)
+
+    def test_member_language_ignores_en_fr_title_words(self):
+        tag = self.mod._language_from_subtitle_filename
+        for name in (
+            "Asterix.en.Bretagne.srt",
+            "Asterix.En.Bretagne.srt",
+            "Il.etait.une.fois.en.Amerique.srt",
+            "Paris.Fr.Show.101.srt",
+            "Frenchy.Enemy.101.srt",
+        ):
+            self.assertIsNone(tag(name), name)
+
+    def test_member_language_keeps_vo_vf_forms_and_refuses_conflicts(self):
+        tag = self.mod._language_from_subtitle_filename
+        self.assertEqual(tag("Game.Of.Thrones.101.ctu.720p.VO.NoTAG.srt"), "eng")
+        self.assertEqual(tag("Game.Of.Thrones.101.ctu.720p.VF.NoTAG.srt"), "fra")
+        self.assertEqual(tag("Show.S01E01.ENG.srt"), "eng")
+        self.assertEqual(tag("Show.S01E01.fre.srt"), "fra")
+        # An explicit VO/VF tag outranks a capitalised title word.
+        self.assertEqual(tag("ASTERIX.EN.BRETAGNE.VF.srt"), "fra")
+        # A single file tagged as both languages cannot be pinned to either.
+        self.assertIsNone(tag("Show.S01E01.VO.VF.srt"))
+        self.assertIsNone(tag("Show.S01E01.EN.FR.srt"))
+
+    def test_archive_languages_ignore_en_fr_title_words(self):
+        # A French-only archive whose title contains "en" must not also declare English,
+        # or search offers an English row that can only ever deliver French.
+        self.assertEqual(self.mod._languages_from_archive("Il.etait.une.fois.en.Amerique.VF.zip", ""), ["fra"])
+        self.assertEqual(self.mod._languages_from_archive("Asterix.en.Bretagne.zip", ""), [])
+        self.assertEqual(self.mod._languages_from_archive("The.Walking.Dead.1x02.FR.STAYIN.zip", ""), ["fra"])
+        self.assertEqual(self.mod._languages_from_archive("Show.1x01.EN.TEAM.zip", ""), ["eng"])
+        self.assertEqual(
+            self.mod._languages_from_archive("The.Walking.Dead.1x01.ENFR.STAYIN.zip", ""), ["eng", "fra"]
+        )
+
+    def test_archive_and_member_tagging_agree(self):
+        # The row's declared languages and the member choice read names the same way.
+        for name in TWD_1X01_ENFR_MEMBERS + [
+            "Asterix.en.Bretagne.VF.srt",
+            "Il.etait.une.fois.en.Amerique.VF.srt",
+            "Game.Of.Thrones.101.ctu.720p.VO.NoTAG.srt",
+            "the.walking.dead.101.fr.srt",
+            "Show.S01E01.srt",
+        ]:
+            member_language = self.mod._language_from_subtitle_filename(name)
+            self.assertEqual(
+                self.mod._languages_from_archive(name, ""),
+                [member_language] if member_language else [],
+                name,
+            )
+
+    def test_parse_archive_rows_reads_live_walking_dead_rows(self):
+        rows = self.mod.parse_archive_rows(
+            TWD_ARCHIVE_ROWS_HTML,
+            "https://www.sous-titres.eu/series/the_walking_dead.html",
+            "series",
+        )
+
+        self.assertEqual([(row["season"], row["episode"]) for row in rows], [(1, 1), (1, 2)])
+        self.assertEqual(rows[0]["languages"], ["eng", "fra"])
+        self.assertEqual(rows[1]["languages"], ["fra"])
 
 
 class SoustitreseuProviderTests(unittest.TestCase):
@@ -381,6 +505,76 @@ class SoustitreseuProviderTests(unittest.TestCase):
         self.assertEqual(
             self.mod._pick_archive_member(members, {"language": "eng", "season": None, "episode": None}),
             ("Asterix.in.Britain.VO.srt", "pin"),
+        )
+
+    def test_pick_archive_member_pins_en_fr_members_of_real_archive_in_both_orders(self):
+        for members in (TWD_1X01_ENFR_MEMBERS, list(reversed(TWD_1X01_ENFR_MEMBERS))):
+            for language, tag in (("eng", ".EN."), ("fra", ".FR.")):
+                member, decision = self.mod._pick_archive_member(
+                    members, {"language": language, "season": 1, "episode": 1}
+                )
+                self.assertEqual(decision, "pin", (language, members[0]))
+                self.assertIn(tag, member)
+                self.assertEqual(member, next(name for name in members if tag in name))
+
+    def test_select_archive_member_saves_requested_language_bytes_from_real_archive(self):
+        # Drive the whole worker side the host uses: download hands the archive back, the
+        # host lists its members, select_archive_member pins one, and the host reads it.
+        provider = self.mod.SoustitreseuProvider()
+        payload = {
+            "url": "https://www.sous-titres.eu/series/download/e6cjutmal0lap2c/The.Walking.Dead.1x01.ENFR.STAYIN.zip",
+            "filename": "The.Walking.Dead.1x01.ENFR.STAYIN.zip",
+            "media_type": "series",
+            "season": 1,
+            "episode": 1,
+        }
+        for members in (TWD_1X01_ENFR_MEMBERS, list(reversed(TWD_1X01_ENFR_MEMBERS))):
+            body = _zip_body({name: _member_language_text(name) for name in members})
+            provider._http_get = lambda url, timeout=30, referer=None, body=body: body
+            for alpha3, alpha2, expected in (
+                ("eng", "en", "English dialogue"),
+                ("fra", "fr", "Dialogue en francais"),
+            ):
+                language = {"alpha3": alpha3, "alpha2": alpha2}
+                content = provider.download({**payload, "language": alpha3}, language, {})
+                archive = zipfile.ZipFile(io.BytesIO(base64.b64decode(content["archive_b64"])))
+                result = provider.select_archive_member(
+                    {**payload, "language": alpha3}, language, archive.namelist(), {}
+                )
+                self.assertEqual(result["decision"], "pin")
+                self.assertEqual(archive.read(result["member"]).decode("ascii"), expected)
+
+    def test_pick_archive_member_rejects_single_language_archive_of_other_language(self):
+        # A French-only archive must not hand an English request French bytes.
+        for members in (
+            ["Il.etait.une.fois.en.Amerique.VF.srt"],
+            ["The.Walking.Dead.102.CTU.FR.TAG.srt", "The.Walking.Dead.102.CTU.FR.ass"],
+        ):
+            self.assertEqual(
+                self.mod._pick_archive_member(members, {"language": "eng", "season": None, "episode": None}),
+                (None, "reject"),
+                members,
+            )
+
+    def test_pick_archive_member_pins_tagged_member_beside_untagged_one(self):
+        # Only one member is tagged: the untagged one may be the other language, so the
+        # host's language-blind pick is not safe. Pin the tagged member of the requested
+        # language, and reject a request for a language no member is tagged with.
+        members = ["Show.S01E01.srt", "Show.S01E01.FR.srt"]
+        self.assertEqual(
+            self.mod._pick_archive_member(members, {"language": "fra", "season": 1, "episode": 1}),
+            ("Show.S01E01.FR.srt", "pin"),
+        )
+        self.assertEqual(
+            self.mod._pick_archive_member(members, {"language": "eng", "season": 1, "episode": 1}),
+            (None, "reject"),
+        )
+
+    def test_pick_archive_member_defers_untagged_archive(self):
+        members = ["Show.S01E01.srt", "Show.S01E02.srt"]
+        self.assertEqual(
+            self.mod._pick_archive_member(members, {"language": "eng", "season": 1, "episode": 2}),
+            (None, "defer"),
         )
 
     def test_pick_archive_member_ignores_macosx_sidecar(self):
