@@ -679,6 +679,16 @@ def _account_digest(api_key):
     return hashlib.sha256(_coerce_text(api_key).encode("utf-8")).hexdigest()
 
 
+def _account_marker(api_key):
+    """A short fragment of the account digest that tags an AI candidate.
+
+    It is derived only from the one-way digest, never from the key itself, so
+    it cannot be turned back into the key and carries no account details. A
+    download compares it with the current key and drops a stale candidate.
+    """
+    return _account_digest(api_key)[:16]
+
+
 def _without_api_key(url):
     """Return a row URL without any api_key query parameter, and whether one was there.
 
@@ -943,7 +953,7 @@ def _valid_translation_source(source):
     )
 
 
-def _translation_candidate(video, wanted_language, target_code, source):
+def _translation_candidate(video, wanted_language, target_code, source, api_key):
     n_id = source.get("n_id")
     if not _valid_translation_source(source):
         return None
@@ -973,6 +983,10 @@ def _translation_candidate(video, wanted_language, target_code, source):
         "n_id": n_id,
         "target_language": target_code,
         "source_language": source_code,
+        "hi": hi,
+        # The marker ties the candidate to the key that found it: a one-way digest
+        # fragment, never the key or anything reversible.
+        "account_marker": _account_marker(api_key),
         "season": _coerce_int(video.get("season")),
         "episode": _coerce_int(video.get("episode")),
         "absolute_episode": _coerce_int(video.get("absolute_episode")),
@@ -1000,7 +1014,7 @@ def _translation_candidate(video, wanted_language, target_code, source):
     }
 
 
-def _build_ai_candidates(video, requested_languages, translation, existing_candidates, blocked=False):
+def _build_ai_candidates(video, requested_languages, translation, existing_candidates, api_key, blocked=False):
     if not _valid_translation_block(translation) or translation.get("entitled") is not True or blocked:
         return []
     missing = translation.get("missing_languages")
@@ -1037,7 +1051,7 @@ def _build_ai_candidates(video, requested_languages, translation, existing_candi
                 selected_overlap = overlap
         if selected is None:
             continue
-        candidate = _translation_candidate(video, wanted, target_code, selected)
+        candidate = _translation_candidate(video, wanted, target_code, selected, api_key)
         if candidate is None:
             continue
         suppressed = False
@@ -1452,22 +1466,59 @@ class SubDLProvider:
         self._prune_translation_state(now)
         return key is not None and key in self._translation_uncertainty
 
-    def _remember_translation_job(self, key, request_id, now):
+    def _translation_scope_key(self, payload, api_key):
+        # The exact key names the chosen source; the scope key drops it, so every
+        # source for one account, episode, target language and HI class shares a
+        # single translation budget.
+        target = _clean_text((payload or {}).get("target_language")).upper()
+        if not target:
+            return None
+        return (
+            _account_digest(api_key),
+            target,
+            _coerce_int((payload or {}).get("season")),
+            _coerce_int((payload or {}).get("episode")),
+            (payload or {}).get("hi") is True,
+        )
+
+    def _translation_scope_blocked(self, scope, now):
+        # True while a job or an uncertainty marker still covers this translation,
+        # whatever the source. A job stops counting once it is published, failed
+        # or expired; only expiry clears an uncertainty marker.
+        if scope is None:
+            return False
+        self._prune_translation_state(now)
+        for marker in self._translation_uncertainty.values():
+            if isinstance(marker, dict) and marker.get("scope") == scope:
+                return True
+        for entry in self._translation_jobs.values():
+            if entry.get("scope") == scope and not entry.get("published"):
+                return True
+        return False
+
+    def _remember_translation_job(self, key, request_id, now, scope=None):
         if key is None:
             return
         self._prune_translation_state(now)
         self._translation_jobs.pop(key, None)
-        self._translation_jobs[key] = {"request_id": request_id, "submitted_at": now}
+        self._translation_jobs[key] = {
+            "request_id": request_id, "submitted_at": now, "scope": scope,
+        }
         while len(self._translation_jobs) > TRANSLATION_STATE_MAX_ITEMS:
             del self._translation_jobs[next(iter(self._translation_jobs))]
         self._translation_uncertainty.pop(key, None)
 
-    def _mark_translation_uncertain(self, key, now):
+    def _mark_translation_job_published(self, key):
+        entry = self._translation_jobs.get(key)
+        if entry is not None and not entry.get("published"):
+            entry["published"] = True
+
+    def _mark_translation_uncertain(self, key, now, scope=None):
         if key is None:
             return
         self._prune_translation_state(now)
         self._translation_uncertainty.pop(key, None)
-        self._translation_uncertainty[key] = now
+        self._translation_uncertainty[key] = {"submitted_at": now, "scope": scope}
         if self._quota_status is not None:
             status = dict(self._quota_status)
             status["remaining"] = None
@@ -1748,9 +1799,15 @@ class SubDLProvider:
     def _download_ai_translation(self, payload, config, api_key):
         if (config or {}).get("ai_translate") is not True:
             return None
+        # A candidate found under another key, or by an older plugin version that
+        # stamped no marker, must not spend this account's quota, so it is
+        # dropped the same way the switch above drops a disabled path.
+        if _clean_text(payload.get("account_marker")) != _account_marker(api_key):
+            return None
         started = time.monotonic()
         deadline = started + _translation_timeout_seconds(config)
         key = self._translation_key(payload, api_key)
+        scope = self._translation_scope_key(payload, api_key)
         try:
             if key is None:
                 self._logger.warning("SubDL AI translation candidate has invalid job details")
@@ -1774,6 +1831,8 @@ class SubDLProvider:
                 request_id = remembered["request_id"]
                 job = {}
             else:
+                if self._translation_scope_blocked(scope, started):
+                    return None
                 status, body, _, error = self._translation_call(
                     "subtitles", api_key, deadline, method="POST", payload=submit_payload,
                 )
@@ -1787,7 +1846,7 @@ class SubDLProvider:
                             "translation_quota_exhausted", "translation_not_entitled",
                         )
                         if status >= 500 or not recognized:
-                            self._mark_translation_uncertain(key, time.monotonic())
+                            self._mark_translation_uncertain(key, time.monotonic(), scope)
                         self._handle_translation_submit_error(status, token, api_key, payload)
                     else:
                         reason = getattr(error, "reason", error)
@@ -1795,7 +1854,7 @@ class SubDLProvider:
                             reason, (socket.gaierror, socket.herror, ConnectionRefusedError),
                         ) or getattr(reason, "errno", None) == errno.ECONNREFUSED
                         if not before_send:
-                            self._mark_translation_uncertain(key, time.monotonic())
+                            self._mark_translation_uncertain(key, time.monotonic(), scope)
                         self._logger.warning(
                             "SubDL AI translation submit failed before send" if before_send
                             else "SubDL AI translation submit response was lost"
@@ -1808,13 +1867,13 @@ class SubDLProvider:
                         "translation_quota_exhausted", "translation_not_entitled",
                     )
                     if status is not None and status >= 500 or not recognized:
-                        self._mark_translation_uncertain(key, time.monotonic())
+                        self._mark_translation_uncertain(key, time.monotonic(), scope)
                     self._handle_translation_submit_error(status, token, api_key, payload)
                     return None
 
                 response = _translation_json(body)
                 if not isinstance(response, dict):
-                    self._mark_translation_uncertain(key, time.monotonic())
+                    self._mark_translation_uncertain(key, time.monotonic(), scope)
                     self._logger.warning("SubDL AI translation submit returned an unreadable response")
                     return None
                 request_id = response.get("request_id")
@@ -1822,10 +1881,10 @@ class SubDLProvider:
                     request_id = ""
                 request_id = str(request_id).strip()
                 if not request_id or len(request_id) > 256 or api_key in request_id:
-                    self._mark_translation_uncertain(key, time.monotonic())
+                    self._mark_translation_uncertain(key, time.monotonic(), scope)
                     self._logger.warning("SubDL AI translation submit returned no readable request id")
                     return None
-                self._remember_translation_job(key, request_id, time.monotonic())
+                self._remember_translation_job(key, request_id, time.monotonic(), scope)
                 self._record_successful_submission(response, api_key)
                 job = _translation_job(response)
 
@@ -1857,12 +1916,17 @@ class SubDLProvider:
                         if isinstance(poll_error, urllib.error.HTTPError):
                             if poll_error.code == 404:
                                 poll_error.close()
+                                # The submission may already be charged, so a
+                                # missing record stays uncertain instead of
+                                # being forgotten outright.
                                 self._translation_jobs.pop(key, None)
+                                self._mark_translation_uncertain(key, time.monotonic(), scope)
                                 return None
                             poll_error.close()
                         failures += 1
                     elif poll_status == 404:
                         self._translation_jobs.pop(key, None)
+                        self._mark_translation_uncertain(key, time.monotonic(), scope)
                         return None
                     elif type(poll_status) is int and 200 <= poll_status < 300:
                         polled = _translation_json(poll_body)
@@ -1889,6 +1953,11 @@ class SubDLProvider:
                             log_request_id,
                         )
                         return None
+
+            if _translation_job_ready(job):
+                # A published job keeps serving its own payload, and it no longer
+                # holds back another source for the same translation.
+                self._mark_translation_job_published(key)
 
             if time.monotonic() >= deadline:
                 self._logger.info(
@@ -2052,7 +2121,7 @@ class SubDLProvider:
                 if runtime_policy["ai_translation_enabled"] and not blocked:
                     try:
                         ai_candidates = _build_ai_candidates(
-                            video, requested_languages, translation_data, suppressors,
+                            video, requested_languages, translation_data, suppressors, api_key,
                         )
                         now = time.monotonic()
                         for candidate in ai_candidates:
