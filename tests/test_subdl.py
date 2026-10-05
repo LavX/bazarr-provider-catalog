@@ -1295,7 +1295,7 @@ class SubDLAITranslationSearchTests(unittest.TestCase):
         manifest = json.loads((PROVIDER_DIR / "provider.json").read_text())
         schema = manifest["config_schema"]["properties"]
 
-        self.assertEqual(manifest["version"], "0.2.2")
+        self.assertEqual(manifest["version"], "0.2.3")
         self.assertIs(schema["ai_translate"]["default"], False)
         self.assertIn("SubDL publishes each translation as a regular subtitle", schema["ai_translate"]["title"])
         self.assertIs(schema["include_ai_translated"]["default"], False)
@@ -1340,6 +1340,29 @@ class SubDLAITranslationSearchTests(unittest.TestCase):
             "exhausted": False, "remaining": None, "limit": None,
             "reset_at": "2026-10-01T00:00:00Z"})
         self.assertEqual(provider.drain_events(), [])
+
+    def test_candidate_carries_a_short_account_marker_without_the_key(self):
+        provider = self.mod.SubDLProvider()
+        response = _subdl_response()
+        response["translation"] = {
+            "entitled": True, "missing_languages": ["FR"],
+            "sources": [{"n_id": 771, "language": "EN", "hi": False}],
+        }
+        provider._http_get_json = lambda params: response
+        api_key = "marker-source-key"
+
+        candidates = provider.search(
+            {"kind": "movie", "title": "Movie", "imdb_id": "tt1234567"},
+            [{"alpha3": "fra"}], {"api_key": api_key, "ai_translate": True},
+        )
+
+        payload = candidates[0]["provider_payload"]
+        digest = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+        marker = payload["account_marker"]
+        self.assertEqual(marker, digest[:16])
+        self.assertNotEqual(marker, digest)
+        self.assertNotIn(api_key, marker)
+        self.assertNotIn(api_key, repr(payload))
 
     def test_absent_translation_block_reports_cached_live_account_ineligibility(self):
         provider = self.mod.SubDLProvider()
@@ -2107,8 +2130,10 @@ class SubDLAITranslationDownloadTests(unittest.TestCase):
                        "ai_translate_timeout_seconds": 60}
         self.payload = {
             "provider": "subdl", "schema": 1, "kind": "ai_translation", "n_id": 771,
-            "target_language": "FR", "source_language": "EN", "season": None, "episode": None,
-            "absolute_episode": None,
+            "target_language": "FR", "source_language": "EN", "hi": False,
+            "season": None, "episode": None, "absolute_episode": None,
+            # The short account marker the search path stamps into every AI candidate.
+            "account_marker": hashlib.sha256(self.api_key.encode("utf-8")).hexdigest()[:16],
         }
 
     def _response(self, body, status=200, headers=None):
@@ -2532,6 +2557,28 @@ class SubDLAITranslationDownloadTests(unittest.TestCase):
         self.assertIsNone(self.provider.download(self.payload, {"alpha3": "fra"}, config))
         self.assertEqual(calls, [])
 
+    def test_payload_without_account_marker_is_dropped_before_any_request(self):
+        ready = self._response(json.dumps({"request_id": "no-marker", "job": {
+            "status": "published", "download_ready": True,
+        }}).encode())
+        calls = self._patch_urlopen([ready, _FakeTranslationHTTPResponse(b"subtitle")])
+        payload = {key: value for key, value in self.payload.items() if key != "account_marker"}
+
+        self.assertIsNone(self.provider.download(payload, {"alpha3": "fra"}, self.config))
+
+        self.assertEqual(calls, [])
+
+    def test_stale_marker_from_another_key_is_dropped_before_any_request(self):
+        ready = self._response(json.dumps({"request_id": "other-key", "job": {
+            "status": "published", "download_ready": True,
+        }}).encode())
+        calls = self._patch_urlopen([ready, _FakeTranslationHTTPResponse(b"subtitle")])
+        other_config = {**self.config, "api_key": "another-test-secret"}
+
+        self.assertIsNone(self.provider.download(self.payload, {"alpha3": "fra"}, other_config))
+
+        self.assertEqual(calls, [])
+
     def test_download_retries_idempotent_file_fetch_and_uses_content_type_fallback(self):
         import urllib.error
 
@@ -2703,7 +2750,9 @@ class SubDLAITranslationLifecycleTests(unittest.TestCase):
                        "ai_translate_timeout_seconds": "60"}
         self.payload = {
             "provider": "subdl", "schema": 1, "kind": "ai_translation", "n_id": 771,
-            "target_language": "FR", "season": None, "episode": None,
+            "target_language": "FR", "hi": False, "season": None, "episode": None,
+            # The short account marker the search path stamps into every AI candidate.
+            "account_marker": hashlib.sha256(self.key.encode("utf-8")).hexdigest()[:16],
         }
 
     def _response(self, data, status=200):
@@ -2759,22 +2808,33 @@ class SubDLAITranslationLifecycleTests(unittest.TestCase):
         self.assertTrue(all(request.get_method() == "GET" for request, _ in second_calls))
         self.assertTrue(all("remember-me" in request.full_url for request, _ in second_calls))
 
-    def test_poll_404_forgets_job_and_next_download_may_submit(self):
+    def test_poll_404_marks_uncertainty_and_blocks_resubmit_until_ttl(self):
         import urllib.error
 
         queued = self._response({"request_id": "gone", "job": {"status": "queued"}}, status=202)
         missing = urllib.error.HTTPError("https://api.subdl.com/job/gone", 404, "missing", {}, io.BytesIO(b""))
         first_calls = self._patch_urlopen([queued, missing])
-        with patch.object(self.mod.time, "sleep"):
-            self.assertIsNone(self.provider.download(self.payload, {"alpha3": "fra"}, self.config))
-        self.assertEqual(len(first_calls), 2)
+        now = [0.0]
+        with patch.object(self.mod.time, "monotonic", side_effect=lambda: now[0]):
+            with patch.object(self.mod.time, "sleep", side_effect=lambda delay: now.__setitem__(0, now[0] + delay)):
+                self.assertIsNone(self.provider.download(self.payload, {"alpha3": "fra"}, self.config))
+                self.assertEqual(len(first_calls), 2)
+                self.assertEqual(self.provider._translation_jobs, {})
+                self.assertEqual(len(self.provider._translation_uncertainty), 1)
 
-        second_calls = self._patch_urlopen([
-            self._response({"request_id": "new-job", "job": {"status": "published", "download_ready": True}}),
-            _FakeTranslationHTTPResponse(b"subtitle"),
-        ])
-        self.assertIsNotNone(self.provider.download(self.payload, {"alpha3": "fra"}, self.config))
-        self.assertEqual(second_calls[0][0].get_method(), "POST")
+                second_calls = self._patch_urlopen([])
+                self.assertIsNone(self.provider.download(self.payload, {"alpha3": "fra"}, self.config))
+                self.assertEqual(second_calls, [])
+
+                now[0] = 86410.0
+                third_calls = self._patch_urlopen([
+                    self._response({"request_id": "new-job", "job": {
+                        "status": "published", "download_ready": True,
+                    }}),
+                    _FakeTranslationHTTPResponse(b"subtitle"),
+                ])
+                self.assertIsNotNone(self.provider.download(self.payload, {"alpha3": "fra"}, self.config))
+        self.assertEqual(third_calls[0][0].get_method(), "POST")
 
     def test_uncertain_submit_suppresses_candidate_and_download_until_ttl(self):
         import urllib.error
@@ -2916,7 +2976,9 @@ class SubDLAITranslationLifecycleTests(unittest.TestCase):
             "status": "published", "download_ready": True,
         }}, status=202)
         calls = self._patch_urlopen([queued, _FakeTranslationHTTPResponse(b"subtitle")])
-        self.assertIsNotNone(self.provider.download(self.payload, {"alpha3": "fra"}, other_config))
+        self.assertIsNotNone(self.provider.download(
+            offered[0]["provider_payload"], {"alpha3": "fra"}, other_config,
+        ))
         self.assertEqual(calls[0][0].get_method(), "POST")
 
         # The first account keeps its own marker; the second account's job is not
@@ -2955,6 +3017,178 @@ class SubDLAITranslationLifecycleTests(unittest.TestCase):
         other_episode = search_episode(4)
         self.assertEqual(other_episode[0]["id"], "ai:771:FR:plain")
         self.assertEqual(other_episode[0]["provider_payload"]["episode"], 4)
+
+    def _candidate_payload_from_search(self, api_key):
+        response = _subdl_response()
+        response["translation"] = {
+            "entitled": True, "missing_languages": ["FR"],
+            "sources": [{"n_id": 771, "language": "EN", "hi": False}],
+        }
+        self.provider._http_get_json = lambda params: response
+        candidates = self.provider.search(
+            {"kind": "movie", "title": "Movie", "imdb_id": "tt1234567"},
+            [{"alpha3": "fra"}], {"api_key": api_key, "ai_translate": True},
+        )
+        return candidates[0]["provider_payload"]
+
+    def _episode_payload(self, n_id, **overrides):
+        payload = dict(self.payload)
+        payload.update({"n_id": n_id, "season": 2, "episode": 3})
+        payload.update(overrides)
+        return payload
+
+    def _leave_source_job_running(self, request_id):
+        payload = self._episode_payload(1001)
+        queued = self._response({"request_id": request_id, "job": {
+            "status": "queued", "download_ready": False,
+        }}, status=202)
+        running = self._response({"job": {"status": "running", "download_ready": False}})
+        calls = self._patch_urlopen([queued, *([running] * 12)])
+        self.assertIsNone(self.provider.download(payload, {"alpha3": "fra"}, self.config))
+        self.assertEqual(calls[0][0].get_method(), "POST")
+        return payload
+
+    def test_candidate_found_under_one_key_sends_no_request_under_another_key(self):
+        payload = self._candidate_payload_from_search("first-account-key")
+        ready = self._response({"request_id": "second-key-job", "job": {
+            "status": "published", "download_ready": True,
+        }})
+        calls = self._patch_urlopen([ready, _FakeTranslationHTTPResponse(b"subtitle")])
+        other_config = {**self.config, "api_key": "second-account-key"}
+
+        self.assertIsNone(self.provider.download(payload, {"alpha3": "fra"}, other_config))
+
+        self.assertEqual(calls, [])
+
+    def test_candidate_downloaded_under_its_own_key_submits_once(self):
+        payload = self._candidate_payload_from_search("first-account-key")
+        ready = self._response({"request_id": "own-key-job", "job": {
+            "status": "published", "download_ready": True,
+        }})
+        calls = self._patch_urlopen([ready, _FakeTranslationHTTPResponse(b"subtitle")])
+
+        result = self.provider.download(
+            payload, {"alpha3": "fra"}, {"api_key": "first-account-key", "ai_translate": True},
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual([request.get_method() for request, _ in calls], ["POST", "GET"])
+
+    def test_running_job_for_one_source_blocks_a_submit_for_another_source(self):
+        now = [0.0]
+        with patch.object(self.mod.time, "monotonic", side_effect=lambda: now[0]):
+            with patch.object(self.mod.time, "sleep", side_effect=lambda delay: now.__setitem__(0, now[0] + delay)):
+                self._leave_source_job_running("source-a-job")
+
+                ready = self._response({"request_id": "source-b-job", "job": {
+                    "status": "published", "download_ready": True,
+                }})
+                calls = self._patch_urlopen([ready, _FakeTranslationHTTPResponse(b"subtitle")])
+
+                self.assertIsNone(self.provider.download(
+                    self._episode_payload(1002), {"alpha3": "fra"}, self.config,
+                ))
+        self.assertEqual(calls, [])
+
+    def test_running_job_still_submits_another_target_language_or_hi_class(self):
+        now = [0.0]
+        with patch.object(self.mod.time, "monotonic", side_effect=lambda: now[0]):
+            with patch.object(self.mod.time, "sleep", side_effect=lambda delay: now.__setitem__(0, now[0] + delay)):
+                self._leave_source_job_running("source-a-job")
+
+                for payload in (
+                    self._episode_payload(1002, target_language="ES"),
+                    self._episode_payload(1003, hi=True),
+                ):
+                    with self.subTest(n_id=payload["n_id"]):
+                        ready = self._response({"request_id": "source-b-job", "job": {
+                            "status": "published", "download_ready": True,
+                        }})
+                        calls = self._patch_urlopen([ready, _FakeTranslationHTTPResponse(b"subtitle")])
+
+                        self.assertIsNotNone(self.provider.download(payload, {"alpha3": "fra"}, self.config))
+                        self.assertEqual(calls[0][0].get_method(), "POST")
+
+    def test_job_block_lifts_once_the_job_is_published(self):
+        now = [0.0]
+        with patch.object(self.mod.time, "monotonic", side_effect=lambda: now[0]):
+            with patch.object(self.mod.time, "sleep", side_effect=lambda delay: now.__setitem__(0, now[0] + delay)):
+                first = self._leave_source_job_running("source-a-job")
+
+                blocked_calls = self._patch_urlopen([])
+                self.assertIsNone(self.provider.download(
+                    self._episode_payload(1002), {"alpha3": "fra"}, self.config,
+                ))
+                self.assertEqual(blocked_calls, [])
+
+                published = self._response({"job": {"status": "published", "download_ready": True}})
+                first_calls = self._patch_urlopen([published, _FakeTranslationHTTPResponse(b"subtitle")])
+                self.assertIsNotNone(self.provider.download(first, {"alpha3": "fra"}, self.config))
+                self.assertTrue(all(request.get_method() == "GET" for request, _ in first_calls))
+
+                ready = self._response({"request_id": "source-b-job", "job": {
+                    "status": "published", "download_ready": True,
+                }})
+                calls = self._patch_urlopen([ready, _FakeTranslationHTTPResponse(b"subtitle")])
+                self.assertIsNotNone(self.provider.download(
+                    self._episode_payload(1002), {"alpha3": "fra"}, self.config,
+                ))
+        self.assertEqual(calls[0][0].get_method(), "POST")
+
+    def test_job_block_lifts_when_the_job_fails(self):
+        now = [0.0]
+        with patch.object(self.mod.time, "monotonic", side_effect=lambda: now[0]):
+            with patch.object(self.mod.time, "sleep", side_effect=lambda delay: now.__setitem__(0, now[0] + delay)):
+                first = self._leave_source_job_running("source-a-job")
+
+                failed = self._response({"job": {"status": "failed", "download_ready": False}})
+                calls = self._patch_urlopen([failed])
+                self.assertIsNone(self.provider.download(first, {"alpha3": "fra"}, self.config))
+                self.assertEqual(self.provider._translation_jobs, {})
+                self.assertEqual(self.provider._translation_uncertainty, {})
+
+                ready = self._response({"request_id": "source-b-job", "job": {
+                    "status": "published", "download_ready": True,
+                }})
+                other_calls = self._patch_urlopen([ready, _FakeTranslationHTTPResponse(b"subtitle")])
+                self.assertIsNotNone(self.provider.download(
+                    self._episode_payload(1002), {"alpha3": "fra"}, self.config,
+                ))
+        self.assertEqual(other_calls[0][0].get_method(), "POST")
+
+    def test_job_block_lifts_when_the_remembered_job_expires(self):
+        now = [0.0]
+        with patch.object(self.mod.time, "monotonic", side_effect=lambda: now[0]):
+            with patch.object(self.mod.time, "sleep", side_effect=lambda delay: now.__setitem__(0, now[0] + delay)):
+                self._leave_source_job_running("source-a-job")
+
+                blocked_calls = self._patch_urlopen([])
+                self.assertIsNone(self.provider.download(
+                    self._episode_payload(1002), {"alpha3": "fra"}, self.config,
+                ))
+                self.assertEqual(blocked_calls, [])
+
+                now[0] = 86401.0
+                ready = self._response({"request_id": "source-b-job", "job": {
+                    "status": "published", "download_ready": True,
+                }})
+                calls = self._patch_urlopen([ready, _FakeTranslationHTTPResponse(b"subtitle")])
+                self.assertIsNotNone(self.provider.download(
+                    self._episode_payload(1002), {"alpha3": "fra"}, self.config,
+                ))
+        self.assertEqual(calls[0][0].get_method(), "POST")
+
+    def test_failed_job_status_clears_the_job_without_leaving_a_marker(self):
+        queued = self._response({"request_id": "doomed-job", "job": {
+            "status": "queued", "download_ready": False,
+        }}, status=202)
+        failed = self._response({"job": {"status": "failed", "download_ready": False}})
+        calls = self._patch_urlopen([queued, failed])
+        with patch.object(self.mod.time, "sleep"):
+            self.assertIsNone(self.provider.download(self.payload, {"alpha3": "fra"}, self.config))
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(self.provider._translation_jobs, {})
+        self.assertEqual(self.provider._translation_uncertainty, {})
 
     def test_uncertain_submit_clears_untrusted_quota_counts(self):
         import urllib.error
@@ -3044,7 +3278,7 @@ class SubDLAITranslationLifecycleTests(unittest.TestCase):
         )
         with patch.object(self.mod.urllib.request, "urlopen", side_effect=error):
             with self.assertLogs("subdl", level="WARNING") as logs:
-                provider.download(self.payload, {"alpha3": "fra"},
+                provider.download(candidates[0]["provider_payload"], {"alpha3": "fra"},
                                   {"api_key": sentinel, "ai_translate": True})
         for value in (candidates, events, provider.__dict__, logs.output):
             self.assertNotIn(sentinel, repr(value))
