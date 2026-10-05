@@ -41,7 +41,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`ktuvit`](providers/ktuvit/) | 0.1.4 | Uses [Ktuvit.me](https://www.ktuvit.me) services for Hebrew movie and episode subtitles. Requires email and hashed password. |
 | [`legendasdivx`](providers/legendasdivx/) | 0.2.2 | Scrapes [LegendasDivx](https://www.legendasdivx.pt) for European and Brazilian Portuguese movie and episode subtitles. Requires username and password. Uses ai-cloudscraper, with optional FlareSolverr and captcha solver fallbacks. |
 | [`legendasnet`](providers/legendasnet/) | 0.1.4 | Uses the [Legendas.net](https://legendas.net) API for Brazilian Portuguese movie and episode subtitles. Requires username and password. |
-| [`moviesubtitles`](providers/moviesubtitles/) | 0.1.2 | Scrapes [Moviesubtitles.org](https://www.moviesubtitles.org) for movie subtitles, including multipart archives. No login or API key. |
+| [`moviesubtitles`](providers/moviesubtitles/) | 0.1.3 | Scrapes [Moviesubtitles.org](https://www.moviesubtitles.org) for movie subtitles, including multipart archives. No login or API key. |
 | [`napisy24`](providers/napisy24/) | 0.1.3 | Uses the [Napisy24](https://napisy24.pl) hash API for Polish movie and episode subtitles. Optional username and password. |
 | [`my_subs`](providers/my_subs/) | 0.1.3 | Scrapes [My-Subs.co](https://my-subs.co) for movie and episode subtitles in many languages. No login or API key. |
 | [`napiprojekt`](providers/napiprojekt/) | 0.1.7 | Searches [NapiProjekt](https://www.napiprojekt.pl) for Polish subtitles using hash lookup and catalog scraping with optional author filters or opt-in hash-only mode. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback. |
