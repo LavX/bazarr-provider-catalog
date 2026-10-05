@@ -6,8 +6,6 @@ import html
 import io
 import os
 import re
-import socket
-import ssl
 import time
 import unicodedata
 import urllib.error
@@ -17,8 +15,6 @@ import zipfile
 
 PROVIDER_ID = "moviesubtitles"
 PUBLIC_BASE_URL = "https://www.moviesubtitles.org"
-FALLBACK_BASE_URL = "https://176.103.50.239"
-PUBLIC_HOST = "www.moviesubtitles.org"
 HTTP_TIMEOUT_SECONDS = 15
 MAX_MOVIE_PAGES = 3
 MAX_RESULTS = 25
@@ -149,23 +145,6 @@ class MoviesubtitlesProvider:
             if error.code == 500 and body and _allows_legacy_500_body(url):
                 return body
             raise
-        except urllib.error.URLError as error:
-            if not _looks_like_dns_error(error):
-                raise
-            try:
-                return _open_url(
-                    _fallback_url(url),
-                    data=data,
-                    timeout=timeout,
-                    referer=referer,
-                    host_header=PUBLIC_HOST,
-                    insecure=True,
-                )
-            except urllib.error.HTTPError as fallback_error:
-                body = _read_http_error_body(fallback_error)
-                if fallback_error.code == 500 and body and _allows_legacy_500_body(url):
-                    return body
-                raise
 
     def search(self, video, languages, config):
         if (video or {}).get("kind") != "movie":
@@ -315,7 +294,7 @@ def _is_sidecar(name):
     return os.path.basename(name).startswith(".")
 
 
-def _open_url(url, data=None, timeout=HTTP_TIMEOUT_SECONDS, referer=None, host_header=None, insecure=False):
+def _open_url(url, data=None, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
     headers = {
         "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -323,11 +302,8 @@ def _open_url(url, data=None, timeout=HTTP_TIMEOUT_SECONDS, referer=None, host_h
     }
     if referer:
         headers["Referer"] = referer
-    if host_header:
-        headers["Host"] = host_header
     request = urllib.request.Request(url, data=data, headers=headers)
-    context = ssl._create_unverified_context() if insecure else None
-    with urllib.request.urlopen(request, timeout=timeout, context=context) as response:
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read()
 
 
@@ -336,24 +312,6 @@ def _read_http_error_body(error):
         return error.read()
     finally:
         error.close()
-
-
-def _fallback_url(url):
-    parsed = urllib.parse.urlparse(url)
-    return urllib.parse.urlunparse(parsed._replace(netloc=urllib.parse.urlparse(FALLBACK_BASE_URL).netloc))
-
-
-def _looks_like_dns_error(error):
-    reason = getattr(error, "reason", error)
-    if isinstance(reason, socket.gaierror):
-        return True
-    if isinstance(reason, OSError) and getattr(reason, "errno", None) in {-2, -3, 8, 11001}:
-        return True
-    return (
-        "Name or service not known" in str(reason)
-        or "Temporary failure in name resolution" in str(reason)
-        or "getaddrinfo failed" in str(reason)
-    )
 
 
 def _rank_movie_pages(video, pages):
