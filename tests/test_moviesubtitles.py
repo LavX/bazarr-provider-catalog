@@ -77,12 +77,6 @@ class MoviesubtitlesParserTests(unittest.TestCase):
             )
         )
 
-    def test_dns_error_detection_uses_exception_type(self):
-        error = urllib.error.URLError(socket.gaierror(11001, "getaddrinfo failed"))
-
-        self.assertTrue(self.mod._looks_like_dns_error(error))
-
-
 class MoviesubtitlesProviderTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
@@ -308,6 +302,46 @@ class MoviesubtitlesProviderTests(unittest.TestCase):
                 provider._http_request("https://www.moviesubtitles.org/download-90389.html")
         finally:
             self.mod._open_url = original
+
+    def test_http_request_propagates_dns_error_without_fallback(self):
+        provider = self.mod.MoviesubtitlesProvider()
+        error = urllib.error.URLError(socket.gaierror(11001, "getaddrinfo failed"))
+        calls = []
+
+        def raise_dns_error(*args, **kwargs):
+            calls.append(args)
+            raise error
+
+        original = self.mod._open_url
+        try:
+            self.mod._open_url = raise_dns_error
+            with self.assertRaises(urllib.error.URLError) as raised:
+                provider._http_request("https://www.moviesubtitles.org/search.php")
+        finally:
+            self.mod._open_url = original
+
+        self.assertIs(raised.exception, error)
+        self.assertEqual(len(calls), 1)
+
+    def test_http_request_propagates_connection_error_without_fallback(self):
+        provider = self.mod.MoviesubtitlesProvider()
+        error = urllib.error.URLError(ConnectionRefusedError())
+        calls = []
+
+        def raise_connection_error(*args, **kwargs):
+            calls.append(args)
+            raise error
+
+        original = self.mod._open_url
+        try:
+            self.mod._open_url = raise_connection_error
+            with self.assertRaises(urllib.error.URLError) as raised:
+                provider._http_request("https://www.moviesubtitles.org/search.php")
+        finally:
+            self.mod._open_url = original
+
+        self.assertIs(raised.exception, error)
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":
