@@ -18,6 +18,7 @@ PROVIDER_ID = "subf2m"
 BASE_URL = "https://subf2m.co"
 HTTP_TIMEOUT_SECONDS = 15
 MAX_TITLE_PATHS = 3
+MAX_SLUG_CANDIDATES = 4
 MAX_RESULTS = 30
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
 DEFAULT_USER_AGENT = (
@@ -122,6 +123,7 @@ _DOWNLOAD_BUTTON_RE = re.compile(
     re.I | re.S,
 )
 _IMDB_RE = re.compile(rb"imdb\.com/title/(?P<imdb>tt\d+)", re.I)
+_PAGE_TITLE_RE = re.compile(rb"<title\b[^>]*>(?P<title>.*?)</title\s*>", re.I | re.S)
 _YEAR_RE = re.compile(r"\((\d{4})\)")
 _SXXEYY_RE = re.compile(r"\bs0*(?P<season>\d{1,2})\s*e0*(?P<episode>\d{1,3})\b", re.I)
 _XX_YY_RE = re.compile(r"\b0*(?P<season>\d{1,2})x0*(?P<episode>\d{1,3})\b", re.I)
@@ -160,6 +162,18 @@ def parse_search_results(body):
             }
         )
     return rows
+
+
+def parse_page_title(body):
+    """The title a subtitle page names, taken from its ``<title>`` text."""
+    match = _PAGE_TITLE_RE.search(body or b"")
+    if not match:
+        return ""
+    title = _strip_tags(match.group("title"))
+    prefix = "subtitles for "
+    if title.lower().startswith(prefix):
+        title = title[len(prefix):].strip()
+    return title
 
 
 def rank_movie_paths(video, rows):
@@ -243,6 +257,7 @@ class SubF2MProvider:
             return []
         results = []
         seen = set()
+        search_errors = []
         queries = [(query, False) for query in build_queries(video)]
         if video.get("kind") == "movie":
             imdb_id = _coerce_text(video.get("imdb_id"))
@@ -259,7 +274,16 @@ class SubF2MProvider:
         for query, is_imdb_fallback in queries:
             _sleep(config)
             search_url = f"{BASE_URL}/subtitles/searchbytitle?query={urllib.parse.quote(query, safe='')}&l="
-            search_body = self._http_get(search_url, config=config)
+            try:
+                search_body = self._http_get(search_url, config=config)
+            except (urllib.error.HTTPError, urllib.error.URLError) as error:
+                # This query could not reach the search endpoint. The remaining
+                # queries still get their chance, and the first failure is
+                # remembered: when every query fails, the title can still be
+                # resolved directly through its slug, and the original error
+                # stands when that also comes back empty.
+                search_errors.append(error)
+                continue
             rows = parse_search_results(search_body)
             if video.get("kind") == "episode":
                 paths = rank_episode_paths(video, rows)
@@ -296,6 +320,62 @@ class SubF2MProvider:
                     return _sort_results(results)
             if results:
                 return _sort_results(results)
+        if search_errors and len(search_errors) == len(queries):
+            # The search endpoint answered none of the queries, which has
+            # happened while the rest of the site stayed up. Resolve the title
+            # straight through its slug instead of failing the whole search.
+            return self._search_by_slug(video, requested, search_errors[0], seen, config)
+        return _sort_results(results)
+
+    def _search_by_slug(self, video, requested, original_error, seen, config):
+        """Resolve the title directly through its slug when search is unavailable.
+
+        Rows are accepted only from a page that parses subtitle rows and
+        passes a positive identity check, because the site also serves
+        auto-generated placeholder pages under slugs adjacent to the real
+        entry. When no candidate verifies, the original search error stands,
+        so the host's throttle keeps its meaning.
+        """
+        results = []
+        try:
+            for slug in slug_candidates(video):
+                for language in requested:
+                    _sleep(config)
+                    page_url = f"{BASE_URL}/subtitles/{slug}/{language['path']}"
+                    try:
+                        page_body = self._http_get(page_url, referer=BASE_URL, config=config)
+                    except urllib.error.HTTPError as error:
+                        if error.code in {403, 404}:
+                            continue
+                        raise
+                    rows = parse_subtitle_page(page_body, language["alpha3"], video)
+                    if not rows or not _page_identity_confirmed(page_body, video):
+                        continue
+                    path = {
+                        "path": f"/subtitles/{slug}",
+                        "url": page_url,
+                        "title": parse_page_title(page_body)
+                        or _coerce_text(video.get("title") or video.get("series")),
+                    }
+                    for row in rows:
+                        if not _row_matches_language(row, language):
+                            continue
+                        key = (row["subtitle_id"], row["language"])
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        results.append(self._result(video, path, row, language))
+                        if len(results) >= MAX_RESULTS:
+                            return _sort_results(results)
+                if results:
+                    return _sort_results(results)
+        except (urllib.error.HTTPError, urllib.error.URLError, OSError):
+            # The slug pages could not be reached either, so the site as a
+            # whole is unavailable and the original failure is the one to
+            # report and throttle on.
+            raise original_error
+        if not results:
+            raise original_error
         return _sort_results(results)
 
     def download(self, provider_payload, language, config):
@@ -404,6 +484,25 @@ def build_queries(video):
     if ":" in title:
         queries.append(title.split(":", 1)[0].strip())
     return _dedupe(queries)
+
+
+def slug_candidates(video):
+    """Bounded title slug guesses, used when the search endpoint is unavailable.
+
+    The same title variants the search itself would query feed the guesses,
+    with the year as a suffix first: the site names some entries after its
+    own short title ("Dune", not "Dune: Part One"), while entries added
+    since 2026 carry the year. Every guess stays a guess: callers must
+    confirm a page's identity before trusting its rows.
+    """
+    video = video or {}
+    year = _safe_int(video.get("year"))
+    candidates = []
+    for query in build_queries(video):
+        if year is not None:
+            candidates.append(_slug(f"{query} {year}"))
+        candidates.append(_slug(query))
+    return _dedupe(candidates)[:MAX_SLUG_CANDIDATES]
 
 
 def derive_matches(video, candidate_title, imdb_matched=False, season_pack=False):
@@ -564,6 +663,27 @@ def _imdb_confirmed(body, video):
     match = _IMDB_RE.search(body or b"")
     parsed = _decode(match.group("imdb")) if match else None
     return parsed is not None and parsed == expected
+
+
+def _page_identity_confirmed(body, video):
+    """A positive identity check for a slug-guessed page.
+
+    IMDb equality is the strongest proof and is required whenever the video
+    carries an id. Without one, the page has to name the wanted title itself,
+    with the site's season suffix ("Chernobyl - First Season") stripped first.
+    The site's placeholder pages share a title text with the real entry, so
+    this check only ever runs on a page that already parsed subtitle rows.
+    """
+    video = video or {}
+    if _expected_imdb(video) is not None:
+        return _imdb_confirmed(body, video)
+    if video.get("kind") == "episode":
+        wanted = _coerce_text(video.get("series"))
+        page_title = _series_title_without_season(parse_page_title(body))
+    else:
+        wanted = _coerce_text(video.get("title"))
+        page_title = parse_page_title(body)
+    return bool(wanted) and _tokens(wanted) == _tokens(page_title)
 
 
 def _expected_imdb(video):
