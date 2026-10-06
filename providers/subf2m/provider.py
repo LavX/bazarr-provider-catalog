@@ -18,6 +18,7 @@ PROVIDER_ID = "subf2m"
 BASE_URL = "https://subf2m.co"
 HTTP_TIMEOUT_SECONDS = 15
 MAX_TITLE_PATHS = 3
+MAX_SLUG_CANDIDATES = 4
 MAX_RESULTS = 30
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
 DEFAULT_USER_AGENT = (
@@ -488,23 +489,20 @@ def build_queries(video):
 def slug_candidates(video):
     """Bounded title slug guesses, used when the search endpoint is unavailable.
 
-    The site names most title pages after the title alone, while entries added
-    since 2026 carry the year as a suffix. Both variants stay guesses: callers
-    must confirm a page's identity before trusting its rows.
+    The same title variants the search itself would query feed the guesses,
+    with the year as a suffix first: the site names some entries after its
+    own short title ("Dune", not "Dune: Part One"), while entries added
+    since 2026 carry the year. Every guess stays a guess: callers must
+    confirm a page's identity before trusting its rows.
     """
     video = video or {}
-    if video.get("kind") == "episode":
-        base = _coerce_text(video.get("series"))
-    else:
-        base = _coerce_text(video.get("title"))
-    if not base:
-        return []
-    candidates = []
     year = _safe_int(video.get("year"))
-    if year is not None:
-        candidates.append(_slug(f"{base} {year}"))
-    candidates.append(_slug(base))
-    return _dedupe(candidates)
+    candidates = []
+    for query in build_queries(video):
+        if year is not None:
+            candidates.append(_slug(f"{query} {year}"))
+        candidates.append(_slug(query))
+    return _dedupe(candidates)[:MAX_SLUG_CANDIDATES]
 
 
 def derive_matches(video, candidate_title, imdb_matched=False, season_pack=False):

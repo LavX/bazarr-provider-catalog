@@ -369,6 +369,9 @@ class SubF2MProviderTests(unittest.TestCase):
         candidates = self.mod.slug_candidates({"kind": "movie", "title": "The Matrix", "year": 1999})
         self.assertEqual(candidates, ["the-matrix-1999", "the-matrix"])
 
+        candidates = self.mod.slug_candidates({"kind": "movie", "title": "Dune: Part One", "year": 2021})
+        self.assertEqual(candidates, ["dune-part-one-2021", "dune-part-one", "dune-2021", "dune"])
+
         candidates = self.mod.slug_candidates({"kind": "episode", "series": "Chernobyl", "year": 2019})
         self.assertEqual(candidates, ["chernobyl-2019", "chernobyl"])
 
@@ -576,6 +579,52 @@ class SubF2MProviderTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, 500)
         finally:
             errors.close()
+
+    def test_search_slug_fallback_resolves_short_site_title(self):
+        # The site registers "Dune: Part One" under its own short title, so the
+        # full-title guesses miss and the colon-prefix variant resolves it.
+        provider = self.mod.SubF2MProvider()
+        errors = _StubErrors()
+        calls = []
+
+        def stub(url, timeout=15, referer=None, config=None):
+            del timeout, referer, config
+            calls.append(url)
+            if "/searchbytitle" in url:
+                raise errors.http_error(url, 500, "Internal Server Error")
+            if url in (
+                "https://subf2m.co/subtitles/dune-part-one-2021/english",
+                "https://subf2m.co/subtitles/dune-part-one/english",
+            ):
+                raise errors.http_error(url, 404, "Not Found")
+            if url == "https://subf2m.co/subtitles/dune-2021/english":
+                return DETAIL_DUNE_EN
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        try:
+            results = provider.search(
+                {"kind": "movie", "title": "Dune: Part One", "year": 2021, "imdb_id": "tt1160419"},
+                [{"alpha3": "eng", "alpha2": "en"}],
+                {"request_delay_ms": 0},
+            )
+        finally:
+            errors.close()
+
+        self.assertEqual(
+            calls,
+            [
+                "https://subf2m.co/subtitles/searchbytitle?query=Dune%3A%20Part%20One&l=",
+                "https://subf2m.co/subtitles/searchbytitle?query=Dune&l=",
+                "https://subf2m.co/subtitles/searchbytitle?query=tt1160419&l=",
+                "https://subf2m.co/subtitles/dune-part-one-2021/english",
+                "https://subf2m.co/subtitles/dune-part-one/english",
+                "https://subf2m.co/subtitles/dune-2021/english",
+            ],
+        )
+        self.assertTrue(results)
+        self.assertEqual(results[0]["provider_payload"]["subtitle_id"], "3331049")
+        self.assertIn("imdb_id", results[0]["matches"])
 
     def test_search_filters_rows_by_requested_forced_flag(self):
         provider = self.mod.SubF2MProvider()
