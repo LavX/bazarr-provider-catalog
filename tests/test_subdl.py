@@ -3060,6 +3060,17 @@ class SubDLAITranslationLifecycleTests(unittest.TestCase):
         }}, status=202)
         running = self._response({"job": {"status": "running", "download_ready": False}})
         calls = self._patch_urlopen([queued, *([running] * 12)])
+        # The virtual clock stays patched for the rest of the test, exactly as
+        # the callers of _leave_source_job_running keep theirs: the job state
+        # this leaves behind carries virtual timestamps, and un-patching here
+        # would let the real clock prune it before the assertions below.
+        now = [0.0]
+        clock = patch.object(self.mod.time, "monotonic", side_effect=lambda: now[0])
+        sleeper = patch.object(self.mod.time, "sleep", side_effect=lambda delay: now.__setitem__(0, now[0] + delay))
+        clock.start()
+        sleeper.start()
+        self.addCleanup(sleeper.stop)
+        self.addCleanup(clock.stop)
         self.assertIsNone(self.provider.download(payload, {"alpha3": "fra"}, self.config))
         self.assertEqual(calls[0][0].get_method(), "POST")
 
