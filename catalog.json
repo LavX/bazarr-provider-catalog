@@ -7126,7 +7126,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "f6ce5d30be8b83863b349ef4f55679bfe5efa8062c88c8aa703dfdb713727c06",
+        "bundle_sha256": "6401496cf56c214d2a01a688dbf3979e382c526d8c69dc360c2a510b72e4e3ef",
         "config_schema": {
           "additionalProperties": false,
           "type": "object"
@@ -7134,11 +7134,11 @@
         "dependencies": {
           "requirements": []
         },
-        "description": "Uses the TsukiHime API for anime movie and episode subtitles. Movie lookup uses AniList ids; episode lookup uses AniDB series and episode ids. XZ downloads are size-bounded.",
+        "description": "Uses the TsukiHime API for anime movie and episode subtitles. Movie lookup uses AniList ids; episode lookup uses the AniDB series id with the episode number, and requires the AniDB episode id from the live AniDB API. XZ downloads are size-bounded.",
         "entry_class": "TsukiHimeProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "f14ea0aa05e5a6170cfe2e2a849f2113da7ac3d37791fdc86cc78901a18afc84"
+          "provider.py": "6bcfdcdadc53b3bde792f84354270026a76fdaccb3fafca2014b57e221b34778"
         },
         "languages": [
           "afr",
@@ -7225,7 +7225,7 @@
           "episode",
           "movie"
         ],
-        "version": "0.1.2"
+        "version": "0.1.3"
       }
     },
     {

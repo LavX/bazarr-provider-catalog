@@ -73,7 +73,7 @@ class TsukiHimeProviderTests(unittest.TestCase):
         provider._http_get = get
         return provider, calls
 
-    def test_episode_search_uses_anidb_series_and_episode_ids(self):
+    def test_episode_search_uses_the_anidb_series_id_and_the_episode_number(self):
         video = {
             "kind": "episode",
             "series": "One Piece",
@@ -81,7 +81,7 @@ class TsukiHimeProviderTests(unittest.TestCase):
             "episode": 1171,
             "year": 1999,
             "series_anidb_id": [68, 69],
-            "series_anidb_episode_id": [1170, 1171],
+            "series_anidb_episode_id": [312668, 312669],
             "series_anidb_episode_no": 1171,
             "name": "One.Piece.S01E1171.1080p.WEB-DL.mkv",
         }
@@ -235,7 +235,7 @@ class TsukiHimeProviderTests(unittest.TestCase):
         }
         responses = {
             f"{API}/animes/anidb/69": _json({"id": 2086, "release_year": 1999}),
-            f"{API}/animes/2086/episodes/9001": _json(
+            f"{API}/animes/2086/episodes/1171": _json(
                 {"results": [{"id": 301, "state": "completed", "sublangs": ["en"]}]}
             ),
             f"{API}/torrents/301": _json(
@@ -267,7 +267,7 @@ class TsukiHimeProviderTests(unittest.TestCase):
         }
         responses = {
             f"{API}/animes/anidb/69": _json({"id": 2086, "release_year": 2020}),
-            f"{API}/animes/2086/episodes/9001": _json(
+            f"{API}/animes/2086/episodes/13": _json(
                 {"results": [{"id": 301, "state": "completed", "sublangs": ["en"]}]}
             ),
             f"{API}/torrents/301": _json(
@@ -301,7 +301,7 @@ class TsukiHimeProviderTests(unittest.TestCase):
         provider, _ = self._provider(
             {
                 f"{API}/animes/anidb/69": _json({"id": 2086, "release_year": 1999}),
-                f"{API}/animes/2086/episodes/9001": _json(
+                f"{API}/animes/2086/episodes/1171": _json(
                     {"results": [{"id": 301, "state": "completed", "sublangs": ["en"]}]}
                 ),
                 f"{API}/torrents/301": _json(
@@ -322,6 +322,9 @@ class TsukiHimeProviderTests(unittest.TestCase):
         self.assertEqual(results, [])
 
     def _episode_results(self, files, episode=1, absolute=None, languages=None):
+        # The episode number the AniDB mapping carries: the episode itself for
+        # a first-cour show, or the absolute number once a second cour starts.
+        episode_no = episode if absolute is None else absolute
         video = {
             "kind": "episode",
             "series": "Show",
@@ -329,14 +332,13 @@ class TsukiHimeProviderTests(unittest.TestCase):
             "episode": episode,
             "series_anidb_id": 69,
             "series_anidb_episode_id": 9001,
+            "series_anidb_episode_no": episode_no,
             "name": f"Show.S01E{episode:02d}.mkv",
         }
-        if absolute is not None:
-            video["series_anidb_episode_no"] = absolute
         provider, _ = self._provider(
             {
                 f"{API}/animes/anidb/69": _json({"id": 2086, "release_year": 2020}),
-                f"{API}/animes/2086/episodes/9001": _json(
+                f"{API}/animes/2086/episodes/{episode_no}": _json(
                     {"results": [{"id": 301, "state": "completed", "sublangs": ["en", "hi"]}]}
                 ),
                 f"{API}/torrents/301": _json({"files": files}),
@@ -407,12 +409,13 @@ class TsukiHimeProviderTests(unittest.TestCase):
             "episode": 5,
             "series_anidb_id": 69,
             "series_anidb_episode_id": 9001,
+            "series_anidb_episode_no": 5,
             "name": "One.Piece.S00E05.mkv",
         }
         provider, _ = self._provider(
             {
                 f"{API}/animes/anidb/69": _json({"id": 2086, "release_year": 1999}),
-                f"{API}/animes/2086/episodes/9001": _json(
+                f"{API}/animes/2086/episodes/5": _json(
                     {"results": [{"id": 301, "state": "completed", "sublangs": ["en"]}]}
                 ),
                 f"{API}/torrents/301": _json(
@@ -438,11 +441,12 @@ class TsukiHimeProviderTests(unittest.TestCase):
             "episode": 1,
             "series_anidb_id": 69,
             "series_anidb_episode_id": 1171,
+            "series_anidb_episode_no": 1,
             "name": "One.Piece.S01E01.mkv",
         }
         responses = {
             f"{API}/animes/anidb/69": _json({"id": 2086, "release_year": 1999}),
-            f"{API}/animes/2086/episodes/1171": _json(
+            f"{API}/animes/2086/episodes/1": _json(
                 {"results": [{"id": 301, "state": "completed", "sublangs": ["en", "pt-BR", "es-419", "zh-Hant"]}]}
             ),
             f"{API}/torrents/301": _json(
@@ -514,6 +518,36 @@ class TsukiHimeProviderTests(unittest.TestCase):
         self.assertEqual(
             provider.search(
                 {"kind": "episode", "series_anidb_id": 69, "season": 1, "episode": 1},
+                [{"alpha3": "eng"}],
+                {},
+            ),
+            [],
+        )
+        # The episode number alone does not unlock the search: the AniDB
+        # episode id only exists once the live AniDB API answered.
+        self.assertEqual(
+            provider.search(
+                {
+                    "kind": "episode",
+                    "series_anidb_id": 69,
+                    "season": 1,
+                    "episode": 1,
+                    "series_anidb_episode_no": 1,
+                },
+                [{"alpha3": "eng"}],
+                {},
+            ),
+            [],
+        )
+        self.assertEqual(
+            provider.search(
+                {
+                    "kind": "episode",
+                    "series_anidb_id": 69,
+                    "season": 1,
+                    "episode": 1,
+                    "series_anidb_episode_id": 312669,
+                },
                 [{"alpha3": "eng"}],
                 {},
             ),
