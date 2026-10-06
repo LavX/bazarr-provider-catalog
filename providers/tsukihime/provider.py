@@ -172,8 +172,14 @@ class TsukiHimeProvider:
         kind = video.get("kind")
         if kind == "episode":
             anidb_id = _positive_id(_scalar(video.get("series_anidb_id")))
+            # The AniDB episode id gates the search, because it only exists
+            # once the live AniDB API answered, but the episodes endpoint is
+            # keyed by the episode number: queried with the AniDB episode id
+            # it returns no torrents for any show, while the episode number
+            # returns them.
             episode_id = _positive_id(_scalar(video.get("series_anidb_episode_id")))
-            if anidb_id is None or episode_id is None:
+            episode_no = _positive_id(_scalar(video.get("series_anidb_episode_no")))
+            if anidb_id is None or episode_id is None or episode_no is None:
                 return []
             anime = self._get_json(f"/animes/anidb/{anidb_id}")
             if not isinstance(anime, dict):
@@ -181,7 +187,7 @@ class TsukiHimeProvider:
             anime_id = _positive_id(anime.get("id"))
             if anime_id is None:
                 return []
-            entries_data = self._get_json(f"/animes/{anime_id}/episodes/{episode_id}")
+            entries_data = self._get_json(f"/animes/{anime_id}/episodes/{episode_no}")
         elif kind == "movie":
             anilist_id = _positive_id(_scalar(video.get("anilist_id")))
             if anilist_id is None:
