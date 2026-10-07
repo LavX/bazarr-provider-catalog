@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "3d38a3b81d4bc0dda964327d7cfee272e420e0b53c8d5b996a921022f9b852cd",
+  "bundle_sha256": "71f91b31439f4d6e09cb0d0511ec547262f1fde1111db7eb178d738c88d7950b",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -22,7 +22,7 @@
   "entry_class": "VladoonProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "d7a6ae529ff0c5f883262be0f2b43b6a7d85544c3d7197d6128567ff15987dc7"
+    "provider.py": "57e65eeda5b5e5843010c09f02e65d9cb2e000b9cd80ebf82dec3e86039f6393"
   },
   "languages": [
     "bul"
@@ -44,5 +44,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.0"
+  "version": "0.1.1"
 }

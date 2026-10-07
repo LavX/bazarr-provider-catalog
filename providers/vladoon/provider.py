@@ -470,7 +470,11 @@ def _derive_matches(video, item):
             if item.get("season") == season and item.get("episode") == episode:
                 matches.append("episode")
         if video.get("series_imdb_id") and item.get("imdb_id") == video.get("series_imdb_id"):
-            matches.append("imdb_id")
+            # The item's id is the series-level identity: emit the
+            # series_imdb_id key, which the score contract credits with
+            # series and year, not imdb_id, which claims season and
+            # episode equivalence this comparison never established.
+            matches.append("series_imdb_id")
         year = video.get("year")
         if year and any(str(year) in _release_tokens(release) for release in releases):
             matches.append("year")

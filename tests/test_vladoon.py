@@ -368,7 +368,7 @@ class DeriveMatchesTests(VladoonTestCase):
         )
         matches = self.mod._derive_matches(video, self.pack)
 
-        for key in ("series", "season", "episode", "imdb_id", "source", "resolution", "video_codec", "release_group"):
+        for key in ("series", "season", "episode", "series_imdb_id", "source", "resolution", "video_codec", "release_group"):
             self.assertIn(key, matches)
 
     def test_pack_season_match_survives_an_episode_outside_the_pack(self):
@@ -378,7 +378,9 @@ class DeriveMatchesTests(VladoonTestCase):
         matches = self.mod._derive_matches(video, self.pack)
         self.assertIn("series", matches)
         self.assertIn("season", matches)
-        self.assertIn("imdb_id", matches)
+        self.assertIn("series_imdb_id", matches)
+        # A series-level id equality must not claim episode-level identity.
+        self.assertNotIn("imdb_id", matches)
         self.assertNotIn("episode", matches)
 
     def test_episode_year_match_survives_without_imdb(self):
