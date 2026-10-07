@@ -333,12 +333,20 @@ class SubF2MProvider:
         Rows are accepted only from a page that parses subtitle rows and
         passes a positive identity check, because the site also serves
         auto-generated placeholder pages under slugs adjacent to the real
-        entry. When no candidate verifies, the original search error stands,
-        so the host's throttle keeps its meaning.
+        entry. A slug whose language pages all answer nothing is settled
+        through its base page once its languages had their chance: when that
+        page proves the entry, the site carries the title and simply has no
+        subtitles for the wanted languages, so the search answers empty
+        rather than reporting the search endpoint's failure. Every candidate
+        keeps its turn even after one resolves, so rows a later slug carries
+        are still found. When no candidate resolves, the original search
+        error stands, so the host's throttle keeps its meaning.
         """
         results = []
+        resolved = False
         try:
             for slug in slug_candidates(video):
+                slug_confirmed = False
                 for language in requested:
                     _sleep(config)
                     page_url = f"{BASE_URL}/subtitles/{slug}/{language['path']}"
@@ -351,6 +359,8 @@ class SubF2MProvider:
                     rows = parse_subtitle_page(page_body, language["alpha3"], video)
                     if not rows or not _page_identity_confirmed(page_body, video):
                         continue
+                    slug_confirmed = True
+                    resolved = True
                     path = {
                         "path": f"/subtitles/{slug}",
                         "url": page_url,
@@ -369,14 +379,41 @@ class SubF2MProvider:
                             return _sort_results(results)
                 if results:
                     return _sort_results(results)
+                if not slug_confirmed:
+                    # None of this slug's language pages answered with rows
+                    # the identity check accepts: 404s, 403s, or pages that
+                    # parsed no rows. The base page decides whether the site
+                    # carries the title under this slug without subtitles in
+                    # the wanted languages, or does not carry it at all. It
+                    # waits until the language pages had their chance, so it
+                    # cannot preempt a language that would still answer, and
+                    # one base request per unresolved slug bounds the cost.
+                    _sleep(config)
+                    base_body = None
+                    try:
+                        base_body = self._http_get(
+                            f"{BASE_URL}/subtitles/{slug}", referer=BASE_URL, config=config
+                        )
+                    except urllib.error.HTTPError as error:
+                        if error.code not in {403, 404}:
+                            raise
+                    if base_body is not None and _base_page_identity_confirmed(base_body, video):
+                        resolved = True
         except (urllib.error.HTTPError, urllib.error.URLError, OSError):
             # The slug pages could not be reached either, so the site as a
             # whole is unavailable and the original failure is the one to
             # report and throttle on.
             raise original_error
-        if not results:
-            raise original_error
-        return _sort_results(results)
+        if results:
+            return _sort_results(results)
+        if resolved:
+            # Some page proved the title is on the site, so the wanted
+            # languages have no subtitles there that survived the requested
+            # filters. That is an answer, not a provider failure, and
+            # reporting the original error would throttle a site that
+            # answered every request.
+            return []
+        raise original_error
 
     def download(self, provider_payload, language, config):
         del language
@@ -611,6 +648,21 @@ def _iter_item_blocks(body):
         yield body[match.end():end]
 
 
+def _base_page_lists_subtitles(body):
+    """True when the base page parses at least one well-formed subtitle item.
+
+    A placeholder names the title but lists no downloadable subtitles, so an
+    item marker alone proves nothing: the item has to parse. Episode
+    matching is deliberately skipped, because the base page lists the whole
+    title and the wanted episode may have no subtitles at all. The language
+    label is unused here; only the parse result matters.
+    """
+    for item in _iter_item_blocks(body or b""):
+        if _parse_item(item, None, None) is not None:
+            return True
+    return False
+
+
 def _release_matches_episode(release_info, video):
     season = _safe_int((video or {}).get("season"))
     episode = _safe_int((video or {}).get("episode"))
@@ -684,6 +736,24 @@ def _page_identity_confirmed(body, video):
         wanted = _coerce_text(video.get("title"))
         page_title = parse_page_title(body)
     return bool(wanted) and _tokens(wanted) == _tokens(page_title)
+
+
+def _base_page_identity_confirmed(body, video):
+    """A positive identity check for a slug's base page.
+
+    The base page is not language filtered, so it never yields rows; it only
+    proves the entry exists under the slug. It is trusted on strong evidence
+    alone: the matching IMDb id when the video carries one, since the site's
+    placeholder pages carry none, or, without an id on the video, a title
+    match plus at least one parsed subtitle item, since a placeholder names
+    the title but lists no downloadable subtitles.
+    """
+    video = video or {}
+    if _expected_imdb(video) is not None:
+        return _imdb_confirmed(body, video)
+    if not _base_page_lists_subtitles(body):
+        return False
+    return _page_identity_confirmed(body, video)
 
 
 def _expected_imdb(video):

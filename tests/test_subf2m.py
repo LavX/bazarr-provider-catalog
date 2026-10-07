@@ -29,6 +29,9 @@ DETAIL_CHERNOBYL_EN = (FIXTURE_DIR / "subf2m_detail_chernobyl_english.html").rea
 LANG_MATRIX_EN = (FIXTURE_DIR / "subf2m_lang_the_matrix_english.html").read_bytes()
 LANG_MATRIX_1999_EN = (FIXTURE_DIR / "subf2m_lang_the_matrix_1999_english.html").read_bytes()
 LANG_CHERNOBYL_EN = (FIXTURE_DIR / "subf2m_lang_chernobyl_english.html").read_bytes()
+BASE_MATRIX = (FIXTURE_DIR / "subf2m_base_the_matrix.html").read_bytes()
+BASE_MATRIX_1999 = (FIXTURE_DIR / "subf2m_base_the_matrix_1999.html").read_bytes()
+BASE_CHERNOBYL = (FIXTURE_DIR / "subf2m_base_chernobyl.html").read_bytes()
 DOWNLOAD_GATE_DUNE = (FIXTURE_DIR / "subf2m_download_gate_dune.html").read_bytes()
 
 
@@ -413,6 +416,8 @@ class SubF2MProviderTests(unittest.TestCase):
                 raise errors.http_error(url, 500, "Internal Server Error")
             if url == "https://subf2m.co/subtitles/the-matrix-1999/english":
                 return LANG_MATRIX_1999_EN
+            if url == "https://subf2m.co/subtitles/the-matrix-1999":
+                return BASE_MATRIX_1999
             if url == "https://subf2m.co/subtitles/the-matrix/english":
                 return LANG_MATRIX_EN
             raise AssertionError(f"unexpected URL: {url}")
@@ -433,6 +438,7 @@ class SubF2MProviderTests(unittest.TestCase):
                 "https://subf2m.co/subtitles/searchbytitle?query=The%20Matrix&l=",
                 "https://subf2m.co/subtitles/searchbytitle?query=tt0133093&l=",
                 "https://subf2m.co/subtitles/the-matrix-1999/english",
+                "https://subf2m.co/subtitles/the-matrix-1999",
                 "https://subf2m.co/subtitles/the-matrix/english",
             ],
         )
@@ -456,6 +462,8 @@ class SubF2MProviderTests(unittest.TestCase):
                 raise errors.http_error(url, 500, "Internal Server Error")
             if url == "https://subf2m.co/subtitles/chernobyl-2019/english":
                 raise errors.http_error(url, 404, "Not Found")
+            if url == "https://subf2m.co/subtitles/chernobyl-2019":
+                raise errors.http_error(url, 404, "Not Found")
             if url == "https://subf2m.co/subtitles/chernobyl/english":
                 return LANG_CHERNOBYL_EN
             raise AssertionError(f"unexpected URL: {url}")
@@ -475,6 +483,7 @@ class SubF2MProviderTests(unittest.TestCase):
             [
                 "https://subf2m.co/subtitles/searchbytitle?query=Chernobyl&l=",
                 "https://subf2m.co/subtitles/chernobyl-2019/english",
+                "https://subf2m.co/subtitles/chernobyl-2019",
                 "https://subf2m.co/subtitles/chernobyl/english",
             ],
         )
@@ -483,15 +492,22 @@ class SubF2MProviderTests(unittest.TestCase):
         self.assertIn("episode", results[0]["matches"])
 
     def test_search_slug_fallback_accepts_title_match_without_imdb(self):
+        # Without an id on the video, the placeholder base page shares the
+        # title text but lists no subtitle items, so it does not resolve the
+        # slug and the walk reaches the real page.
         provider = self.mod.SubF2MProvider()
         errors = _StubErrors()
+        calls = []
 
         def stub(url, timeout=15, referer=None, config=None):
             del timeout, referer, config
+            calls.append(url)
             if "/searchbytitle" in url:
                 raise errors.http_error(url, 500, "Internal Server Error")
             if url == "https://subf2m.co/subtitles/the-matrix-1999/english":
                 return LANG_MATRIX_1999_EN
+            if url == "https://subf2m.co/subtitles/the-matrix-1999":
+                return BASE_MATRIX_1999
             if url == "https://subf2m.co/subtitles/the-matrix/english":
                 return LANG_MATRIX_EN
             raise AssertionError(f"unexpected URL: {url}")
@@ -506,6 +522,15 @@ class SubF2MProviderTests(unittest.TestCase):
         finally:
             errors.close()
 
+        self.assertEqual(
+            calls,
+            [
+                "https://subf2m.co/subtitles/searchbytitle?query=The%20Matrix&l=",
+                "https://subf2m.co/subtitles/the-matrix-1999/english",
+                "https://subf2m.co/subtitles/the-matrix-1999",
+                "https://subf2m.co/subtitles/the-matrix/english",
+            ],
+        )
         self.assertTrue(results)
         self.assertNotIn("imdb_id", results[0]["matches"])
 
@@ -519,6 +544,10 @@ class SubF2MProviderTests(unittest.TestCase):
             if "/searchbytitle" in url:
                 raise errors.http_error(url, 500, "Internal Server Error")
             if url == "https://subf2m.co/subtitles/the-matrix-1999/english":
+                raise errors.http_error(url, 404, "Not Found")
+            if url == "https://subf2m.co/subtitles/the-matrix-1999":
+                raise errors.http_error(url, 404, "Not Found")
+            if url == "https://subf2m.co/subtitles/the-matrix":
                 raise errors.http_error(url, 404, "Not Found")
             if url == "https://subf2m.co/subtitles/the-matrix/english":
                 return page_without_imdb
@@ -594,7 +623,9 @@ class SubF2MProviderTests(unittest.TestCase):
                 raise errors.http_error(url, 500, "Internal Server Error")
             if url in (
                 "https://subf2m.co/subtitles/dune-part-one-2021/english",
+                "https://subf2m.co/subtitles/dune-part-one-2021",
                 "https://subf2m.co/subtitles/dune-part-one/english",
+                "https://subf2m.co/subtitles/dune-part-one",
             ):
                 raise errors.http_error(url, 404, "Not Found")
             if url == "https://subf2m.co/subtitles/dune-2021/english":
@@ -618,13 +649,408 @@ class SubF2MProviderTests(unittest.TestCase):
                 "https://subf2m.co/subtitles/searchbytitle?query=Dune&l=",
                 "https://subf2m.co/subtitles/searchbytitle?query=tt1160419&l=",
                 "https://subf2m.co/subtitles/dune-part-one-2021/english",
+                "https://subf2m.co/subtitles/dune-part-one-2021",
                 "https://subf2m.co/subtitles/dune-part-one/english",
+                "https://subf2m.co/subtitles/dune-part-one",
                 "https://subf2m.co/subtitles/dune-2021/english",
             ],
         )
         self.assertTrue(results)
         self.assertEqual(results[0]["provider_payload"]["subtitle_id"], "3331049")
         self.assertIn("imdb_id", results[0]["matches"])
+
+    def test_search_slug_fallback_answers_empty_when_site_carries_title_without_wanted_language(self):
+        # The Hungarian episode searches on the shared box kept reporting the
+        # search endpoint's failure for titles the site does carry: the entry
+        # exists, it just has no subtitles in the wanted language. The base
+        # page proves the entry, so the search answers [] instead of raising.
+        provider = self.mod.SubF2MProvider()
+        errors = _StubErrors()
+        calls = []
+
+        def stub(url, timeout=15, referer=None, config=None):
+            del timeout, referer, config
+            calls.append(url)
+            if "/searchbytitle" in url:
+                raise errors.http_error(url, 500, "Internal Server Error")
+            if url == "https://subf2m.co/subtitles/chernobyl-2019/hungarian":
+                raise errors.http_error(url, 404, "Not Found")
+            if url == "https://subf2m.co/subtitles/chernobyl-2019":
+                raise errors.http_error(url, 404, "Not Found")
+            if url == "https://subf2m.co/subtitles/chernobyl/hungarian":
+                raise errors.http_error(url, 404, "Not Found")
+            if url == "https://subf2m.co/subtitles/chernobyl":
+                return BASE_CHERNOBYL
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        try:
+            results = provider.search(
+                {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1, "year": 2019, "series_imdb_id": "tt7366338"},
+                [{"alpha3": "hun", "alpha2": "hu"}],
+                {"request_delay_ms": 0},
+            )
+        finally:
+            errors.close()
+
+        self.assertEqual(results, [])
+        self.assertEqual(
+            calls,
+            [
+                "https://subf2m.co/subtitles/searchbytitle?query=Chernobyl&l=",
+                "https://subf2m.co/subtitles/chernobyl-2019/hungarian",
+                "https://subf2m.co/subtitles/chernobyl-2019",
+                "https://subf2m.co/subtitles/chernobyl/hungarian",
+                "https://subf2m.co/subtitles/chernobyl",
+            ],
+        )
+
+    def test_search_slug_fallback_answers_empty_for_movie_resolved_through_base_page(self):
+        # A movie variant of the empty-language answer: the placeholder base
+        # page does not resolve the slug, the real base page does, and the
+        # search returns [] without re-raising the search endpoint's error.
+        provider = self.mod.SubF2MProvider()
+        errors = _StubErrors()
+        calls = []
+
+        def stub(url, timeout=15, referer=None, config=None):
+            del timeout, referer, config
+            calls.append(url)
+            if "/searchbytitle" in url:
+                raise errors.http_error(url, 500, "Internal Server Error")
+            if url == "https://subf2m.co/subtitles/the-matrix-1999/hungarian":
+                raise errors.http_error(url, 404, "Not Found")
+            if url == "https://subf2m.co/subtitles/the-matrix-1999":
+                return BASE_MATRIX_1999
+            if url == "https://subf2m.co/subtitles/the-matrix/hungarian":
+                raise errors.http_error(url, 404, "Not Found")
+            if url == "https://subf2m.co/subtitles/the-matrix":
+                return BASE_MATRIX
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        try:
+            results = provider.search(
+                {"kind": "movie", "title": "The Matrix", "year": 1999, "imdb_id": "tt0133093"},
+                [{"alpha3": "hun", "alpha2": "hu"}],
+                {"request_delay_ms": 0},
+            )
+        finally:
+            errors.close()
+
+        self.assertEqual(results, [])
+        self.assertEqual(
+            calls,
+            [
+                "https://subf2m.co/subtitles/searchbytitle?query=The%20Matrix&l=",
+                "https://subf2m.co/subtitles/searchbytitle?query=tt0133093&l=",
+                "https://subf2m.co/subtitles/the-matrix-1999/hungarian",
+                "https://subf2m.co/subtitles/the-matrix-1999",
+                "https://subf2m.co/subtitles/the-matrix/hungarian",
+                "https://subf2m.co/subtitles/the-matrix",
+            ],
+        )
+
+    def test_search_slug_fallback_fetches_base_page_once_per_slug(self):
+        # Two requested languages, both missing: the language pages get their
+        # chance first, then one base page per slug candidate decides it, and
+        # a slug confirmed through its language pages spends no base request.
+        # The title-only identity rule accepts the base page only when it
+        # parses at least one subtitle item.
+        provider = self.mod.SubF2MProvider()
+        errors = _StubErrors()
+        calls = []
+
+        def stub(url, timeout=15, referer=None, config=None):
+            del timeout, referer, config
+            calls.append(url)
+            if "/searchbytitle" in url:
+                raise errors.http_error(url, 500, "Internal Server Error")
+            if url in (
+                "https://subf2m.co/subtitles/chernobyl-2019/hungarian",
+                "https://subf2m.co/subtitles/chernobyl-2019/english",
+                "https://subf2m.co/subtitles/chernobyl-2019",
+                "https://subf2m.co/subtitles/chernobyl/hungarian",
+                "https://subf2m.co/subtitles/chernobyl/english",
+            ):
+                raise errors.http_error(url, 404, "Not Found")
+            if url == "https://subf2m.co/subtitles/chernobyl":
+                return BASE_CHERNOBYL
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        try:
+            results = provider.search(
+                {"kind": "episode", "series": "Chernobyl", "season": 1, "episode": 1, "year": 2019},
+                [{"alpha3": "hun", "alpha2": "hu"}, {"alpha3": "eng", "alpha2": "en"}],
+                {"request_delay_ms": 0},
+            )
+        finally:
+            errors.close()
+
+        self.assertEqual(results, [])
+        self.assertEqual(
+            calls,
+            [
+                "https://subf2m.co/subtitles/searchbytitle?query=Chernobyl&l=",
+                "https://subf2m.co/subtitles/chernobyl-2019/hungarian",
+                "https://subf2m.co/subtitles/chernobyl-2019/english",
+                "https://subf2m.co/subtitles/chernobyl-2019",
+                "https://subf2m.co/subtitles/chernobyl/hungarian",
+                "https://subf2m.co/subtitles/chernobyl/english",
+                "https://subf2m.co/subtitles/chernobyl",
+            ],
+        )
+
+    def test_search_slug_fallback_lets_remaining_languages_answer_before_base_page(self):
+        # The base request must not preempt the slug's other languages: the
+        # Hungarian page is missing, the English page still carries rows, and
+        # a slug confirmed through its language pages spends no base request.
+        provider = self.mod.SubF2MProvider()
+        errors = _StubErrors()
+        calls = []
+
+        def stub(url, timeout=15, referer=None, config=None):
+            del timeout, referer, config
+            calls.append(url)
+            if "/searchbytitle" in url:
+                raise errors.http_error(url, 500, "Internal Server Error")
+            if url == "https://subf2m.co/subtitles/the-matrix-1999/hungarian":
+                raise errors.http_error(url, 404, "Not Found")
+            if url == "https://subf2m.co/subtitles/the-matrix-1999/english":
+                return LANG_MATRIX_1999_EN
+            if url == "https://subf2m.co/subtitles/the-matrix-1999":
+                return BASE_MATRIX_1999
+            if url == "https://subf2m.co/subtitles/the-matrix/hungarian":
+                raise errors.http_error(url, 404, "Not Found")
+            if url == "https://subf2m.co/subtitles/the-matrix/english":
+                return LANG_MATRIX_EN
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        try:
+            results = provider.search(
+                {"kind": "movie", "title": "The Matrix", "year": 1999, "imdb_id": "tt0133093"},
+                [{"alpha3": "hun", "alpha2": "hu"}, {"alpha3": "eng", "alpha2": "en"}],
+                {"request_delay_ms": 0},
+            )
+        finally:
+            errors.close()
+
+        self.assertEqual(
+            calls,
+            [
+                "https://subf2m.co/subtitles/searchbytitle?query=The%20Matrix&l=",
+                "https://subf2m.co/subtitles/searchbytitle?query=tt0133093&l=",
+                "https://subf2m.co/subtitles/the-matrix-1999/hungarian",
+                "https://subf2m.co/subtitles/the-matrix-1999/english",
+                "https://subf2m.co/subtitles/the-matrix-1999",
+                "https://subf2m.co/subtitles/the-matrix/hungarian",
+                "https://subf2m.co/subtitles/the-matrix/english",
+            ],
+        )
+        self.assertEqual(len(results), 3)
+        self.assertEqual(results[0]["provider_payload"]["subtitle_id"], "3732233")
+
+    def test_search_slug_fallback_keeps_walking_when_confirmed_rows_all_filter_out(self):
+        # A candidate whose rows parse and pass identity but all fail the
+        # requested HI and forced filters confirms the slug yet contributes
+        # nothing; the walk must still reach the later candidate that carries
+        # an acceptable row.
+        provider = self.mod.SubF2MProvider()
+        errors = _StubErrors()
+        calls = []
+        clean_dune = DETAIL_DUNE_EN.replace(
+            b"FORCED alien and sign language parts only",
+            b"alien and sign language parts only",
+        )
+
+        def stub(url, timeout=15, referer=None, config=None):
+            del timeout, referer, config
+            calls.append(url)
+            if "/searchbytitle" in url:
+                raise errors.http_error(url, 500, "Internal Server Error")
+            if url == "https://subf2m.co/subtitles/dune-part-one-2021/english":
+                return DETAIL_DUNE_EN
+            if url in (
+                "https://subf2m.co/subtitles/dune-part-one/english",
+                "https://subf2m.co/subtitles/dune-part-one",
+            ):
+                raise errors.http_error(url, 404, "Not Found")
+            if url == "https://subf2m.co/subtitles/dune-2021/english":
+                return clean_dune
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        try:
+            results = provider.search(
+                {"kind": "movie", "title": "Dune: Part One", "year": 2021, "imdb_id": "tt1160419"},
+                [{"alpha3": "eng", "alpha2": "en", "hi": False, "forced": False}],
+                {"request_delay_ms": 0},
+            )
+        finally:
+            errors.close()
+
+        self.assertEqual(
+            [item["provider_payload"]["subtitle_id"] for item in results],
+            ["2600413"],
+        )
+        self.assertEqual(
+            calls,
+            [
+                "https://subf2m.co/subtitles/searchbytitle?query=Dune%3A%20Part%20One&l=",
+                "https://subf2m.co/subtitles/searchbytitle?query=Dune&l=",
+                "https://subf2m.co/subtitles/searchbytitle?query=tt1160419&l=",
+                "https://subf2m.co/subtitles/dune-part-one-2021/english",
+                "https://subf2m.co/subtitles/dune-part-one/english",
+                "https://subf2m.co/subtitles/dune-part-one",
+                "https://subf2m.co/subtitles/dune-2021/english",
+            ],
+        )
+
+    def test_search_slug_fallback_answers_empty_when_confirmed_rows_all_filter_out(self):
+        # The terminal case of the filter rule: the only confirming page's
+        # rows all fail the requested HI and forced filters and no other
+        # candidate carries anything, so the site answered for the title and
+        # the search reports an empty result rather than the search
+        # endpoint's error.
+        provider = self.mod.SubF2MProvider()
+        errors = _StubErrors()
+        calls = []
+
+        def stub(url, timeout=15, referer=None, config=None):
+            del timeout, referer, config
+            calls.append(url)
+            if "/searchbytitle" in url:
+                raise errors.http_error(url, 500, "Internal Server Error")
+            if url == "https://subf2m.co/subtitles/dune-part-one-2021/english":
+                return DETAIL_DUNE_EN
+            raise errors.http_error(url, 404, "Not Found")
+
+        provider._http_get = stub
+        try:
+            results = provider.search(
+                {"kind": "movie", "title": "Dune: Part One", "year": 2021, "imdb_id": "tt1160419"},
+                [{"alpha3": "eng", "alpha2": "en", "hi": False, "forced": False}],
+                {"request_delay_ms": 0},
+            )
+        finally:
+            errors.close()
+
+        self.assertEqual(results, [])
+        self.assertEqual(
+            calls,
+            [
+                "https://subf2m.co/subtitles/searchbytitle?query=Dune%3A%20Part%20One&l=",
+                "https://subf2m.co/subtitles/searchbytitle?query=Dune&l=",
+                "https://subf2m.co/subtitles/searchbytitle?query=tt1160419&l=",
+                "https://subf2m.co/subtitles/dune-part-one-2021/english",
+                "https://subf2m.co/subtitles/dune-part-one/english",
+                "https://subf2m.co/subtitles/dune-part-one",
+                "https://subf2m.co/subtitles/dune-2021/english",
+                "https://subf2m.co/subtitles/dune-2021",
+                "https://subf2m.co/subtitles/dune/english",
+                "https://subf2m.co/subtitles/dune",
+            ],
+        )
+
+    def test_search_slug_fallback_base_page_hard_error_keeps_original_error(self):
+        # A base page that fails hard, like a language page failing hard,
+        # means the site is in trouble: the original search error is the one
+        # to report, not an empty answer.
+        provider = self.mod.SubF2MProvider()
+        errors = _StubErrors()
+        calls = []
+
+        def stub(url, timeout=15, referer=None, config=None):
+            del timeout, referer, config
+            calls.append(url)
+            if "/searchbytitle" in url:
+                raise errors.http_error(url, 500, "Internal Server Error")
+            if url == "https://subf2m.co/subtitles/the-matrix-1999/hungarian":
+                raise errors.http_error(url, 404, "Not Found")
+            if url == "https://subf2m.co/subtitles/the-matrix-1999":
+                raise errors.http_error(url, 500, "Internal Server Error")
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        try:
+            with self.assertRaises(urllib.error.HTTPError) as raised:
+                provider.search(
+                    {"kind": "movie", "title": "The Matrix", "year": 1999, "imdb_id": "tt0133093"},
+                    [{"alpha3": "hun", "alpha2": "hu"}],
+                    {"request_delay_ms": 0},
+                )
+            self.assertEqual(raised.exception.code, 500)
+            # Both failures are 500s, so pin the URL: the original search
+            # error is the one reported, not the base page's own error.
+            self.assertEqual(
+                raised.exception.url,
+                "https://subf2m.co/subtitles/searchbytitle?query=The%20Matrix&l=",
+            )
+        finally:
+            errors.close()
+
+        self.assertEqual(
+            calls,
+            [
+                "https://subf2m.co/subtitles/searchbytitle?query=The%20Matrix&l=",
+                "https://subf2m.co/subtitles/searchbytitle?query=tt0133093&l=",
+                "https://subf2m.co/subtitles/the-matrix-1999/hungarian",
+                "https://subf2m.co/subtitles/the-matrix-1999",
+            ],
+        )
+
+    def test_search_slug_fallback_requires_parsed_item_not_marker(self):
+        # A placeholder that shares the title text can still carry an empty
+        # item marker; the base page counts only when an item parses into a
+        # downloadable subtitle, so this slug does not resolve and the
+        # original error stands.
+        provider = self.mod.SubF2MProvider()
+        errors = _StubErrors()
+        marker_only_base = (
+            b"<html><head><title>Subtitles for The Matrix</title></head>"
+            b'<body><ul><li class="item"><div class="subs"></div></li></ul></body></html>'
+        )
+        calls = []
+
+        def stub(url, timeout=15, referer=None, config=None):
+            del timeout, referer, config
+            calls.append(url)
+            if "/searchbytitle" in url:
+                raise errors.http_error(url, 500, "Internal Server Error")
+            if url == "https://subf2m.co/subtitles/the-matrix-1999/hungarian":
+                raise errors.http_error(url, 404, "Not Found")
+            if url == "https://subf2m.co/subtitles/the-matrix-1999":
+                return marker_only_base
+            if url == "https://subf2m.co/subtitles/the-matrix/hungarian":
+                raise errors.http_error(url, 404, "Not Found")
+            if url == "https://subf2m.co/subtitles/the-matrix":
+                raise errors.http_error(url, 404, "Not Found")
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_get = stub
+        try:
+            with self.assertRaises(urllib.error.HTTPError) as raised:
+                provider.search(
+                    {"kind": "movie", "title": "The Matrix", "year": 1999},
+                    [{"alpha3": "hun", "alpha2": "hu"}],
+                    {"request_delay_ms": 0},
+                )
+            self.assertEqual(raised.exception.code, 500)
+        finally:
+            errors.close()
+
+        self.assertEqual(
+            calls,
+            [
+                "https://subf2m.co/subtitles/searchbytitle?query=The%20Matrix&l=",
+                "https://subf2m.co/subtitles/the-matrix-1999/hungarian",
+                "https://subf2m.co/subtitles/the-matrix-1999",
+                "https://subf2m.co/subtitles/the-matrix/hungarian",
+                "https://subf2m.co/subtitles/the-matrix",
+            ],
+        )
 
     def test_search_filters_rows_by_requested_forced_flag(self):
         provider = self.mod.SubF2MProvider()
