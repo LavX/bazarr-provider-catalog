@@ -7650,6 +7650,56 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "3d38a3b81d4bc0dda964327d7cfee272e420e0b53c8d5b996a921022f9b852cd",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "request_delay_ms": {
+              "default": 0,
+              "description": "Optional politeness delay between HTTP calls to vladoon.com.",
+              "maximum": 5000,
+              "minimum": 0,
+              "title": "Delay between requests (ms)",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Searches the Vladoon Bulgarian subtitle site through its JSON API, including season packs, and hands its ZIP downloads to Bazarr for member extraction. No login or API key required.",
+        "entry_class": "VladoonProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "d7a6ae529ff0c5f883262be0f2b43b6a7d85544c3d7197d6128567ff15987dc7"
+        },
+        "languages": [
+          "bul"
+        ],
+        "name": "Vladoon",
+        "provider_id": "vladoon",
+        "schema_version": 1,
+        "secret_fields": [],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/vladoon",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.0"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
         "bundle_sha256": "6b100eb0582bcf717869866e14146c8a67827629e4b9ff93b0e45d9e527b20b8",
         "config_schema": {
           "additionalProperties": false,
