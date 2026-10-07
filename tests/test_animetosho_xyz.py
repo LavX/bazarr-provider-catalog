@@ -13,8 +13,8 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "animetosho_xyz"
-FEED = "https://feed.animetosho.xyz"
-DOWNLOAD = "https://animetosho.xyz/storage/attach/00000065/101.xz"
+FEED = "https://feed.animetosho.net"
+DOWNLOAD = "https://storage.animetosho.net/attachments/00000065/101.xz"
 
 
 def _load_provider_module():
@@ -264,7 +264,7 @@ class AnimeToshoXYZProviderTests(unittest.TestCase):
         episode_one["filename"] = "Show.S01E01.en.srt"
         episode_two = _attachment(
             202,
-            url="https://animetosho.xyz/storage/attach/00000066/102.xz",
+            url="https://storage.animetosho.net/attachments/00000066/102.xz",
         )
         episode_two["filename"] = "Show.S01E02.en.srt"
         provider, _ = self._provider(
@@ -298,7 +298,7 @@ class AnimeToshoXYZProviderTests(unittest.TestCase):
         ):
             attachment = _attachment(
                 attachment_id,
-                url=f"https://animetosho.xyz/storage/attach/{attachment_id:08X}/{attachment_id}.xz",
+                url=f"https://storage.animetosho.net/attachments/{attachment_id:08X}/{attachment_id}.xz",
             )
             attachment["filename"] = filename
             attachments.append(attachment)
@@ -325,7 +325,7 @@ class AnimeToshoXYZProviderTests(unittest.TestCase):
         episode_one["filename"] = "English.srt"
         episode_two = _attachment(
             202,
-            url="https://animetosho.xyz/storage/attach/00000066/102.xz",
+            url="https://storage.animetosho.net/attachments/00000066/102.xz",
         )
         episode_two["filename"] = "English.srt"
         detail = {
@@ -362,7 +362,7 @@ class AnimeToshoXYZProviderTests(unittest.TestCase):
         for index, filename in enumerate(filenames, start=201):
             attachment = _attachment(
                 index,
-                url=f"https://animetosho.xyz/storage/attach/{index:08X}/{index}.xz",
+                url=f"https://storage.animetosho.net/attachments/{index:08X}/{index}.xz",
             )
             attachment["filename"] = "English.srt"
             attachments.append(attachment)
@@ -406,7 +406,7 @@ class AnimeToshoXYZProviderTests(unittest.TestCase):
         special["filename"] = "Show.S00E05.en.srt"
         regular = _attachment(
             202,
-            url="https://animetosho.xyz/storage/attach/00000066/102.xz",
+            url="https://storage.animetosho.net/attachments/00000066/102.xz",
         )
         regular["filename"] = "Show.S01E05.en.srt"
         provider, _ = self._provider(
@@ -447,7 +447,7 @@ class AnimeToshoXYZProviderTests(unittest.TestCase):
             {
                 f"{FEED}/feed/json?eid=101": _json([entry]),
                 f"{FEED}/json?show=torrent&id=1": _json(
-                    _torrent([_attachment(1, url="https://animetosho.xyz:invalid/subtitle.xz")])
+                    _torrent([_attachment(1, url="https://animetosho.net:invalid/subtitle.xz")])
                 ),
             }
         )
@@ -507,7 +507,7 @@ class AnimeToshoXYZProviderTests(unittest.TestCase):
 
         with patch.object(self.mod.urllib.request, "build_opener", return_value=Opener()) as build_opener:
             with self.assertRaisesRegex(ValueError, "size limit"):
-                provider._http_get("https://feed.animetosho.xyz/feed/json", max_bytes=64)
+                provider._http_get("https://feed.animetosho.net/feed/json", max_bytes=64)
 
         self.assertEqual(reads, [65])
         self.assertEqual(timeouts, [self.mod.HTTP_TIMEOUT_SECONDS])
@@ -536,8 +536,8 @@ class AnimeToshoXYZProviderTests(unittest.TestCase):
         for target in (
             "http://127.0.0.1/private",
             "https://example.invalid/private",
-            "https://feed.animetosho.xyz:444/private",
-            "https://user@feed.animetosho.xyz/private",
+            "https://feed.animetosho.net:444/private",
+            "https://user@feed.animetosho.net/private",
         ):
             with self.subTest(target=target):
                 server = RedirectServer(target)
@@ -607,6 +607,16 @@ class AnimeToshoXYZProviderTests(unittest.TestCase):
 
         self.assertGreater(len(loop.opened), 1)
         self.assertLessEqual(len(loop.opened), 10)
+
+    def test_retired_xyz_hosts_are_outside_the_provider_endpoints(self):
+        for url, allow_feed in (
+            ("https://feed.animetosho.xyz/feed/json?eid=101", True),
+            ("https://animetosho.xyz/storage/attach/00000065/101.xz", False),
+            ("https://storage.animetosho.xyz/attachments/101.xz", False),
+        ):
+            with self.subTest(url=url):
+                with self.assertRaisesRegex(ValueError, "outside the provider endpoints"):
+                    self.mod._validate_url(url, allow_feed=allow_feed)
 
     def test_manifest_declares_regional_variants(self):
         manifest = json.loads((PROVIDER_DIR / "provider.json").read_text(encoding="utf-8"))

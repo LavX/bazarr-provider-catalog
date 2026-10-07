@@ -1295,7 +1295,7 @@ class SubDLAITranslationSearchTests(unittest.TestCase):
         manifest = json.loads((PROVIDER_DIR / "provider.json").read_text())
         schema = manifest["config_schema"]["properties"]
 
-        self.assertEqual(manifest["version"], "0.2.3")
+        self.assertEqual(manifest["version"], "0.2.4")
         self.assertIs(schema["ai_translate"]["default"], False)
         self.assertIn("SubDL publishes each translation as a regular subtitle", schema["ai_translate"]["title"])
         self.assertIs(schema["include_ai_translated"]["default"], False)
@@ -3047,6 +3047,156 @@ class SubDLAITranslationLifecycleTests(unittest.TestCase):
         self.assertIsNone(self.provider.download(payload, {"alpha3": "fra"}, self.config))
         self.assertEqual(calls[0][0].get_method(), "POST")
         return payload
+
+    def _movie_payload(self, n_id, media_identity, **overrides):
+        payload = dict(self.payload)
+        payload.update({"n_id": n_id, "media_identity": media_identity})
+        payload.update(overrides)
+        return payload
+
+    def _leave_job_running(self, payload, request_id):
+        queued = self._response({"request_id": request_id, "job": {
+            "status": "queued", "download_ready": False,
+        }}, status=202)
+        running = self._response({"job": {"status": "running", "download_ready": False}})
+        calls = self._patch_urlopen([queued, *([running] * 12)])
+        # The virtual clock stays patched for the rest of the test, exactly as
+        # the callers of _leave_source_job_running keep theirs: the job state
+        # this leaves behind carries virtual timestamps, and un-patching here
+        # would let the real clock prune it before the assertions below.
+        now = [0.0]
+        clock = patch.object(self.mod.time, "monotonic", side_effect=lambda: now[0])
+        sleeper = patch.object(self.mod.time, "sleep", side_effect=lambda delay: now.__setitem__(0, now[0] + delay))
+        clock.start()
+        sleeper.start()
+        self.addCleanup(sleeper.stop)
+        self.addCleanup(clock.stop)
+        self.assertIsNone(self.provider.download(payload, {"alpha3": "fra"}, self.config))
+        self.assertEqual(calls[0][0].get_method(), "POST")
+
+    def test_media_identity_names_imdb_else_normalized_title(self):
+        self.assertEqual(
+            self.mod._media_identity({"kind": "movie", "imdb_id": "TT0133093"}),
+            "imdb:tt0133093",
+        )
+        self.assertEqual(
+            self.mod._media_identity({"kind": "movie", "title": "  Some   Movie "}),
+            "title:some movie",
+        )
+        self.assertEqual(
+            self.mod._media_identity(
+                {"kind": "episode", "series": "Show", "series_imdb_id": "TT0944947"}
+            ),
+            "imdb:tt0944947",
+        )
+        self.assertEqual(
+            self.mod._media_identity({"kind": "episode", "series": "  Another   Show "}),
+            "title:another show",
+        )
+        self.assertIsNone(self.mod._media_identity({"kind": "movie"}))
+        self.assertIsNone(self.mod._media_identity(None))
+
+    def test_search_stamps_media_identity_into_candidate_payload(self):
+        payload = self._candidate_payload_from_search(self.key)
+        self.assertEqual(payload["media_identity"], "imdb:tt1234567")
+
+    def test_scope_key_separates_unrelated_media_and_coalesces_sources(self):
+        first = self._movie_payload(1001, "imdb:tt1111111")
+        second = self._movie_payload(1002, "imdb:tt2222222")
+        another_source = self._movie_payload(1003, "imdb:tt1111111")
+
+        self.assertNotEqual(
+            self.provider._translation_scope_key(first, self.key),
+            self.provider._translation_scope_key(second, self.key),
+        )
+        # Two sources for the same title still share one translation budget.
+        self.assertEqual(
+            self.provider._translation_scope_key(first, self.key),
+            self.provider._translation_scope_key(another_source, self.key),
+        )
+        # Two series separate by identity, not by their season and episode numbers.
+        episode_one = self._episode_payload(1001, media_identity="imdb:tt1111111")
+        episode_two = self._episode_payload(1002, media_identity="imdb:tt2222222")
+        self.assertNotEqual(
+            self.provider._translation_scope_key(episode_one, self.key),
+            self.provider._translation_scope_key(episode_two, self.key),
+        )
+        # Payloads minted before the identity field keep a None slot, so they
+        # collide with no identity-carrying payload.
+        legacy = dict(self.payload)
+        legacy_scope = self.provider._translation_scope_key(legacy, self.key)
+        for payload in (first, second, episode_one, episode_two):
+            self.assertNotEqual(
+                self.provider._translation_scope_key(payload, self.key), legacy_scope
+            )
+
+    def test_running_job_for_one_movie_does_not_block_another_movie(self):
+        first = self._movie_payload(1001, "imdb:tt1111111")
+        self._leave_job_running(first, "first-movie-job")
+
+        second = self._movie_payload(1002, "imdb:tt2222222")
+        calls = self._patch_urlopen([
+            self._response({"request_id": "second-movie-job", "job": {
+                "status": "published", "download_ready": True,
+            }}),
+            _FakeTranslationHTTPResponse(b"subtitle"),
+        ])
+
+        result = self.provider.download(second, {"alpha3": "fra"}, self.config)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(calls[0][0].get_method(), "POST")
+
+    def test_running_job_for_one_series_does_not_block_same_numbered_episode_of_another_series(self):
+        first = self._episode_payload(1001, media_identity="imdb:tt1111111")
+        self._leave_job_running(first, "first-series-job")
+
+        second = self._episode_payload(1002, media_identity="imdb:tt2222222")
+        calls = self._patch_urlopen([
+            self._response({"request_id": "second-series-job", "job": {
+                "status": "published", "download_ready": True,
+            }}),
+            _FakeTranslationHTTPResponse(b"subtitle"),
+        ])
+
+        result = self.provider.download(second, {"alpha3": "fra"}, self.config)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(calls[0][0].get_method(), "POST")
+
+    def test_running_job_for_one_movie_still_blocks_another_source_for_the_same_movie(self):
+        first = self._movie_payload(1001, "imdb:tt1111111")
+        self._leave_job_running(first, "first-source-job")
+
+        same_movie_other_source = self._movie_payload(1002, "imdb:tt1111111")
+        calls = self._patch_urlopen([
+            self._response({"request_id": "unused-job", "job": {
+                "status": "published", "download_ready": True,
+            }}),
+            _FakeTranslationHTTPResponse(b"subtitle"),
+        ])
+
+        self.assertIsNone(
+            self.provider.download(same_movie_other_source, {"alpha3": "fra"}, self.config)
+        )
+        self.assertEqual(calls, [])
+
+    def test_legacy_payload_without_identity_stops_blocking_identity_payloads(self):
+        legacy = dict(self.payload)
+        self._leave_job_running(legacy, "legacy-job")
+
+        fresh = self._movie_payload(1002, "imdb:tt1234567")
+        calls = self._patch_urlopen([
+            self._response({"request_id": "fresh-job", "job": {
+                "status": "published", "download_ready": True,
+            }}),
+            _FakeTranslationHTTPResponse(b"subtitle"),
+        ])
+
+        result = self.provider.download(fresh, {"alpha3": "fra"}, self.config)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(calls[0][0].get_method(), "POST")
 
     def test_candidate_found_under_one_key_sends_no_request_under_another_key(self):
         payload = self._candidate_payload_from_search("first-account-key")

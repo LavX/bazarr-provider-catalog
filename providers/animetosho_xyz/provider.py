@@ -11,7 +11,12 @@ import urllib.parse
 import urllib.request
 
 PROVIDER_ID = "animetosho_xyz"
-FEED_URL = "https://feed.animetosho.xyz"
+# The upstream moved the feed and storage hosts from animetosho.xyz to
+# animetosho.net with a permanent redirect. The same-origin redirect guard
+# must not follow a cross-origin hop, so the provider points at the new hosts
+# directly and the retired .xyz hosts are dropped from the allowlist instead of
+# being followed.
+FEED_URL = "https://feed.animetosho.net"
 HTTP_TIMEOUT_SECONDS = 15
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_COMPRESSED_SUBTITLE_BYTES = 2 * 1024 * 1024
@@ -558,12 +563,12 @@ def _validate_url(value, allow_feed, reject_invalid=False):
         if reject_invalid:
             return None
         raise ValueError("AnimeTosho.xyz URL is malformed") from None
-    is_feed = host == "feed.animetosho.xyz"
+    is_feed = host == "feed.animetosho.net"
     is_download = (
-        host != "feed.animetosho.xyz"
+        host != "feed.animetosho.net"
         and (
-            host == "animetosho.xyz"
-            or host.endswith(".animetosho.xyz")
+            host == "animetosho.net"
+            or host.endswith(".animetosho.net")
             or host == "animetosho.org"
             or host.endswith(".animetosho.org")
         )

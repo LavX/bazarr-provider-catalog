@@ -953,6 +953,28 @@ def _valid_translation_source(source):
     )
 
 
+def _media_identity(video):
+    # A stable identity for the translation scope: the imdb id when the video
+    # carries one, else a normalized title. Without it every movie for one
+    # account, target language and HI class shares a single scope, and episodes
+    # from different series collide whenever their season and episode numbers
+    # match, so a running or uncertain job silently drops their paid
+    # translations. The identity names the media, never the source: every
+    # source for one title still coalesces into one translation budget.
+    video = video or {}
+    if video.get("kind") == "episode":
+        imdb_id = _clean_text(video.get("series_imdb_id"))
+        title = _clean_text(video.get("series"))
+    else:
+        imdb_id = _clean_text(video.get("imdb_id"))
+        title = _clean_text(video.get("title"))
+    if imdb_id:
+        return "imdb:" + imdb_id.lower()
+    if title:
+        return "title:" + title.lower()
+    return None
+
+
 def _translation_candidate(video, wanted_language, target_code, source, api_key):
     n_id = source.get("n_id")
     if not _valid_translation_source(source):
@@ -990,6 +1012,10 @@ def _translation_candidate(video, wanted_language, target_code, source, api_key)
         "season": _coerce_int(video.get("season")),
         "episode": _coerce_int(video.get("episode")),
         "absolute_episode": _coerce_int(video.get("absolute_episode")),
+        # Names the media for the translation scope, so unrelated titles stop
+        # sharing one translation budget. The source n_id deliberately stays
+        # out of the scope itself.
+        "media_identity": _media_identity(video),
     }
     return {
         "provider": PROVIDER_ID,
@@ -1468,14 +1494,17 @@ class SubDLProvider:
 
     def _translation_scope_key(self, payload, api_key):
         # The exact key names the chosen source; the scope key drops it, so every
-        # source for one account, episode, target language and HI class shares a
-        # single translation budget.
+        # source for one account, one media identity, one episode, one target
+        # language and one HI class shares a single translation budget. Payloads
+        # minted before the identity field keep a None slot: they collide only
+        # with each other, never with an identity-carrying payload.
         target = _clean_text((payload or {}).get("target_language")).upper()
         if not target:
             return None
         return (
             _account_digest(api_key),
             target,
+            _clean_text((payload or {}).get("media_identity")) or None,
             _coerce_int((payload or {}).get("season")),
             _coerce_int((payload or {}).get("episode")),
             (payload or {}).get("hi") is True,
