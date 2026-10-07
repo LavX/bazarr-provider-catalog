@@ -126,7 +126,7 @@ def _multi_token_present(release_tokens, value):
 # inside a release name. Matching is case-insensitive on tokenized text.
 _SOURCE_TOKENS = {
     "Blu-ray": ["bluray", "blueray", "brrip", "bdrip", "bd"],
-    "Web": ["web", "webrip", "webdl", "web-dl"],
+    "Web": ["web", "webrip", "webdl", "web-dl", "web-dlrip"],
     "WEB-DL": ["webdl", "web-dl", "web"],
     "WEBRip": ["webrip", "web-rip", "web"],
     "HDTV": ["hdtv"],
@@ -140,10 +140,12 @@ _VIDEO_CODEC_TOKENS = {
     "H.265": ["h265", "x265", "hevc"],
     "DivX": ["divx"],
     "XviD": ["xvid"],
+    "AV1": ["av1"],
+    "VP9": ["vp9"],
 }
 _AUDIO_CODEC_TOKENS = {
     "AAC": ["aac"],
-    "DTS": ["dts"],
+    "DTS": ["dts", "dts-x", "dts-es"],
     "DTS-HD": ["dtshd", "dts-hd"],
     "FLAC": ["flac"],
     "MP3": ["mp3"],
@@ -152,7 +154,7 @@ _AUDIO_CODEC_TOKENS = {
 # Dolby Digital is AC3 and Dolby Digital Plus is EAC3; the Plus track must
 # not be claimed for a plain Dolby Digital request, so the two get ordered
 # dedicated handling instead of plain synonym lists.
-_AC3_TOKENS = ["ac3", "dd", "dolby digital"]
+_AC3_TOKENS = ["ac3", "dd", "dd-ex", "dolby digital"]
 _EAC3_TOKENS = ["eac3", "ddp", "dolby digital plus"]
 _DOLBY_DIGITAL_PLUS_TOKENS = {"dolby", "digital", "plus"}
 _TRAILING_DIGITS_RE = re.compile(r"^(.*[a-z])\d{1,2}$")
@@ -494,82 +496,698 @@ _ATTRIBUTE_KEYS = (
     "streaming_service",
     "edition",
 )
-_GROUP_SEGMENT_RE = re.compile(r"-[^-\s]+$")
+# The release identity keys: these outweigh the generic attribute keys
+# when ranking archive members, because a member that disagrees with the
+# video's source or release group is mistimed no matter how many generic
+# tags its filename spells out.
+_IDENTITY_ATTRIBUTE_KEYS = ("source", "streaming_service", "release_group")
 
 
-def _without_release_group(release):
-    """Return a release name without its trailing release-group segment.
+def _tag_synonym_chunks(*tables):
+    """The accent-folded chunks of every synonym in the given tag tables.
 
-    Release names end with the release group after a hyphen
-    (``...x264-CM``). Short group names collide with source synonyms: the
-    group ``BD`` in ``...WEB-DL.x264-BD`` would otherwise read as a
-    Blu-ray source, so source matching runs on the name without its
-    trailing group segment.
+    A dict table contributes its keys and every synonym in its value
+    lists; a list table contributes its entries. The compound-boundary
+    and body-token sets below derive from this inventory, so both stay
+    in sync with the tag tables.
     """
-    return _GROUP_SEGMENT_RE.sub("", release)
+    for table in tables:
+        synonyms = list(table)
+        if isinstance(table, dict):
+            synonyms.extend(token for tokens in table.values() for token in tokens)
+        for synonym in synonyms:
+            yield _normalize_tokens(synonym)
 
 
-def _source_tokens(release, title_tokens):
-    """Release tokens for source matching, without title and group tokens.
+# A hyphen segment that continues a compound source or audio tag
+# (``WEB-DL``, ``DTS-HD``, ``Dolby-Digital-Plus``) belongs to the release
+# body, not to the trailing release group. Every adjacent pair inside a
+# multi-chunk synonym is a boundary, so the group span never starts
+# inside a compound tag and no pair of one is left mid-name.
+_COMPOUND_TAG_BOUNDARIES = {
+    pair
+    for chunks in _tag_synonym_chunks(
+        _SOURCE_TOKENS,
+        _VIDEO_CODEC_TOKENS,
+        _AUDIO_CODEC_TOKENS,
+        _STREAMING_SERVICE_TOKENS,
+        _AC3_TOKENS,
+        _EAC3_TOKENS,
+    )
+    for pair in zip(chunks, chunks[1:])
+}
+# A hyphen segment that carries a codec, audio or streaming token, or a
+# long-form source token (``BluRay``, ``WEBRip``, ``HDTV``), names the
+# release or its technical profile, so it is body content and the group
+# span stops before it. The short, ambiguous source tokens (``BD``,
+# ``WEB``, ``TS``, ``CAM``, ``DVD``) are deliberately absent: a trailing
+# hyphen segment carrying one is more plausibly the release group (a
+# release group can genuinely be named ``WEB``), and its source claim is
+# suppressed because the whole hyphen group span is dropped from source
+# matching. In the dot and space walks those tokens are body content
+# instead: no release name run on dots or spaces carries one as its
+# group.
+_AMBIGUOUS_SOURCE_TOKENS = frozenset({"bd", "web", "ts", "cam", "dvd"})
+# Release-profile modifiers (``Atmos``, ``REMUX``, ``Hybrid``) and the
+# subtitle track annotations that name the track: a hyphen segment
+# carrying one names the release's profile, so the group behind it
+# still fires.
+_BODY_MODIFIER_TOKENS = frozenset(
+    {
+        "atmos",
+        "remux",
+        "hybrid",
+        "proper",
+        "repack",
+        "extended",
+        "remastered",
+        "unrated",
+        "dual",
+        "audio",
+        "internal",
+        "limited",
+        "hdr",
+        "hdr10",
+        "10bit",
+        "dv",
+        "dovi",
+        "sdr",
+        "uhd",
+        "ma",
+    }
+)
+_BODY_TAG_TOKENS = {
+    chunk
+    for chunks in _tag_synonym_chunks(
+        _VIDEO_CODEC_TOKENS,
+        _AUDIO_CODEC_TOKENS,
+        _STREAMING_SERVICE_TOKENS,
+        _AC3_TOKENS,
+        _EAC3_TOKENS,
+    )
+    for chunk in chunks
+} | {
+    chunk
+    for chunks in _tag_synonym_chunks(_SOURCE_TOKENS)
+    for chunk in chunks
+    if chunk not in _AMBIGUOUS_SOURCE_TOKENS
+} | set(_DOLBY_DIGITAL_PLUS_TOKENS) | _BODY_MODIFIER_TOKENS
+# Resolutions are matched by shape: three or four digits plus a
+# progressive or interlaced letter (``720p``, ``1080p``, ``2160p``).
+_RESOLUTION_TOKEN_RE = re.compile(r"\d{3,4}[pi]")
 
-    Release names lead with the production title, and a title word can
-    collide with a source synonym (``The.Web.2024.1080p.BluRay`` is a
-    Blu-ray release whose title word ``Web`` is not a source claim). So
-    source matching runs on the release without its trailing group
-    segment and without the item's title tokens.
+
+def _is_year_chunk(chunk):
+    """True for a four-digit year chunk, which is never zero-padded."""
+    return len(chunk) == 4 and chunk.isdigit() and chunk[0] != "0"
+
+
+def _is_body_chunk(chunk, dot_or_space=False):
+    """True when a single chunk is release-body content.
+
+    A codec, audio, streaming, profile-modifier or long-form source
+    token, with channel digits stripped (``AAC2.0``, ``DDP5.1``,
+    ``DTS-X.7.1``), or a resolution names the release or its technical
+    profile; a short ambiguous source token is one only in a walk over
+    dot or space segments.
     """
-    text = _without_release_group(release)
-    return {token for token in _release_tokens(text) if token not in title_tokens}
+    if chunk in _BODY_TAG_TOKENS or (
+        dot_or_space and chunk in _AMBIGUOUS_SOURCE_TOKENS
+    ):
+        return True
+    stripped = _TRAILING_DIGITS_RE.match(chunk)
+    if stripped and stripped.group(1) in _BODY_TAG_TOKENS:
+        return True
+    return _RESOLUTION_TOKEN_RE.fullmatch(chunk) is not None
+
+
+def _chunks_body_signal(chunks, dot_or_space=False):
+    """The release-body signal pre-normalized chunks carry.
+
+    Returns ``"tags"`` when the chunks carry a codec, audio,
+    streaming, profile-modifier or long-form source token, with
+    channel digits stripped (``AAC2.0``, ``DDP5.1``, ``DTS-X.7.1``), a
+    resolution, or, in a walk over dot or space segments, a short
+    ambiguous source token: those name the release or its technical
+    profile. Returns ``"year"`` when they only carry a four-digit year,
+    which names the release without evidencing a group behind it.
+    Returns ``None`` when they carry no body signal; a year whose only
+    company is a short source token is a counter on the group instead
+    (``BD.1234``, ``BD.0001``).
+    """
+    for chunk in chunks:
+        if _is_body_chunk(chunk, dot_or_space):
+            return "tags"
+    non_year = [chunk for chunk in chunks if not _is_year_chunk(chunk)]
+    if non_year and all(chunk in _AMBIGUOUS_SOURCE_TOKENS for chunk in non_year):
+        return None
+    if any(_is_year_chunk(chunk) for chunk in chunks):
+        return "year"
+    return None
+
+
+def _segment_body_signal(segment, dot_or_space=False):
+    """The release-body signal a segment carries, for the group walk."""
+    return _chunks_body_signal(_normalize_tokens(segment), dot_or_space)
+
+
+def _segment_is_annotated_group(segment, dot_or_space=False):
+    """True when a segment is a group name with trailing annotations.
+
+    A segment whose chunks lead with group content and trail only with
+    annotation chunks (``CM.REPACK``, ``CM.Atmos.HI``, ``CM.REPACK.CD1``)
+    names a release group with annotations joined behind it, not
+    release body content: the annotations name the track behind the
+    group. A segment whose body chunks lead (``BluRay.x264``,
+    ``REMUX``) is body content, and an annotation that only follows
+    them in a longer technical segment stays body content too.
+    """
+    chunks = _normalize_tokens(segment)
+    index = 0
+    while index < len(chunks) and not _is_body_chunk(chunks[index], dot_or_space):
+        index += 1
+    if index == 0 or index == len(chunks):
+        return False
+    return all(_is_group_tail_chunk(chunk) for chunk in chunks[index:])
+
+
+def _tokens_without_title(chunks, title_chunks):
+    """Chunks without the title's own consecutive token occurrence.
+
+    A title that does not appear as the full sequence falls back to
+    dropping the leading run of its tokens.
+    """
+    if not title_chunks:
+        return chunks
+    for start in range(len(chunks) - len(title_chunks) + 1):
+        if chunks[start : start + len(title_chunks)] == title_chunks:
+            return chunks[:start] + chunks[start + len(title_chunks) :]
+    title_tokens = set(title_chunks)
+    index = 0
+    while index < len(chunks) and chunks[index] in title_tokens:
+        index += 1
+    return chunks[index:]
+
+
+def _is_channel_fragment(parts, index):
+    """True when the segment at index is a split channel count.
+
+    A name run on dots or spaces can split the channel count off its
+    audio tag (a dotted ``TrueHD.7.1`` becomes ``TrueHD``, ``7`` and
+    ``1``; a space-joined ``5.1`` is one segment): a segment that is
+    only short digit runs is that half when the nearest segment behind
+    it that is not itself only short digits carries a technical tag of
+    the release (``truehd``, ``dts-hd``, ``ma``, a codec). Behind a
+    release group (``...SPARKS.1``) the same digits are a disc number
+    and stay group tail content.
+    """
+    if not _is_short_digit_run(parts[index]):
+        return False
+    for position in range(index - 1, max(index - 5, -1), -1):
+        previous = _normalize_tokens(parts[position])
+        if previous and all(
+            len(chunk) <= 2 and chunk.isdigit() for chunk in previous
+        ):
+            # A chain of channel digits (the ``7`` of ``TrueHD.7.1``)
+            # belongs to the same split tag; a chain longer than a
+            # channel count is not one, and capping the scan bounds
+            # the walk on an uploader's pathological digit-run name.
+            continue
+        return any(
+            chunk in _BODY_TAG_TOKENS
+            or _RESOLUTION_TOKEN_RE.fullmatch(chunk)
+            or (
+                (stripped := _TRAILING_DIGITS_RE.match(chunk)) is not None
+                and stripped.group(1) in _BODY_TAG_TOKENS
+            )
+            for chunk in previous
+        )
+    return False
+
+
+def _is_short_digit_run(segment):
+    """True when a segment is only one- or two-digit chunks."""
+    chunks = _normalize_tokens(segment)
+    return bool(chunks) and all(
+        len(chunk) <= 2 and chunk.isdigit() for chunk in chunks
+    )
+
+
+def _release_components(release):
+    """The path components of a release name or archive member."""
+    return [part for part in str(release or "").replace("\\", "/").split("/") if part]
+
+
+def _strip_subtitle_extension(text):
+    """Return text without a trailing subtitle file extension."""
+    lowered = str(text or "").lower()
+    for extension in SUBTITLE_EXTENSIONS:
+        if lowered.endswith(extension):
+            return str(text)[: len(text) - len(extension)]
+    return str(text)
+
+
+_LANGUAGE_ANNOTATION_BRACKET_RE = re.compile(
+    rf"\[(?:{LANGUAGE_ALPHA2}|{LANGUAGE_ALPHA3})\]$", re.IGNORECASE
+)
+_LANGUAGE_ANNOTATION_HYPHEN_RE = re.compile(
+    rf"-(?:{LANGUAGE_ALPHA2}|{LANGUAGE_ALPHA3})$", re.IGNORECASE
+)
+
+
+def _component_stem(component):
+    """A component without its subtitle extension and language annotation.
+
+    A member can trail with the site's language marker before or inside
+    the extension (``...-CM.bg.srt``, ``...-CM[BG].srt``,
+    ``...-CM-BG.srt``, and a bare ``Movie.2024-BG.srt``); the marker is
+    not release content, so the extension and a trailing marker of the
+    site's own language are dropped before tags are compared.
+    """
+    stem = _strip_subtitle_extension(component)
+    stem = _LANGUAGE_ANNOTATION_BRACKET_RE.sub("", stem)
+    segments = stem.split(".")
+    if len(segments) > 1 and _normalize_tokens(segments[-1]) in (
+        [LANGUAGE_ALPHA2],
+        [LANGUAGE_ALPHA3],
+    ):
+        stem = ".".join(segments[:-1])
+    return _LANGUAGE_ANNOTATION_HYPHEN_RE.sub("", stem).strip(" ._-")
+
+
+def _title_pairs(title):
+    """The adjacent token pairs of the production title, accent-folded."""
+    chunks = _normalize_tokens(title)
+    return set(zip(chunks, chunks[1:]))
+
+
+def _trailing_annotation_start(parts):
+    """The index where a component's trailing annotation segments start.
+
+    The segments at a component's end whose chunks are only annotation
+    chunks (``REPACK``, ``PROPER``, ``REPACK.HI``, a run of them)
+    annotate the release behind its group, so they are span content
+    rather than body evidence. Bare digits are not: they are disc
+    numbers or the split channel counts a technical tag owns
+    (``TrueHD.7.1``). Returns ``len(parts)`` when no trailing segment
+    is one.
+    """
+    start = len(parts)
+    while start > 0:
+        chunks = _normalize_tokens(parts[start - 1])
+        if not chunks or not all(
+            _is_group_tail_chunk(chunk) and not chunk.isdigit()
+            for chunk in chunks
+        ):
+            break
+        start -= 1
+    return start
+
+
+def _trailing_group_parts(parts, title_pairs, title_chunks, dot_or_space=False):
+    """The trailing segments of a component that form its group, with
+    whether the span was stopped by release tags.
+
+    The group grows from the end, segment by segment, while the next
+    segment carries no release-body signal: a segment that continues a
+    compound source or audio tag (``WEB-DL``, ``DTS-HD``,
+    ``Dolby-Digital-Plus``), that continues the production title
+    (``Spider-Man.2024.BluRay.x264-CM`` keeps its ``CM`` group and its
+    ``BluRay`` source), or that carries a tag or year signal is body
+    content, except a group name with annotations joined behind it
+    (``...x264-CM.REPACK``) and a trailing segment that is only
+    profile-modifier chunks (``...x264-CM-REPACK``,
+    ``...x264.CM.REPACK``), which are group content: the annotations
+    name the track behind the group. A multi-segment group stays whole
+    (``...x264-BD-FOO-BAR``). The component's first segment is always
+    body content. Returns the span and whether it was stopped by
+    release tags, a compound tag or a tag signal, rather than by the
+    title, a year alone, or running out of segments.
+    """
+    start = len(parts)
+    stopped_by_tags = False
+    annotation_start = _trailing_annotation_start(parts)
+    while start > 1:
+        candidate = start - 1
+        before = _normalize_tokens(parts[candidate - 1])
+        opening = _normalize_tokens(parts[candidate])
+        if not opening:
+            break
+        if before:
+            pair = (before[-1], opening[0])
+            if pair in _COMPOUND_TAG_BOUNDARIES:
+                stopped_by_tags = True
+                break
+            if pair in title_pairs:
+                break
+        if candidate >= annotation_start:
+            # A trailing segment that is only profile-modifier chunks
+            # annotates the release behind the group, so it is span
+            # content, not body evidence.
+            start = candidate
+            continue
+        if dot_or_space and _is_channel_fragment(parts, candidate):
+            stopped_by_tags = True
+            break
+        signal = _segment_body_signal(parts[candidate], dot_or_space)
+        if signal is not None:
+            if signal == "tags" and _segment_is_annotated_group(
+                parts[candidate], dot_or_space
+            ):
+                start = candidate
+                continue
+            if signal == "tags":
+                stopped_by_tags = True
+            break
+        start = candidate
+    if start == 1 and not stopped_by_tags:
+        # The walk ran out of segments: the first segment is body
+        # content by rule, and its own tags, behind the production
+        # title's occurrence, are the evidence that the span trails a
+        # release (``Movie.2024.BluRay.x264 CM.srt``). A bare title,
+        # even one whose word is itself a tag chunk (``Ray``, a
+        # Blu-ray chunk), or a title with a year alone
+        # (``Movie.Bulgarian.srt``) is not.
+        stopped_by_tags = (
+            _chunks_body_signal(
+                _tokens_without_title(_normalize_tokens(parts[0]), title_chunks),
+                dot_or_space,
+            )
+            == "tags"
+        )
+    return parts[start:], stopped_by_tags
+
+
+def _release_body_and_group(component, title):
+    """The component's release body, its trailing group segments and
+    the separator that joins them.
+
+    The group is the stem's trailing hyphen segments; a name that
+    separates its tags with dots or spaces instead (the site's own
+    ``Dune.Part.Two.2024.1080p.HDTS.CLEAN.X264.COLLECTIVE``,
+    ``Devil In Dune (2021) HDRip XviD WKD``) carries its group as
+    trailing dot or space segments, so the same walk runs over those
+    segments when no hyphen span exists. All walks stop before compound
+    tags, the production title and technical-tag segments, never take
+    the component's first segment, and treat the short ambiguous
+    source tokens as group content only in the hyphen walk: a name run
+    on dots or spaces never carries one as its group, so its trailing
+    ``WEB`` or ``BD`` stays a source claim. A dot or space span only
+    names a group when release tags stopped the walk, not the title or
+    a year alone: a span that trails nothing but a bare production name
+    (``Movie.Bulgarian.srt``, ``Movie.2024.Bulgarian.srt``) or a
+    title's own words (``Devil.In.Dune.srt``) is not a group.
+    """
+    stem = _component_stem(component)
+    title_chunks = _normalize_tokens(title)
+    title_pairs = _title_pairs(title)
+    parts = stem.split("-")
+    group, _ = _trailing_group_parts(parts, title_pairs, title_chunks)
+    if group and not all(
+        _is_group_tail_chunk(chunk)
+        for part in group
+        for chunk in _normalize_tokens(part)
+    ):
+        # A hyphen span that is only disc numbers or language markers
+        # trails a group named by another separator
+        # (``Movie.2024.BluRay.x264.CM-1.srt``) or no group at all
+        # (``...x264-1.srt``); it is not the group itself.
+        return "-".join(parts[: len(parts) - len(group)]), group, "-"
+    for separator in (".", " "):
+        parts = stem.split(separator)
+        group, stopped_by_tags = _trailing_group_parts(
+            parts, title_pairs, title_chunks, dot_or_space=True
+        )
+        if not group or not stopped_by_tags:
+            continue
+        if separator == "." and any(
+            " " in part for part in parts[len(parts) - len(group) - 1 :]
+        ):
+            # A dot split of a name run on spaces shreds its tags
+            # across segments, whether into the group or into the
+            # segment that stopped the walk; the space walk behind it
+            # sees them whole.
+            continue
+        return (
+            separator.join(parts[: len(parts) - len(group)]),
+            group,
+            separator,
+        )
+    return stem, [], ""
+
+
+def _is_group_tail_chunk(chunk):
+    """True for a chunk that trails a release group without naming it.
+
+    Multi-part releases number their discs after the group
+    (``...-CM-1``, ``...-DEiTY.CD1``), a member can carry the site's
+    language marker behind the group (``...-CM-BG``), a subtitle
+    track can carry its hearing annotation (``...-CM-HI``), and a
+    release can carry its profile behind the group
+    (``...-CM-REPACK``); none of them is part of the group's name.
+    """
+    return (
+        chunk in _BODY_MODIFIER_TOKENS
+        or chunk.isdigit()
+        or re.fullmatch(r"cd\d+", chunk) is not None
+        or chunk in (LANGUAGE_ALPHA2, LANGUAGE_ALPHA3)
+        or chunk in ("hi", "sdh")
+    )
+
+
+def _release_group_matches(component, requested_group, title):
+    """True when a component's trailing release-group span is the group.
+
+    The group span is derived with ``_release_body_and_group``: the
+    trailing hyphen segments of the stem, or its trailing dot or space
+    segments when the name separates its tags with dots or spaces,
+    stopped before compound
+    tags, the production title and technical-tag segments. The
+    requested group must be the span's leading, ordered, accent-folded
+    token sequence. Chunks dot-joined behind it inside its own segment
+    annotate the group rather than name it (``...-CM.HI``,
+    ``...-CM.Bulgarian``, ``...-EVO[TGx]``, ``...-DEiTY.CD1``), so they
+    are accepted; every later hyphen segment must name nothing (a disc
+    number, the language code or the release's profile, ``...-CM-BG``,
+    ``...-CM-REPACK``), while the segments of
+    a dot or space span only annotate the group behind its name. A
+    requested group
+    token therefore never fires from a source or codec position
+    (``WEB-DL`` carries no ``DL`` group), from a title, from a name
+    without a group span, from a longer group it only prefixes
+    (``CM`` does not match ``CM-OTHER``), or across a path boundary; a
+    hyphenated group (``FOO-BAR``) still matches its full trailing span.
+    """
+    requested = _normalize_tokens(requested_group)
+    if not requested:
+        return False
+    _, segments, separator = _release_body_and_group(component, title)
+    if not segments:
+        return False
+    flat = [
+        chunk for segment in segments for chunk in _normalize_tokens(segment)
+    ]
+    if flat[: len(requested)] != requested:
+        return False
+    index = len(requested)
+    for position, segment in enumerate(segments):
+        chunks = _normalize_tokens(segment)
+        if index == 0:
+            # The group is fully named: every later hyphen segment must
+            # trail it without naming anything, while segments joined
+            # by the group's own dot or space separator only annotate
+            # the group behind its name.
+            if separator == "-" and not all(
+                _is_group_tail_chunk(chunk) for chunk in chunks
+            ):
+                return False
+            continue
+        if index >= len(chunks):
+            index -= len(chunks)
+            continue
+        # The requested group ends inside this segment: the chunks
+        # dot-joined behind it here annotate the group rather than
+        # name it, so only later segments are held to the strict rule.
+        index = 0
+    return index == 0
+
+
+def _source_tokens(release, title):
+    """Release tokens for source matching, without the title occurrence.
+
+    Release names lead with the production title, sometimes behind a
+    leading annotation (``[BG].The.Web.2024.1080p.BluRay``), and a title
+    word can collide with a source synonym (``The.Web.2024.WEB-DL`` is
+    a web release of a production titled ``The Web``; its second ``web``
+    is a source claim, the title's is not). So source matching runs on
+    the release with its subtitle extension, language annotation and
+    trailing release-group span dropped, without the title's own
+    consecutive token occurrence, wherever it appears: a title word
+    outside that occurrence still claims its source. A title that does
+    not appear as the full sequence falls back to dropping the leading
+    run of its tokens. Both sides use the accent-folded normalizer, so
+    an accented title still excludes its plain release spelling
+    (``Café Web`` / ``Cafe.Web``).
+    """
+    title_chunks = _normalize_tokens(title)
+    body, group, _ = _release_body_and_group(release, title)
+    return set(_tokens_without_title(_normalize_tokens(body), title_chunks))
+
+
+# Every source synonym chunk, the short ambiguous ones included: a
+# component carrying one names a release source, which is a release tag
+# even where it is too ambiguous to end a group span.
+_RELEASE_TAG_TOKENS = _BODY_TAG_TOKENS | {
+    chunk
+    for chunks in _tag_synonym_chunks(_SOURCE_TOKENS)
+    for chunk in chunks
+}
+
+
+def _component_carries_release_tags(component, title):
+    """True when a path component names release tags of its own.
+
+    A component with a release-group span, or with a tag token, a year
+    or a resolution behind the production title, describes a release
+    variant. A bare production name (``Movie.bg.srt``) carries none, and
+    the release it belongs to is named by an outer component, its
+    directory.
+    """
+    body, group, _ = _release_body_and_group(component, title)
+    if group:
+        return True
+    # A year alone does not carry release identity: a bare basename
+    # (``Movie.2024.bg.srt``) belongs to the release its directory
+    # names, and only a tag token, its channel digits stripped as the
+    # audio matcher strips them (``DDP5.1``), or a resolution names a
+    # variant.
+    return any(
+        chunk in _RELEASE_TAG_TOKENS
+        or _RESOLUTION_TOKEN_RE.fullmatch(chunk)
+        or (
+            (stripped := _TRAILING_DIGITS_RE.match(chunk)) is not None
+            and stripped.group(1) in _RELEASE_TAG_TOKENS
+        )
+        for chunk in _source_tokens(component, title)
+    )
+
+
+def _component_attribute_matches(video, component, title):
+    """The attribute keys a single path component's name matches."""
+    matched = set()
+    tokens = _release_tokens(component)
+    source = _coerce_text(video.get("source"))
+    if source:
+        source_tokens = _source_tokens(component, title)
+        token_list = _SOURCE_TOKENS.get(source)
+        if (token_list and _has_token(source_tokens, token_list)) or (
+            token_list is None and _multi_token_present(source_tokens, source)
+        ):
+            matched.add("source")
+    resolution = _coerce_text(video.get("resolution"))
+    if resolution and str(resolution).lower() in tokens:
+        matched.add("resolution")
+    video_codec = _coerce_text(video.get("video_codec"))
+    if video_codec:
+        token_list = _VIDEO_CODEC_TOKENS.get(video_codec)
+        if (token_list and _has_token(tokens, token_list)) or (
+            token_list is None and _multi_token_present(tokens, video_codec)
+        ):
+            matched.add("video_codec")
+    audio_codec = _coerce_text(video.get("audio_codec"))
+    if audio_codec and _audio_codec_matches(audio_codec, component):
+        matched.add("audio_codec")
+    release_group = _coerce_text(video.get("release_group"))
+    if release_group and _release_group_matches(component, release_group, title):
+        matched.add("release_group")
+    streaming_service = _coerce_text(video.get("streaming_service"))
+    if streaming_service:
+        token_list = _STREAMING_SERVICE_TOKENS.get(streaming_service)
+        if (token_list and _has_token(tokens, token_list)) or (
+            token_list is None and _multi_token_present(tokens, streaming_service)
+        ):
+            matched.add("streaming_service")
+    edition = _coerce_text(video.get("edition"))
+    if edition and _multi_token_present(tokens, edition):
+        matched.add("edition")
+    return matched
 
 
 def _release_attribute_matches(video, item, releases):
-    """Release-level match keys, evaluated per release name.
+    """Release-level match keys, evaluated on the release's own name.
 
     The upstream provider evaluates each release name independently and
     unions the resulting match keys. Pooling every release's tokens into
     one set would manufacture matches: a video release group ``FOO-BAR``
     must not match one release ending ``-FOO`` and another ending
-    ``-BAR``. The keys are returned in a fixed order.
+    ``-BAR``. A release name (or archive member path) is described by
+    its innermost component that carries release tags of its own or that
+    already matches the video: the member's basename when it names a
+    variant, even one only the video's own free-form attributes name
+    (an ``AV1`` codec), else the release directory behind a bare
+    basename. Scoring every component would let a directory's tags
+    override the variant the member's own basename names (a WEB-DL
+    resync inside a Blu-ray release's directory), and pooling
+    components would leak a title occurrence, group segment or source
+    tokens across the path boundary. The keys are returned in a fixed
+    order.
     """
     matched = set()
-    title_tokens = set(_normalize_tokens(_item_title(item)))
+    title = _item_title(item)
     for release in releases:
-        tokens = _release_tokens(release)
-        source = _coerce_text(video.get("source"))
-        if source:
-            source_tokens = _source_tokens(release, title_tokens)
-            token_list = _SOURCE_TOKENS.get(source)
-            if (token_list and _has_token(source_tokens, token_list)) or (
-                token_list is None and _multi_token_present(source_tokens, source)
+        components = _release_components(release)
+        for component in reversed(components):
+            # The innermost component that carries release tags of its
+            # own, or that the video's own attributes already match,
+            # describes the release; a component that does neither
+            # names no variant of it.
+            component_matches = _component_attribute_matches(
+                video, component, title
+            )
+            if component_matches or _component_carries_release_tags(
+                component, title
             ):
-                matched.add("source")
-        resolution = _coerce_text(video.get("resolution"))
-        if resolution and str(resolution).lower() in tokens:
-            matched.add("resolution")
-        video_codec = _coerce_text(video.get("video_codec"))
-        if video_codec:
-            token_list = _VIDEO_CODEC_TOKENS.get(video_codec)
-            if (token_list and _has_token(tokens, token_list)) or (
-                token_list is None and _multi_token_present(tokens, video_codec)
-            ):
-                matched.add("video_codec")
-        audio_codec = _coerce_text(video.get("audio_codec"))
-        if audio_codec and _audio_codec_matches(audio_codec, release):
-            matched.add("audio_codec")
-        release_group = _coerce_text(video.get("release_group"))
-        if release_group and _multi_token_present(tokens, release_group):
-            matched.add("release_group")
-        streaming_service = _coerce_text(video.get("streaming_service"))
-        if streaming_service:
-            token_list = _STREAMING_SERVICE_TOKENS.get(streaming_service)
-            if (token_list and _has_token(tokens, token_list)) or (
-                token_list is None and _multi_token_present(tokens, streaming_service)
-            ):
-                matched.add("streaming_service")
-        edition = _coerce_text(video.get("edition"))
-        if edition and _multi_token_present(tokens, edition):
-            matched.add("edition")
+                matched.update(component_matches)
+                break
     return [key for key in _ATTRIBUTE_KEYS if key in matched]
+
+
+def _select_movie_member(names, payload):
+    """Pick the movie member whose release best matches the video.
+
+    A movie archive carries one member per release variant, and the
+    candidate's attribute matches are the union over the item's
+    releases, so the pick must deliver the variant that carries the
+    matched attributes; archive order would deliver an arbitrary variant,
+    possibly mistimed for the video's release. Release identity (the
+    source, the streaming service and the release group) outweighs the
+    generic attributes (the resolution, the codecs, the edition), so a
+    fuller filename on a wrong-source variant does not outrank the
+    variant that agrees with the video's release. Each member is scored
+    on its innermost path component that carries release tags of its
+    own, so a per-release directory carries the variant's tags over a
+    plain filename without overriding a basename that names its own
+    variant. Ties keep archive order, and a payload without release
+    attributes (an older search's, or a video that carries none) keeps
+    the first-member behavior.
+    """
+    payload = payload or {}
+    video = payload.get("video") or {}
+    if not video:
+        return names[0]
+    item = {"title": payload.get("title")}
+    best_name = names[0]
+    best_rank = (-1, -1)
+    for name in names:
+        matched = _release_attribute_matches(video, item, [name])
+        rank = (
+            len([key for key in matched if key in _IDENTITY_ATTRIBUTE_KEYS]),
+            len(matched),
+        )
+        if rank > best_rank:
+            best_name = name
+            best_rank = rank
+    return best_name
 
 
 def _compute_score(video, matches):
@@ -655,6 +1273,19 @@ class VladoonProvider:
             if video.get("kind") == "episode":
                 payload["season"] = video.get("season")
                 payload["episode"] = video.get("episode")
+            else:
+                # The movie member pick ranks the archive's release
+                # variants by the video's release attributes, so the
+                # payload carries them, plus the item's title whose
+                # tokens are excluded from source matching, for the
+                # separate download call.
+                attributes = {
+                    key: _coerce_text(video.get(key)) for key in _ATTRIBUTE_KEYS
+                }
+                attributes = {key: value for key, value in attributes.items() if value}
+                if attributes:
+                    payload["video"] = attributes
+                payload["title"] = _item_title(item)
             results.append(
                 {
                     "provider": PROVIDER_ID,
@@ -759,10 +1390,21 @@ class VladoonProvider:
                     archive["episode"] = wanted[1]
             return archive
 
-        # A movie archive carries one member per release variant; the first
-        # subtitle member in archive order is the pick, mirroring upstream's
-        # first-subtitle rule.
-        archive["member"] = names[0]
+        # A movie archive carries one member per release variant; the pick
+        # is the variant whose release attributes best match the video's,
+        # so the delivered member is the one the candidate's matches
+        # describe. Upstream's first-subtitle rule would deliver an
+        # arbitrary variant, possibly mistimed for the video's release.
+        # The host reads a pinned member as-is, so forced-tagged members
+        # are filtered before the ranking exactly like the episode path:
+        # a forced member must not win the pick for a normal request, and
+        # a forced-only archive cannot serve one.
+        eligible = [name for name in names if not _is_forced_member(name)]
+        if not eligible:
+            raise ValueError(
+                f"Vladoon download {url} carries no non-forced subtitle member"
+            )
+        archive["member"] = _select_movie_member(eligible, payload)
         return archive
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, max_bytes=MAX_SEARCH_BYTES):
