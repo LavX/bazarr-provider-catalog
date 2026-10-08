@@ -1,0 +1,127 @@
+{
+  "api_version": "bazarr.provider-hub.v1",
+  "bundle_sha256": "711c539f9d0db947f5d51a12f4094fbd50d4274b54a1d92f0ed848b4b864e136",
+  "config_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "api_key": {
+        "description": "Optional API key for the SubsDump instance, sent as the X-API-Key header.",
+        "secret": true,
+        "title": "API key",
+        "type": "string"
+      },
+      "base_url": {
+        "description": "Base URL of the self-hosted SubsDump service, including http:// or https://.",
+        "title": "Base URL",
+        "type": "string"
+      }
+    },
+    "required": [
+      "base_url"
+    ],
+    "type": "object"
+  },
+  "dependencies": {
+    "requirements": []
+  },
+  "description": "Connects to a self-hosted SubsDump (Subscene archive) service through its JSON API for movie and episode subtitles in 70+ languages, including Brazilian Portuguese. Requires a base URL; an optional API key is sent when the instance uses one.",
+  "entry_class": "SubsDumpProvider",
+  "entry_module": "provider",
+  "files": {
+    "provider.py": "5110a8449791409681b1d4e6418e4704552a497533297d7badbc5503b07dde00"
+  },
+  "languages": [
+    "ara",
+    "aze",
+    "bel",
+    "ben",
+    "bos",
+    "bul",
+    "cat",
+    "ces",
+    "dan",
+    "deu",
+    "ell",
+    "eng",
+    "epo",
+    "est",
+    "eus",
+    "fas",
+    "fin",
+    "fra",
+    "heb",
+    "hin",
+    "hrv",
+    "hun",
+    "hye",
+    "ind",
+    "isl",
+    "ita",
+    "jpn",
+    "kal",
+    "kan",
+    "kat",
+    "khm",
+    "kin",
+    "kor",
+    "kur",
+    "lav",
+    "lit",
+    "mal",
+    "mkd",
+    "mni",
+    "mon",
+    "msa",
+    "mya",
+    "nep",
+    "nld",
+    "nor",
+    "pan",
+    "pol",
+    "por",
+    "por-BR",
+    "pus",
+    "ron",
+    "rus",
+    "sin",
+    "slk",
+    "slv",
+    "som",
+    "spa",
+    "sqi",
+    "srp",
+    "sun",
+    "swa",
+    "swe",
+    "tam",
+    "tel",
+    "tgl",
+    "tha",
+    "tur",
+    "ukr",
+    "urd",
+    "vie",
+    "yor",
+    "zho"
+  ],
+  "name": "SubsDump",
+  "provider_id": "subsdump",
+  "schema_version": 1,
+  "secret_fields": [
+    "api_key"
+  ],
+  "source": {
+    "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+    "commit": "0000000000000000000000000000000000000000",
+    "path": "providers/subsdump",
+    "ref": "main",
+    "repo": "LavX/bazarr-provider-catalog",
+    "trusted": true,
+    "type": "github"
+  },
+  "supported_media": [
+    "movie",
+    "episode"
+  ],
+  "version": "0.1.0"
+}
