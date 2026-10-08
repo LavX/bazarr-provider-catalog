@@ -27,14 +27,13 @@ jobs:
         run: |
           python3 -B -m sdk build-catalog
           git diff --exit-code -- catalog.json providers
-      - name: Install optional deps a few provider tests import
-        # Most providers guard their optional imports, but the ai-cloudscraper and
-        # smokehub tests patch real modules, so install just those for full coverage.
+      - name: Install pinned provider test dependencies
+        # The ai-cloudscraper, smokehub and SubCentral tests import real modules.
         # Pin to the versions locked in the manifests (derived here, single source of
         # truth) so CI matches what Bazarr workers install and a new upstream release
         # cannot break or silently shift the build.
         run: |
-          python3 -m pip install --quiet $(python3 -c "import glob,json;names={'ai-cloudscraper','humanfriendly'};v={r['name']:r['version'] for p in sorted(glob.glob('providers/*/provider.json')) for r in json.load(open(p)).get('dependencies',{}).get('requirements',[]) if r['name'] in names};print(' '.join(sorted(f'{n}=={ver}' for n,ver in v.items())))")
+          python3 -m pip install --quiet $(python3 -c "import glob,json;names={'ai-cloudscraper','humanfriendly','ua-generator'};v={r['name']:r['version'] for p in sorted(glob.glob('providers/*/provider.json')) for r in json.load(open(p)).get('dependencies',{}).get('requirements',[]) if r['name'] in names};print(' '.join(sorted(f'{n}=={ver}' for n,ver in v.items())))")
       - name: Run test suite
         run: python3 -B -m unittest discover -s tests
 

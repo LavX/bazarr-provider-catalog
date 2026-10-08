@@ -12,6 +12,9 @@ import urllib.request
 import zipfile
 from http.cookiejar import CookieJar
 
+import ua_generator
+from ua_generator.options import Options
+
 PROVIDER_ID = "subcentral"
 BASE_URL = "https://www.subcentral.de"
 HOME_URL = f"{BASE_URL}/"
@@ -22,10 +25,6 @@ SUPPORTED_LANGUAGES = {"deu": "de", "eng": "en"}
 ALPHA2_TO_ALPHA3 = {value: key for key, value in SUPPORTED_LANGUAGES.items()}
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt")
 ARCHIVE_EXTENSIONS = (".zip", ".rar")
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
-)
 
 _OPTION_RE = re.compile(rb"<option\b[^>]*value=['\"]?(?P<id>\d+)['\"]?[^>]*>(?P<title>.*?)</option>", re.I | re.S)
 _THREAD_RE = re.compile(
@@ -159,11 +158,17 @@ def derive_matches(video, candidate_title):
 class SubCentralProvider:
     def __init__(self):
         self._cookie_jar = CookieJar()
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform="linux",
+            browser="firefox",
+            options=Options(latest_versions=True),
+        ).text
         self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cookie_jar))
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": self._user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
         }
