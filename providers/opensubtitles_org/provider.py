@@ -16,6 +16,9 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass, replace as _dataclass_replace
 
+import ua_generator
+from ua_generator.options import Options
+
 try:
     import cloudscraper
 except ImportError:  # pragma: no cover, dependency is declared in provider.json
@@ -35,12 +38,16 @@ USER_AGENT = (
 )
 DEFAULT_TIMEOUT_SECONDS = 30
 DEFAULT_FLARESOLVERR_TIMEOUT_MS = 60000
+OPERATION_BUDGET_SECONDS = 110
+DIRECT_HTTP_BUDGET_SECONDS = 110
+REQUEST_CONNECT_CAP_SECONDS = 10
+FLARESOLVERR_RESERVE_SECONDS = 1
 SUBTITLE_FORMAT = "srt"
 
 # Transport-level retry for raw network blips only. Matches upstream subliminal's
 # RetryingSession/ProviderRetryMixin (about three tries with exponential backoff).
 # This wraps only the urllib/cloudscraper GET; it never retries challenge
-# responses, 4xx other than 429, or any non-network error.
+# responses, rate limits, other 4xx, or any non-network error.
 RETRY_MAX_ATTEMPTS = 3
 RETRY_BACKOFF_SECONDS = 0.5
 RETRY_BACKOFF_CAP_SECONDS = 8.0
@@ -204,6 +211,31 @@ class ServiceUnavailable(OpenSubtitlesError):
     """The upstream service is not currently usable."""
 
 
+class BudgetExhausted(ServiceUnavailable):
+    """The provider's bounded operation deadline was reached."""
+
+
+def _budget_remaining(deadline, stage):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise BudgetExhausted(f"OpenSubtitles.org stage={stage} budget_exhausted")
+    return remaining
+
+
+def _request_timeout(timeout, deadline, stage):
+    # Requests applies connect and read timeouts separately, so their sum must
+    # fit the remaining budget rather than setting each to the full remainder.
+    total = min(float(timeout), _budget_remaining(deadline, stage))
+    connect = min(REQUEST_CONNECT_CAP_SECONDS, total / 2)
+    return (connect, total - connect)
+
+
+def _budget_sleep(seconds, deadline, stage):
+    if seconds >= _budget_remaining(deadline, stage):
+        raise BudgetExhausted(f"OpenSubtitles.org stage={stage} budget_exhausted")
+    time.sleep(seconds)
+
+
 class _MissingCloudscraper:
     @staticmethod
     def create_scraper(**kwargs):
@@ -214,9 +246,23 @@ if cloudscraper is None:  # pragma: no cover, dependency is declared in provider
     cloudscraper = _MissingCloudscraper()
 
 
-def _create_cloudscraper_session():
+def _browser_user_agent(previous=None):
+    user_agent = previous
+    for _ in range(3):
+        user_agent = ua_generator.generate(
+            device="desktop",
+            platform="windows",
+            browser="chrome",
+            options=Options(latest_versions=True),
+        ).text
+        if user_agent != previous:
+            break
+    return user_agent
+
+
+def _create_cloudscraper_session(user_agent):
     kwargs = {
-        "browser": {"custom": USER_AGENT},
+        "browser": {"custom": user_agent},
         "interpreter": "native",
         "enable_cookie_persistence": False,
         "debug": False,
@@ -757,12 +803,21 @@ def _is_anubis_response(response):
     )
 
 
-def _anubis_get(session, url, timeout, stage, allow_redirects=True):
+def _anubis_get(session, url, timeout, stage, allow_redirects=True, deadline=None):
     # The caller owns recovery. Never nest transport retries inside its gate
     # budget, or include request URLs, cookies or exception payloads in logs.
+    if deadline is None:
+        deadline = time.monotonic() + DIRECT_HTTP_BUDGET_SECONDS
     try:
-        response = session.get(url, timeout=timeout, allow_redirects=allow_redirects)
+        response = session.get(
+            url,
+            timeout=_request_timeout(timeout, deadline, stage),
+            allow_redirects=allow_redirects,
+        )
+        if response.status_code != 429:
+            _budget_remaining(deadline, stage)
     except Exception as exc:
+        _budget_remaining(deadline, stage)
         logger.warning("OpenSubtitles.org Anubis stage=%s request_failed", stage)
         if _is_retryable_transport_error(exc):
             return None
@@ -773,7 +828,7 @@ def _anubis_get(session, url, timeout, stage, allow_redirects=True):
     return response
 
 
-def solve_anubis_challenge(session, challenge_url, original_url, timeout=DEFAULT_TIMEOUT_SECONDS):
+def solve_anubis_challenge(session, challenge_url, original_url, timeout=DEFAULT_TIMEOUT_SECONDS, deadline=None):
     parsed = urllib.parse.urlparse(challenge_url)
     query = urllib.parse.parse_qs(parsed.query)
     original = urllib.parse.urlparse(original_url)
@@ -782,9 +837,10 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=DEFAULT
     base = f"{parsed.scheme}://{parsed.netloc}"
     challenge_page_url = challenge_url if challenge_url.startswith("http") else base + challenge_url
     started = time.monotonic()
-    deadline = started + max(float(timeout or DEFAULT_TIMEOUT_SECONDS), 0.1)
+    solver_deadline = started + max(float(timeout or DEFAULT_TIMEOUT_SECONDS), 0.1)
+    deadline = min(deadline, solver_deadline) if deadline is not None else solver_deadline
 
-    response = _anubis_get(session, challenge_page_url, (10, timeout), "challenge_fetch")
+    response = _anubis_get(session, challenge_page_url, timeout, "challenge_fetch", deadline=deadline)
     if response is None:
         return None
     challenge = _extract_anubis_challenge(_response_text(response))
@@ -805,15 +861,12 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=DEFAULT
         redirect_url = challenge["redirect_url"]
         if not redirect_url.startswith("http"):
             redirect_url = base + redirect_url
-        time.sleep(challenge.get("delay", 1))
-        solved = _anubis_get(session, redirect_url, (10, timeout), "pass_submit")
+        _budget_sleep(challenge.get("delay", 1), deadline, "pass_submit")
+        solved = _anubis_get(session, redirect_url, timeout, "pass_submit", deadline=deadline)
     elif method == "preact":
         result, delay = _solve_preact(challenge["randomData"], challenge["difficulty"])
-        remaining = deadline - time.monotonic()
-        if delay > remaining:
-            raise ServiceUnavailable("OpenSubtitles.org Anubis preact challenge timed out")
         if delay > 0:
-            time.sleep(delay)
+            _budget_sleep(delay, deadline, "pass_submit")
         params = {
             "id": challenge["id"],
             "result": result,
@@ -823,12 +876,18 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=DEFAULT
         solved = _anubis_get(
             session,
             f"{base}/.within.website/x/cmd/anubis/api/pass-challenge?{urllib.parse.urlencode(params)}",
-            (10, timeout),
+            timeout,
             "pass_submit",
             allow_redirects=False,
+            deadline=deadline,
         )
     else:
-        nonce, digest = _solve_pow(challenge["randomData"], challenge["difficulty"], deadline=deadline)
+        try:
+            nonce, digest = _solve_pow(challenge["randomData"], challenge["difficulty"], deadline=deadline)
+        except ServiceUnavailable:
+            if time.monotonic() >= deadline:
+                raise BudgetExhausted("OpenSubtitles.org stage=proof_of_work budget_exhausted") from None
+            raise
         params = {
             "id": challenge["id"],
             "response": digest,
@@ -839,9 +898,10 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=DEFAULT
         solved = _anubis_get(
             session,
             f"{base}/.within.website/x/cmd/anubis/api/pass-challenge?{urllib.parse.urlencode(params)}",
-            (10, timeout),
+            timeout,
             "pass_submit",
             allow_redirects=False,
+            deadline=deadline,
         )
 
     if solved is None:
@@ -1271,16 +1331,6 @@ def _is_retryable_transport_error(exc):
     return False
 
 
-def _retry_after_seconds(response):
-    headers = getattr(response, "headers", None) or {}
-    getter = getattr(headers, "get", None)
-    raw = getter("Retry-After") if getter else None
-    value = _as_int(raw)
-    if value is None or value < 0:
-        return None
-    return min(float(value), RETRY_BACKOFF_CAP_SECONDS)
-
-
 def _backoff_delay(attempt):
     # attempt is 1-based; first retry waits RETRY_BACKOFF_SECONDS, then doubles.
     return min(RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1)), RETRY_BACKOFF_CAP_SECONDS)
@@ -1292,6 +1342,7 @@ class OpenSubtitlesOrgProvider:
         self._last_request_at = 0.0
 
     def search(self, video, languages, config):
+        deadline = time.monotonic() + OPERATION_BUDGET_SECONDS
         config = config or {}
         context = build_search_context(video, config)
         query = context.query[0] if context.query else _clean_text((video or {}).get("title") or (video or {}).get("series"))
@@ -1300,14 +1351,14 @@ class OpenSubtitlesOrgProvider:
         # moviehash listing first so hash-matched results come back, then merge
         # with the regular imdb/title lookup (deduplicated by subtitle id).
         seen = set()
-        candidates = self._hash_candidates(video or {}, languages or [], context, config, seen)
+        candidates = self._hash_candidates(video or {}, languages or [], context, config, seen, deadline)
 
         candidates.extend(
-            self._regular_candidates(video or {}, languages or [], context, config, query, seen)
+            self._regular_candidates(video or {}, languages or [], context, config, query, seen, deadline)
         )
         return candidates
 
-    def _hash_candidates(self, video, languages, context, config, seen):
+    def _hash_candidates(self, video, languages, context, config, seen, deadline):
         hash_url = self._build_hash_search_url(context)
         if not hash_url:
             return []
@@ -1320,9 +1371,9 @@ class OpenSubtitlesOrgProvider:
         }
         if _subtitle_language_codes(languages):
             return self._subtitles_for_result(
-                hash_result, video, languages, context, config, seen, is_hash_lookup=True
+                hash_result, video, languages, context, config, seen, is_hash_lookup=True, deadline=deadline
             )
-        response = self._http_get(hash_url, config)
+        response = self._http_get(hash_url, config, deadline=deadline)
         return self._candidates_from_items(
             _parse_subtitle_rows(_response_text(response), hash_url),
             hash_result,
@@ -1334,9 +1385,9 @@ class OpenSubtitlesOrgProvider:
             is_hash_lookup=True,
         )
 
-    def _regular_candidates(self, video, languages, context, config, query, seen):
+    def _regular_candidates(self, video, languages, context, config, query, seen, deadline):
         search_url = self._build_search_url(query, context)
-        search_response = self._http_get(search_url, config)
+        search_response = self._http_get(search_url, config, deadline=deadline)
         search_html = _response_text(search_response)
         # Prefer the URL we landed on over the one we asked for: a title lookup
         # can be redirected onto the real listing, whose path segment is the only
@@ -1362,8 +1413,10 @@ class OpenSubtitlesOrgProvider:
                 # fall back to what we have rather than lose the whole search.
                 try:
                     language_candidates = self._subtitles_for_result(
-                        direct_result, video, languages, context, config, seen
+                        direct_result, video, languages, context, config, seen, deadline=deadline
                     )
+                except BudgetExhausted:
+                    raise
                 except OpenSubtitlesError:
                     language_candidates = []
                 if language_candidates:
@@ -1375,7 +1428,7 @@ class OpenSubtitlesOrgProvider:
         best_result = select_best_result(results, context.imdb_id, query, video.get("year"))
         if not best_result:
             return []
-        return self._subtitles_for_result(best_result, video, languages, context, config, seen)
+        return self._subtitles_for_result(best_result, video, languages, context, config, seen, deadline=deadline)
 
     @staticmethod
     def _language_filter_base(language_codes, *urls):
@@ -1391,13 +1444,14 @@ class OpenSubtitlesOrgProvider:
         return None
 
     def download(self, provider_payload, language, config):
+        deadline = time.monotonic() + OPERATION_BUDGET_SECONDS
         del language
         payload = provider_payload or {}
         subtitle_id = str(payload.get("subtitle_id") or "")
         if not subtitle_id:
             raise ValueError("opensubtitles.org download requires subtitle_id")
         direct_url = f"{DOWNLOAD_BASE_URL}/en/download/sub/{subtitle_id}"
-        response = self._http_get(direct_url, config or {})
+        response = self._http_get(direct_url, config or {}, deadline=deadline)
         content = getattr(response, "content", b"") or b""
         content_type = (getattr(response, "headers", {}) or {}).get("content-type", "").lower()
         archive = self._archive_download(content, content_type, payload)
@@ -1408,7 +1462,7 @@ class OpenSubtitlesOrgProvider:
             match = _DOWNLOAD_LINK_RE.search(page_html)
             if not match:
                 raise ServiceUnavailable("OpenSubtitles.org download page contained no subtitle link")
-            response = self._http_get(_absolute_url(match.group("href"), BASE_URL), config or {})
+            response = self._http_get(_absolute_url(match.group("href"), BASE_URL), config or {}, deadline=deadline)
             content = getattr(response, "content", b"") or b""
             archive = self._archive_download(content, "", payload)
             if archive is not None:
@@ -1462,7 +1516,7 @@ class OpenSubtitlesOrgProvider:
             params["SearchOnlyMovies"] = "on"
         return f"{BASE_URL}/en/search2?{urllib.parse.urlencode(params)}"
 
-    def _subtitles_for_result(self, result, video, languages, context, config, seen=None, is_hash_lookup=False):
+    def _subtitles_for_result(self, result, video, languages, context, config, seen=None, is_hash_lookup=False, deadline=None):
         language_codes = _subtitle_language_codes(languages)
         page_urls = []
         if language_codes:
@@ -1485,7 +1539,9 @@ class OpenSubtitlesOrgProvider:
             # would come back empty over a single transient block. Keep what was
             # fetched, and only re-raise if nothing was.
             try:
-                response = self._http_get(page_url, config)
+                response = self._http_get(page_url, config, deadline=deadline)
+            except BudgetExhausted:
+                raise
             except OpenSubtitlesError as error:
                 failure = failure or error
                 continue
@@ -1564,20 +1620,33 @@ class OpenSubtitlesOrgProvider:
             )
         return candidates
 
-    def _get_session(self):
+    def _get_session(self, previous_user_agent=None):
         if self._session is None:
-            self._session = _create_cloudscraper_session()
-            self._session.headers.update({"User-Agent": USER_AGENT})
+            user_agent = _browser_user_agent(previous_user_agent)
+            self._session = _create_cloudscraper_session(user_agent)
+            self._session.headers.update({"User-Agent": user_agent})
         return self._session
 
-    def _http_get(self, url, config):
+    def _renew_session(self, session):
+        # A rejected identity includes its browser header and cookies. Keep the
+        # next attempt isolated instead of replaying either half of that pair.
+        previous_user_agent = session.headers.get("User-Agent")
+        close = getattr(session, "close", None)
+        if close is not None:
+            close()
+        self._session = None
+        return self._get_session(previous_user_agent)
+
+    def _http_get(self, url, config, deadline=None):
         config = config or {}
-        self._apply_delay(config)
+        if deadline is None:
+            deadline = time.monotonic() + DIRECT_HTTP_BUDGET_SECONDS
+        self._apply_delay(config, deadline)
         session = self._get_session()
         timeout = _as_int(config.get("timeout")) or DEFAULT_TIMEOUT_SECONDS
         last_status = None
         for attempt in range(1, CHALLENGE_RETRY_ATTEMPTS + 1):
-            response = self._session_get(session, url, timeout)
+            response = self._session_get(session, url, timeout, deadline)
             # Resolve layered anti-bot gates (Cloudflare in front of Anubis): solve whichever
             # gate the current response shows and re-fetch, a few rounds, so a CF->Anubis
             # chain clears in this pass rather than waiting for the next retry attempt.
@@ -1587,22 +1656,32 @@ class OpenSubtitlesOrgProvider:
                     raise RateLimited("OpenSubtitles.org rate limited the request")
                 challenge_url = getattr(response, "url", "") or url
                 if _is_anubis_response(response):
-                    solved = solve_anubis_challenge(session, challenge_url, url, timeout=timeout)
+                    solved = solve_anubis_challenge(session, challenge_url, url, timeout=timeout, deadline=deadline)
                     if not solved:
                         anubis_failed = True
                         break
                     if isinstance(solved, _AnubisPage):
                         response = solved.response
                     else:
-                        refreshed = _anubis_get(session, url, timeout, "resource_refetch")
+                        refreshed = _anubis_get(session, url, timeout, "resource_refetch", deadline=deadline)
                         if refreshed is None:
                             anubis_failed = True
                             break
                         response = refreshed
                     continue
                 if _is_cloudflare_challenge(response):
-                    self._fallback_to_flaresolverr(url, config)
-                    response = session.get(url, timeout=timeout, allow_redirects=True)
+                    self._fallback_to_flaresolverr(url, config, deadline)
+                    try:
+                        response = session.get(
+                            url,
+                            timeout=_request_timeout(timeout, deadline, "cloudflare_refetch"),
+                            allow_redirects=True,
+                        )
+                    except Exception as exc:
+                        _budget_remaining(deadline, "cloudflare_refetch")
+                        raise ServiceUnavailable("OpenSubtitles.org Cloudflare refetch failed") from exc
+                    if response.status_code != 429:
+                        _budget_remaining(deadline, "cloudflare_refetch")
                     if _is_cloudflare_challenge(response):
                         raise ServiceUnavailable("OpenSubtitles.org Cloudflare challenge remained after FlareSolverr fallback")
                     continue
@@ -1616,8 +1695,8 @@ class OpenSubtitlesOrgProvider:
                     attempt, CHALLENGE_RETRY_ATTEMPTS, status,
                 )
                 if attempt < CHALLENGE_RETRY_ATTEMPTS:
-                    self._reset_anubis_cookies(session)
-                    time.sleep(_backoff_delay(attempt))
+                    session = self._renew_session(session)
+                    _budget_sleep(_backoff_delay(attempt), deadline, "recovery_backoff")
                     continue
                 raise ServiceUnavailable(
                     f"OpenSubtitles.org Anubis challenge could not be solved after {attempt} attempts"
@@ -1625,39 +1704,45 @@ class OpenSubtitlesOrgProvider:
             if status >= 400:
                 last_status = status
                 # A 401/403 after challenge handling is a transient anti-bot block: the
-                # site rotates the Anubis challenge per request and throttles bursts. Drop
-                # the stale clearance cookie and re-solve after a short backoff rather than
+                # site rotates the Anubis challenge per request and throttles bursts. Replace
+                # the rejected browser session and re-solve after a short backoff rather than
                 # failing the entire search on the first block.
                 if status in (401, 403) and attempt < CHALLENGE_RETRY_ATTEMPTS:
-                    self._reset_anubis_cookies(session)
-                    time.sleep(_backoff_delay(attempt))
+                    session = self._renew_session(session)
+                    _budget_sleep(_backoff_delay(attempt), deadline, "recovery_backoff")
                     continue
                 raise ServiceUnavailable(f"OpenSubtitles.org HTTP {status}")
             return response
         raise ServiceUnavailable(f"OpenSubtitles.org HTTP {last_status}")
 
-    def _session_get(self, session, url, timeout):
+    def _session_get(self, session, url, timeout, deadline):
         # Wrap only the raw transport GET in a bounded retry so a single transient
-        # network blip (connection reset, DNS hiccup, timeout, an isolated 5xx/429)
+        # network blip (connection reset, DNS hiccup, timeout, an isolated 5xx)
         # does not abort the search/download. Challenge responses (Anubis /
-        # Cloudflare) and any 4xx other than 429 are returned untouched so the
+        # Cloudflare) and any 4xx are returned untouched so the
         # existing fallback and status-mapping logic decides what to do. The final
         # failure raises the same error the provider raised before this retry.
         last_exc = None
         for attempt in range(1, RETRY_MAX_ATTEMPTS + 1):
             try:
-                response = session.get(url, timeout=timeout, allow_redirects=True)
+                response = session.get(
+                    url,
+                    timeout=_request_timeout(timeout, deadline, "resource_fetch"),
+                    allow_redirects=True,
+                )
+                if response.status_code != 429:
+                    _budget_remaining(deadline, "resource_fetch")
             except Exception as exc:  # noqa: BLE001 - mirror prior catch-all mapping
+                _budget_remaining(deadline, "resource_fetch")
                 if not _is_retryable_transport_error(exc):
                     raise ServiceUnavailable(f"OpenSubtitles.org request failed: {exc}") from exc
                 last_exc = exc
                 if attempt >= RETRY_MAX_ATTEMPTS:
                     raise ServiceUnavailable(f"OpenSubtitles.org request failed: {exc}") from exc
-                time.sleep(_backoff_delay(attempt))
+                _budget_sleep(_backoff_delay(attempt), deadline, "transport_backoff")
                 continue
             if attempt < RETRY_MAX_ATTEMPTS and self._should_retry_response(response):
-                delay = _retry_after_seconds(response)
-                time.sleep(delay if delay is not None else _backoff_delay(attempt))
+                _budget_sleep(_backoff_delay(attempt), deadline, "transport_backoff")
                 continue
             return response
         # Unreachable: the loop always returns or raises, but keep a definite fallback.
@@ -1671,7 +1756,7 @@ class OpenSubtitlesOrgProvider:
         # challenge can ride on a 503/403, so never retry those here: they belong
         # to the challenge fallback path, not the transport blip path.
         status = getattr(response, "status_code", 200) or 200
-        if status != 429 and status < 500:
+        if status < 500:
             return False
         if _is_cloudflare_challenge(response):
             return False
@@ -1679,38 +1764,38 @@ class OpenSubtitlesOrgProvider:
             return False
         return True
 
-    @staticmethod
-    def _reset_anubis_cookies(session):
-        # Drop the Anubis clearance cookie so the next request re-solves a fresh
-        # challenge instead of replaying a stale/rejected token after a 401/403 block.
-        try:
-            for cookie in list(session.cookies):
-                name = (cookie.name or "").lower()
-                if "anubis" in name or "within" in name:
-                    session.cookies.clear(cookie.domain, cookie.path, cookie.name)
-        except Exception:  # noqa: BLE001 - cookie jar internals vary; best-effort reset
-            pass
-
-    def _apply_delay(self, config):
+    def _apply_delay(self, config, deadline):
         delay_ms = _as_int((config or {}).get("request_delay_ms")) or 0
         if delay_ms <= 0:
             return
         elapsed = time.monotonic() - self._last_request_at
         wait_for = delay_ms / 1000 - elapsed
         if wait_for > 0:
-            time.sleep(wait_for)
+            _budget_sleep(wait_for, deadline, "request_delay")
         self._last_request_at = time.monotonic()
 
-    def _fallback_to_flaresolverr(self, url, config):
+    def _fallback_to_flaresolverr(self, url, config, deadline):
         endpoint = _clean_text((config or {}).get("flaresolverr_url"))
         if not endpoint:
             raise ServiceUnavailable("OpenSubtitles.org Cloudflare challenge requires optional FlareSolverr URL")
+        remaining = _budget_remaining(deadline, "flaresolverr")
+        if remaining <= FLARESOLVERR_RESERVE_SECONDS + 1:
+            raise BudgetExhausted("OpenSubtitles.org stage=flaresolverr budget_exhausted")
         payload = {
             "cmd": "request.get",
             "url": url,
-            "maxTimeout": _as_int(config.get("flaresolverr_timeout_ms")) or DEFAULT_FLARESOLVERR_TIMEOUT_MS,
+            "maxTimeout": min(
+                _as_int(config.get("flaresolverr_timeout_ms")) or DEFAULT_FLARESOLVERR_TIMEOUT_MS,
+                int((remaining - FLARESOLVERR_RESERVE_SECONDS) * 1000),
+            ),
         }
-        data = self._post_flaresolverr(endpoint, payload, timeout=max(payload["maxTimeout"] / 1000 + 10, 20))
+        helper_timeout = min(payload["maxTimeout"] / 1000 + 10, _budget_remaining(deadline, "flaresolverr"))
+        try:
+            data = self._post_flaresolverr(endpoint, payload, timeout=helper_timeout)
+        except ServiceUnavailable:
+            _budget_remaining(deadline, "flaresolverr")
+            raise
+        _budget_remaining(deadline, "flaresolverr")
         solution = data.get("solution") or {}
         self._inject_solution(solution)
 
@@ -1725,8 +1810,8 @@ class OpenSubtitlesOrgProvider:
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 response_body = response.read()
-        except urllib.error.URLError as exc:
-            raise ServiceUnavailable(f"FlareSolverr unavailable: {exc.reason}") from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise ServiceUnavailable("FlareSolverr unavailable") from exc
         try:
             data = json.loads(response_body.decode("utf-8"))
         except json.JSONDecodeError as exc:
