@@ -3337,7 +3337,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "5e7ac82fe4363717019ad7f8f926c78270fff59c4298d4f58bfcf9b351764743",
+        "bundle_sha256": "c5788b5ff4ceac7bb92ff0e6c13db4946a702a98736d04ac2fa00c7a4c5ba968",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -3642,6 +3642,13 @@
             },
             {
               "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            },
+            {
+              "hashes": [
                 "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
               ],
               "name": "urllib3",
@@ -3662,11 +3669,11 @@
             }
           ]
         },
-        "description": "Scrapes OpenSubtitles.org natively with ai-cloudscraper, inline Anubis proof-of-work solving, and optional FlareSolverr fallback for Cloudflare browser challenges.",
+        "description": "Scrapes OpenSubtitles.org with a per-session browser identity, inline Anubis proof-of-work solving, and optional FlareSolverr fallback for Cloudflare browser challenges.",
         "entry_class": "OpenSubtitlesOrgProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "b9371734d6eaa60c684988c70412e93c31302a39832df860bfc06c56cce88572"
+          "provider.py": "7b81bc7efd43e05bb15425e6c25633a32995101649b8c59184cea1cabf5225d9"
         },
         "flaresolverr": true,
         "languages": [
@@ -4109,7 +4116,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.13"
+        "version": "0.1.14"
       }
     },
     {
