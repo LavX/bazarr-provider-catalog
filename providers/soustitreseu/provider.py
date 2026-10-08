@@ -15,6 +15,9 @@ import urllib.request
 import zipfile
 from http.cookiejar import CookieJar
 
+import ua_generator
+from ua_generator.options import Options
+
 PROVIDER_ID = "soustitreseu"
 BASE_URL = "https://www.sous-titres.eu"
 SEARCH_URL = f"{BASE_URL}/search.html"
@@ -30,10 +33,6 @@ SUPPORTED_LANGUAGES = {"eng": "en", "fra": "fr"}
 ALPHA2_TO_ALPHA3 = {value: key for key, value in SUPPORTED_LANGUAGES.items()}
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
 LANGUAGE_ORDER = ("eng", "fra")
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
-)
 
 _MEDIA_ROW_RE = re.compile(
     r"<li\b[^>]*class=['\"](?P<class>[^'\"]*\b(?:serie|film)\b[^'\"]*)['\"][^>]*>(?P<body>.*?)</li>",
@@ -172,12 +171,18 @@ def derive_matches(video, item):
 
 class SoustitreseuProvider:
     def __init__(self):
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
         self._cookie_jar = CookieJar()
         self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cookie_jar))
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": self._user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
         }

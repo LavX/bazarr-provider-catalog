@@ -14,6 +14,9 @@ import urllib.request
 import zipfile
 from http.cookiejar import CookieJar
 
+import ua_generator
+from ua_generator.options import Options
+
 PROVIDER_ID = "subssabbz"
 BASE_URL = "http://subs.sab.bz"
 SEARCH_URL = f"{BASE_URL}/index.php?"
@@ -21,10 +24,6 @@ HTTP_TIMEOUT_SECONDS = 30
 SUPPORTED_LANGUAGES = {"bul": "bg", "eng": "en"}
 ALPHA2_TO_ALPHA3 = {"bg": "bul", "en": "eng"}
 SUBTITLE_EXTENSIONS = (".srt", ".sub")
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
-)
 TV_NAME_FIXES = {
     "Marvel's Daredevil": "Daredevil",
     "Marvel's Luke Cage": "Luke Cage",
@@ -148,16 +147,22 @@ def derive_matches(video, item):
 
 class SubsSabBzProvider:
     def __init__(self):
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
         self._cookie_jar = CookieJar()
         self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cookie_jar))
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
-        request = urllib.request.Request(url, headers=_headers(referer))
+        request = urllib.request.Request(url, headers=_headers(referer, self._user_agent))
         return self._open_request(request, timeout)
 
     def _http_post(self, url, data, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         encoded = urllib.parse.urlencode(data).encode("utf-8")
-        headers = _headers(referer)
+        headers = _headers(referer, self._user_agent)
         headers["Content-Type"] = "application/x-www-form-urlencoded"
         request = urllib.request.Request(url, data=encoded, headers=headers, method="POST")
         return self._open_request(request, timeout)
@@ -665,13 +670,14 @@ def _query_title(title):
     return _ascii_fold(title).replace("'", "")
 
 
-def _headers(referer=None):
+def _headers(referer=None, user_agent=None):
     headers = {
-        "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.8,bg;q=0.7",
         "Connection": "keep-alive",
     }
+    if user_agent:
+        headers["User-Agent"] = user_agent
     if referer:
         headers["Referer"] = referer
     return headers

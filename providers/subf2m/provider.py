@@ -14,6 +14,14 @@ import urllib.parse
 import urllib.request
 import zipfile
 
+import ua_generator
+from ua_generator.options import Options
+
+
+def _new_user_agent():
+    return ua_generator.generate(device="desktop", options=Options(latest_versions=True)).text
+
+
 PROVIDER_ID = "subf2m"
 BASE_URL = "https://subf2m.co"
 HTTP_TIMEOUT_SECONDS = 15
@@ -248,6 +256,9 @@ def parse_download_url(body, page_url):
 
 
 class SubF2MProvider:
+    def __init__(self):
+        self._user_agent = _new_user_agent()
+
     def search(self, video, languages, config):
         video = dict(video or {})
         if video.get("kind") not in {"movie", "episode"}:
@@ -432,7 +443,7 @@ class SubF2MProvider:
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None, config=None):
         config = dict(config or {})
         headers = {
-            "User-Agent": _user_agent(config),
+            "User-Agent": _user_agent(config, self._user_agent),
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
         }
@@ -859,9 +870,9 @@ def _optional_bool(value):
     return None
 
 
-def _user_agent(config):
+def _user_agent(config, default=DEFAULT_USER_AGENT):
     value = _coerce_text((config or {}).get("user_agent"))
-    return value or DEFAULT_USER_AGENT
+    return value or default
 
 
 def _sleep(config):

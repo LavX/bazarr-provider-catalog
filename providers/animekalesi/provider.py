@@ -16,6 +16,9 @@ import zipfile
 from html.parser import HTMLParser
 from http.cookiejar import CookieJar
 
+import ua_generator
+from ua_generator.options import Options
+
 PROVIDER_ID = "animekalesi"
 BASE_URL = "https://www.animekalesi.com"
 SERIES_INDEX_URL = f"{BASE_URL}/tum-anime-serileri.html"
@@ -28,10 +31,6 @@ SUPPORTED_LANGUAGES = {"tur": "tr"}
 ALPHA2_TO_ALPHA3 = {value: key for key, value in SUPPORTED_LANGUAGES.items()}
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt")
 SUPPORTED_FILE_EXTENSIONS = SUBTITLE_EXTENSIONS + (".zip",)
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
-)
 
 _NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
 _SEASON_RE = re.compile(r"\b(\d{1,2})\s*sezon\b", re.I)
@@ -184,12 +183,18 @@ def derive_matches(video, series_title, season, episode, release_info=""):
 
 class AnimeKalesiProvider:
     def __init__(self):
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
         self._cookie_jar = CookieJar()
         self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cookie_jar))
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": self._user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "tr,en-US;q=0.7,en;q=0.3",
             "Connection": "keep-alive",

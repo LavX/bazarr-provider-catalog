@@ -10,6 +10,14 @@ import urllib.request
 from html.parser import HTMLParser
 from http.cookies import SimpleCookie
 
+import ua_generator
+from ua_generator.options import Options
+
+
+def _new_user_agent():
+    return ua_generator.generate(device="desktop", options=Options(latest_versions=True)).text
+
+
 PROVIDER_ID = "karagarga"
 BASE_URL = "https://karagarga.in"
 FORUM_URL = "https://forum.karagarga.in"
@@ -28,6 +36,7 @@ class HttpResponse:
 class KaragargaProvider:
     def __init__(self):
         self._authenticated = False
+        self._user_agent = _new_user_agent()
         self._tracker_cookies = {}
         self._forum_cookies = {}
 
@@ -171,7 +180,7 @@ class KaragargaProvider:
     def _headers(self):
         return {
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "User-Agent": DEFAULT_USER_AGENT,
+            "User-Agent": self._user_agent,
         }
 
     def _http_get(self, url, headers, cookies, timeout=HTTP_TIMEOUT_SECONDS, params=None, allow_redirects=True):

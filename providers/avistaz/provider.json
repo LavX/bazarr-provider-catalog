@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "41ba4c15a170a69768d68d19efb57fea509294c211828b25360c38b474f6e60c",
+  "bundle_sha256": "bda2bdf5c355f0c9b7459fb7b3a391eecfb451e36e6a6374f8501106c0db3bec",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -24,13 +24,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Uses AvistaZ release pages refined from Sonarr or Radarr history to download attached subtitles. Requires AvistaZ session cookies.",
   "entry_class": "AvistazProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "cfb791fe2884a79fbd9b0b4d73d1a0204cb3cc93e79000faf9fafc681c53933b"
+    "provider.py": "ea075649aadd6cf6a92daa4e404805f8084019c9fbb1a938477a586c1b0572cd"
   },
   "languages": [
     "aar",
@@ -237,5 +245,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.5"
+  "version": "0.1.6"
 }

@@ -10,12 +10,11 @@ import urllib.parse
 import urllib.request
 import zipfile
 
+import ua_generator
+from ua_generator.options import Options
+
 PROVIDER_ID = "fansubs"
 BASE_URL = "http://fansubs.ru"
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
-)
 HTTP_TIMEOUT_SECONDS = 15
 SUPPORTED_ALPHA3 = "rus"
 SUPPORTED_ALPHA2 = "ru"
@@ -471,11 +470,19 @@ def _filename_from_headers(headers):
 
 
 class FansubsProvider:
+    def __init__(self):
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
+
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS):
         request = urllib.request.Request(
             url,
             headers={
-                "User-Agent": USER_AGENT,
+                "User-Agent": self._user_agent,
                 "Accept-Language": "ru,en;q=0.8",
             },
         )
@@ -490,7 +497,7 @@ class FansubsProvider:
             url,
             data=encoded,
             headers={
-                "User-Agent": USER_AGENT,
+                "User-Agent": self._user_agent,
                 "Accept-Language": "ru,en;q=0.8",
                 "Content-Type": "application/x-www-form-urlencoded",
             },

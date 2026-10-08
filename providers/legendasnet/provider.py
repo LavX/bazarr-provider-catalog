@@ -15,6 +15,14 @@ import urllib.parse
 import urllib.request
 import zipfile
 
+import ua_generator
+from ua_generator.options import Options
+
+
+def _new_user_agent():
+    return ua_generator.generate(device="desktop", options=Options(latest_versions=True)).text
+
+
 PROVIDER_ID = "legendasnet"
 BASE_URL = "https://legendas.net"
 API_URL = f"{BASE_URL}/api/v1"
@@ -103,6 +111,7 @@ def _retry_after_seconds(headers):
 class LegendasNetProvider:
     def __init__(self):
         self._access_token = None
+        self._user_agent = _new_user_agent()
 
     def search(self, video, languages, config):
         video = dict(video or {})
@@ -255,7 +264,7 @@ class LegendasNetProvider:
 
     def _headers(self, config, authenticated=True):
         headers = {
-            "User-Agent": _text(config.get("user_agent")) or USER_AGENT,
+            "User-Agent": _text(config.get("user_agent")) or self._user_agent,
             "Accept": "application/json,text/plain,*/*",
         }
         if authenticated and self._access_token:

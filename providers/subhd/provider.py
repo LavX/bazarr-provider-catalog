@@ -16,6 +16,9 @@ import urllib.request
 import zipfile
 from http.cookiejar import CookieJar
 
+import ua_generator
+from ua_generator.options import Options
+
 _PROVIDER_DIR = os.path.dirname(__file__)
 if _PROVIDER_DIR and _PROVIDER_DIR not in sys.path:
     sys.path.insert(0, _PROVIDER_DIR)
@@ -25,10 +28,6 @@ from captcha_templates import CAPTCHA_TEMPLATE_ROWS
 PROVIDER_ID = "subhd"
 BASE_URL = "https://subhd.tv"
 API_DOWN_URL = f"{BASE_URL}/api/sub/down"
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
-)
 HTTP_TIMEOUT_SECONDS = 15
 MAX_CANDIDATES_PER_QUERY = 12
 MAX_CAPTCHA_ATTEMPTS = 6
@@ -556,12 +555,18 @@ def _sleep(config):
 
 class SubHDProvider:
     def __init__(self):
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
         self._cookie_jar = CookieJar()
         self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cookie_jar))
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": self._user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
         }
@@ -573,7 +578,7 @@ class SubHDProvider:
 
     def _http_post_json(self, url, payload, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": self._user_agent,
             "Accept": "application/json",
             "Content-Type": "application/json",
             "Accept-Language": "en-US,en;q=0.9",

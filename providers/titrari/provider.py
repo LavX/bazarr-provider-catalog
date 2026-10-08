@@ -13,6 +13,9 @@ import urllib.request
 import zipfile
 from http.cookiejar import CookieJar
 
+import ua_generator
+from ua_generator.options import Options
+
 PROVIDER_ID = "titrari"
 BASE_URL = "https://www.titrari.ro"
 HOME_URL = f"{BASE_URL}/"
@@ -30,10 +33,6 @@ SUPPORTED_LANGUAGES = {"ron": "ro", "eng": "en"}
 ALPHA2_TO_ALPHA3 = {value: key for key, value in SUPPORTED_LANGUAGES.items()}
 LANGUAGE_SEARCH_CODES = {"ron": "1", "eng": "2"}
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt")
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
-)
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _BR_RE = re.compile(r"<br\s*/?>", re.I)
@@ -283,13 +282,19 @@ def _member_match_score(name, payload):
 
 class TitrariProvider:
     def __init__(self):
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
         self._cookie_jar = CookieJar()
         self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cookie_jar))
         self._advanced_page_param = None
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": self._user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "ro-RO,ro;q=0.9,en-US;q=0.8,en;q=0.7",
         }

@@ -13,6 +13,14 @@ import zipfile
 from html.parser import HTMLParser
 from http.cookies import SimpleCookie
 
+import ua_generator
+from ua_generator.options import Options
+
+
+def _new_user_agent():
+    return ua_generator.generate(device="desktop", options=Options(latest_versions=True)).text
+
+
 PROVIDER_ID = "cinemaz"
 BASE_URL = "https://cinemaz.to/"
 RULES_URL = urllib.parse.urljoin(BASE_URL, "rules")
@@ -240,6 +248,7 @@ class HttpResponse:
 class CinemaZProvider:
     def __init__(self):
         self._cookies_verified = False
+        self._user_agent = _new_user_agent()
 
     def search(self, video, languages, config):
         config = dict(config or {})
@@ -305,7 +314,7 @@ class CinemaZProvider:
         self._cookies_verified = True
 
     def _headers(self, config):
-        user_agent = str((config or {}).get("user_agent") or "").strip() or DEFAULT_USER_AGENT
+        user_agent = str((config or {}).get("user_agent") or "").strip() or self._user_agent
         return {
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "User-Agent": user_agent,

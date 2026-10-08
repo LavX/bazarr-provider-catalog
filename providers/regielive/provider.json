@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "9647f3761fcfa7c55c49015c91af5e1f4b6d3540fe36473508250e76d6e95156",
+  "bundle_sha256": "f65f717fa15be0f8f53dc38b8522e9daf99626396340f7a8b3c5238ef216fbb2",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -16,13 +16,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Searches the RegieLive Bazarr API for Romanian movie and episode subtitles, falls back to the public HTML pages when the API rejects the request, and downloads subtitle ZIP files.",
   "entry_class": "RegieLiveProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "be184d297245642c6d5d27a9b3f46bdac670f522f8a5fb95e3412a2e8c3cbb01"
+    "provider.py": "b56ca782096ef3f950918bc6ce14e37c41bdc068dafbb30f0f758dac567981fe"
   },
   "languages": [
     "ron"
@@ -44,5 +52,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.3"
+  "version": "0.1.4"
 }

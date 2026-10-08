@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "8e90a12afd41215680473e8b00e70b296d9944bcd86e28fa1ac9ab1bbb7eed7c",
+  "bundle_sha256": "b133b7bdac0b60a6c9e9959e2337d710302075f94aad94e5f76d7de74a41bb68",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -30,13 +30,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Uses the Titlovi Kodi API for movie and episode subtitles. Login, pagination, ZIP/RAR downloads, episode packs, and Serbian script bundles are supported.",
   "entry_class": "TitloviProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "03a0526c59ff79753af2f46041d12d4c8c6e014742cb8ad889209fe5575dd101"
+    "provider.py": "bd29c8d4bdeae70b6ae6aa1a28430da4c1fe7daa6f4ea9a900d992d80bf57db9"
   },
   "languages": [
     "bos",
@@ -67,5 +75,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.8"
+  "version": "0.1.9"
 }

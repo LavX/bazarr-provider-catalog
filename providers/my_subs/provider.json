@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "cdb890c7f7a9bd30ca39dcb02aa8cc7b09e2d046fab30640ff219b7ecb52d0d8",
+  "bundle_sha256": "1568fc3991384a4e227dc14bd8c7c0b93489a38f08ff59639f92600d5162a961",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -16,13 +16,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Scrapes my-subs.co for TV and movie subtitle files. No login or API key required.",
   "entry_class": "MySubsProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "20ebe426b072ce49538ebf79946b6ce8ed2889a51b20a58d462a2cb5201804d3"
+    "provider.py": "7af125e03d1671f0925eaf3b16d9cb5d75bfddd2ca08748c75b28c8dea18f149"
   },
   "languages": [
     "eng",
@@ -85,5 +93,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.3"
+  "version": "0.1.4"
 }

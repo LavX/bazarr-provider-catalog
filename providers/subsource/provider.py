@@ -16,6 +16,14 @@ import urllib.request
 import zipfile
 
 
+import ua_generator
+from ua_generator.options import Options
+
+
+def _new_user_agent():
+    return ua_generator.generate(device="desktop", options=Options(latest_versions=True)).text
+
+
 PROVIDER_ID = "subsource"
 BASE_API_URL = "https://api.subsource.net/api/v1"
 SITE_URL = "https://subsource.net"
@@ -304,10 +312,10 @@ def language_names(languages):
     return sorted(name for name in names if name)
 
 
-def auth_headers(api_key):
+def auth_headers(api_key, user_agent=USER_AGENT):
     return {
         "Accept": "application/json",
-        "User-Agent": os.environ.get("SZ_USER_AGENT", USER_AGENT),
+        "User-Agent": os.environ.get("SZ_USER_AGENT") or user_agent,
         "X-API-Key": api_key,
     }
 
@@ -658,6 +666,9 @@ def _archive_payload(body, payload):
 
 
 class SubSourceProvider:
+    def __init__(self):
+        self._user_agent = _new_user_agent()
+
     def _sleep(self, config):
         delay = _request_delay(config)
         if delay:
@@ -674,7 +685,7 @@ class SubSourceProvider:
         api_key = _require_api_key(config)
         request = urllib.request.Request(
             self._url_for_path(path, params),
-            headers=auth_headers(api_key),
+            headers=auth_headers(api_key, self._user_agent),
         )
 
         def do_request():
@@ -700,7 +711,7 @@ class SubSourceProvider:
         api_key = _require_api_key(config)
         request = urllib.request.Request(
             self._url_for_path(path),
-            headers=auth_headers(api_key),
+            headers=auth_headers(api_key, self._user_agent),
         )
 
         def do_request():

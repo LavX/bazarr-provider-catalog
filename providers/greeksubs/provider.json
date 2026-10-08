@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "9234c2f9212227ed24736d1395cfe5dabc8f595bc7b9c9ee93b02ccd6e9ddde0",
+  "bundle_sha256": "2b066badd93df00f59dba5cf6837f8525bbb34a8151be7dcc28f73cb36260627",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -16,13 +16,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Scrapes greeksubs.net for Greek movie and episode subtitles by IMDb id. No login or API key required.",
   "entry_class": "GreekSubsProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "1c908ce5c036c7d8f6d1942ca4602106f3bcc0c52d9e1775743f21c21301b8e5"
+    "provider.py": "cd3c38610644fc54ef3871693b6f59a7d253892557c778f53d9369ac786ffb1b"
   },
   "languages": [
     "ell"
@@ -44,5 +52,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.2"
+  "version": "0.1.3"
 }

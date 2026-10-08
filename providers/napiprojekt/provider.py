@@ -19,6 +19,14 @@ try:
 except ImportError:  # pragma: no cover, dependency is declared in provider.json
     cloudscraper = None
 
+import ua_generator
+from ua_generator.options import Options
+
+
+def _new_user_agent():
+    return ua_generator.generate(device="desktop", options=Options(latest_versions=True)).text
+
+
 PROVIDER_ID = "napiprojekt"
 HASH_DOWNLOAD_URL = "https://napiprojekt.pl/unit_napisy/dl.php"
 CATALOG_SEARCH_URL = "https://www.napiprojekt.pl/ajax/search_catalog.php"
@@ -77,9 +85,9 @@ if cloudscraper is None:  # pragma: no cover
     cloudscraper = _MissingCloudscraper()
 
 
-def _create_cloudscraper():
+def _create_cloudscraper(user_agent=USER_AGENT):
     options = {
-        "browser": {"custom": USER_AGENT},
+        "browser": {"custom": user_agent},
         "interpreter": "native",
         "enable_cookie_persistence": False,
         "debug": False,
@@ -247,7 +255,7 @@ def is_cloudflare_challenge(status_code, headers, body):
 
 class NapiProjektProvider:
     def __init__(self):
-        self._state = {}
+        self._state = {"user_agent": _new_user_agent()}
         self._content_cache = {}
 
     def _http_get(self, url, config=None, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
@@ -504,8 +512,9 @@ def _scraper_request(scraper, method, url, headers, data, timeout):
 
 def _cloudflare_request(method, url, data=None, config=None, state=None, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
     config = config or {}
+    state = state if isinstance(state, dict) else {}
     scraper = _get_cloudscraper(state)
-    headers = {"User-Agent": USER_AGENT, "Accept-Language": "pl,en-US;q=0.9,en;q=0.8"}
+    headers = {"User-Agent": state.get("user_agent") or USER_AGENT, "Accept-Language": "pl,en-US;q=0.9,en;q=0.8"}
     if referer:
         headers["Referer"] = referer
     response = _scraper_request(scraper, method, url, headers, data, timeout)
@@ -529,7 +538,7 @@ def _get_cloudscraper(state):
     state = state if isinstance(state, dict) else {}
     scraper = state.get("cloudscraper")
     if scraper is None:
-        scraper = _create_cloudscraper()
+        scraper = _create_cloudscraper(state.get("user_agent") or USER_AGENT)
         state["cloudscraper"] = scraper
     return scraper
 
@@ -690,7 +699,6 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=HTTP_TI
 
 
 def _flaresolverr_request(method, url, data=None, config=None, state=None, referer=None):
-    del state
     payload = {
         "cmd": "request.post" if method == "POST" else "request.get",
         "url": url,
@@ -727,6 +735,28 @@ def _flaresolverr_request(method, url, data=None, config=None, state=None, refer
         raise CloudflareBlockedError("napiprojekt FlareSolverr response had no page body")
     if is_cloudflare_challenge(403, {}, body):
         raise CloudflareBlockedError("napiprojekt FlareSolverr response is still a Cloudflare challenge")
+    if isinstance(state, dict):
+        user_agent = solution.get("userAgent")
+        scraper = state.get("cloudscraper")
+        if user_agent and user_agent != state.get("user_agent"):
+            replacement = _create_cloudscraper(user_agent)
+            if scraper is not None:
+                replacement.cookies.update(scraper.cookies)
+            state["cloudscraper"] = replacement
+            if scraper is not None and replacement is not scraper and hasattr(scraper, "close"):
+                scraper.close()
+            scraper = replacement
+        if user_agent:
+            state["user_agent"] = user_agent
+        for cookie in solution.get("cookies") or []:
+            name = cookie.get("name")
+            value = cookie.get("value")
+            if scraper is not None and name and value is not None:
+                scraper.cookies.set(
+                    name, value,
+                    domain=cookie.get("domain") or ".napiprojekt.pl",
+                    path=cookie.get("path") or "/",
+                )
     return body
 
 

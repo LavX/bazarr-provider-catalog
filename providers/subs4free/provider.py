@@ -13,6 +13,9 @@ import urllib.request
 import zipfile
 from http.cookiejar import CookieJar
 
+import ua_generator
+from ua_generator.options import Options
+
 PROVIDER_ID = "subs4free"
 BASE_URL = "https://www.subs4free.info"
 SEARCH_URL = f"{BASE_URL}/search_report.php"
@@ -21,10 +24,6 @@ ANTI_BLOCK_URLS = (
     "https://images.subs4free.info/favicon.ico",
     "https://www.subs4series.com/includes/anti-block-layover.php?launch=1",
     "https://www.subs4series.com/includes/anti-block.php",
-)
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
 )
 HTTP_TIMEOUT_SECONDS = 15
 MAX_CANDIDATES_PER_QUERY = 20
@@ -274,6 +273,12 @@ def compute_score(video, item):
 
 class Subs4FreeProvider:
     def __init__(self):
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
         self._cookie_jar = CookieJar()
         self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cookie_jar))
 
@@ -381,13 +386,13 @@ class Subs4FreeProvider:
                 continue
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
-        request = urllib.request.Request(url, headers=_headers(referer))
+        request = urllib.request.Request(url, headers=_headers(self._user_agent, referer))
         with self._opener.open(request, timeout=timeout) as response:
             return response.read()
 
     def _http_post(self, url, data, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         encoded = urllib.parse.urlencode(data).encode("utf-8")
-        headers = _headers(referer)
+        headers = _headers(self._user_agent, referer)
         headers["Content-Type"] = "application/x-www-form-urlencoded"
         request = urllib.request.Request(url, data=encoded, headers=headers, method="POST")
         with self._opener.open(request, timeout=timeout) as response:
@@ -398,9 +403,9 @@ def _search_url(query):
     return f"{SEARCH_URL}?{urllib.parse.urlencode({'search': query, 'searchType': '1'})}"
 
 
-def _headers(referer=None):
+def _headers(user_agent, referer=None):
     headers = {
-        "User-Agent": USER_AGENT,
+        "User-Agent": user_agent,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "el-GR,el;q=0.9,en-US;q=0.8,en;q=0.7",
     }

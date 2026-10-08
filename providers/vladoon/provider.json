@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "82544f8f7f70a55242ee48c70afb44dbac14718cca0ce05b394cca7bc26fbb15",
+  "bundle_sha256": "480171bd3c2ba9777d494a650e70bced10e9f3720a64a7c1691722f2ec251d8e",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -16,13 +16,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Searches the Vladoon Bulgarian subtitle site through its JSON API, including season packs, and hands its ZIP downloads to Bazarr for member extraction. No login or API key required.",
   "entry_class": "VladoonProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "6ee3051bbf2f810339aac51f2d63b028c758584140844d9f47dfef1c014528d7"
+    "provider.py": "df4026fd99394d76b6b2777d5cd4a23162330724e8502e2fe39ef45eab1175ec"
   },
   "languages": [
     "bul"
@@ -44,5 +52,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.2"
+  "version": "0.1.3"
 }

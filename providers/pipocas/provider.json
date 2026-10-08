@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "eabbccfc13e8ef1c60c872ac21637074bd7283d2653084433847a75359b2eaab",
+  "bundle_sha256": "6459b201447895f73c21e85c2de965d8c2464a6e58c646d913ecf28808633dbc",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -30,13 +30,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Scrapes Pipocas.tv for movie and episode subtitles in Portuguese, Brazilian Portuguese, English, and Spanish. Login is required. ZIP and RAR downloads are supported.",
   "entry_class": "PipocasProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "811319bb2f0589e26354798af8f567548eb7d23c224d8d63c71826c0206291ff"
+    "provider.py": "31c449a3916a6e6a48b514eae7a076e0c0857d150b0621fa61d71b5a9388eb0a"
   },
   "languages": [
     "eng",
@@ -64,5 +72,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.6"
+  "version": "0.1.7"
 }

@@ -14,6 +14,9 @@ import urllib.request
 import zipfile
 from http.cookiejar import CookieJar
 
+import ua_generator
+from ua_generator.options import Options
+
 PROVIDER_ID = "regielive"
 API_URL = "https://api.regielive.ro/bazarr/search.php"
 DOWNLOAD_ORIGIN = "https://subtitrari.regielive.ro"
@@ -22,10 +25,6 @@ API_HEADER_VALUE = "API-BAZARR-YTZ-SL"
 HTTP_TIMEOUT_SECONDS = 15
 MAX_RESULTS = 20
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt", ".smi", ".sami")
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
-)
 
 ROMANIAN = {"alpha3": "ron", "alpha2": "ro", "hi": False, "forced": False}
 
@@ -185,12 +184,18 @@ def parse_html_detail_results(body, detail_url):
 
 class RegieLiveProvider:
     def __init__(self):
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
         cookie_jar = CookieJar()
         self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookie_jar))
 
     def _http_get(self, url, headers=None, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         merged_headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": self._user_agent,
             "Accept": "application/json,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9,ro;q=0.8",
         }

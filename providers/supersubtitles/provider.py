@@ -12,6 +12,9 @@ import urllib.parse
 import urllib.request
 import zipfile
 
+import ua_generator
+from ua_generator.options import Options
+
 PROVIDER_ID = "supersubtitles"
 BASE_URL = "https://feliratok.eu"
 HTTP_TIMEOUT_SECONDS = 15
@@ -19,10 +22,6 @@ SUPPORTED_LANGUAGES = {"hun": "hu", "eng": "en"}
 ALPHA2_TO_ALPHA3 = {value: key for key, value in SUPPORTED_LANGUAGES.items()}
 LANGUAGE_LABELS = {"magyar": "hun", "angol": "eng"}
 SUBTITLE_EXTENSIONS = (".srt", ".sub", ".ssa", ".ass", ".vtt")
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-)
 
 _ATTR_RE = re.compile(r"""(?P<name>[-:\w]+)\s*=\s*(?P<quote>["'])(?P<value>.*?)(?P=quote)""", re.S)
 _DOWNLOAD_LINK_RE = re.compile(r"""<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["'])(?P<href>[^"']*action=letolt[^"']*)(?P=quote)[^>]*)>""", re.I | re.S)
@@ -195,9 +194,17 @@ def derive_matches(video, row):
 
 
 class SuperSubtitlesProvider:
+    def __init__(self):
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
+
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": self._user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "hu-HU,hu;q=0.9,en-US;q=0.8,en;q=0.7",
         }

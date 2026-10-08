@@ -19,6 +19,14 @@ import urllib.request
 import zipfile
 
 
+import ua_generator
+from ua_generator.options import Options
+
+
+def _new_user_agent():
+    return ua_generator.generate(device="desktop", options=Options(latest_versions=True)).text
+
+
 PROVIDER_ID = "subdl"
 API_URL = "https://api.subdl.com/api/v1/subtitles"
 ACCOUNT_API_URL = "https://api.subdl.com/api/v1/me"
@@ -1334,6 +1342,7 @@ def _read_response_until_deadline(response, deadline, max_bytes=None):
 
 class SubDLProvider:
     def __init__(self):
+        self._user_agent = _new_user_agent()
         self._pending_event = None
         self._quota_blocked_until = 0.0
         self._quota_blocked_account = None
@@ -1586,7 +1595,7 @@ class SubDLProvider:
             f"{API_URL}?{query}",
             headers={
                 "Accept": "application/json",
-                "User-Agent": os.environ.get("SZ_USER_AGENT", USER_AGENT),
+                "User-Agent": os.environ.get("SZ_USER_AGENT") or self._user_agent,
             },
         )
         try:
@@ -1604,7 +1613,7 @@ class SubDLProvider:
             raise ValueError("SubDL download URL must use HTTPS on a subdl.com host")
         request = urllib.request.Request(
             url,
-            headers={"User-Agent": os.environ.get("SZ_USER_AGENT", USER_AGENT)},
+            headers={"User-Agent": os.environ.get("SZ_USER_AGENT") or self._user_agent},
         )
         try:
             return _urlopen_with_retry(request, timeout, opener=_download_opener())
@@ -1620,7 +1629,7 @@ class SubDLProvider:
             f"{ACCOUNT_API_URL}?{query}",
             headers={
                 "Accept": "application/json",
-                "User-Agent": os.environ.get("SZ_USER_AGENT", USER_AGENT),
+                "User-Agent": os.environ.get("SZ_USER_AGENT") or self._user_agent,
             },
         )
         active = self._account_request_thread
@@ -1722,7 +1731,7 @@ class SubDLProvider:
             headers={
                 "Accept": "application/json",
                 "Content-Type": "application/json",
-                "User-Agent": os.environ.get("SZ_USER_AGENT", USER_AGENT),
+                "User-Agent": os.environ.get("SZ_USER_AGENT") or self._user_agent,
             },
             method=method,
         )
@@ -1776,7 +1785,7 @@ class SubDLProvider:
         url = self._translation_url(path, api_key)
         request = urllib.request.Request(
             url,
-            headers={"User-Agent": os.environ.get("SZ_USER_AGENT", USER_AGENT)},
+            headers={"User-Agent": os.environ.get("SZ_USER_AGENT") or self._user_agent},
         )
         for attempt in range(1, HTTP_MAX_ATTEMPTS + 1):
             remaining = deadline - time.monotonic()

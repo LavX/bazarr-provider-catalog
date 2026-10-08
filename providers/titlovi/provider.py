@@ -14,6 +14,9 @@ import urllib.parse
 import urllib.request
 import zipfile
 
+import ua_generator
+from ua_generator.options import Options
+
 PROVIDER_ID = "titlovi"
 API_BASE_URL = "https://kodi.titlovi.com/api/subtitles"
 TOKEN_URL = f"{API_BASE_URL}/gettoken"
@@ -27,10 +30,6 @@ RETRY_BACKOFF_SECONDS = 0.5
 RETRY_BACKOFF_MAX_SECONDS = 8.0
 RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt")
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
-)
 
 LANGUAGES = {
     "bos": {"alpha3": "bos", "alpha2": "bs", "titlovi": "Bosanski"},
@@ -56,6 +55,12 @@ class HttpResponse:
 
 class TitloviProvider:
     def __init__(self):
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
         self._login_token = None
         self._user_id = None
 
@@ -157,13 +162,13 @@ class TitloviProvider:
             query = urllib.parse.urlencode(params)
             separator = "&" if urllib.parse.urlparse(url).query else "?"
             url = f"{url}{separator}{query}"
-        request = urllib.request.Request(url, headers=_headers(headers))
+        request = urllib.request.Request(url, headers=_headers(headers, self._user_agent))
         return _urlopen_with_retry(request, timeout)
 
     def _http_post(self, url, params=None, headers=None, timeout=HTTP_TIMEOUT_SECONDS):
         query = urllib.parse.urlencode(params or {})
         separator = "&" if urllib.parse.urlparse(url).query else "?"
-        request = urllib.request.Request(f"{url}{separator}{query}", data=b"", headers=_headers(headers), method="POST")
+        request = urllib.request.Request(f"{url}{separator}{query}", data=b"", headers=_headers(headers, self._user_agent), method="POST")
         return _urlopen_with_retry(request, timeout)
 
 
@@ -433,11 +438,12 @@ def _require_credentials(config):
         raise PermissionError("Titlovi username and password are required")
 
 
-def _headers(extra=None):
+def _headers(extra=None, user_agent=None):
     headers = {
-        "User-Agent": USER_AGENT,
         "Accept": "application/json,text/plain,*/*",
     }
+    if user_agent:
+        headers["User-Agent"] = user_agent
     headers.update(extra or {})
     return headers
 
