@@ -157,7 +157,7 @@ class CinemaZManifestTests(unittest.TestCase):
         requirements = manifest["dependencies"]["requirements"]
         names = {item["name"].lower() for item in requirements}
 
-        self.assertEqual(manifest["version"], "0.1.6")
+        self.assertEqual(manifest["version"], "0.1.7")
         self.assertTrue(names.isdisjoint({"py7zz", "py7zr", "rarfile"}))
 
     def test_manifest_declares_every_language_the_parser_maps(self):

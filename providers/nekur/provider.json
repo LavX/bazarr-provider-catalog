@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "bb0353d2b44dde0e2afb24c6e967e38069a60b2e44cbcc9a16d86b911e893fc2",
+  "bundle_sha256": "17983d426b421a9a90dbbf4bfed7cc23073f789c29ad7c15139c58f70e18d7f4",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -16,13 +16,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Scrapes Nekur for Latvian movie subtitles. ZIP and RAR downloads are handed to the host for extraction.",
   "entry_class": "NekurProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "49dedb10665e10322cc05b3f2eb2135118b9cf00561e531c50afd6918fd1c5b1"
+    "provider.py": "c5d71623ad56be15217fc6faa968c64216a0300dfb6d912a619325f4c0c9b72d"
   },
   "languages": [
     "lav"
@@ -43,5 +51,5 @@
   "supported_media": [
     "movie"
   ],
-  "version": "0.1.4"
+  "version": "0.1.5"
 }

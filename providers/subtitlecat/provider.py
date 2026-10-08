@@ -1,7 +1,7 @@
 """SubtitleCat provider for the Bazarr+ Provider Hub catalog.
 
-This module is loaded by the hub worker in an isolated process. It uses only
-the Python standard library; no third-party imports are permitted here.
+This module is loaded by the hub worker in an isolated process. HTTP uses the
+Python standard library, with the pinned ua-generator dependency for identity.
 """
 
 import base64 as _base64
@@ -14,12 +14,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import ua_generator
+from ua_generator.options import Options
+
 PROVIDER_ID = "subtitlecat"
 BASE_URL = "https://www.subtitlecat.com"
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
-)
 HTTP_TIMEOUT_SECONDS = 15
 MAX_CANDIDATES_PER_QUERY = 10
 # A body is read in pieces of up to this size, so a deadline is checked
@@ -867,6 +866,12 @@ class SubtitlecatProvider:
     """
 
     def __init__(self):
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
         # The search budget reads this clock, so tests can move time by hand.
         self._monotonic = time.monotonic
 
@@ -903,7 +908,7 @@ class SubtitlecatProvider:
         request = urllib.request.Request(
             url,
             headers={
-                "User-Agent": USER_AGENT,
+                "User-Agent": self._user_agent,
                 "Accept-Language": "en-US,en;q=0.9",
             },
         )

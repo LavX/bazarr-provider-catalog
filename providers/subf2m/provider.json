@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "a4484c2e153dfc85f44bfe7b2299f3e2cc498281803a3d26d41e278806fc403c",
+  "bundle_sha256": "0b671b5ef3d84e410ba9ef698ad323391df5d09aedfb8acaae9ecc9cca1e9e51",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -13,8 +13,8 @@
         "type": "integer"
       },
       "user_agent": {
-        "default": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub",
-        "description": "Browser User-Agent sent to subf2m.co.",
+        "default": "",
+        "description": "Optional browser User-Agent. Leave blank to generate a desktop browser identity for this provider session.",
         "title": "User-Agent",
         "type": "string"
       },
@@ -28,13 +28,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Scrapes subf2m.co for movie and episode subtitle ZIP files. Custom User-Agent and SSL verification settings are supported.",
   "entry_class": "SubF2MProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "8cf396f5ae0b678a866a66ae619bff15808061a3dd863a536bd1d4df4836894e"
+    "provider.py": "8ac13bf10b27d2dc34bb637d5ab372f93b027e4d449f4f57f1ecbe504237e3c6"
   },
   "languages": [
     "ara",
@@ -87,5 +95,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.6"
+  "version": "0.1.7"
 }

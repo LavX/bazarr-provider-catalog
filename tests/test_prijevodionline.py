@@ -2346,7 +2346,7 @@ class ManifestTests(ProviderTestCase):
         for key in properties:
             self.assertFalse(key in ("timeout", "timeout_seconds", "worker_timeout") or key.endswith("_timeout_seconds"), key)
         self.assertEqual(manifest["supported_media"], ["episode", "movie"])
-        self.assertEqual(manifest["version"], "0.3.0")
+        self.assertEqual(manifest["version"], "0.3.1")
 
     def test_manifest_declares_no_account_requirement(self):
         # The Provider Hub derives its sign-up badge from the setting keys: a

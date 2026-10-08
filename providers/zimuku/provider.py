@@ -21,6 +21,9 @@ import zipfile
 from dataclasses import dataclass
 from http.cookiejar import Cookie, CookieJar
 
+import ua_generator
+from ua_generator.options import Options
+
 _PROVIDER_DIR = os.path.dirname(__file__)
 if _PROVIDER_DIR and _PROVIDER_DIR not in sys.path:
     sys.path.insert(0, _PROVIDER_DIR)
@@ -34,10 +37,6 @@ HTTP_TIMEOUT_SECONDS = 30
 YUNSUO_MAX_VERIFY_ATTEMPTS = 8
 YUNSUO_COORDINATE_X_RANGE = (800, 1920)
 YUNSUO_COORDINATE_Y_RANGE = (600, 1080)
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
-)
 SUPPORTED_LANGUAGES = {"eng", "zho", "zho-CN", "zho-TW"}
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt")
 
@@ -372,6 +371,12 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 class ZimukuProvider:
     def __init__(self):
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
         self._cookie_jar = CookieJar()
         cookie_processor = urllib.request.HTTPCookieProcessor(self._cookie_jar)
         self._opener = urllib.request.build_opener(cookie_processor)
@@ -541,7 +546,7 @@ class ZimukuProvider:
 
     def _http_get_response(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None, allow_redirects=True):
         headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": self._user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         }

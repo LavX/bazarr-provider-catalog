@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "975544a8cec37a7432996b9d9dc8ce05d631c8c28115cea9646b6a88931adaac",
+  "bundle_sha256": "f28b0ebffdb59565b6daf44c1e1962601be0413d170a65788d362c751e0803da",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -16,13 +16,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Scrapes kitsunekko.net static subtitle directories for anime subtitle files. Zip archives are supported.",
   "entry_class": "KitsunekkoProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "e1adfc311a786bc60f8c26789b7b6b1dec0d096b7c741c7daea4b06da56f458f"
+    "provider.py": "766b7027687b60f16ff3d715986a4d56016dbd32f5bfd9aa36554f5bf02902f5"
   },
   "languages": [
     "eng",
@@ -45,5 +53,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.2"
+  "version": "0.1.3"
 }

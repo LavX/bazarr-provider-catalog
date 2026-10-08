@@ -13,6 +13,9 @@ import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
 
+import ua_generator
+from ua_generator.options import Options
+
 PROVIDER_ID = "greeksubs"
 BASE_URL = "https://greeksubs.net"
 HTTP_TIMEOUT_SECONDS = 20
@@ -21,10 +24,6 @@ RETRY_BACKOFF_SECONDS = 0.5
 RETRY_BACKOFF_CAP_SECONDS = 8
 RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 MAX_RESULTS = 25
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-)
 
 GREEK_LANGUAGE = {
     "alpha3": "ell",
@@ -209,12 +208,18 @@ def extract_download_form(body):
 
 class GreekSubsProvider:
     def __init__(self):
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
         cookie_jar = http.cookiejar.CookieJar()
         self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookie_jar))
 
     def _http_request(self, url, data=None, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": self._user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         }
         if referer:

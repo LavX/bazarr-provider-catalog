@@ -11,13 +11,12 @@ import urllib.request
 import zipfile
 from html.parser import HTMLParser
 
+import ua_generator
+from ua_generator.options import Options
+
 PROVIDER_ID = "subtitlestar"
 BASE_URL = "https://subtitlestar.com"
 DOWNLOAD_BASE_URL = "https://dl2.subtitlestar.com/dlsub"
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
-)
 HTTP_TIMEOUT_SECONDS = 15
 SUPPORTED_ALPHA3 = "fas"
 SUPPORTED_ALPHA2 = "fa"
@@ -756,11 +755,19 @@ def _candidate_scoring_title(video, candidate_title, details):
 
 
 class SubtitlestarProvider:
+    def __init__(self):
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
+
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS):
         request = urllib.request.Request(
             url,
             headers={
-                "User-Agent": USER_AGENT,
+                "User-Agent": self._user_agent,
                 "Accept-Language": "fa,en;q=0.8",
             },
         )

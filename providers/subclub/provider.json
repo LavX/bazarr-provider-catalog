@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "4df03992c79df890ab3fc0edda72a6349dd8a89e60496ca0feaa008dd3644789",
+  "bundle_sha256": "d4d17e04fc3d2905109128f335e7c3c56355a4d3eda430cfbe717aa8b14e7fc7",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -16,13 +16,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Scrapes Subclub.eu for Estonian movie and episode subtitles. Direct file downloads and ZIP/RAR archive fallback are supported.",
   "entry_class": "SubclubProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "ab845315bd0a5fb9b07aa690ae4ddc2a44d509f8131252cb7d6d8ccd925bc2de"
+    "provider.py": "5d0b8357fb20e6d4bde958baf43878061bbaeb1214a32ce977d0077cfb9fb3da"
   },
   "languages": [
     "est"
@@ -44,5 +52,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.4"
+  "version": "0.1.5"
 }

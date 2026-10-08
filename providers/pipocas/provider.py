@@ -14,6 +14,9 @@ import urllib.request
 import zipfile
 from html.parser import HTMLParser
 
+import ua_generator
+from ua_generator.options import Options
+
 PROVIDER_ID = "pipocas"
 BASE_URL = "https://pipocas.tv"
 LOGIN_URL = f"{BASE_URL}/login"
@@ -21,10 +24,6 @@ SEARCH_URL = f"{BASE_URL}/legendas"
 DOWNLOAD_URL = f"{BASE_URL}/legendas/download/{{id}}"
 HTTP_TIMEOUT_SECONDS = 15
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt")
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
-)
 
 LANGUAGES = {
     "eng": {"alpha3": "eng", "alpha2": "en", "site": "ingles"},
@@ -115,6 +114,12 @@ class _CookieCapturingRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 class PipocasProvider:
     def __init__(self):
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
         self._authenticated = False
         self._cookies = {}
         self._opener = urllib.request.build_opener(
@@ -287,7 +292,7 @@ class PipocasProvider:
 
     def _headers(self, extra=None, url=None):
         headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": self._user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
             "Origin": BASE_URL,

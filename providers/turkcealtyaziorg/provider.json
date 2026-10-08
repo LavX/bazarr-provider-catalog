@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "2d115d0686bcb93737ea3538646dfba50c87778234f8f88586a67d433d920b18",
+  "bundle_sha256": "b699439fcbfc62862d158fd5ca6bb4b3e7724740c77cb564dbf7ab47efa0ca70",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -292,6 +292,13 @@
       },
       {
         "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      },
+      {
+        "hashes": [
           "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
         ],
         "name": "urllib3",
@@ -316,7 +323,7 @@
   "entry_class": "TurkceAltyaziOrgProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "22fb337ae921fbe4e048f5cfe84ae425f97f3a49151d8250472a2910141812e1"
+    "provider.py": "440aee6bc9e446b64d18db2ec0f3ac1b83dec7d9af799b83d1a5d43e8bc17af2"
   },
   "flaresolverr": true,
   "languages": [
@@ -342,5 +349,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.7"
+  "version": "0.1.8"
 }

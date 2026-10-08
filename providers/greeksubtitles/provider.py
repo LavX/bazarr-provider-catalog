@@ -14,6 +14,14 @@ import urllib.request
 import zipfile
 from http.cookiejar import CookieJar
 
+import ua_generator
+from ua_generator.options import Options
+
+
+def _new_user_agent():
+    return ua_generator.generate(device="desktop", options=Options(latest_versions=True)).text
+
+
 PROVIDER_ID = "greeksubtitles"
 BASE_URL = "https://gr.greek-subtitles.com"
 DOWNLOAD_URL = "https://www.greeksubtitles.info/getp.php?id={}"
@@ -263,6 +271,7 @@ class _DeadlineRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 class GreekSubtitlesProvider:
     def __init__(self):
+        self._user_agent = _new_user_agent()
         cookie_jar = CookieJar()
 
         def clock():
@@ -281,7 +290,7 @@ class GreekSubtitlesProvider:
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None, deadline=None):
         headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": self._user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "el,en-US;q=0.7,en;q=0.3",
         }

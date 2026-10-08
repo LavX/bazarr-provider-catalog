@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "d2c06e4b7ebf956d437954fe28ee1f192795afe2e4832bef5ca611cafb457d7e",
+  "bundle_sha256": "4d48c288d5ca3c639b9513909b94d2d79e0a4f5dbcf4efffa873172294a15cf7",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -25,13 +25,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Uses the official SubSource API for movie and episode subtitles. API key required.",
   "entry_class": "SubSourceProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "23eb3d471c3e17167d2a7df36108346143336c8eca8e154b343bb55d32ad36b7"
+    "provider.py": "3ef7554b190047d0eb9b80830186f77716cfc3cfbcf3aa9ebc942240d403ba30"
   },
   "languages": [
     "abk",
@@ -140,5 +148,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.5"
+  "version": "0.1.6"
 }

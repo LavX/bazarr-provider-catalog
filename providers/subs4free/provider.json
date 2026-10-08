@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "3e63de3b408b8c97792068a85471955a4c2efe7283930db583608cb3caeca02c",
+  "bundle_sha256": "b39f832db238ab604773da79f0cc4ab61de11b90c6abd489690d6705097f6691",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -16,13 +16,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Scrapes subs4free.info for Greek and English movie subtitles. Supports the legacy anti-block download flow plus ZIP and RAR archives.",
   "entry_class": "Subs4FreeProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "a513c190737d08d72b93e6731407eee03ed97d6ef7df5496bc2952940e899252"
+    "provider.py": "24067d483670f4311e5ff89a32d71984d015ca9ba46ede6d64201e3c5dadd37b"
   },
   "languages": [
     "ell",
@@ -44,5 +52,5 @@
   "supported_media": [
     "movie"
   ],
-  "version": "0.1.4"
+  "version": "0.1.5"
 }

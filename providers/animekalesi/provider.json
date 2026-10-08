@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "81463c61b8b021eafb87619ef1438815acf789c97cc080c749cc352f8a7a0366",
+  "bundle_sha256": "802ea9c542587079a026a66147cb0e7cdec11b0d84c73709ab7ad7384f8a76ef",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -16,13 +16,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Scrapes AnimeKalesi episode subtitle pages for Turkish anime subtitles. Direct subtitle files and ZIP packages are supported.",
   "entry_class": "AnimeKalesiProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "526ad59e1feb071cf169750bb676ff2420a609e2d708388dec415f53f441b7eb"
+    "provider.py": "f994a8ae0af5fbc834e8d2d6d11ad8c4354d30812db4039c44eefdd4f59da377"
   },
   "languages": [
     "tur"
@@ -43,5 +51,5 @@
   "supported_media": [
     "episode"
   ],
-  "version": "0.1.4"
+  "version": "0.1.5"
 }

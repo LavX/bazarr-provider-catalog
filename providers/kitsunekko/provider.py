@@ -13,6 +13,9 @@ import urllib.request
 import zipfile
 import socket
 
+import ua_generator
+from ua_generator.options import Options
+
 PROVIDER_ID = "kitsunekko"
 BASE_URL = "https://kitsunekko.net"
 HTTP_TIMEOUT_SECONDS = 30
@@ -30,10 +33,6 @@ ALPHA3_TO_ALPHA2 = {
     "jpn": "ja",
 }
 ALPHA2_TO_ALPHA3 = {value: key for key, value in ALPHA3_TO_ALPHA2.items()}
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
-)
 
 _ANCHOR_RE = re.compile(
     rb"<a\b[^>]*href=['\"](?P<href>[^'\"]+)['\"][^>]*>\s*"
@@ -143,9 +142,17 @@ def compute_score(video, candidate, directory_score):
 
 
 class KitsunekkoProvider:
+    def __init__(self):
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
+
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": self._user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
         }

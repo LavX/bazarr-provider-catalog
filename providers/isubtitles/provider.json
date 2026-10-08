@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "e29ade500c5849ab1cb0c369914951e4c81822cc12d3a78e7d2392556fc039aa",
+  "bundle_sha256": "98cfd53317e0f79a2166ef1ff91cf55b763c8fa6c1234227bcc449a6dd95d289",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -16,13 +16,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Scrapes isubtitles.org title and language pages for downloadable subtitle ZIP files.",
   "entry_class": "ISubtitlesProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "cecd09375798c3f0816d810c94c9c7f696bfc14c3e25794d9bebb189bbcfa755"
+    "provider.py": "18ccd16edd6a4414c55bec0a34d5cea516b0792fb70707c655d95e89d41b7e3e"
   },
   "languages": [
     "aze",
@@ -115,5 +123,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.4"
+  "version": "0.1.5"
 }

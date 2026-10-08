@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "adb5c41a9f98732033cf3e26a7750be2b7c3405d82dd8fe9382651d580c79f69",
+  "bundle_sha256": "f4cecfdaf8d2248d6ba5c4abab9696f9a923756699e6cb5bf6ce6aed1a985ba8",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -22,13 +22,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Scrapes subtitlecat.com for community subtitle files. No login or API key required.",
   "entry_class": "SubtitlecatProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "38a64c5dc624ab334a5a0abe828d423cb9ddc82fe9069d9fc1e2e0c6458df418"
+    "provider.py": "cf0125fffa6b7d6e99a007193cd9b00ae74292fef49d3338d0f76982d93c5873"
   },
   "languages": [
     "eng",
@@ -101,5 +109,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.8"
+  "version": "0.1.9"
 }

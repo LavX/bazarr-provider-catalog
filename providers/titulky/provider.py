@@ -13,6 +13,9 @@ import urllib.parse
 import urllib.request
 import zipfile
 
+import ua_generator
+from ua_generator.options import Options
+
 PROVIDER_ID = "titulky"
 BASE_URL = "https://premium.titulky.com"
 DOWNLOAD_URL = f"{BASE_URL}/download.php?id="
@@ -25,10 +28,6 @@ RETRY_MAX_ATTEMPTS = 3
 RETRY_BACKOFF_SECONDS = 0.5
 RETRY_BACKOFF_CAP_SECONDS = 8.0
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt")
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
-)
 LANGUAGES = {
     "ces": {"alpha3": "ces", "alpha2": "cs", "flag": "flag-CZ"},
     "slk": {"alpha3": "slk", "alpha2": "sk", "flag": "flag-SK"},
@@ -60,6 +59,12 @@ class HttpResponse:
 
 class TitulkyProvider:
     def __init__(self):
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
         self._logged_in = False
         self._cookies = {}
 
@@ -187,7 +192,7 @@ class TitulkyProvider:
 
     def _headers(self, extra=None):
         headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": self._user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "sk,cs,en;q=0.7",
             "Connection": "keep-alive",

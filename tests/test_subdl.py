@@ -1295,7 +1295,7 @@ class SubDLAITranslationSearchTests(unittest.TestCase):
         manifest = json.loads((PROVIDER_DIR / "provider.json").read_text())
         schema = manifest["config_schema"]["properties"]
 
-        self.assertEqual(manifest["version"], "0.2.4")
+        self.assertEqual(manifest["version"], "0.2.5")
         self.assertIs(schema["ai_translate"]["default"], False)
         self.assertIn("SubDL publishes each translation as a regular subtitle", schema["ai_translate"]["title"])
         self.assertIs(schema["include_ai_translated"]["default"], False)

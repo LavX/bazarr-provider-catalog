@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "3d36aa74bdd8280090f4132152b1c49262faf13204f1642a8a4d9b47810fb21f",
+  "bundle_sha256": "c74b686f5005983a55e1309193d0cdb15f5c44b21a9bf801d8a53eee88bd7457",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -76,13 +76,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Uses the Prijevodi-Online API for Croatian, Serbian (Latin and Cyrillic), Bosnian, Montenegrin, Macedonian, and Serbo-Croatian episode and movie subtitles. No account is needed for series: search always works, and downloads work wherever the site lets visitors download. An account is optional and unlocks movies and token-priced subtitles. Movie subtitles need an account, because the site does not let visitors download movies. Sign in with a username and password or a browser session cookie. Tokens are spent only after you turn on token-priced downloads, and never for more than the per-download limit you set. Downloads arrive as ZIP archives (the site repacks older RAR uploads), and a RAR is still accepted.",
   "entry_class": "PrijevodiOnlineProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "59fe99db0ea56600b2d2dcc2b3075a3aff8c33f0c66fefda7ba16cf88741457e"
+    "provider.py": "c032db1915e0f95e1c0d3330c6b15247871eb9b8fe1134a59b1dd69157ff25ce"
   },
   "flaresolverr": true,
   "languages": [
@@ -115,5 +123,5 @@
     "episode",
     "movie"
   ],
-  "version": "0.3.0"
+  "version": "0.3.1"
 }

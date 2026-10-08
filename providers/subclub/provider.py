@@ -14,6 +14,9 @@ import urllib.request
 import zipfile
 from http.cookiejar import CookieJar
 
+import ua_generator
+from ua_generator.options import Options
+
 PROVIDER_ID = "subclub"
 BASE_URL = "https://www.subclub.eu"
 SEARCH_URL = f"{BASE_URL}/jutud.php"
@@ -30,10 +33,6 @@ RETRY_STATUS = 429
 SUPPORTED_LANGUAGES = {"est": "et"}
 ALPHA2_TO_ALPHA3 = {"et": "est"}
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
-)
 
 _ROW_START_RE = re.compile(r"<tr\b[^>]*class=['\"][^'\"]*\balt\d?\b[^'\"]*['\"][^>]*>", re.I)
 _TABLE_END_RE = re.compile(r"</table>", re.I)
@@ -136,12 +135,18 @@ def derive_matches(video, item):
 
 class SubclubProvider:
     def __init__(self):
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
         self._cookie_jar = CookieJar()
         self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cookie_jar))
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": self._user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "et-EE,et;q=0.9,en-US;q=0.8,en;q=0.7",
         }

@@ -73,6 +73,7 @@ class FakeScraper:
     def __init__(self, response):
         self.responses = response if isinstance(response, list) else [response]
         self.calls = []
+        self.cookies = {}
 
     def get(self, url, headers=None, timeout=None):
         self.calls.append((url, headers or {}, timeout))

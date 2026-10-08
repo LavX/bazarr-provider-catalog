@@ -19,15 +19,13 @@ import urllib.parse
 import urllib.request
 import zipfile
 
+import ua_generator
+from ua_generator.options import Options
 
 PROVIDER_ID = "vladoon"
 BASE_URL = "https://vladoon.com/subs"
 SEARCH_URL = BASE_URL + "/search-subtitles"
 DOWNLOAD_URL = BASE_URL + "/download/{item_id}"
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
-)
 HTTP_TIMEOUT_SECONDS = 20
 DOWNLOAD_TIMEOUT_SECONDS = 30
 # A search response is a small JSON document; a download is a zip the host
@@ -1236,6 +1234,14 @@ def _sleep(config):
 
 
 class VladoonProvider:
+    def __init__(self):
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
+
     def search(self, video, languages, config):
         video = video or {}
         if _requested_language(languages) is None:
@@ -1411,7 +1417,7 @@ class VladoonProvider:
         request = urllib.request.Request(
             url,
             headers={
-                "User-Agent": USER_AGENT,
+                "User-Agent": self._user_agent,
                 "Accept": "application/json, application/zip, */*",
                 "Referer": BASE_URL + "/",
             },

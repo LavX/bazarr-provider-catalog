@@ -11,15 +11,14 @@ import urllib.parse
 import urllib.request
 import zipfile
 
+import ua_generator
+from ua_generator.options import Options
+
 PROVIDER_ID = "subtitriid"
 BASE_URL = "https://subtitri.do.am"
 HTTP_TIMEOUT_SECONDS = 15
 SUPPORTED_LANGUAGE = {"alpha3": "lav", "alpha2": "lv"}
 SUBTITLE_EXTENSIONS = (".srt", ".sub", ".ssa", ".ass", ".vtt")
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
-)
 
 _ATTR_RE = re.compile(r"""(?P<name>[-:\w]+)\s*=\s*(?P<quote>["'])(?P<value>.*?)(?P=quote)""", re.S)
 _DOWNLOAD_LINK_RE = re.compile(
@@ -127,9 +126,17 @@ def derive_matches(video, row):
 
 
 class SubtitriIdProvider:
+    def __init__(self):
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
+
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": self._user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "lv-LV,lv;q=0.9,en-US;q=0.7,en;q=0.6",
         }

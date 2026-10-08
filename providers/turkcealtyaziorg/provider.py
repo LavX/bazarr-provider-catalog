@@ -19,6 +19,14 @@ try:
 except ImportError:  # pragma: no cover, dependency is declared in provider.json
     cloudscraper = None
 
+import ua_generator
+from ua_generator.options import Options
+
+
+def _new_user_agent():
+    return ua_generator.generate(device="desktop", options=Options(latest_versions=True)).text
+
+
 PROVIDER_ID = "turkcealtyaziorg"
 BASE_URL = "https://turkcealtyazi.org"
 DOWNLOAD_URL = f"{BASE_URL}/ind"
@@ -107,9 +115,9 @@ if cloudscraper is None:  # pragma: no cover, dependency is declared in provider
     cloudscraper = _MissingCloudscraper()
 
 
-def _create_cloudscraper_session():
+def _create_cloudscraper_session(user_agent=DEFAULT_USER_AGENT):
     kwargs = {
-        "browser": {"custom": DEFAULT_USER_AGENT},
+        "browser": {"custom": user_agent},
         "interpreter": "native",
         "enable_cookie_persistence": False,
         "debug": False,
@@ -125,6 +133,8 @@ def _create_cloudscraper_session():
 
 class TurkceAltyaziOrgProvider:
     def __init__(self):
+        self._user_agent = _new_user_agent()
+        self._helper_user_agent = ""
         self._access_checked = False
         self._last_request_at = 0.0
         self._session = None
@@ -188,10 +198,11 @@ class TurkceAltyaziOrgProvider:
         self._access_checked = True
 
     def _headers(self, config):
-        session_user_agent = ""
-        if self._session is not None:
-            session_user_agent = str(self._session.headers.get("User-Agent") or "").strip()
-        user_agent = str((config or {}).get("user_agent") or "").strip() or session_user_agent or DEFAULT_USER_AGENT
+        configured_user_agent = str((config or {}).get("user_agent") or "").strip()
+        if configured_user_agent and not self._helper_user_agent and configured_user_agent != self._user_agent:
+            self._user_agent = configured_user_agent
+            self._session = None
+        user_agent = self._helper_user_agent or configured_user_agent or self._user_agent
         return {
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Referer": BASE_URL,
@@ -200,8 +211,9 @@ class TurkceAltyaziOrgProvider:
 
     def _get_session(self):
         if self._session is None:
-            self._session = _create_cloudscraper_session()
-            self._session.headers.update({"User-Agent": DEFAULT_USER_AGENT})
+            user_agent = self._helper_user_agent or self._user_agent
+            self._session = _create_cloudscraper_session(user_agent)
+            self._session.headers.update({"User-Agent": user_agent})
         return self._session
 
     def _http_get(self, url, headers, cookies, timeout=HTTP_TIMEOUT_SECONDS, allow_redirects=True, config=None):
@@ -239,7 +251,7 @@ class TurkceAltyaziOrgProvider:
         if _is_cloudflare_challenge(response) and _flaresolverr_url(config):
             solved_names = self._fallback_to_flaresolverr(url, config)
             retry_headers = dict(headers or {})
-            retry_headers["User-Agent"] = self._get_session().headers.get("User-Agent", DEFAULT_USER_AGENT)
+            retry_headers["User-Agent"] = self._get_session().headers.get("User-Agent", self._user_agent)
             # Drop any per-request cookies FlareSolverr just refreshed so the
             # stale configured values cannot mask the freshly solved session
             # cookies during the retry.
@@ -302,7 +314,7 @@ class TurkceAltyaziOrgProvider:
         request = urllib.request.Request(
             url,
             data=body,
-            headers={"Content-Type": "application/json", "User-Agent": DEFAULT_USER_AGENT},
+            headers={"Content-Type": "application/json", "User-Agent": self._helper_user_agent or self._user_agent},
             method="POST",
         )
         try:
@@ -321,7 +333,15 @@ class TurkceAltyaziOrgProvider:
     def _inject_solution(self, solution):
         session = self._get_session()
         user_agent = solution.get("userAgent")
+        if user_agent and user_agent != session.headers.get("User-Agent"):
+            replacement = _create_cloudscraper_session(user_agent)
+            replacement.cookies.update(session.cookies)
+            self._session = replacement
+            if replacement is not session and hasattr(session, "close"):
+                session.close()
+            session = replacement
         if user_agent:
+            self._helper_user_agent = user_agent
             session.headers["User-Agent"] = user_agent
         injected = set()
         for cookie in solution.get("cookies") or []:

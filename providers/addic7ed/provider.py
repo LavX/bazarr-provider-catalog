@@ -13,6 +13,14 @@ import urllib.request
 from html.parser import HTMLParser
 from http.cookies import SimpleCookie
 
+import ua_generator
+from ua_generator.options import Options
+
+
+def _new_user_agent():
+    return ua_generator.generate(device="desktop", options=Options(latest_versions=True)).text
+
+
 PROVIDER_ID = "addic7ed"
 BASE_URL = "https://www.addic7ed.com"
 DEFAULT_USER_AGENT = "BazarrProviderHub/1.0"
@@ -107,6 +115,7 @@ class Addic7edProvider:
     def __init__(self):
         self._authenticated = False
         self._session_cookies = {}
+        self._user_agent = _new_user_agent()
 
     def search(self, video, languages, config):
         video = video or {}
@@ -282,7 +291,7 @@ class Addic7edProvider:
         return {
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Referer": referer,
-            "User-Agent": str(config.get("user_agent") or "").strip() or DEFAULT_USER_AGENT,
+            "User-Agent": str(config.get("user_agent") or "").strip() or self._user_agent,
         }
 
     def _cookies(self, config):
