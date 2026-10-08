@@ -28,6 +28,8 @@ SEARCH_RICK = json.loads((FIXTURE_DIR / "assrt_search_rick_morty.json").read_tex
 SEARCH_PACK = json.loads((FIXTURE_DIR / "assrt_search_season_pack.json").read_text())
 DETAIL_PACK = json.loads((FIXTURE_DIR / "assrt_detail_season_pack.json").read_text())
 DETAIL_SINGLE = json.loads((FIXTURE_DIR / "assrt_detail_single_file.json").read_text())
+SEARCH_CURRENT = json.loads((FIXTURE_DIR / "assrt_search_current_schema.json").read_text())
+DETAIL_CURRENT = json.loads((FIXTURE_DIR / "assrt_detail_current_schema.json").read_text())
 SEARCH_BILINGUAL = {
     "sub": {
         "subs": [
@@ -127,6 +129,237 @@ DETAIL_PACK_MISSING_EPISODE = {
                     },
                 ],
             }
+        ]
+    }
+}
+# Current-schema rows carry "fileid" instead of "id", "sub_name" instead of
+# "videoname", and "m_langn" instead of the "lang" block. "m_langn" holds the
+# same "lang<code>" keys, as a single string or a list, and "m_lang" is only a
+# display name the provider never reads.
+SEARCH_CURRENT_STRING_M_LANGN = {
+    "sub": {
+        "subs": [
+            {
+                "fileid": 73006,
+                "sub_name": "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL",
+                "m_langn": "langchs",
+            }
+        ]
+    }
+}
+SEARCH_CURRENT_TRADITIONAL_ONLY = {
+    "sub": {
+        "subs": [
+            {
+                "fileid": 73007,
+                "sub_name": "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL",
+                "m_langn": ["langcht"],
+            }
+        ]
+    }
+}
+# A row can carry a different language in each source, or the same key in both.
+SEARCH_MIXED_LANGUAGE_SOURCES = {
+    "sub": {
+        "subs": [
+            {
+                "id": 73008,
+                "videoname": "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL",
+                "lang": {"langlist": {"langeng": 1}},
+                "m_langn": ["langchs"],
+            }
+        ]
+    }
+}
+SEARCH_DUPLICATE_LANGUAGE_SOURCES = {
+    "sub": {
+        "subs": [
+            {
+                "fileid": 73012,
+                "sub_name": "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL",
+                "lang": {"langlist": {"langchs": 1}},
+                "m_langn": ["langchs"],
+            }
+        ]
+    }
+}
+# Two rows of one response can share a "fileid", which is one subtitle listed
+# twice.
+SEARCH_DUPLICATE_FILEID_ROWS = {
+    "sub": {
+        "subs": [
+            {
+                "fileid": 73022,
+                "sub_name": "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL",
+                "m_langn": ["langchs", "langeng"],
+            },
+            {
+                "fileid": 73022,
+                "sub_name": "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL",
+                "m_langn": ["langchs", "langeng"],
+            },
+        ]
+    }
+}
+SEARCH_CURRENT_BILINGUAL = {
+    "sub": {
+        "subs": [
+            {
+                "fileid": 73013,
+                "sub_name": "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL",
+                "m_langn": ["langdou"],
+            }
+        ]
+    }
+}
+SEARCH_NONSTRING_M_LANGN = {
+    "sub": {
+        "subs": [
+            {
+                "fileid": 73014,
+                "sub_name": "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL",
+                "m_langn": [1],
+            },
+            {
+                "fileid": 73015,
+                "sub_name": "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL",
+                "m_langn": [1, "langchs"],
+            },
+        ]
+    }
+}
+# "langchs2" and "langlist" have the shape of a key but name no language, and a
+# trailing newline must not smuggle a real language key through.
+SEARCH_ANCHORED_LANGUAGE_KEYS = {
+    "sub": {
+        "subs": [
+            {
+                "fileid": 73016,
+                "sub_name": "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL",
+                "m_langn": ["langchs2", "langlist", "langchs\n"],
+            },
+            {
+                "fileid": 73017,
+                "sub_name": "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL",
+                "m_langn": ["langchs"],
+            },
+        ]
+    }
+}
+SEARCH_ID_AND_FILEID = {
+    "sub": {
+        "subs": [
+            {
+                "id": 73009,
+                "fileid": 73099,
+                "sub_name": "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL",
+                "m_langn": ["langchs"],
+            }
+        ]
+    }
+}
+SEARCH_VIDEONAME_AND_SUB_NAME = {
+    "sub": {
+        "subs": [
+            {
+                "fileid": 73010,
+                "videoname": "Rick.and.Morty.S07E10.1080p.BluRay.x264-ETHEL",
+                "sub_name": "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL",
+                "m_langn": ["langchs"],
+            }
+        ]
+    }
+}
+SEARCH_MEANINGLESS_VIDEONAME_WITH_SUB_NAME = {
+    "sub": {
+        "subs": [
+            {
+                "id": 73011,
+                "videoname": "\u4e0d\u77e5\u9053",
+                "sub_name": "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL",
+                "lang": {"langlist": {"langchs": 1}},
+            }
+        ]
+    }
+}
+SEARCH_EMPTY_ID_WITH_FILEID = {
+    "sub": {
+        "subs": [
+            {
+                "id": "",
+                "fileid": 73018,
+                "sub_name": "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL",
+                "m_langn": ["langchs"],
+            }
+        ]
+    }
+}
+# An empty "native_name", alone or inside a list, is no title at all.
+SEARCH_EMPTY_NATIVE_NAME = {
+    "sub": {
+        "subs": [
+            {
+                "id": 73019,
+                "native_name": "",
+                "sub_name": "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL",
+                "lang": {"langlist": {"langchs": 1}},
+            },
+            {
+                "id": 73020,
+                "native_name": [""],
+                "sub_name": "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL",
+                "lang": {"langlist": {"langchs": 1}},
+            },
+            {
+                "id": 73021,
+                "native_name": [None],
+                "sub_name": "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL",
+                "lang": {"langlist": {"langchs": 1}},
+            },
+        ]
+    }
+}
+# A native title read past an empty entry of its list outranks "sub_name".
+SEARCH_NATIVE_NAME_AND_SUB_NAME = {
+    "sub": {
+        "subs": [
+            {
+                "fileid": 73023,
+                "videoname": "\u4e0d\u77e5\u9053",
+                "native_name": ["", "Rick.and.Morty.S07E10.720p.WEB.x264-GalaxyTV"],
+                "sub_name": "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL",
+                "m_langn": ["langchs"],
+            }
+        ]
+    }
+}
+# A row that carries neither "id" nor "fileid", or carries both of them empty,
+# has nothing to download with, so search must skip it instead of building a
+# candidate for it.
+SEARCH_WITHOUT_ID = {
+    "sub": {
+        "subs": [
+            {
+                "videoname": "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL",
+                "sub_name": "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL",
+                "lang": {"langlist": {"langchs": 1}},
+            },
+            {
+                "sub_name": "Rick.and.Morty.S07E10.720p.WEB.x264-GalaxyTV",
+                "m_langn": ["langchs"],
+            },
+            {
+                "id": "",
+                "fileid": "",
+                "sub_name": "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL",
+                "m_langn": ["langchs"],
+            },
+            {
+                "id": "",
+                "fileid": "",
+                "sub_name": "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL",
+                "m_langn": ["langeng"],
+            },
         ]
     }
 }
@@ -967,6 +1200,326 @@ class AssrtProviderTests(unittest.TestCase):
             {"71001": "CN", "71002": "TW"},
         )
         self.assertFalse(any("country" in item["language"] for item in results))
+
+    def test_search_reads_current_schema_rows(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_CURRENT
+        provider._sleep = lambda seconds: None
+
+        results = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+            [{"alpha3": "zho", "country_alpha2": "CN"}, {"alpha3": "eng"}],
+            {"token": "secret-token"},
+        )
+
+        # A current-schema row carries "fileid" instead of "id", "sub_name"
+        # instead of "videoname", and "m_langn" instead of the "lang" block.
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["73005"])
+        self.assertEqual(results[0]["release_info"], "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL")
+        self.assertEqual(results[0]["language"]["alpha3"], "zho")
+        self.assertEqual(results[0]["language"]["country_alpha2"], "CN")
+
+    def test_search_reads_a_single_string_m_langn(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_CURRENT_STRING_M_LANGN
+        provider._sleep = lambda seconds: None
+
+        results = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+            [{"alpha3": "zho", "country_alpha2": "CN"}],
+            {"token": "secret-token"},
+        )
+
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["73006"])
+
+    def test_search_matches_current_schema_variant_keys(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_CURRENT_TRADITIONAL_ONLY
+        provider._sleep = lambda seconds: None
+
+        # "langcht" claims the Traditional variant only, so a Traditional
+        # request reads the row and a Simplified one does not. Reading "m_langn"
+        # is what the Traditional half proves: ignoring it would leave both
+        # requests empty.
+        traditional = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+            [{"alpha3": "zho", "country_alpha2": "TW"}],
+            {"token": "secret-token"},
+        )
+        simplified = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+            [{"alpha3": "zho", "country_alpha2": "CN"}],
+            {"token": "secret-token"},
+        )
+
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in traditional], ["73007"])
+        self.assertEqual(traditional[0]["language"]["country_alpha2"], "TW")
+        self.assertEqual(simplified, [])
+
+    def test_search_reads_both_language_sources_of_a_mixed_row(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_MIXED_LANGUAGE_SOURCES
+        provider._sleep = lambda seconds: None
+
+        results = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+            [{"alpha3": "zho", "country_alpha2": "CN"}, {"alpha3": "eng"}],
+            {"token": "secret-token"},
+        )
+
+        # The legacy "lang" block and "m_langn" are both read, so a row offering
+        # its English through the former and its Chinese through the latter
+        # yields a candidate for each language.
+        self.assertEqual({item["language"]["alpha3"] for item in results}, {"zho", "eng"})
+        self.assertEqual({item["provider_payload"]["subtitle_id"] for item in results}, {"73008"})
+
+    def test_search_dedupes_a_language_key_read_twice(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_DUPLICATE_LANGUAGE_SOURCES
+        provider._sleep = lambda seconds: None
+
+        results = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+            [{"alpha3": "zho", "country_alpha2": "CN"}],
+            {"token": "secret-token"},
+        )
+
+        # The same key read from the legacy "lang" block and from "m_langn" is
+        # one language, so the row yields a single candidate.
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["73012"])
+
+    def test_search_dedupes_fileid_rows_read_twice(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_DUPLICATE_FILEID_ROWS
+        provider._sleep = lambda seconds: None
+
+        results = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+            [{"alpha3": "zho", "country_alpha2": "CN"}, {"alpha3": "eng"}],
+            {"token": "secret-token"},
+        )
+
+        # Two rows sharing one "fileid" are one subtitle listed twice, so each
+        # requested language still yields a single candidate.
+        self.assertEqual(
+            [(item["provider_payload"]["subtitle_id"], item["language"]["alpha3"]) for item in results],
+            [("73022", "zho"), ("73022", "eng")],
+        )
+
+    def test_search_reads_langdou_from_m_langn_as_chinese_only(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_CURRENT_BILINGUAL
+        provider._sleep = lambda seconds: None
+
+        chinese = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+            [{"alpha3": "zho", "country_alpha2": "CN"}],
+            {"token": "secret-token"},
+        )
+        english = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+            [{"alpha3": "eng"}],
+            {"token": "secret-token"},
+        )
+
+        # "langdou" read from "m_langn" still claims only the Chinese half of a
+        # bilingual subtitle; English needs its own "langeng" entry.
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in chinese], ["73013"])
+        self.assertEqual(chinese[0]["language"]["country_alpha2"], "CN")
+        self.assertEqual(english, [])
+
+    def test_search_ignores_non_string_m_langn_entries(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_NONSTRING_M_LANGN
+        provider._sleep = lambda seconds: None
+
+        results = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+            [{"alpha3": "zho", "country_alpha2": "CN"}],
+            {"token": "secret-token"},
+        )
+
+        # A number inside "m_langn" is not a language key, so the row carrying
+        # only numbers stays out and the mixed row yields one candidate.
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["73015"])
+
+    def test_search_ignores_anchored_keys_that_name_no_language(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_ANCHORED_LANGUAGE_KEYS
+        provider._sleep = lambda seconds: None
+
+        results = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+            [{"alpha3": "zho", "country_alpha2": "CN"}],
+            {"token": "secret-token"},
+        )
+
+        # "langchs2" and "langlist" have the shape of a key but name no language,
+        # and a trailing newline must not smuggle "langchs" through, so only the
+        # "langchs" row yields a candidate.
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["73017"])
+
+    def test_search_skips_rows_without_id_or_fileid(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_WITHOUT_ID
+        provider._sleep = lambda seconds: None
+
+        results = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+            [{"alpha3": "zho", "country_alpha2": "CN"}],
+            {"token": "secret-token"},
+        )
+
+        self.assertEqual(results, [])
+
+    def test_search_prefers_id_over_fileid(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_ID_AND_FILEID
+        provider._sleep = lambda seconds: None
+
+        results = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+            [{"alpha3": "zho", "country_alpha2": "CN"}],
+            {"token": "secret-token"},
+        )
+
+        # "fileid" is a fallback for rows without "id", so a row carrying both is
+        # downloaded through its "id".
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["73009"])
+
+    def test_search_reads_fileid_when_id_is_empty(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_EMPTY_ID_WITH_FILEID
+        provider._sleep = lambda seconds: None
+
+        results = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+            [{"alpha3": "zho", "country_alpha2": "CN"}],
+            {"token": "secret-token"},
+        )
+
+        # An empty "id" is as good as none, so the row falls back to "fileid"
+        # instead of producing a candidate that downloads with an empty id.
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["73018"])
+
+    def test_search_skips_rows_with_empty_id_and_empty_fileid(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_WITHOUT_ID
+        provider._sleep = lambda seconds: None
+
+        results = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+            [{"alpha3": "zho", "country_alpha2": "CN"}, {"alpha3": "eng"}],
+            {"token": "secret-token"},
+        )
+
+        # An empty "id" with an empty "fileid" leaves nothing to download with,
+        # so the row yields no candidate for any requested language.
+        self.assertEqual(results, [])
+
+    def test_search_prefers_videoname_over_sub_name(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_VIDEONAME_AND_SUB_NAME
+        provider._sleep = lambda seconds: None
+
+        results = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+            [{"alpha3": "zho", "country_alpha2": "CN"}],
+            {"token": "secret-token"},
+        )
+
+        # "sub_name" is a fallback for rows without "videoname", so a row
+        # carrying both is titled by its "videoname".
+        self.assertEqual([item["release_info"] for item in results], ["Rick.and.Morty.S07E10.1080p.BluRay.x264-ETHEL"])
+
+    def test_search_uses_sub_name_when_videoname_is_meaningless(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_MEANINGLESS_VIDEONAME_WITH_SUB_NAME
+        provider._sleep = lambda seconds: None
+
+        results = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+            [{"alpha3": "zho", "country_alpha2": "CN"}],
+            {"token": "secret-token"},
+        )
+
+        # A meaningless "videoname" is no title, so the row is titled by its
+        # "sub_name" instead.
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["73011"])
+        self.assertEqual(results[0]["release_info"], "Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL")
+
+    def test_search_reads_sub_name_when_native_name_is_empty(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_EMPTY_NATIVE_NAME
+        provider._sleep = lambda seconds: None
+
+        results = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+            [{"alpha3": "zho", "country_alpha2": "CN"}],
+            {"token": "secret-token"},
+        )
+
+        # An empty "native_name", alone or inside a list, hides a valid
+        # "sub_name", so each row falls through to that title instead.
+        self.assertEqual(
+            {item["provider_payload"]["subtitle_id"] for item in results},
+            {"73019", "73020", "73021"},
+        )
+        self.assertEqual(
+            {item["release_info"] for item in results},
+            {"Rick.and.Morty.S07E10.1080p.WEB.h264-ETHEL"},
+        )
+
+    def test_search_prefers_native_name_over_sub_name(self):
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_NATIVE_NAME_AND_SUB_NAME
+        provider._sleep = lambda seconds: None
+
+        results = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+            [{"alpha3": "zho", "country_alpha2": "CN"}],
+            {"token": "secret-token"},
+        )
+
+        # A native title read past the empty entries of its list outranks
+        # "sub_name", so the row is titled by the native release and not by the
+        # current-schema fallback.
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["73023"])
+        self.assertEqual(results[0]["release_info"], "Rick.and.Morty.S07E10.720p.WEB.x264-GalaxyTV")
+
+    def test_download_uses_current_schema_fileid_as_detail_id(self):
+        provider = self.mod.AssrtProvider()
+        calls = []
+
+        def json_stub(url, timeout=15, config=None):
+            del timeout, config
+            calls.append(url)
+            if "/user/quota" in url:
+                return QUOTA
+            if "/sub/search" in url:
+                return SEARCH_CURRENT
+            return DETAIL_CURRENT
+
+        provider._http_get_json = json_stub
+        provider._http_get_bytes = lambda url, timeout=15, config=None: b"1\n00:00:01,000 --> 00:00:02,000\nCurrent schema\n"
+        provider._sleep = lambda seconds: None
+        results = provider.search(
+            {"kind": "episode", "series": "Rick and Morty", "season": 7, "episode": 10},
+            [{"alpha3": "zho", "country_alpha2": "CN"}],
+            {"token": "secret-token"},
+        )
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["73005"])
+        result = provider.download(
+            results[0]["provider_payload"],
+            {"alpha3": "zho", "country_alpha2": "CN"},
+            {"token": "secret-token"},
+        )
+
+        # The quota is cached from the search, so the third call is the detail
+        # lookup, which must use the row's "fileid" as its id.
+        self.assertEqual(_query(calls[2])["id"], "73005")
+        self.assertIn(b"Current schema", base64.b64decode(result["content_b64"]))
+        self.assertEqual(result["format"], "srt")
 
 
 if __name__ == "__main__":
