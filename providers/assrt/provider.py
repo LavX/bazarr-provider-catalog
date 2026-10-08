@@ -137,6 +137,10 @@ class AssrtProvider:
         results = []
         seen = set()
         for item in ((payload.get("sub") or {}).get("subs") or []):
+            if _subtitle_id(item) is None:
+                # A row that carries neither "id" nor "fileid" has nothing to
+                # download with, so no candidate is built for it at all.
+                continue
             for language_code, language_meta in _languages_from_search_item(item):
                 requested_language = _match_requested_language(language_meta, requested)
                 if not requested_language:
@@ -226,7 +230,7 @@ class AssrtProvider:
     def _result(self, video, item, video_name, language_code, requested_language):
         matches = derive_matches(video, video_name)
         score = 95 if "episode" in matches or "title" in matches else 80
-        subtitle_id = str(item.get("id"))
+        subtitle_id = _subtitle_id(item)
         language_id = requested_language["alpha3"]
         if requested_language.get("country"):
             language_id = f"{language_id}-{requested_language['country']}"
@@ -459,9 +463,22 @@ def _requested_language_meta(language):
 
 
 def _languages_from_search_item(item):
-    langlist = (((item or {}).get("lang") or {}).get("langlist") or {})
-    for key in langlist:
-        match = _LANGLIST_RE.match(str(key))
+    # Legacy rows list their languages in "lang.langlist", keyed by "lang<code>".
+    # Current rows carry "m_langn" instead, as a single string or a list of the
+    # same keys. Read both sources and drop duplicate and non-string entries.
+    item = item or {}
+    keys = [str(key) for key in (item.get("lang") or {}).get("langlist") or {}]
+    m_langn = item.get("m_langn")
+    if isinstance(m_langn, str):
+        m_langn = [m_langn]
+    if isinstance(m_langn, list):
+        keys.extend(key for key in m_langn if isinstance(key, str))
+    seen = set()
+    for key in keys:
+        if key in seen:
+            continue
+        seen.add(key)
+        match = _LANGLIST_RE.fullmatch(key)
         if not match:
             continue
         code = match.group("code").lower()
@@ -493,11 +510,29 @@ def _video_name(item):
     if isinstance(name, str) and name and name not in MEANINGLESS_VIDEO_NAMES:
         return name
     native = item.get("native_name")
-    if isinstance(native, str):
+    if isinstance(native, str) and native:
         return native
-    if isinstance(native, list) and native:
-        return str(native[0])
+    if isinstance(native, list):
+        for entry in native:
+            if isinstance(entry, str) and entry:
+                return entry
+    # Current rows title the record with "sub_name".
+    sub_name = item.get("sub_name")
+    if isinstance(sub_name, str) and sub_name:
+        return sub_name
     return name if isinstance(name, str) else None
+
+
+def _subtitle_id(item):
+    # Legacy rows carry "id"; current rows carry "fileid" instead. A row with
+    # neither has nothing to download with, so search skips it entirely. An
+    # empty string is as good as a missing field, so the fallback reads past
+    # an empty "id" and an empty "fileid" is no id either.
+    item = item or {}
+    value = item.get("id")
+    if value is None or value == "":
+        value = item.get("fileid")
+    return None if value is None or value == "" else str(value)
 
 
 def _token(config):
