@@ -1,8 +1,10 @@
 import base64
 import hashlib
 import importlib.util
+from email.message import Message
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "subcentral"
@@ -23,6 +25,111 @@ BOARD_HTML = (FIXTURE_DIR / "subcentral_board_blue_lights.html").read_bytes()
 THREAD_HTML = (FIXTURE_DIR / "subcentral_thread_blue_lights.html").read_bytes()
 THANK_XML = (FIXTURE_DIR / "subcentral_thank_blue_lights.xml").read_bytes()
 RAR_BODY = (FIXTURE_DIR / "subcentral_blue_lights_ion10.rar").read_bytes()
+
+
+class SubCentralBrowserSessionTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def test_requests_keep_firefox_identity_referer_and_cookie_session(self):
+        received = []
+
+        class OfflineResponse:
+            def __init__(self, url, set_cookie=None):
+                self.url = url
+                self.headers = Message()
+                if set_cookie:
+                    self.headers.add_header("Set-Cookie", set_cookie)
+
+            def info(self):
+                return self.headers
+
+            def geturl(self):
+                return self.url
+
+            def read(self):
+                return b"ok"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        generate_patcher = patch.object(
+            self.mod.ua_generator,
+            "generate",
+            wraps=self.mod.ua_generator.generate,
+        )
+        generate = generate_patcher.start()
+        self.addCleanup(generate_patcher.stop)
+
+        provider = self.mod.SubCentralProvider()
+        cookie_handler = next(
+            handler
+            for handler in provider._opener.handlers
+            if isinstance(handler, self.mod.urllib.request.HTTPCookieProcessor)
+        )
+        self.assertIs(cookie_handler.cookiejar, provider._cookie_jar)
+
+        def offline_open(request, timeout):
+            self.assertEqual(timeout, self.mod.HTTP_TIMEOUT_SECONDS)
+            request = cookie_handler.http_request(request)
+            received.append(request)
+            set_cookie = (
+                "subcentral_session=active; Path=/"
+                if request.full_url.endswith("/first")
+                else None
+            )
+            response = OfflineResponse(request.full_url, set_cookie=set_cookie)
+            cookie_handler.http_response(request, response)
+            return response
+
+        provider._opener.open = offline_open
+        base_url = "https://www.subcentral.de"
+        self.assertEqual(provider._http_get(f"{base_url}/first"), b"ok")
+        self.assertEqual(
+            provider._http_get(f"{base_url}/second", referer=f"{base_url}/first"),
+            b"ok",
+        )
+
+        self.assertEqual(len(received), 2)
+        generate.assert_called_once()
+        generation = generate.call_args.kwargs
+        self.assertEqual(generation["device"], "desktop")
+        self.assertEqual(generation["platform"], "linux")
+        self.assertEqual(generation["browser"], "firefox")
+        self.assertTrue(generation["options"].latest_versions)
+        self.assertTrue(
+            all(
+                isinstance(request, self.mod.urllib.request.Request)
+                for request in received
+            )
+        )
+
+        def header(request, name):
+            return next(
+                value
+                for key, value in request.header_items()
+                if key.lower() == name.lower()
+            )
+
+        user_agents = [header(request, "User-Agent") for request in received]
+        self.assertEqual(user_agents[0], user_agents[1])
+        self.assertIn("Firefox/", user_agents[0])
+        self.assertIn("Linux", user_agents[0])
+        self.assertNotIn("Chrome/", user_agents[0])
+        for request in received:
+            self.assertEqual(
+                header(request, "Accept"),
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            )
+            self.assertEqual(
+                header(request, "Accept-Language"),
+                "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
+            )
+        self.assertEqual(header(received[1], "Referer"), f"{base_url}/first")
+        self.assertIn("subcentral_session=active", header(received[1], "Cookie"))
 
 
 def _thread_link(thread_id, title):
