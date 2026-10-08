@@ -12,6 +12,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+from http.cookiejar import CookieJar
+
+import ua_generator
+from ua_generator.options import Options
 
 
 PROVIDER_ID = "tvsubtitles"
@@ -21,11 +25,8 @@ HTTP_MAX_ATTEMPTS = 3
 RETRY_BACKOFF_SECONDS = 0.5
 RETRY_BACKOFF_CAP_SECONDS = 8.0
 RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+SHOW_INDEX_CACHE_TTL_SECONDS = 3600
 SUPPORTED_EXTENSIONS = (".srt", ".sub", ".ass", ".ssa")
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
-)
 
 LANGUAGES = {
     "ara": {"alpha2": "ar"},
@@ -89,14 +90,13 @@ LANGUAGE_LABEL_TO_LANGUAGE = {
     "ukrainian": ("ukr", None),
 }
 
-_SHOW_LINK_RE = re.compile(
-    rb"<a\b[^>]*href=['\"]/?tvshow-(?P<id>\d+)\.html['\"][^>]*>(?P<title>.*?)</a>",
+_SHOW_INDEX_LINK_RE = re.compile(
+    rb"<a\b[^>]*href=['\"]/?tvshow-(?P<id>\d+)-\d+\.html['\"][^>]*>(?P<title>.*?)</a>",
     re.I | re.S,
 )
-_SHOW_LABEL_RE = re.compile(
-    r"^(?P<series>.+?)(?: \(?\d{4}\)?| \((?:US|UK)\))? \((?P<first_year>\d{4})-\d{4}\)$"
-)
 _ROW_RE = re.compile(rb"<tr\b[^>]*>(?P<body>.*?)</tr>", re.I | re.S)
+_CELL_RE = re.compile(rb"<td\b[^>]*>(?P<body>.*?)</td>", re.I | re.S)
+_SHOW_YEAR_RE = re.compile(rb"\b(?P<year>\d{4})(?:\s*-\s*\d{4})?\b")
 _EPISODE_PAGE_RE = re.compile(rb"episode-(?P<id>\d+)\.html", re.I)
 _EPISODE_NUMBER_RE = re.compile(rb"(\d+)\s*x\s*(\d+)", re.I)
 _SUBTITLE_BLOCK_RE = re.compile(
@@ -120,19 +120,22 @@ _SRT_TIMECODE_RE = re.compile(
 )
 
 
-def parse_show_suggestions(body):
+def parse_show_index(body):
     rows = []
-    for match in _SHOW_LINK_RE.finditer(body or b""):
-        label = _strip_tags(match.group("title"))
-        parsed = _parse_show_label(label)
-        if not parsed:
+    for row_match in _ROW_RE.finditer(body or b""):
+        row = row_match.group("body")
+        show_match = _SHOW_INDEX_LINK_RE.search(row)
+        if not show_match:
             continue
+        cells = [match.group("body") for match in _CELL_RE.finditer(row)]
+        year_match = _SHOW_YEAR_RE.search(_strip_tags_bytes(cells[-1])) if cells else None
+        title = _strip_tags(show_match.group("title"))
         rows.append(
             {
-                "show_id": _decode(match.group("id")),
-                "series": parsed["series"],
-                "first_year": parsed["first_year"],
-                "title": label,
+                "show_id": _decode(show_match.group("id")),
+                "series": title,
+                "first_year": int(year_match.group("year")) if year_match else None,
+                "title": title,
             }
         )
     return rows
@@ -143,6 +146,26 @@ def pick_show_id(suggestions, series, year=None):
     wanted_year = _safe_int(year)
     for item in suggestions or []:
         if _normalize(item.get("series")) != wanted:
+            continue
+        if wanted_year is not None and item.get("first_year") != wanted_year:
+            continue
+        return item.get("show_id")
+    wanted_alias = _normalize(_show_name_without_region(series))
+    if not wanted_alias:
+        return None
+    has_explicit_region = bool(
+        re.search(r"\s+\((?:US|UK)\)$", _coerce_text(series) or "", re.I)
+    )
+    if has_explicit_region and any(
+        _normalize(item.get("series")) == wanted for item in suggestions or []
+    ):
+        return None
+    for item in suggestions or []:
+        if has_explicit_region and re.search(
+            r"\s+\((?:US|UK)\)$", _coerce_text(item.get("series")) or "", re.I
+        ):
+            continue
+        if _normalize(_show_name_without_region(item.get("series"))) != wanted_alias:
             continue
         if wanted_year is not None and item.get("first_year") != wanted_year:
             continue
@@ -223,19 +246,47 @@ def extract_download(body, payload=None):
 
 
 class TvSubtitlesProvider:
+    def __init__(self):
+        self._cookie_jar = CookieJar()
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform="linux",
+            browser="firefox",
+            options=Options(latest_versions=True),
+        ).text
+        self._opener = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(self._cookie_jar)
+        )
+        self._show_index_body = None
+        self._show_index_cached_at = 0.0
+
     def _http_request(self, url, data=None, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": self._user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
             "Referer": referer or f"{BASE_URL}/",
             "X-Requested-With": "XMLHttpRequest",
         }
         request = urllib.request.Request(url, data=data, headers=headers)
-        return _urlopen_with_retry(request, timeout)
+        return _urlopen_with_retry(request, timeout, opener=self._opener)
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         return self._http_request(url, timeout=timeout, referer=referer)
+
+    def _get_show_index(self, config):
+        now = time.monotonic()
+        if (
+            self._show_index_body is None
+            or now - self._show_index_cached_at >= SHOW_INDEX_CACHE_TTL_SECONDS
+        ):
+            _sleep(config)
+            body = self._http_get(f"{BASE_URL}/tvshows.html")
+            if not parse_show_index(body):
+                return body
+            self._show_index_body = body
+            self._show_index_cached_at = time.monotonic()
+        return self._show_index_body
 
     def search(self, video, languages, config):
         if (video or {}).get("kind") != "episode":
@@ -251,12 +302,11 @@ class TvSubtitlesProvider:
             return []
         results = []
         seen = set()
-        for title in _candidate_titles(video):
-            _sleep(config)
-            post_body = urllib.parse.urlencode({"qs": title}).encode("ascii")
-            suggestions = parse_show_suggestions(
-                self._http_request(f"{BASE_URL}/search1.php", data=post_body)
-            )
+        titles = _candidate_titles(video)
+        if not titles:
+            return []
+        suggestions = parse_show_index(self._get_show_index(config))
+        for title in titles:
             show_id = pick_show_id(suggestions, title, video.get("year"))
             if not show_id:
                 continue
@@ -381,14 +431,8 @@ def derive_matches(video, row):
     return matches
 
 
-def _parse_show_label(label):
-    match = _SHOW_LABEL_RE.match(label or "")
-    if not match:
-        return None
-    return {
-        "series": match.group("series"),
-        "first_year": int(match.group("first_year")),
-    }
+def _show_name_without_region(value):
+    return re.sub(r"\s+\((?:US|UK)\)$", "", _coerce_text(value) or "", flags=re.I).strip()
 
 
 def _language_from_flag(flag):
@@ -524,17 +568,20 @@ def _decode(value):
     return value.decode("utf-8", errors="replace")
 
 
-def _urlopen_with_retry(request, timeout):
-    # Bounded retry around the raw urllib transport. Only transient transport
+def _urlopen_with_retry(request, timeout, opener=None):
+    # Bounded retry around urllib transport. The provider opener retains its
+    # cookie handler, while callers without one keep the default urlopen path.
+    # Only transient transport
     # failures are retried: connection errors / DNS / reset (URLError), socket
     # timeouts, and HTTP 5xx / 429. Every other failure (4xx other than 429,
     # parse errors, etc.) propagates unchanged on the first occurrence. The body
     # read happens inside the try so a reset mid-read is also retried; the
     # return type and behavior of the original urlopen call are preserved.
     last_error = None
+    open_request = opener.open if opener is not None else urllib.request.urlopen
     for attempt in range(1, HTTP_MAX_ATTEMPTS + 1):
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with open_request(request, timeout=timeout) as response:
                 return response.read()
         except urllib.error.HTTPError as error:
             if error.code not in RETRY_STATUS_CODES:
