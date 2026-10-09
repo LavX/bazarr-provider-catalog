@@ -12,14 +12,13 @@ import urllib.parse
 import urllib.request
 import zipfile
 
+import ua_generator
+from ua_generator.options import Options
+
 PROVIDER_ID = "yifysubtitles"
 BASE_URL = "https://yifysubtitles.ch"
 HOME_URL = f"{BASE_URL}/"
 HTTP_TIMEOUT_SECONDS = 15
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
-)
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".sub", ".vtt")
 
 # Maps the YIFY language label to (alpha3, alpha2, country_alpha2). The country
@@ -194,9 +193,17 @@ def select_subtitle_file(names, payload=None):
 
 
 class YifySubtitlesProvider:
+    def __init__(self):
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
+
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": self._user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
         }

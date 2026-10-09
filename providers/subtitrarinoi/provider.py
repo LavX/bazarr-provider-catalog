@@ -12,6 +12,9 @@ import urllib.parse
 import urllib.request
 import zipfile
 
+import ua_generator
+from ua_generator.options import Options
+
 PROVIDER_ID = "subtitrarinoi"
 BASE_URL = "https://www.subtitrari-noi.ro"
 API_URL = f"{BASE_URL}/paginare_filme.php"
@@ -19,10 +22,6 @@ HTTP_TIMEOUT_SECONDS = 15
 SUPPORTED_LANGUAGES = {"ron": "ro"}
 ALPHA2_TO_ALPHA3 = {"ro": "ron"}
 SUBTITLE_EXTENSIONS = (".srt", ".sub", ".ssa", ".ass", ".vtt")
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
-)
 
 _ALIASES = {
     "dc s legends of tomorrow": "Legends of Tomorrow",
@@ -123,9 +122,17 @@ def derive_matches(video, row):
 
 
 class SubtitrariNoiProvider:
+    def __init__(self):
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
+
     def _http_post(self, url, data, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": self._user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "ro-RO,ro;q=0.9,en-US;q=0.7,en;q=0.6",
             "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
@@ -145,7 +152,7 @@ class SubtitrariNoiProvider:
 
     def _http_get(self, url, timeout=30, referer=None):
         headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": self._user_agent,
             "Accept": "application/zip,application/octet-stream,text/plain,text/html;q=0.8,*/*;q=0.5",
             "Accept-Language": "ro-RO,ro;q=0.9,en-US;q=0.7,en;q=0.6",
         }

@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "6abd56a18e5cda0f6cf5b88c0ecfd2c383010f3f8a893ad25fe005c7f4d63e0f",
+  "bundle_sha256": "06218dbb0cc77680831914f11255b0b1858a583d15b4c15465705b7964d02033",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -16,13 +16,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
-  "description": "Scrapes tvsubtitles.net for episode subtitles in broad multilingual coverage. No login or API key required.",
+  "description": "Scrapes tvsubtitles.net with a stable desktop Firefox identity for episode subtitles in broad multilingual coverage. No login or API key required.",
   "entry_class": "TvSubtitlesProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "d348b4474fa3c1da17400316e60d4c6d9982ec1947bc9f7956f2002696e03032"
+    "provider.py": "8d0c6634a3ec0a162a8ea7471ee587f79a711773faf723a5e79194132a5de0dc"
   },
   "languages": [
     "ara",
@@ -65,5 +73,5 @@
   "supported_media": [
     "episode"
   ],
-  "version": "0.1.3"
+  "version": "0.1.4"
 }

@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "7dcaa937e4009e329f1343fa5e5912d76da49be9960976592c08a2cee62ad531",
+  "bundle_sha256": "bf110efd89127f1e2a9efca64fa0cde8904107ed1c46e707a0dc6203491d68fa",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -291,6 +291,13 @@
       },
       {
         "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      },
+      {
+        "hashes": [
           "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
         ],
         "name": "urllib3",
@@ -315,7 +322,7 @@
   "entry_class": "NapiProjektProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "1f577592d958344ab7ca1f93b1146ff5e248c570acb354c99679c0b91e908d5f"
+    "provider.py": "7508f91bc520ffc464f88963ff321091fbce59e5636cff577c271e4b7978acd7"
   },
   "flaresolverr": true,
   "languages": [
@@ -338,5 +345,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.7"
+  "version": "0.1.8"
 }

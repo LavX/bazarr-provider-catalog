@@ -1,7 +1,7 @@
 {
   "anti_captcha": true,
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "4c60bb321f4a4ad850ed452fcfd8fffe5d47d58b3e49f25ddc527a1b66ee213c",
+  "bundle_sha256": "6c0e7d681f202ca818a423bff9c14ab9fc06c263c2bd381ccc982ad636f3e196",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -45,13 +45,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Scrapes Zimuku / srtku.com for Chinese and English movie and episode subtitles. Includes native Yunsuo image verification, no-image coordinate fallback, optional helper fallback, and host-side extraction of ZIP archives or direct subtitle downloads. Multilingual RAR/7z archives are skipped, since they cannot be language-selected host-side.",
   "entry_class": "ZimukuProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "f9d79504099dac386f79c5efe74abaeb1a7c5f81d9dd1c415c9841614f60d805",
+    "provider.py": "5fc6a69b8c0d30a1d6ff67a068ad738498ce58688ec34d0680b41765a06c1476",
     "yunsuo_templates.py": "abad0d629bb24b28c40f7dc5a0257660266e6be449fbd8cda81a044d26c4959d"
   },
   "languages": [
@@ -80,5 +88,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.10"
+  "version": "0.1.11"
 }

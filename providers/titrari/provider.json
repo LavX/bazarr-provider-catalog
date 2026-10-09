@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "b8c8e3e52e4cf9052d139065ecc9daad874187137bfc87f776baca6d62c43f0f",
+  "bundle_sha256": "27cced1fa2bc1f5811ebdf6ced06cd4fcfc9bfa73abadaf9de793226fc40b124",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -16,13 +16,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Scrapes titrari.ro for Romanian and English movie and episode subtitles. Direct files, ZIP, and RAR downloads are supported.",
   "entry_class": "TitrariProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "ce46056efcf2c729ae35f0d339cd2ca5bb072f3401a9223818f6858fa9cd3f54"
+    "provider.py": "628e166fa9b8583e82c6059eb64d2fe8eb4ad54deb29e953dab906bf5607ba5b"
   },
   "languages": [
     "ron",
@@ -45,5 +53,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.5"
+  "version": "0.1.6"
 }

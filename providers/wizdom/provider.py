@@ -17,6 +17,14 @@ try:
 except ImportError:  # pragma: no cover, dependency is declared in provider.json
     cloudscraper = None
 
+import ua_generator
+from ua_generator.options import Options
+
+
+def _new_user_agent():
+    return ua_generator.generate(device="desktop", options=Options(latest_versions=True)).text
+
+
 PROVIDER_ID = "wizdom"
 BASE_URL = "https://wizdom.xyz"
 TMDB_BASE_URL = "https://api.tmdb.org/3"
@@ -82,9 +90,9 @@ if cloudscraper is None:  # pragma: no cover, dependency is declared in provider
     cloudscraper = _MissingCloudscraper()
 
 
-def _create_cloudscraper_session():
+def _create_cloudscraper_session(user_agent=USER_AGENT):
     kwargs = {
-        "browser": {"custom": USER_AGENT},
+        "browser": {"custom": user_agent},
         "interpreter": "native",
         "enable_cookie_persistence": False,
         "debug": False,
@@ -142,13 +150,14 @@ def extract_download(body, payload=None):
 
 class WizdomProvider:
     def __init__(self):
+        self._user_agent = _new_user_agent()
         self._session = None
         self._request_config = {}
 
     def _get_session(self):
         if self._session is None:
-            self._session = _create_cloudscraper_session()
-            self._session.headers.update({"User-Agent": USER_AGENT})
+            self._session = _create_cloudscraper_session(self._user_agent)
+            self._session.headers.update({"User-Agent": self._user_agent})
         return self._session
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None, config=None):
@@ -157,7 +166,7 @@ class WizdomProvider:
             timeout = HTTP_TIMEOUT_SECONDS
         config = dict(config or self._request_config or {})
         session = self._get_session()
-        headers = _headers(referer, session.headers.get("User-Agent") or USER_AGENT)
+        headers = _headers(referer, session.headers.get("User-Agent") or self._user_agent)
         try:
             response = session.get(url, headers=headers, timeout=timeout, allow_redirects=True)
         except Exception as exc:
@@ -170,7 +179,8 @@ class WizdomProvider:
             response = session.get(url, headers=headers, timeout=timeout, allow_redirects=True)
         if _is_cloudflare_challenge(response):
             self._fallback_to_flaresolverr(url, config)
-            headers = _headers(referer, session.headers.get("User-Agent") or USER_AGENT)
+            session = self._get_session()
+            headers = _headers(referer, session.headers.get("User-Agent") or self._user_agent)
             response = session.get(url, headers=headers, timeout=timeout, allow_redirects=True)
             if _is_cloudflare_challenge(response):
                 raise ServiceUnavailable("Wizdom Cloudflare challenge remained after FlareSolverr fallback")
@@ -250,7 +260,7 @@ class WizdomProvider:
         request = urllib.request.Request(
             url,
             data=body,
-            headers={"Content-Type": "application/json", "User-Agent": USER_AGENT},
+            headers={"Content-Type": "application/json", "User-Agent": self._user_agent},
             method="POST",
         )
         try:
@@ -269,7 +279,15 @@ class WizdomProvider:
     def _inject_solution(self, solution):
         session = self._get_session()
         user_agent = solution.get("userAgent")
+        if user_agent and user_agent != session.headers.get("User-Agent"):
+            replacement = _create_cloudscraper_session(user_agent)
+            replacement.cookies.update(session.cookies)
+            self._session = replacement
+            if replacement is not session and hasattr(session, "close"):
+                session.close()
+            session = replacement
         if user_agent:
+            self._user_agent = user_agent
             session.headers["User-Agent"] = user_agent
         for cookie in solution.get("cookies") or []:
             name = cookie.get("name")

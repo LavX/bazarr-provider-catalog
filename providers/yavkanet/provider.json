@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "4a2858232d66896e5523d51e6fdebb6ee9170f739b71b9ed4510b36c49f4fefb",
+  "bundle_sha256": "759a3dba0ff51204712953a0d37f4d3d0828bb1fbed8e0baa8a3f2f499feca1a",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -281,6 +281,13 @@
       },
       {
         "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      },
+      {
+        "hashes": [
           "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
         ],
         "name": "urllib3",
@@ -305,7 +312,7 @@
   "entry_class": "YavkaNetProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "a5d003fa58cea5dc4b5794802324739096fa9eda6d10373b491a89461acbc035"
+    "provider.py": "440906199f1f371bf62779347445439041cd782f4b03483db400c281fc3de7e7"
   },
   "flaresolverr": true,
   "languages": [
@@ -332,5 +339,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.10"
+  "version": "0.1.11"
 }

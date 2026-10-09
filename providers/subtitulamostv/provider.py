@@ -11,16 +11,15 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from functools import partial
 from html.parser import HTMLParser
 
+import ua_generator
+from ua_generator.options import Options
 
 PROVIDER_ID = "subtitulamostv"
 BASE_URL = "https://www.subtitulamos.tv"
 SEARCH_URL = f"{BASE_URL}/search/query"
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
-)
 HTTP_TIMEOUT_SECONDS = 10
 HTTP_MAX_ATTEMPTS = 3
 RETRY_BACKOFF_SECONDS = 0.5
@@ -454,11 +453,12 @@ def _backoff_seconds(attempt):
     return min(delay, RETRY_BACKOFF_CAP_SECONDS)
 
 
-def _http_get(url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
+def _http_get(url, timeout=HTTP_TIMEOUT_SECONDS, referer=None, user_agent=None):
     headers = {
-        "User-Agent": USER_AGENT,
         "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
     }
+    if user_agent:
+        headers["User-Agent"] = user_agent
     if referer:
         headers["Referer"] = referer
     request = urllib.request.Request(url, headers=headers)
@@ -519,7 +519,13 @@ def _content_payload(body, subtitle_format):
 
 class SubtitulamosTVProvider:
     def __init__(self):
-        self._http_get = _http_get
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
+        self._http_get = partial(_http_get, user_agent=self._user_agent)
 
     def search(self, video, languages, config):
         requested_languages = _supported_requested_languages(languages)

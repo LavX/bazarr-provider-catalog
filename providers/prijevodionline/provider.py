@@ -42,6 +42,14 @@ import zipfile
 from collections import OrderedDict
 from http.cookiejar import Cookie, CookieJar
 
+import ua_generator
+from ua_generator.options import Options
+
+
+def _new_user_agent():
+    return ua_generator.generate(device="desktop", options=Options(latest_versions=True)).text
+
+
 PROVIDER_ID = "prijevodionline"
 SITE_ORIGIN = "https://www.prijevodi-online.org"
 API_ROOT = SITE_ORIGIN + "/api/v1"
@@ -991,13 +999,14 @@ class PrijevodiOnlineProvider:
     def __init__(self):
         # Test seams: every request goes through _send, and the clock and the
         # sleep are instance attributes so TTLs and pacing are testable.
+        self._user_agent = _new_user_agent()
         self._monotonic = time.monotonic
         self._sleep = time.sleep
         self._opener = urllib.request.build_opener(_NoRedirectHandler())
         clock = lambda: self._monotonic()  # noqa: E731, follows a patched clock
         self._call = None
         self._sessions = {}
-        self._anonymous = _Session(_digest("anonymous", ""), "anonymous")
+        self._anonymous = _Session(_digest("anonymous", ""), "anonymous", self._user_agent)
         self._credential_fingerprint = None
         self._spend_lock = threading.RLock()
         self._last_request_at = None
@@ -1200,7 +1209,7 @@ class PrijevodiOnlineProvider:
                 ("user_agent_rejected", _digest("ua", user_agent_setting)),
                 "Prijevodi-Online browser User-Agent setting is not usable; using the default one",
             )
-        user_agent = user_agent or USER_AGENT
+        user_agent = user_agent or self._user_agent
         material = "; ".join(f"{name}={value}" for name, value in pairs) + "\0" + user_agent
         digest = _digest("cookie", material)
         if self._cookie_invalid.get(digest):
@@ -1280,7 +1289,7 @@ class PrijevodiOnlineProvider:
 
     def _login(self, digest, username, password):
         """One sign-in attempt. Returns (session, None) or (None, failure class)."""
-        session = _Session(digest, "password")
+        session = _Session(digest, "password", self._user_agent)
         body = json.dumps({"username": username, "password": password, "rememberMe": True}).encode("utf-8")
         status, headers, raw = None, {}, b""
         failure = None

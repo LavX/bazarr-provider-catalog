@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "95a61988dd16509d2f2153c94436a51cc6aa06688017229ab1f14d0965e6c975",
+  "bundle_sha256": "ee1525d79864d86e92f5a53e38e36bec62a96f02f265abf4154674203ee4152a",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -16,13 +16,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Scrapes moviesubtitles.org for movie subtitle ZIP files. Movie-only provider.",
   "entry_class": "MoviesubtitlesProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "23b3e582ab85f9a43789801c1c2faeb51296f686d16cff780f43ca746002846e"
+    "provider.py": "548c354f6a3fc56df14dd49242f9e96c4043f93bd20be71332a78fdf308b4b0a"
   },
   "languages": [
     "ara",
@@ -55,5 +63,5 @@
   "supported_media": [
     "movie"
   ],
-  "version": "0.1.3"
+  "version": "0.1.4"
 }

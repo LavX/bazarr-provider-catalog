@@ -13,16 +13,15 @@ import urllib.parse
 import urllib.request
 import zipfile
 
+import ua_generator
+from ua_generator.options import Options
+
 PROVIDER_ID = "moviesubtitles"
 PUBLIC_BASE_URL = "https://www.moviesubtitles.org"
 HTTP_TIMEOUT_SECONDS = 15
 MAX_MOVIE_PAGES = 3
 MAX_RESULTS = 25
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
-)
 
 LANGUAGES = {
     "ara": {"alpha2": "ar", "flag": "ar", "name": "arabic"},
@@ -137,9 +136,19 @@ def derive_matches(video, candidate_title):
 
 
 class MoviesubtitlesProvider:
+    def __init__(self):
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
+
     def _http_request(self, url, data=None, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         try:
-            return _open_url(url, data=data, timeout=timeout, referer=referer)
+            return _open_url(
+                url, data=data, timeout=timeout, referer=referer, user_agent=self._user_agent
+            )
         except urllib.error.HTTPError as error:
             body = _read_http_error_body(error)
             if error.code == 500 and body and _allows_legacy_500_body(url):
@@ -294,9 +303,9 @@ def _is_sidecar(name):
     return os.path.basename(name).startswith(".")
 
 
-def _open_url(url, data=None, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
+def _open_url(url, data=None, timeout=HTTP_TIMEOUT_SECONDS, referer=None, *, user_agent):
     headers = {
-        "User-Agent": USER_AGENT,
+        "User-Agent": user_agent,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
     }

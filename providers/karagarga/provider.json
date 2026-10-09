@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "b5e944d04b0fa7f486696eba631afe7a027126bdcf3b03521e5f8ed16bfbc51f",
+  "bundle_sha256": "60c71dc1ebcc308eccff6989c50ea5af9b618f8a78188841262f95c2c9518970",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -39,13 +39,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Uses Karagarga tracker search plus forum attachments for English movie subtitles. Requires Karagarga tracker and forum credentials.",
   "entry_class": "KaragargaProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "5b03ed08993d003f08af9f465970d532f6529f70bf1763ac7742235931402900"
+    "provider.py": "afbb5e2e1b64b3b3ab544d2752fd728743ea689f902ff49947ba5ca754ae6788"
   },
   "languages": [
     "eng"
@@ -70,5 +78,5 @@
   "supported_media": [
     "movie"
   ],
-  "version": "0.1.5"
+  "version": "0.1.6"
 }

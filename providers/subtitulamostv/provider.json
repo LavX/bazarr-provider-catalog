@@ -1,19 +1,27 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "7ba561ce03e053ec6044e0830a82817338ae855a4abaad7908abcecabbb3714c",
+  "bundle_sha256": "d79ab9f3fa6aa1eca070eac470d5fae6f6ac33f8ddf901aed89dec910f197d29",
   "config_schema": {
     "additionalProperties": false,
     "properties": {},
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Scrapes subtitulamos.tv for episode subtitles in Spanish, English, Catalan, Galician, and Portuguese. No login or API key required.",
   "entry_class": "SubtitulamosTVProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "1f3db65051b8220a470369339522a637a8e4dcd57bb1147609f6fe45215afcc2"
+    "provider.py": "a8aca950126c458e296d38914593d2c9100844b8229f5bc37f16a3aa76bcba33"
   },
   "languages": [
     "ca",
@@ -60,5 +68,5 @@
   "supported_media": [
     "episode"
   ],
-  "version": "0.1.2"
+  "version": "0.1.3"
 }

@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "8f84c719c14f0d91327412a8882c8c9aa4ecc5d47d61f736f3f44a537e2ccdfd",
+  "bundle_sha256": "e90710660f6ea703b05fe5ede6bab777644a646da8aa2ab9e9336eb769c4893d",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -41,13 +41,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Uses Addic7ed for movie and episode subtitles. Requires username and password or valid Addic7ed cookies.",
   "entry_class": "Addic7edProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "8bc3c3fa725af38ff3d605a7ceda3240d592bf3f0892e792b5a5de591b2bb0df"
+    "provider.py": "d62614ad4d62f7cb4faf2521dc9add153641e4ad23845833f7169c304187a134"
   },
   "languages": [
     "ara",
@@ -119,5 +127,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.4"
+  "version": "0.1.5"
 }

@@ -38,6 +38,14 @@ try:
 except ImportError:  # pragma: no cover, dependency is declared in provider.json
     cloudscraper = None
 
+import ua_generator
+from ua_generator.options import Options
+
+
+def _new_user_agent():
+    return ua_generator.generate(device="desktop", options=Options(latest_versions=True)).text
+
+
 PROVIDER_ID = "legendasdivx"
 BASE_URL = "https://www.legendasdivx.pt"
 LOGIN_URL = f"{BASE_URL}/forum/ucp.php?mode=login"
@@ -229,6 +237,7 @@ class HttpResponse:
 
 class LegendasDivxProvider:
     def __init__(self):
+        self._user_agent = _new_user_agent()
         self._authenticated = False
         self._scraper = None
         self._scraper_initialized = False
@@ -503,7 +512,7 @@ class LegendasDivxProvider:
         return self._request("POST", url, data or {}, config, referer, timeout, allow_redirects)
 
     def _request(self, method, url, data, config, referer, timeout, allow_redirects):
-        headers = _browser_headers(referer, self._flaresolverr_user_agent)
+        headers = _browser_headers(referer, self._flaresolverr_user_agent or self._user_agent)
         scraper = self._get_scraper()
         if scraper is not None:
             if data is not None:
@@ -636,7 +645,15 @@ class LegendasDivxProvider:
     def _store_flaresolverr_solution(self, solution):
         user_agent = solution.get("userAgent")
         if user_agent:
-            # Reuse the solved User-Agent: the clearance cookie is bound to it.
+            if self._scraper is not None and user_agent != self._user_agent:
+                old_scraper = self._scraper
+                replacement = _create_cloudscraper(user_agent)
+                if replacement is not None:
+                    replacement.cookies.update(old_scraper.cookies)
+                self._scraper = replacement
+                if replacement is not old_scraper and hasattr(old_scraper, "close"):
+                    old_scraper.close()
+            self._user_agent = user_agent
             self._flaresolverr_user_agent = user_agent
         for cookie in solution.get("cookies") or []:
             name = cookie.get("name")
@@ -659,7 +676,7 @@ class LegendasDivxProvider:
 
     def _get_scraper(self):
         if not self._scraper_initialized:
-            self._scraper = _create_cloudscraper()
+            self._scraper = _create_cloudscraper(self._flaresolverr_user_agent or self._user_agent)
             self._scraper_initialized = True
         return self._scraper
 
@@ -670,11 +687,11 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def _create_cloudscraper():
+def _create_cloudscraper(user_agent=USER_AGENT):
     if cloudscraper is None:
         return None
     options = {
-        "browser": {"custom": USER_AGENT},
+        "browser": {"custom": user_agent},
         "interpreter": "native",
         "enable_cookie_persistence": False,
         "debug": False,

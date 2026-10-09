@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "a01224d99ebd56ffb258a8f7d8ef84d64e6d1968d73bafac8509817e1981d49f",
+  "bundle_sha256": "2d67d6151d8307d206d5efc2a7fb851f10d20b0ce22396b96f55aae08cce60c0",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -16,13 +16,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Scrapes SubSynchro movie release pages for French subtitle ZIP files. Movie-only provider.",
   "entry_class": "SubsynchroProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "72777ebadf3a2d4fe1417430d42fa721860cf830534d4b2c073868f4aa98548c"
+    "provider.py": "2499949f2c99109e1b761767ff4ca90609c404f4a25c5053621174be5d673896"
   },
   "languages": [
     "fra"
@@ -43,5 +51,5 @@
   "supported_media": [
     "movie"
   ],
-  "version": "0.1.4"
+  "version": "0.1.5"
 }

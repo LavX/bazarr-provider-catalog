@@ -19,6 +19,14 @@ try:
 except ImportError:  # pragma: no cover, dependency is declared in provider.json
     cloudscraper = None
 
+import ua_generator
+from ua_generator.options import Options
+
+
+def _new_user_agent():
+    return ua_generator.generate(device="desktop", options=Options(latest_versions=True)).text
+
+
 PROVIDER_ID = "subs4series"
 BASE_URL = "https://www.subs4series.com"
 SEARCH_URL = f"{BASE_URL}/search_report.php"
@@ -318,6 +326,7 @@ def compute_score(video, item):
 
 class Subs4SeriesProvider:
     def __init__(self):
+        self._user_agent = _new_user_agent()
         self._cookie_jar = CookieJar()
         self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cookie_jar))
         self._scraper = None
@@ -493,7 +502,7 @@ class Subs4SeriesProvider:
         return None
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None, config=None):
-        headers = _browser_headers(referer, self._flaresolverr_user_agent, self._flaresolverr_cookies)
+        headers = _browser_headers(referer, self._flaresolverr_user_agent or self._user_agent, self._flaresolverr_cookies)
         scraper = self._get_scraper()
         if scraper is not None:
             try:
@@ -530,7 +539,7 @@ class Subs4SeriesProvider:
             raise
 
     def _http_post(self, url, data, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
-        headers = _browser_headers(referer, self._flaresolverr_user_agent, self._flaresolverr_cookies)
+        headers = _browser_headers(referer, self._flaresolverr_user_agent or self._user_agent, self._flaresolverr_cookies)
         headers["Content-Type"] = "application/x-www-form-urlencoded"
         encoded = urllib.parse.urlencode(data or {}).encode("utf-8")
         scraper = self._get_scraper()
@@ -595,6 +604,15 @@ class Subs4SeriesProvider:
     def _store_flaresolverr_solution(self, solution):
         user_agent = solution.get("userAgent")
         if user_agent:
+            if self._scraper is not None and user_agent != self._user_agent:
+                old_scraper = self._scraper
+                replacement = _create_cloudscraper(user_agent)
+                if replacement is not None:
+                    replacement.cookies.update(old_scraper.cookies)
+                self._scraper = replacement
+                if replacement is not old_scraper and hasattr(old_scraper, "close"):
+                    old_scraper.close()
+            self._user_agent = user_agent
             self._flaresolverr_user_agent = user_agent
         for cookie in solution.get("cookies") or []:
             name = cookie.get("name")
@@ -610,16 +628,16 @@ class Subs4SeriesProvider:
 
     def _get_scraper(self):
         if not self._scraper_initialized:
-            self._scraper = _create_cloudscraper()
+            self._scraper = _create_cloudscraper(self._flaresolverr_user_agent or self._user_agent)
             self._scraper_initialized = True
         return self._scraper
 
 
-def _create_cloudscraper():
+def _create_cloudscraper(user_agent=USER_AGENT):
     if cloudscraper is None:
         return None
     options = {
-        "browser": {"custom": USER_AGENT},
+        "browser": {"custom": user_agent},
         "interpreter": "native",
         "enable_cookie_persistence": False,
         "debug": False,

@@ -18,6 +18,14 @@ try:
 except ImportError:  # pragma: no cover, dependency is declared in manifest
     cloudscraper = None
 
+import ua_generator
+from ua_generator.options import Options
+
+
+def _new_user_agent():
+    return ua_generator.generate(device="desktop", options=Options(latest_versions=True)).text
+
+
 PROVIDER_ID = "yavkanet"
 BASE_URL = "https://yavka.net"
 HOME_URL = f"{BASE_URL}/"
@@ -106,9 +114,9 @@ if cloudscraper is None:  # pragma: no cover, dependency is declared in provider
     cloudscraper = _MissingCloudscraper()
 
 
-def _create_cloudscraper_session():
+def _create_cloudscraper_session(user_agent=USER_AGENT):
     kwargs = {
-        "browser": {"custom": USER_AGENT},
+        "browser": {"custom": user_agent},
         "interpreter": "native",
         "enable_cookie_persistence": False,
         "debug": False,
@@ -361,7 +369,7 @@ def _member_match_score(name, video):
 
 class YavkaNetProvider:
     def __init__(self):
-        self._http_state = {}
+        self._http_state = {"user_agent": _new_user_agent()}
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, config=None, state=None, referer=None):
         return http_get(url, timeout=timeout, config=config, state=state or self._http_state, referer=referer)
@@ -630,7 +638,7 @@ def _sleep_backoff(attempt, retry_after=0.0):
 def _get_cloudscraper(state):
     scraper = state.get("cloudscraper")
     if scraper is None:
-        scraper = _create_cloudscraper_session()
+        scraper = _create_cloudscraper_session(state.get("user_agent") or USER_AGENT)
         state["cloudscraper"] = scraper
     return scraper
 
@@ -819,6 +827,14 @@ def _store_flaresolverr_solution(state, solution):
         return
     user_agent = solution.get("userAgent")
     if user_agent:
+        if state.get("cloudscraper") is not None and user_agent != state.get("user_agent"):
+            old_scraper = state["cloudscraper"]
+            replacement = _create_cloudscraper_session(user_agent)
+            replacement.cookies.update(old_scraper.cookies)
+            state["cloudscraper"] = replacement
+            if replacement is not old_scraper and hasattr(old_scraper, "close"):
+                old_scraper.close()
+        state["user_agent"] = user_agent
         state["flaresolverr_user_agent"] = user_agent
     cookies = state.setdefault("flaresolverr_cookies", {})
     for cookie in solution.get("cookies") or []:
@@ -831,7 +847,7 @@ def _store_flaresolverr_solution(state, solution):
 def _request_headers(state=None, referer=None):
     state = state or {}
     headers = {
-        "User-Agent": state.get("flaresolverr_user_agent") or USER_AGENT,
+        "User-Agent": state.get("flaresolverr_user_agent") or state.get("user_agent") or USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
     }

@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "11836f6ade1463b90f67e0a1f79731f1136221ad8c86cb87bdb77d92b3601679",
+  "bundle_sha256": "c4d9a986a0df6e3d84810d3d301325ff7b292a485819b1902eefb7aeb6be75eb",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -16,13 +16,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Scrapes feliratok.eu for Hungarian and English movie and episode subtitles. Forced subtitles, direct subtitle files, ZIP, and RAR downloads are supported.",
   "entry_class": "SuperSubtitlesProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "05a7885ff73d9d1f20c87b93c9ffbb2892efc19a4476a0707791c3f4121ec179"
+    "provider.py": "387d7175e2844b18a86bb704d0bee45a0962ebb4b1929f6f3d5b17b113824cd6"
   },
   "languages": [
     "eng",
@@ -45,5 +53,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.5"
+  "version": "0.1.6"
 }

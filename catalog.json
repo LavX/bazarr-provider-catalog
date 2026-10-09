@@ -4,7 +4,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "8f84c719c14f0d91327412a8882c8c9aa4ecc5d47d61f736f3f44a537e2ccdfd",
+        "bundle_sha256": "e90710660f6ea703b05fe5ede6bab777644a646da8aa2ab9e9336eb769c4893d",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -45,13 +45,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Uses Addic7ed for movie and episode subtitles. Requires username and password or valid Addic7ed cookies.",
         "entry_class": "Addic7edProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "8bc3c3fa725af38ff3d605a7ceda3240d592bf3f0892e792b5a5de591b2bb0df"
+          "provider.py": "d62614ad4d62f7cb4faf2521dc9add153641e4ad23845833f7169c304187a134"
         },
         "languages": [
           "ara",
@@ -123,13 +131,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.4"
+        "version": "0.1.5"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "81463c61b8b021eafb87619ef1438815acf789c97cc080c749cc352f8a7a0366",
+        "bundle_sha256": "802ea9c542587079a026a66147cb0e7cdec11b0d84c73709ab7ad7384f8a76ef",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -145,13 +153,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes AnimeKalesi episode subtitle pages for Turkish anime subtitles. Direct subtitle files and ZIP packages are supported.",
         "entry_class": "AnimeKalesiProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "526ad59e1feb071cf169750bb676ff2420a609e2d708388dec415f53f441b7eb"
+          "provider.py": "f994a8ae0af5fbc834e8d2d6d11ad8c4354d30812db4039c44eefdd4f59da377"
         },
         "languages": [
           "tur"
@@ -172,7 +188,7 @@
         "supported_media": [
           "episode"
         ],
-        "version": "0.1.4"
+        "version": "0.1.5"
       }
     },
     {
@@ -228,7 +244,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "71e605773bddc5e67e045952c92d363fafd7d0e3a459f9e6c0fd668e55b28401",
+        "bundle_sha256": "a39dfae6e6040271a1ad73d6599ff4bccad935db55985b9280c7a5a849421255",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -252,13 +268,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Archive-only provider for AnimeTosho's JSON feed, finding embedded subtitle attachments for older anime episodes by AniDB episode id. AnimeTosho stopped new torrent ingestion on May 9, 2026. No login or API key required.",
         "entry_class": "AnimeToshoProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "a10645c053e1eacbb302ce03cf5e764cd5bcf13fe820b5b6240824637f895888"
+          "provider.py": "85d43bc2bfde14b1d303b0871d884b9a94fedc0f25dd09104e15c6f25998cc25"
         },
         "languages": [
           "ara",
@@ -295,7 +319,7 @@
         "supported_media": [
           "episode"
         ],
-        "version": "0.1.5"
+        "version": "0.1.6"
       }
     },
     {
@@ -441,7 +465,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "41ba4c15a170a69768d68d19efb57fea509294c211828b25360c38b474f6e60c",
+        "bundle_sha256": "bda2bdf5c355f0c9b7459fb7b3a391eecfb451e36e6a6374f8501106c0db3bec",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -465,13 +489,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Uses AvistaZ release pages refined from Sonarr or Radarr history to download attached subtitles. Requires AvistaZ session cookies.",
         "entry_class": "AvistazProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "cfb791fe2884a79fbd9b0b4d73d1a0204cb3cc93e79000faf9fafc681c53933b"
+          "provider.py": "ea075649aadd6cf6a92daa4e404805f8084019c9fbb1a938477a586c1b0572cd"
         },
         "languages": [
           "aar",
@@ -678,7 +710,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.5"
+        "version": "0.1.6"
       }
     },
     {
@@ -736,7 +768,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "2ff3913000697c8939825a5db17de4650434d514369714a13953ddcd28ed5fac",
+        "bundle_sha256": "82e7786ca402beb7cf8ea2827d845406d924a633b7622bb9f5dd01854fe8527a",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -752,13 +784,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes BollyNook Bollywood movie subtitle pages for downloadable ZIP files. Movie-only provider.",
         "entry_class": "BollyNookProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "98cb280a508de07cf67f27fb89404c72846e58e853fcc07f4ade363e89fee247"
+          "provider.py": "ef92c018cf58f4e241e8ce063bff3dc8d8a6e027a2e12b5f66a7120ba083f1a1"
         },
         "languages": [
           "arg",
@@ -824,7 +864,7 @@
         "supported_media": [
           "movie"
         ],
-        "version": "0.1.3"
+        "version": "0.1.4"
       }
     },
     {
@@ -915,7 +955,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "3fc0def9f50391fa520342a10a47a1d9e247a288ddfc30c37c11b84e5fba54aa",
+        "bundle_sha256": "8be6f00bcf4bb81ed237097f9603af6723b082bdd3d315196f69aa98ca8fb55f",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -939,13 +979,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Uses CinemaZ release pages refined from Sonarr or Radarr history to download attached subtitles. Requires CinemaZ session cookies.",
         "entry_class": "CinemaZProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "cda4f7afd7128d11aed1af46183094ca3b778f07a0ea2c1d805ed8d927ac855d"
+          "provider.py": "0a5dcc435f1e8ad66a63d8fc60920d4b2c7ce446421e7dcb2af91be451a864f6"
         },
         "languages": [
           "aar",
@@ -1152,7 +1200,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.6"
+        "version": "0.1.7"
       }
     },
     {
@@ -1342,7 +1390,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "a20e5501edee33854dc4245b8b01eb8b37ff4899d3fc2439550e688c7f2f8d24",
+        "bundle_sha256": "87a145651601fcfda69cc85679c2a341ea48829a4a40f2fb9ffcf71a22c2f480",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1358,13 +1406,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes fansubs.ru for Russian anime and Asian cinema subtitle releases. No login or API key required.",
         "entry_class": "FansubsProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "b041ea46442bae83d9a83f0271a0bf292fe7a6f3decd18ac3d7a7e8a5f168e81"
+          "provider.py": "772159f90d59b42f9ec4b0afba0b0605ea5635744852266839313a78d29d7fdd"
         },
         "languages": [
           "rus"
@@ -1386,7 +1442,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.6"
+        "version": "0.1.7"
       }
     },
     {
@@ -1494,7 +1550,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "9234c2f9212227ed24736d1395cfe5dabc8f595bc7b9c9ee93b02ccd6e9ddde0",
+        "bundle_sha256": "2b066badd93df00f59dba5cf6837f8525bbb34a8151be7dcc28f73cb36260627",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1510,13 +1566,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes greeksubs.net for Greek movie and episode subtitles by IMDb id. No login or API key required.",
         "entry_class": "GreekSubsProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "1c908ce5c036c7d8f6d1942ca4602106f3bcc0c52d9e1775743f21c21301b8e5"
+          "provider.py": "cd3c38610644fc54ef3871693b6f59a7d253892557c778f53d9369ac786ffb1b"
         },
         "languages": [
           "ell"
@@ -1538,13 +1602,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.2"
+        "version": "0.1.3"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "f7c9fba58827e4b5d4d0921a025bf29b3a40f2f40dfbca87866ae5cfe1b7d922",
+        "bundle_sha256": "56ce5c44c7fb576f7a81af1695c275f04c7e5eac9ff00d9b6dbd718499cf1a4d",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1560,13 +1624,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes GreekSubtitles search results for Greek and English movie and episode subtitles. ZIP and RAR downloads are supported.",
         "entry_class": "GreekSubtitlesProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "bfe2c03aca6f2e422409eaa3a85d73efcb66b054698de86f9e141d994f95f65b"
+          "provider.py": "2c358e7e9ec2352dd7a943a00f2a1617ab107d6d5f607b7acab058d37b5bbb4f"
         },
         "languages": [
           "ell",
@@ -1589,7 +1661,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.6"
+        "version": "0.1.7"
       }
     },
     {
@@ -1845,7 +1917,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "e29ade500c5849ab1cb0c369914951e4c81822cc12d3a78e7d2392556fc039aa",
+        "bundle_sha256": "98cfd53317e0f79a2166ef1ff91cf55b763c8fa6c1234227bcc449a6dd95d289",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1861,13 +1933,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes isubtitles.org title and language pages for downloadable subtitle ZIP files.",
         "entry_class": "ISubtitlesProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "cecd09375798c3f0816d810c94c9c7f696bfc14c3e25794d9bebb189bbcfa755"
+          "provider.py": "18ccd16edd6a4414c55bec0a34d5cea516b0792fb70707c655d95e89d41b7e3e"
         },
         "languages": [
           "aze",
@@ -1960,7 +2040,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.4"
+        "version": "0.1.5"
       }
     },
     {
@@ -2079,7 +2159,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "b5e944d04b0fa7f486696eba631afe7a027126bdcf3b03521e5f8ed16bfbc51f",
+        "bundle_sha256": "60c71dc1ebcc308eccff6989c50ea5af9b618f8a78188841262f95c2c9518970",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -2118,13 +2198,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Uses Karagarga tracker search plus forum attachments for English movie subtitles. Requires Karagarga tracker and forum credentials.",
         "entry_class": "KaragargaProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "5b03ed08993d003f08af9f465970d532f6529f70bf1763ac7742235931402900"
+          "provider.py": "afbb5e2e1b64b3b3ab544d2752fd728743ea689f902ff49947ba5ca754ae6788"
         },
         "languages": [
           "eng"
@@ -2149,13 +2237,13 @@
         "supported_media": [
           "movie"
         ],
-        "version": "0.1.5"
+        "version": "0.1.6"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "975544a8cec37a7432996b9d9dc8ce05d631c8c28115cea9646b6a88931adaac",
+        "bundle_sha256": "f28b0ebffdb59565b6daf44c1e1962601be0413d170a65788d362c751e0803da",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -2171,13 +2259,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes kitsunekko.net static subtitle directories for anime subtitle files. Zip archives are supported.",
         "entry_class": "KitsunekkoProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "e1adfc311a786bc60f8c26789b7b6b1dec0d096b7c741c7daea4b06da56f458f"
+          "provider.py": "766b7027687b60f16ff3d715986a4d56016dbd32f5bfd9aa36554f5bf02902f5"
         },
         "languages": [
           "eng",
@@ -2200,7 +2296,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.2"
+        "version": "0.1.3"
       }
     },
     {
@@ -2270,7 +2366,7 @@
       "manifest": {
         "anti_captcha": true,
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "e14357dc2e3aaf6f4c4163134cb1d3ac9343225a427b42c909fd46ca49ab22ed",
+        "bundle_sha256": "cea7025b770294495ccb6f3964d65d06e52c50d784c59dd6d233252f8080350d",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -2601,6 +2697,13 @@
             },
             {
               "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            },
+            {
+              "hashes": [
                 "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
               ],
               "name": "urllib3",
@@ -2625,7 +2728,7 @@
         "entry_class": "LegendasDivxProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "4f321c64a08ba4fb482fb7122ec2782c50420af093a37011fe5e4dfc32e84565"
+          "provider.py": "c674a94b6b2ad05b7a4e924dfa0954c4135ab5afcca7c0fc603fc91c2cd562b0"
         },
         "flaresolverr": true,
         "languages": [
@@ -2654,13 +2757,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.2.2"
+        "version": "0.2.3"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "ee53740493d568ca76514bf226d42876f54f5df318b77d3f9890eeaeb8dbc0af",
+        "bundle_sha256": "6d5e9a4277a0c96e85586fb1e64c6b0cad736169d53fd4e65cb4264faa54938f",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -2692,12 +2795,20 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "entry_class": "LegendasNetProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "4450241072a39439ded0004768ef1db7d141a4c31faf5ec18327cf4428770ebb"
+          "provider.py": "088b2affc628361bf37d00fac94dd4230ded9a52cba39fb510803f1166256bc5"
         },
         "languages": [
           "por-BR"
@@ -2722,13 +2833,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.4"
+        "version": "0.1.5"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "95a61988dd16509d2f2153c94436a51cc6aa06688017229ab1f14d0965e6c975",
+        "bundle_sha256": "ee1525d79864d86e92f5a53e38e36bec62a96f02f265abf4154674203ee4152a",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -2744,13 +2855,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes moviesubtitles.org for movie subtitle ZIP files. Movie-only provider.",
         "entry_class": "MoviesubtitlesProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "23b3e582ab85f9a43789801c1c2faeb51296f686d16cff780f43ca746002846e"
+          "provider.py": "548c354f6a3fc56df14dd49242f9e96c4043f93bd20be71332a78fdf308b4b0a"
         },
         "languages": [
           "ara",
@@ -2783,13 +2902,13 @@
         "supported_media": [
           "movie"
         ],
-        "version": "0.1.3"
+        "version": "0.1.4"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "cdb890c7f7a9bd30ca39dcb02aa8cc7b09e2d046fab30640ff219b7ecb52d0d8",
+        "bundle_sha256": "1568fc3991384a4e227dc14bd8c7c0b93489a38f08ff59639f92600d5162a961",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -2805,13 +2924,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes my-subs.co for TV and movie subtitle files. No login or API key required.",
         "entry_class": "MySubsProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "20ebe426b072ce49538ebf79946b6ce8ed2889a51b20a58d462a2cb5201804d3"
+          "provider.py": "7af125e03d1671f0925eaf3b16d9cb5d75bfddd2ca08748c75b28c8dea18f149"
         },
         "languages": [
           "eng",
@@ -2874,13 +3001,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.3"
+        "version": "0.1.4"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "7dcaa937e4009e329f1343fa5e5912d76da49be9960976592c08a2cee62ad531",
+        "bundle_sha256": "bf110efd89127f1e2a9efca64fa0cde8904107ed1c46e707a0dc6203491d68fa",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -3171,6 +3298,13 @@
             },
             {
               "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            },
+            {
+              "hashes": [
                 "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
               ],
               "name": "urllib3",
@@ -3195,7 +3329,7 @@
         "entry_class": "NapiProjektProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "1f577592d958344ab7ca1f93b1146ff5e248c570acb354c99679c0b91e908d5f"
+          "provider.py": "7508f91bc520ffc464f88963ff321091fbce59e5636cff577c271e4b7978acd7"
         },
         "flaresolverr": true,
         "languages": [
@@ -3218,7 +3352,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.7"
+        "version": "0.1.8"
       }
     },
     {
@@ -3288,7 +3422,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "bb0353d2b44dde0e2afb24c6e967e38069a60b2e44cbcc9a16d86b911e893fc2",
+        "bundle_sha256": "17983d426b421a9a90dbbf4bfed7cc23073f789c29ad7c15139c58f70e18d7f4",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -3304,13 +3438,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes Nekur for Latvian movie subtitles. ZIP and RAR downloads are handed to the host for extraction.",
         "entry_class": "NekurProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "49dedb10665e10322cc05b3f2eb2135118b9cf00561e531c50afd6918fd1c5b1"
+          "provider.py": "c5d71623ad56be15217fc6faa968c64216a0300dfb6d912a619325f4c0c9b72d"
         },
         "languages": [
           "lav"
@@ -3331,13 +3473,13 @@
         "supported_media": [
           "movie"
         ],
-        "version": "0.1.4"
+        "version": "0.1.5"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "5e7ac82fe4363717019ad7f8f926c78270fff59c4298d4f58bfcf9b351764743",
+        "bundle_sha256": "c5788b5ff4ceac7bb92ff0e6c13db4946a702a98736d04ac2fa00c7a4c5ba968",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -3642,6 +3784,13 @@
             },
             {
               "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            },
+            {
+              "hashes": [
                 "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
               ],
               "name": "urllib3",
@@ -3662,11 +3811,11 @@
             }
           ]
         },
-        "description": "Scrapes OpenSubtitles.org natively with ai-cloudscraper, inline Anubis proof-of-work solving, and optional FlareSolverr fallback for Cloudflare browser challenges.",
+        "description": "Scrapes OpenSubtitles.org with a per-session browser identity, inline Anubis proof-of-work solving, and optional FlareSolverr fallback for Cloudflare browser challenges.",
         "entry_class": "OpenSubtitlesOrgProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "b9371734d6eaa60c684988c70412e93c31302a39832df860bfc06c56cce88572"
+          "provider.py": "7b81bc7efd43e05bb15425e6c25633a32995101649b8c59184cea1cabf5225d9"
         },
         "flaresolverr": true,
         "languages": [
@@ -4109,7 +4258,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.13"
+        "version": "0.1.14"
       }
     },
     {
@@ -4292,7 +4441,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "eabbccfc13e8ef1c60c872ac21637074bd7283d2653084433847a75359b2eaab",
+        "bundle_sha256": "6459b201447895f73c21e85c2de965d8c2464a6e58c646d913ecf28808633dbc",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -4322,13 +4471,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes Pipocas.tv for movie and episode subtitles in Portuguese, Brazilian Portuguese, English, and Spanish. Login is required. ZIP and RAR downloads are supported.",
         "entry_class": "PipocasProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "811319bb2f0589e26354798af8f567548eb7d23c224d8d63c71826c0206291ff"
+          "provider.py": "31c449a3916a6e6a48b514eae7a076e0c0857d150b0621fa61d71b5a9388eb0a"
         },
         "languages": [
           "eng",
@@ -4356,13 +4513,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.6"
+        "version": "0.1.7"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "3d36aa74bdd8280090f4132152b1c49262faf13204f1642a8a4d9b47810fb21f",
+        "bundle_sha256": "c74b686f5005983a55e1309193d0cdb15f5c44b21a9bf801d8a53eee88bd7457",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -4438,13 +4595,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Uses the Prijevodi-Online API for Croatian, Serbian (Latin and Cyrillic), Bosnian, Montenegrin, Macedonian, and Serbo-Croatian episode and movie subtitles. No account is needed for series: search always works, and downloads work wherever the site lets visitors download. An account is optional and unlocks movies and token-priced subtitles. Movie subtitles need an account, because the site does not let visitors download movies. Sign in with a username and password or a browser session cookie. Tokens are spent only after you turn on token-priced downloads, and never for more than the per-download limit you set. Downloads arrive as ZIP archives (the site repacks older RAR uploads), and a RAR is still accepted.",
         "entry_class": "PrijevodiOnlineProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "59fe99db0ea56600b2d2dcc2b3075a3aff8c33f0c66fefda7ba16cf88741457e"
+          "provider.py": "c032db1915e0f95e1c0d3330c6b15247871eb9b8fe1134a59b1dd69157ff25ce"
         },
         "flaresolverr": true,
         "languages": [
@@ -4477,13 +4642,13 @@
           "episode",
           "movie"
         ],
-        "version": "0.3.0"
+        "version": "0.3.1"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "9647f3761fcfa7c55c49015c91af5e1f4b6d3540fe36473508250e76d6e95156",
+        "bundle_sha256": "f65f717fa15be0f8f53dc38b8522e9daf99626396340f7a8b3c5238ef216fbb2",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -4499,13 +4664,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Searches the RegieLive Bazarr API for Romanian movie and episode subtitles, falls back to the public HTML pages when the API rejects the request, and downloads subtitle ZIP files.",
         "entry_class": "RegieLiveProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "be184d297245642c6d5d27a9b3f46bdac670f522f8a5fb95e3412a2e8c3cbb01"
+          "provider.py": "b56ca782096ef3f950918bc6ce14e37c41bdc068dafbb30f0f758dac567981fe"
         },
         "languages": [
           "ron"
@@ -4527,7 +4700,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.3"
+        "version": "0.1.4"
       }
     },
     {
@@ -4645,7 +4818,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "719200ded2962660f0c23c629c7f2cda7230327185495e274638de1596ccb0fa",
+        "bundle_sha256": "5417961796b9f3949b35d45cdf0dd2716aa18d0059903ab9fc1e76990ef840d9",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -4661,13 +4834,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes Sous-Titres.eu for French and English movie and episode subtitles. ZIP and RAR downloads are supported.",
         "entry_class": "SoustitreseuProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "5a7f596fd886e9b56e0823a5b377b9e18d6280c17c5e94b812cddeea4bff6cf8"
+          "provider.py": "eed1d42dc799c87154a06ba826e7f584ce7bf603d8f05219c94ce3db8e6c2d49"
         },
         "languages": [
           "eng",
@@ -4690,13 +4871,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.11"
+        "version": "0.1.12"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "7aa8e8da75fc2f3ba79731e5e335c07d492b68e753e83e876545b65dcff89189",
+        "bundle_sha256": "67ad05d083347e8233c9049819e58344441cd9cc48869a1f2b264684ffd9499b",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -4977,6 +5158,13 @@
             },
             {
               "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            },
+            {
+              "hashes": [
                 "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
               ],
               "name": "urllib3",
@@ -5001,7 +5189,7 @@
         "entry_class": "SubSceneProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "9f6c9352c93cf5e986d571fcbf6e4eaf114260daf631821a3ceb08774c62ba20"
+          "provider.py": "03b92240f206c093697233df9937e53ec21201d8917b60926d150b303051d7ea"
         },
         "flaresolverr": true,
         "languages": [
@@ -5059,7 +5247,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.17"
+        "version": "0.1.18"
       }
     },
     {
@@ -5123,7 +5311,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "4df03992c79df890ab3fc0edda72a6349dd8a89e60496ca0feaa008dd3644789",
+        "bundle_sha256": "d4d17e04fc3d2905109128f335e7c3c56355a4d3eda430cfbe717aa8b14e7fc7",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -5139,13 +5327,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes Subclub.eu for Estonian movie and episode subtitles. Direct file downloads and ZIP/RAR archive fallback are supported.",
         "entry_class": "SubclubProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "ab845315bd0a5fb9b07aa690ae4ddc2a44d509f8131252cb7d6d8ccd925bc2de"
+          "provider.py": "5d0b8357fb20e6d4bde958baf43878061bbaeb1214a32ce977d0077cfb9fb3da"
         },
         "languages": [
           "est"
@@ -5167,13 +5363,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.4"
+        "version": "0.1.5"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "2d5b22381e4292e0b7468cf360df5df4288f95fe587de1884ef68d3a0410dc2f",
+        "bundle_sha256": "77200ccc5f34dc62fc0e065a1e36753d1adf0dea8941bda6f3e47dd4121a0d22",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -5230,13 +5426,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Uses the official SubDL API for movie and episode subtitles, including season packs, optional anime search fallbacks, and opt-in AI translation for Plus or Pro accounts.",
         "entry_class": "SubDLProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "10a6474d3cf42a0f1056817108322149837ade96d8190775f21619fdf964abe4"
+          "provider.py": "e0a292e83835836ede6c5210f3677340860ae04b8a07f7b5052bbfb449290491"
         },
         "languages": [
           "ara",
@@ -5327,13 +5531,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.2.4"
+        "version": "0.2.5"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "a4484c2e153dfc85f44bfe7b2299f3e2cc498281803a3d26d41e278806fc403c",
+        "bundle_sha256": "0b671b5ef3d84e410ba9ef698ad323391df5d09aedfb8acaae9ecc9cca1e9e51",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -5346,8 +5550,8 @@
               "type": "integer"
             },
             "user_agent": {
-              "default": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub",
-              "description": "Browser User-Agent sent to subf2m.co.",
+              "default": "",
+              "description": "Optional browser User-Agent. Leave blank to generate a desktop browser identity for this provider session.",
               "title": "User-Agent",
               "type": "string"
             },
@@ -5361,13 +5565,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes subf2m.co for movie and episode subtitle ZIP files. Custom User-Agent and SSL verification settings are supported.",
         "entry_class": "SubF2MProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "8cf396f5ae0b678a866a66ae619bff15808061a3dd863a536bd1d4df4836894e"
+          "provider.py": "8ac13bf10b27d2dc34bb637d5ab372f93b027e4d449f4f57f1ecbe504237e3c6"
         },
         "languages": [
           "ara",
@@ -5420,13 +5632,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.6"
+        "version": "0.1.7"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "722432a7b32a491a2b7497c1a35798067adcefa6182490cee13e2fb87f43fc88",
+        "bundle_sha256": "f9e3b1a69d2bcda3a374913d791f6bf084cbb787ee55e948296f951141f67443",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -5442,14 +5654,22 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes subhd.tv for community subtitle files. No login or API key required.",
         "entry_class": "SubHDProvider",
         "entry_module": "provider",
         "files": {
           "captcha_templates.py": "92d62df74786303aac9b368f6be1b975abaef3ea285b1aca694a372372b056bf",
-          "provider.py": "837ee1f5ef79082d67fa693489934e57c073690ec0899fa0324481d9e05ce0e4"
+          "provider.py": "a0b22a8f5a500b5605ff3131ed3fa70add5b26ed9fb9edc3f400d92c7e166b68"
         },
         "languages": [
           "zho",
@@ -5485,13 +5705,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.4"
+        "version": "0.1.5"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "3e63de3b408b8c97792068a85471955a4c2efe7283930db583608cb3caeca02c",
+        "bundle_sha256": "b39f832db238ab604773da79f0cc4ab61de11b90c6abd489690d6705097f6691",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -5507,13 +5727,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes subs4free.info for Greek and English movie subtitles. Supports the legacy anti-block download flow plus ZIP and RAR archives.",
         "entry_class": "Subs4FreeProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "a513c190737d08d72b93e6731407eee03ed97d6ef7df5496bc2952940e899252"
+          "provider.py": "24067d483670f4311e5ff89a32d71984d015ca9ba46ede6d64201e3c5dadd37b"
         },
         "languages": [
           "ell",
@@ -5535,14 +5763,14 @@
         "supported_media": [
           "movie"
         ],
-        "version": "0.1.4"
+        "version": "0.1.5"
       }
     },
     {
       "manifest": {
         "anti_captcha": true,
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "b6d4bca75c62645ad3cc4caedd16f8d11d72cff9162113d8cac95c8eb05100aa",
+        "bundle_sha256": "f2f4b4a8fabd2ee872802cf1768397835617e2883ab5bb013cffd3dd62b88628",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -5851,6 +6079,13 @@
             },
             {
               "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            },
+            {
+              "hashes": [
                 "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
               ],
               "name": "urllib3",
@@ -5875,7 +6110,7 @@
         "entry_class": "Subs4SeriesProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "34dc974814adeb77dbf0eb8d47488f6034b44c535685191fe6feb9512bdaa15f"
+          "provider.py": "d81bf3f72c97a0c21449361e6946544458aa7adda23e4e870db64f241db8798c"
         },
         "flaresolverr": true,
         "languages": [
@@ -5901,7 +6136,7 @@
         "supported_media": [
           "episode"
         ],
-        "version": "0.1.8"
+        "version": "0.1.9"
       }
     },
     {
@@ -6184,7 +6419,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "d2c06e4b7ebf956d437954fe28ee1f192795afe2e4832bef5ca611cafb457d7e",
+        "bundle_sha256": "4d48c288d5ca3c639b9513909b94d2d79e0a4f5dbcf4efffa873172294a15cf7",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -6209,13 +6444,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Uses the official SubSource API for movie and episode subtitles. API key required.",
         "entry_class": "SubSourceProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "23eb3d471c3e17167d2a7df36108346143336c8eca8e154b343bb55d32ad36b7"
+          "provider.py": "3ef7554b190047d0eb9b80830186f77716cfc3cfbcf3aa9ebc942240d403ba30"
         },
         "languages": [
           "abk",
@@ -6324,7 +6567,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.5"
+        "version": "0.1.6"
       }
     },
     {
@@ -6392,7 +6635,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "63a21f4a778068a9bb14ccf84020cff1507f60cc1c83022d5cc237729221c24a",
+        "bundle_sha256": "b37de3d6d5fb750bf6612bb16c3983e98c41c5e4faa9d44576996bdb4e2b27a5",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -6408,13 +6651,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes SubsSabBz for Bulgarian and English movie and episode subtitles. ZIP and RAR downloads are supported.",
         "entry_class": "SubsSabBzProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "9fb08869a1578b52e54de5050dba55ec3f2b3429d1ace3abf589055c113f473b"
+          "provider.py": "8811cebb7a5a1330cc613b58064bf78974c1aa75901a0024feb3d1733dd5b26c"
         },
         "languages": [
           "bul",
@@ -6437,13 +6688,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.6"
+        "version": "0.1.7"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "e655e0fe077fa931cffa39674072a0161960b942ce31499e1e4a7e6db1133a75",
+        "bundle_sha256": "0ff8c64e3bf6562dd6932108f202c45b2baac2d359f76621629c82e018b10a7b",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -6459,13 +6710,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes SubsUnacs for Bulgarian and English movie and episode subtitles. Direct entry pages plus ZIP, RAR, and 7Z downloads are supported; archives are extracted host-side.",
         "entry_class": "SubsUnacsProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "9b06ccb492da30dee42878480b851594d010fccc7fcaef49eff20053f3d58b2c"
+          "provider.py": "1ebf389df12929be7fb992d6dc84c87ad8ed97845fbe9f39df644df569988862"
         },
         "languages": [
           "bul",
@@ -6488,13 +6747,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.5"
+        "version": "0.1.6"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "a01224d99ebd56ffb258a8f7d8ef84d64e6d1968d73bafac8509817e1981d49f",
+        "bundle_sha256": "2d67d6151d8307d206d5efc2a7fb851f10d20b0ce22396b96f55aae08cce60c0",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -6510,13 +6769,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes SubSynchro movie release pages for French subtitle ZIP files. Movie-only provider.",
         "entry_class": "SubsynchroProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "72777ebadf3a2d4fe1417430d42fa721860cf830534d4b2c073868f4aa98548c"
+          "provider.py": "2499949f2c99109e1b761767ff4ca90609c404f4a25c5053621174be5d673896"
         },
         "languages": [
           "fra"
@@ -6537,7 +6804,7 @@
         "supported_media": [
           "movie"
         ],
-        "version": "0.1.4"
+        "version": "0.1.5"
       }
     },
     {
@@ -6583,7 +6850,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "adb5c41a9f98732033cf3e26a7750be2b7c3405d82dd8fe9382651d580c79f69",
+        "bundle_sha256": "f4cecfdaf8d2248d6ba5c4abab9696f9a923756699e6cb5bf6ce6aed1a985ba8",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -6605,13 +6872,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes subtitlecat.com for community subtitle files. No login or API key required.",
         "entry_class": "SubtitlecatProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "38a64c5dc624ab334a5a0abe828d423cb9ddc82fe9069d9fc1e2e0c6458df418"
+          "provider.py": "cf0125fffa6b7d6e99a007193cd9b00ae74292fef49d3338d0f76982d93c5873"
         },
         "languages": [
           "eng",
@@ -6684,13 +6959,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.8"
+        "version": "0.1.9"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "08f9a9ed3a5d785921041efbcc3b5f3db2ce89308ad39d29f21f22a8f05159c4",
+        "bundle_sha256": "3e55fee95536a5f1ad6b885dca73b970e09959ab1270d18cad6d12ae0862c216",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -6706,13 +6981,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes subtitlestar.com for Persian/Farsi subtitle files. No login or API key required.",
         "entry_class": "SubtitlestarProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "641f9f520d947ee46665e733089e908a892a2bdcf60eac9fc6b3ce60f44e40a1"
+          "provider.py": "048111737339829a175d35af20d77126688e54a81ea51156f0af012e95234a88"
         },
         "languages": [
           "fas"
@@ -6734,13 +7017,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.12"
+        "version": "0.1.13"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "3d03736b04b6381b5e2d171aabce3a15e2c846b09d2e05992791aaca2bdfcddd",
+        "bundle_sha256": "b2c4f5db0645f188aad676f74e904c7a27034fd7ef3db19d5eacf5259e4ac9f3",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -6756,13 +7039,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes subtitrari-noi.ro for Romanian movie and episode subtitles. Direct files, ZIP archives, and RAR archives are supported.",
         "entry_class": "SubtitrariNoiProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "29d06e87e77696749602ef63dafe4b485d6abd780cf25f7c16000165dbb03aa0"
+          "provider.py": "59d5408c96177e2c924491c496139bbcb1cdb4e95f91b28df22b36e50e9a24e8"
         },
         "languages": [
           "ron"
@@ -6784,13 +7075,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.5"
+        "version": "0.1.6"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "50bae796c4678e53e5bccb1d769f1a1fca09d194f88534a8669245737343f142",
+        "bundle_sha256": "238accad6badb3be209df8c91725889499216f891c4a6a9d0f12b2e28c6b689f",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -6843,6 +7134,13 @@
             },
             {
               "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            },
+            {
+              "hashes": [
                 "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
               ],
               "name": "urllib3",
@@ -6854,7 +7152,7 @@
         "entry_class": "SubtitriIdProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "97fd2026434a761b9628784687f590d07e6d6784655db8a9ee665bc8fd90ba35"
+          "provider.py": "99ac2ed4c23e9825b0e0d0b19d4f29ab391032d72174e20dbb1e6ff734ccf03a"
         },
         "languages": [
           "lav"
@@ -6875,26 +7173,34 @@
         "supported_media": [
           "movie"
         ],
-        "version": "0.1.5"
+        "version": "0.1.6"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "7ba561ce03e053ec6044e0830a82817338ae855a4abaad7908abcecabbb3714c",
+        "bundle_sha256": "d79ab9f3fa6aa1eca070eac470d5fae6f6ac33f8ddf901aed89dec910f197d29",
         "config_schema": {
           "additionalProperties": false,
           "properties": {},
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes subtitulamos.tv for episode subtitles in Spanish, English, Catalan, Galician, and Portuguese. No login or API key required.",
         "entry_class": "SubtitulamosTVProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "1f3db65051b8220a470369339522a637a8e4dcd57bb1147609f6fe45215afcc2"
+          "provider.py": "a8aca950126c458e296d38914593d2c9100844b8229f5bc37f16a3aa76bcba33"
         },
         "languages": [
           "ca",
@@ -6941,7 +7247,7 @@
         "supported_media": [
           "episode"
         ],
-        "version": "0.1.2"
+        "version": "0.1.3"
       }
     },
     {
@@ -7008,7 +7314,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "11836f6ade1463b90f67e0a1f79731f1136221ad8c86cb87bdb77d92b3601679",
+        "bundle_sha256": "c4d9a986a0df6e3d84810d3d301325ff7b292a485819b1902eefb7aeb6be75eb",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -7024,13 +7330,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes feliratok.eu for Hungarian and English movie and episode subtitles. Forced subtitles, direct subtitle files, ZIP, and RAR downloads are supported.",
         "entry_class": "SuperSubtitlesProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "05a7885ff73d9d1f20c87b93c9ffbb2892efc19a4476a0707791c3f4121ec179"
+          "provider.py": "387d7175e2844b18a86bb704d0bee45a0962ebb4b1929f6f3d5b17b113824cd6"
         },
         "languages": [
           "eng",
@@ -7053,13 +7367,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.5"
+        "version": "0.1.6"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "8e90a12afd41215680473e8b00e70b296d9944bcd86e28fa1ac9ab1bbb7eed7c",
+        "bundle_sha256": "b133b7bdac0b60a6c9e9959e2337d710302075f94aad94e5f76d7de74a41bb68",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -7089,13 +7403,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Uses the Titlovi Kodi API for movie and episode subtitles. Login, pagination, ZIP/RAR downloads, episode packs, and Serbian script bundles are supported.",
         "entry_class": "TitloviProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "03a0526c59ff79753af2f46041d12d4c8c6e014742cb8ad889209fe5575dd101"
+          "provider.py": "bd29c8d4bdeae70b6ae6aa1a28430da4c1fe7daa6f4ea9a900d992d80bf57db9"
         },
         "languages": [
           "bos",
@@ -7126,13 +7448,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.8"
+        "version": "0.1.9"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "b8c8e3e52e4cf9052d139065ecc9daad874187137bfc87f776baca6d62c43f0f",
+        "bundle_sha256": "27cced1fa2bc1f5811ebdf6ced06cd4fcfc9bfa73abadaf9de793226fc40b124",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -7148,13 +7470,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes titrari.ro for Romanian and English movie and episode subtitles. Direct files, ZIP, and RAR downloads are supported.",
         "entry_class": "TitrariProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "ce46056efcf2c729ae35f0d339cd2ca5bb072f3401a9223818f6858fa9cd3f54"
+          "provider.py": "628e166fa9b8583e82c6059eb64d2fe8eb4ad54deb29e953dab906bf5607ba5b"
         },
         "languages": [
           "ron",
@@ -7177,13 +7507,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.5"
+        "version": "0.1.6"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "9298f2988297810d730198e2fb9ffca8994a7686fa6faa804c898d1afc3d57fb",
+        "bundle_sha256": "00103cf92e0fd59bc4fc0532c24f37c5a7b8c2c1ffcbdf06b3ff2359a1b7f406",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -7225,13 +7555,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes premium.titulky.com for Czech and Slovak movie and episode subtitles. VIP login, approved-only filtering, FPS checks, and ZIP/RAR downloads (extracted host-side) are supported.",
         "entry_class": "TitulkyProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "92e5426df6c351907acd5abfa4f124d2ca69069ad7cd84f6aa40debd6878584f"
+          "provider.py": "5dcfa12b26455dd33dfb38ba424018f9de39dbd8db89841ee49dd55880a20097"
         },
         "languages": [
           "ces",
@@ -7257,7 +7595,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.6"
+        "version": "0.1.7"
       }
     },
     {
@@ -7368,7 +7706,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "2d115d0686bcb93737ea3538646dfba50c87778234f8f88586a67d433d920b18",
+        "bundle_sha256": "b699439fcbfc62862d158fd5ca6bb4b3e7724740c77cb564dbf7ab47efa0ca70",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -7660,6 +7998,13 @@
             },
             {
               "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            },
+            {
+              "hashes": [
                 "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
               ],
               "name": "urllib3",
@@ -7684,7 +8029,7 @@
         "entry_class": "TurkceAltyaziOrgProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "22fb337ae921fbe4e048f5cfe84ae425f97f3a49151d8250472a2910141812e1"
+          "provider.py": "440aee6bc9e446b64d18db2ec0f3ac1b83dec7d9af799b83d1a5d43e8bc17af2"
         },
         "flaresolverr": true,
         "languages": [
@@ -7710,13 +8055,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.7"
+        "version": "0.1.8"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "6abd56a18e5cda0f6cf5b88c0ecfd2c383010f3f8a893ad25fe005c7f4d63e0f",
+        "bundle_sha256": "06218dbb0cc77680831914f11255b0b1858a583d15b4c15465705b7964d02033",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -7732,13 +8077,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
-        "description": "Scrapes tvsubtitles.net for episode subtitles in broad multilingual coverage. No login or API key required.",
+        "description": "Scrapes tvsubtitles.net with a stable desktop Firefox identity for episode subtitles in broad multilingual coverage. No login or API key required.",
         "entry_class": "TvSubtitlesProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "d348b4474fa3c1da17400316e60d4c6d9982ec1947bc9f7956f2002696e03032"
+          "provider.py": "8d0c6634a3ec0a162a8ea7471ee587f79a711773faf723a5e79194132a5de0dc"
         },
         "languages": [
           "ara",
@@ -7781,13 +8134,13 @@
         "supported_media": [
           "episode"
         ],
-        "version": "0.1.3"
+        "version": "0.1.4"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "82544f8f7f70a55242ee48c70afb44dbac14718cca0ce05b394cca7bc26fbb15",
+        "bundle_sha256": "480171bd3c2ba9777d494a650e70bced10e9f3720a64a7c1691722f2ec251d8e",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -7803,13 +8156,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Searches the Vladoon Bulgarian subtitle site through its JSON API, including season packs, and hands its ZIP downloads to Bazarr for member extraction. No login or API key required.",
         "entry_class": "VladoonProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "6ee3051bbf2f810339aac51f2d63b028c758584140844d9f47dfef1c014528d7"
+          "provider.py": "df4026fd99394d76b6b2777d5cd4a23162330724e8502e2fe39ef45eab1175ec"
         },
         "languages": [
           "bul"
@@ -7831,7 +8192,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.2"
+        "version": "0.1.3"
       }
     },
     {
@@ -8014,7 +8375,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "58f56df6b1375ac4f37af920e9d354c555f3713953a6214192f2cdf9acab9ee0",
+        "bundle_sha256": "1e66385ec413c91a199352e53255ac0050c503446bb9ebd55e4d1bdeda52e2e3",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -8286,6 +8647,13 @@
             },
             {
               "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            },
+            {
+              "hashes": [
                 "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
               ],
               "name": "urllib3",
@@ -8310,7 +8678,7 @@
         "entry_class": "WizdomProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "b6ab96bba7349145fe92c54f52384c17777e322bb76919797445ebcd1f103907"
+          "provider.py": "354889ea75c34849de708bb0d8a418a6c452c33b8711935b5e62555539df8ce0"
         },
         "flaresolverr": true,
         "languages": [
@@ -8333,13 +8701,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.4"
+        "version": "0.1.5"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "4a2858232d66896e5523d51e6fdebb6ee9170f739b71b9ed4510b36c49f4fefb",
+        "bundle_sha256": "759a3dba0ff51204712953a0d37f4d3d0828bb1fbed8e0baa8a3f2f499feca1a",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -8620,6 +8988,13 @@
             },
             {
               "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            },
+            {
+              "hashes": [
                 "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
               ],
               "name": "urllib3",
@@ -8644,7 +9019,7 @@
         "entry_class": "YavkaNetProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "a5d003fa58cea5dc4b5794802324739096fa9eda6d10373b491a89461acbc035"
+          "provider.py": "440906199f1f371bf62779347445439041cd782f4b03483db400c281fc3de7e7"
         },
         "flaresolverr": true,
         "languages": [
@@ -8671,13 +9046,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.10"
+        "version": "0.1.11"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "a51a605e631384b0da776cbf1dd36d334cf5be86e41a6349165737b9f2c9d414",
+        "bundle_sha256": "c3ead12ca8fb807606e778d0cf8ab8cfa13eb832d09405b75ab0184ec0546f92",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -8693,13 +9068,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes yifysubtitles.ch movie subtitle pages across many languages. No login or API key required.",
         "entry_class": "YifySubtitlesProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "3bb79fb0336b2a63d9ee98832420b21a3ef42103251bba6b41b67164648ba76f"
+          "provider.py": "733ee04600254d6502cb52b3155caa19933b0173879961bbeecc923237cc4d4d"
         },
         "languages": [
           "ara",
@@ -8756,14 +9139,14 @@
         "supported_media": [
           "movie"
         ],
-        "version": "0.1.3"
+        "version": "0.1.4"
       }
     },
     {
       "manifest": {
         "anti_captcha": true,
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "4c60bb321f4a4ad850ed452fcfd8fffe5d47d58b3e49f25ddc527a1b66ee213c",
+        "bundle_sha256": "6c0e7d681f202ca818a423bff9c14ab9fc06c263c2bd381ccc982ad636f3e196",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -8807,13 +9190,21 @@
           "type": "object"
         },
         "dependencies": {
-          "requirements": []
+          "requirements": [
+            {
+              "hashes": [
+                "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+              ],
+              "name": "ua-generator",
+              "version": "2.1.6"
+            }
+          ]
         },
         "description": "Scrapes Zimuku / srtku.com for Chinese and English movie and episode subtitles. Includes native Yunsuo image verification, no-image coordinate fallback, optional helper fallback, and host-side extraction of ZIP archives or direct subtitle downloads. Multilingual RAR/7z archives are skipped, since they cannot be language-selected host-side.",
         "entry_class": "ZimukuProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "f9d79504099dac386f79c5efe74abaeb1a7c5f81d9dd1c415c9841614f60d805",
+          "provider.py": "5fc6a69b8c0d30a1d6ff67a068ad738498ce58688ec34d0680b41765a06c1476",
           "yunsuo_templates.py": "abad0d629bb24b28c40f7dc5a0257660266e6be449fbd8cda81a044d26c4959d"
         },
         "languages": [
@@ -8842,7 +9233,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.10"
+        "version": "0.1.11"
       }
     }
   ],

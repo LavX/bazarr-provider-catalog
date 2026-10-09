@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "3d03736b04b6381b5e2d171aabce3a15e2c846b09d2e05992791aaca2bdfcddd",
+  "bundle_sha256": "b2c4f5db0645f188aad676f74e904c7a27034fd7ef3db19d5eacf5259e4ac9f3",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -16,13 +16,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Scrapes subtitrari-noi.ro for Romanian movie and episode subtitles. Direct files, ZIP archives, and RAR archives are supported.",
   "entry_class": "SubtitrariNoiProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "29d06e87e77696749602ef63dafe4b485d6abd780cf25f7c16000165dbb03aa0"
+    "provider.py": "59d5408c96177e2c924491c496139bbcb1cdb4e95f91b28df22b36e50e9a24e8"
   },
   "languages": [
     "ron"
@@ -44,5 +52,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.5"
+  "version": "0.1.6"
 }

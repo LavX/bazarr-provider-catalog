@@ -246,6 +246,15 @@ class ManifestSchemaTests(unittest.TestCase):
         ):
             self.assertNotIn(hidden_field, properties)
         self.assertEqual(manifest["secret_fields"], [])
+        self.assertEqual(
+            next(dependency for dependency in manifest["dependencies"]["requirements"]
+                 if dependency["name"] == "ua-generator"),
+            {
+                "name": "ua-generator",
+                "version": "2.1.6",
+                "hashes": ["sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"],
+            },
+        )
 
     def test_manifest_languages_round_trip_through_parser_filtering(self):
         mod = _load_provider_module()
@@ -292,7 +301,7 @@ class AntibotSessionTests(unittest.TestCase):
 
         solved_calls = []
 
-        def fake_solve(active_session, challenge_url, original_url, timeout):
+        def fake_solve(active_session, challenge_url, original_url, timeout, deadline=None):
             solved_calls.append((active_session, challenge_url, original_url, timeout))
             active_session.cookies.set("techaro.lol-anubis-auth", "ok", domain=".opensubtitles.org")
             return {"techaro.lol-anubis-auth": "ok"}
@@ -312,6 +321,31 @@ class AntibotSessionTests(unittest.TestCase):
         self.assertEqual(solved_calls[0][2], "https://www.opensubtitles.org/")
         self.assertEqual(created[0]["interpreter"], "native")
         self.assertFalse(created[0]["enable_cookie_persistence"])
+        self.assertEqual(created[0]["browser"]["custom"], session.headers["User-Agent"])
+
+    def test_browser_identity_stays_stable_across_successful_requests(self):
+        session = FakeSession([
+            FakeResponse("https://www.opensubtitles.org/en/search", text="first"),
+            FakeResponse("https://www.opensubtitles.org/en/search", text="second"),
+        ])
+        created = []
+
+        class FakeCloudscraper:
+            @staticmethod
+            def create_scraper(**kwargs):
+                created.append(kwargs)
+                return session
+
+        self.mod.cloudscraper = FakeCloudscraper
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        with patch.object(self.mod.ua_generator, "generate", wraps=self.mod.ua_generator.generate) as generate:
+            provider._http_get("https://www.opensubtitles.org/en/search", {})
+            provider._http_get("https://www.opensubtitles.org/en/search", {})
+
+        generate.assert_called_once()
+        self.assertEqual(len(created), 1)
+        self.assertEqual(len(session.calls), 2)
+        self.assertEqual(session.headers["User-Agent"], created[0]["browser"]["custom"])
 
     def _provider_with_session(self, session):
         class FakeCloudscraper:
@@ -357,11 +391,11 @@ class AntibotSessionTests(unittest.TestCase):
             ]
         )
         provider = self._provider_with_session(session)
-        provider._fallback_to_flaresolverr = lambda url, config: None  # pretend FlareSolverr cleared CF
+        provider._fallback_to_flaresolverr = lambda url, config, deadline=None: None  # pretend FlareSolverr cleared CF
 
         solved = []
 
-        def fake_solve(active_session, challenge_url, original_url, timeout):
+        def fake_solve(active_session, challenge_url, original_url, timeout, deadline=None):
             solved.append(challenge_url)
             return {"techaro.lol-anubis-auth": "ok"}
 
@@ -418,6 +452,10 @@ class AntibotSessionTests(unittest.TestCase):
                     "https://www.opensubtitles.org/en/search",
                     text="<html><title>Search</title></html>",
                 ),
+                FakeResponse(
+                    "https://www.opensubtitles.org/en/search",
+                    text="<html><title>Search</title></html>",
+                ),
             ]
         )
 
@@ -450,10 +488,12 @@ class AntibotSessionTests(unittest.TestCase):
                 "flaresolverr_timeout_ms": 45000,
             },
         )
+        provider._http_get("https://www.opensubtitles.org/en/search", {})
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(session.calls), 2)
+        self.assertEqual(len(session.calls), 3)
         self.assertEqual(session.headers["User-Agent"], "Solved UA")
+        self.assertEqual(session.cookies[-1].name, "cf_clearance")
         self.assertEqual(flaresolverr_calls[0][0], "http://127.0.0.1:8191/v1")
         self.assertEqual(flaresolverr_calls[0][1]["cmd"], "request.get")
         self.assertEqual(flaresolverr_calls[0][1]["url"], "https://www.opensubtitles.org/en/search")
@@ -532,7 +572,7 @@ class AntibotSessionTests(unittest.TestCase):
 
         solved_calls = []
 
-        def fake_solve(active_session, challenge_url, original_url, timeout):
+        def fake_solve(active_session, challenge_url, original_url, timeout, deadline=None):
             solved_calls.append((active_session, challenge_url, original_url, timeout))
             active_session.cookies.set("techaro.lol-anubis-auth", "ok", domain=".opensubtitles.org")
             return {"techaro.lol-anubis-auth": "ok"}
@@ -557,7 +597,7 @@ class NativeSearchTests(unittest.TestCase):
         provider = self.mod.OpenSubtitlesOrgProvider()
         calls = []
 
-        def fake_get(url, config):
+        def fake_get(url, config, deadline=None):
             calls.append(url)
             if "search/sublanguageid-all/imdbid-1480055" in url:
                 return FakeResponse(url, text=SEARCH_HTML)
@@ -593,7 +633,7 @@ class NativeSearchTests(unittest.TestCase):
         provider = self.mod.OpenSubtitlesOrgProvider()
         calls = []
 
-        def fake_get(url, config):
+        def fake_get(url, config, deadline=None):
             calls.append(url)
             if "search/sublanguageid-all/imdbid-1480055" in url:
                 return FakeResponse(url, text=SUBTITLES_HTML)
@@ -621,7 +661,7 @@ class NativeSearchTests(unittest.TestCase):
     def test_search_preserves_forced_and_hearing_impaired_row_flags(self):
         provider = self.mod.OpenSubtitlesOrgProvider()
 
-        def fake_get(url, config):
+        def fake_get(url, config, deadline=None):
             if "search/sublanguageid-all/imdbid-1480055" in url:
                 return FakeResponse(url, text=SEARCH_HTML)
             if "search/sublanguageid-eng/imdbid-1480055" in url:
@@ -644,7 +684,7 @@ class NativeSearchTests(unittest.TestCase):
     def test_foreign_config_includes_or_limits_forced_rows(self):
         provider = self.mod.OpenSubtitlesOrgProvider()
 
-        def fake_get(url, config):
+        def fake_get(url, config, deadline=None):
             if "search/sublanguageid-all/imdbid-1480055" in url:
                 return FakeResponse(url, text=SEARCH_HTML)
             if "search/sublanguageid-eng/imdbid-1480055" in url:
@@ -671,7 +711,7 @@ class NativeSearchTests(unittest.TestCase):
     def test_search_uses_page_language_for_advertised_language_without_slug_suffix(self):
         provider = self.mod.OpenSubtitlesOrgProvider()
 
-        def fake_get(url, config):
+        def fake_get(url, config, deadline=None):
             if "search/sublanguageid-all/imdbid-1480055" in url:
                 return FakeResponse(url, text=SEARCH_HTML)
             if "search/sublanguageid-hin/imdbid-1480055" in url:
@@ -692,7 +732,7 @@ class NativeSearchTests(unittest.TestCase):
     def test_search_preserves_regional_language_keys_from_page_language(self):
         provider = self.mod.OpenSubtitlesOrgProvider()
 
-        def fake_get(url, config):
+        def fake_get(url, config, deadline=None):
             if "search/sublanguageid-all/imdbid-1480055" in url:
                 return FakeResponse(url, text=SEARCH_HTML)
             if "search/sublanguageid-pob/imdbid-1480055" in url:
@@ -714,7 +754,7 @@ class NativeSearchTests(unittest.TestCase):
     def test_wrong_fps_candidate_is_kept_with_lowered_matches(self):
         provider = self.mod.OpenSubtitlesOrgProvider()
 
-        def fake_get(url, config):
+        def fake_get(url, config, deadline=None):
             if "search/sublanguageid-all/imdbid-1480055" in url:
                 return FakeResponse(url, text=SEARCH_HTML)
             if "search/sublanguageid-eng/imdbid-1480055" in url:
@@ -747,7 +787,7 @@ class NativeSearchTests(unittest.TestCase):
         provider = self.mod.OpenSubtitlesOrgProvider()
         calls = []
 
-        def fake_get(url, config):
+        def fake_get(url, config, deadline=None):
             calls.append(url)
             if "search2?" in url:
                 return FakeResponse(url, text=SEARCH_HTML)
@@ -831,7 +871,7 @@ class NativeSearchTests(unittest.TestCase):
         calls = []
         archive = _zip_bytes()
 
-        def fake_get(url, config):
+        def fake_get(url, config, deadline=None):
             calls.append(url)
             return FakeResponse(
                 url,
@@ -867,7 +907,7 @@ class NativeSearchTests(unittest.TestCase):
         provider = self.mod.OpenSubtitlesOrgProvider()
         archive = _zip_bytes(filename="Game.of.Thrones.S01E01.1080p.srt")
 
-        provider._http_get = lambda url, config: FakeResponse(
+        provider._http_get = lambda url, config, deadline=None: FakeResponse(
             url, content=archive, headers={"content-type": "application/zip"}
         )
 
@@ -889,7 +929,7 @@ class NativeSearchTests(unittest.TestCase):
         provider = self.mod.OpenSubtitlesOrgProvider()
         rar_body = b"Rar!\x1a\x07\x00rest-of-archive-bytes"
 
-        provider._http_get = lambda url, config: FakeResponse(url, content=rar_body)
+        provider._http_get = lambda url, config, deadline=None: FakeResponse(url, content=rar_body)
 
         result = provider.download(
             {
@@ -915,7 +955,7 @@ class NativeSearchTests(unittest.TestCase):
         archive = _zip_bytes()
         calls = []
 
-        def fake_get(url, config):
+        def fake_get(url, config, deadline=None):
             calls.append(url)
             if "download/sub" in url:
                 return FakeResponse(
@@ -946,7 +986,7 @@ class NativeSearchTests(unittest.TestCase):
 
     def test_download_returns_direct_non_archive_subtitle_as_content(self):
         provider = self.mod.OpenSubtitlesOrgProvider()
-        provider._http_get = lambda url, config: FakeResponse(url, content=SRT_BODY)
+        provider._http_get = lambda url, config, deadline=None: FakeResponse(url, content=SRT_BODY)
 
         result = provider.download(
             {
@@ -968,7 +1008,7 @@ class NativeSearchTests(unittest.TestCase):
 
     def test_download_rejects_empty_body(self):
         provider = self.mod.OpenSubtitlesOrgProvider()
-        provider._http_get = lambda url, config: FakeResponse(url, content=b"")
+        provider._http_get = lambda url, config, deadline=None: FakeResponse(url, content=b"")
 
         with self.assertRaisesRegex(self.mod.ServiceUnavailable, "empty"):
             provider.download(
@@ -980,7 +1020,7 @@ class NativeSearchTests(unittest.TestCase):
     def test_download_rejects_html_error_page_without_link(self):
         provider = self.mod.OpenSubtitlesOrgProvider()
         body = b"<html><body>Subtitle has been removed.</body></html>"
-        provider._http_get = lambda url, config: FakeResponse(url, text=body.decode(), content=body)
+        provider._http_get = lambda url, config, deadline=None: FakeResponse(url, text=body.decode(), content=body)
 
         with self.assertRaisesRegex(self.mod.ServiceUnavailable, "no subtitle link"):
             provider.download(
@@ -998,7 +1038,7 @@ class MovieHashMatchTests(unittest.TestCase):
         provider = self.mod.OpenSubtitlesOrgProvider()
         calls = []
 
-        def fake_get(url, config):
+        def fake_get(url, config, deadline=None):
             calls.append(url)
             if "moviehash-9f8e7d6c5b4a3210" in url and "sublanguageid-eng" in url:
                 return FakeResponse(url, text=HASH_SUBTITLES_HTML)
@@ -1041,7 +1081,7 @@ class MovieHashMatchTests(unittest.TestCase):
     def test_regular_listing_rows_are_not_awarded_a_hash_match(self):
         provider = self.mod.OpenSubtitlesOrgProvider()
 
-        def fake_get(url, config):
+        def fake_get(url, config, deadline=None):
             if "moviehash-9f8e7d6c5b4a3210" in url:
                 # The moviehash listing finds nothing for this video.
                 return FakeResponse(url, text="<table id=\"search_results\"></table>")
@@ -1066,7 +1106,7 @@ class MovieHashMatchTests(unittest.TestCase):
         provider = self.mod.OpenSubtitlesOrgProvider()
         calls = []
 
-        def fake_get(url, config):
+        def fake_get(url, config, deadline=None):
             calls.append(url)
             if "search/sublanguageid-all/imdbid-1480055" in url:
                 return FakeResponse(url, text=SEARCH_HTML)
@@ -1159,7 +1199,7 @@ class TransportRetryTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(len(self.slept), 1)
 
-    def test_http_get_honors_retry_after_header_on_transient_429(self):
+    def test_http_get_stops_on_explicit_429_without_reusing_identity(self):
         success = FakeResponse(
             "https://www.opensubtitles.org/en/search",
             text="<html><title>Search</title></html>",
@@ -1177,11 +1217,11 @@ class TransportRetryTests(unittest.TestCase):
         )
         provider = self.mod.OpenSubtitlesOrgProvider()
 
-        response = provider._http_get("https://www.opensubtitles.org/en/search", {})
+        with self.assertRaises(self.mod.RateLimited):
+            provider._http_get("https://www.opensubtitles.org/en/search", {})
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(calls), 2)
-        self.assertEqual(self.slept, [2.0])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.slept, [])
 
     def test_http_get_does_not_retry_4xx_and_propagates_first_failure(self):
         calls = self._install_session(
@@ -1432,7 +1472,7 @@ class TitleOnlyDirectListingTests(unittest.TestCase):
         landing_url = "https://www.opensubtitles.org/en/search/sublanguageid-all/idmovie-77777"
         calls = []
 
-        def fake_get(url, config):
+        def fake_get(url, config, deadline=None):
             calls.append(url)
             if "search2?" in url:
                 # The site redirects a title search onto the real listing URL.
@@ -1460,7 +1500,7 @@ class TitleOnlyDirectListingTests(unittest.TestCase):
         provider = self.mod.OpenSubtitlesOrgProvider()
         calls = []
 
-        def fake_get(url, config):
+        def fake_get(url, config, deadline=None):
             calls.append(url)
             if "search2?" in url and "SubLanguageID=hin" in url:
                 return FakeResponse(
@@ -1494,7 +1534,7 @@ class TitleOnlyDirectListingTests(unittest.TestCase):
         provider = self.mod.OpenSubtitlesOrgProvider()
         calls = []
 
-        def fake_get(url, config):
+        def fake_get(url, config, deadline=None):
             calls.append(url)
             # Served in place: the response URL is the one we asked for.
             return FakeResponse(url, text=HINDI_SUBTITLES_HTML)
@@ -1636,7 +1676,7 @@ class LandedUrlTrustTests(unittest.TestCase):
         provider = self.mod.OpenSubtitlesOrgProvider()
         calls = []
 
-        def fake_get(url, config):
+        def fake_get(url, config, deadline=None):
             calls.append(url)
             return FakeResponse(
                 "https://evil.example/en/search/sublanguageid-all/idmovie-1",
@@ -1686,7 +1726,7 @@ class LandedUrlTrustTests(unittest.TestCase):
         provider = self.mod.OpenSubtitlesOrgProvider()
         calls = []
 
-        def fake_get(url, config):
+        def fake_get(url, config, deadline=None):
             calls.append(url)
             if "sublanguageid-all" in url:
                 return FakeResponse(
@@ -1743,7 +1783,7 @@ class RefetchContainmentTests(unittest.TestCase):
         provider = self.mod.OpenSubtitlesOrgProvider()
         landing_url = "https://www.opensubtitles.org/en/search/sublanguageid-all/idmovie-77777"
 
-        def fake_get(url, config):
+        def fake_get(url, config, deadline=None):
             if "search2?" in url:
                 return FakeResponse(landing_url, text=SUBTITLES_HTML)
             raise error
@@ -1771,7 +1811,7 @@ class RefetchContainmentTests(unittest.TestCase):
         provider = self.mod.OpenSubtitlesOrgProvider()
         calls = []
 
-        def fake_get(url, config):
+        def fake_get(url, config, deadline=None):
             calls.append(url)
             return FakeResponse(url, text=SUBTITLES_HTML)
 
@@ -1844,7 +1884,7 @@ class MontenegrinListingTests(unittest.TestCase):
         provider = self.mod.OpenSubtitlesOrgProvider()
         calls = []
 
-        def fake_get(url, config):
+        def fake_get(url, config, deadline=None):
             calls.append(url)
             return FakeResponse(url, text=SERBIAN_SLUG_SUBTITLES_HTML)
 
@@ -1895,7 +1935,7 @@ class AnonymousEpisodeRoutingTests(unittest.TestCase):
         provider = self.mod.OpenSubtitlesOrgProvider()
         calls = []
 
-        def get(url, config):
+        def get(url, config, deadline=None):
             self.assertEqual(config, {})
             calls.append(url)
             if "/download/sub/" in url:
@@ -2036,7 +2076,16 @@ class AnubisRecoveryTests(unittest.TestCase):
         return response
 
     def _provider(self, responses):
+        remaining = list(responses)
+        calls = []
+
         class Session(FakeSession):
+            def __init__(self):
+                self.responses = remaining
+                self.calls = calls
+                self.headers = {}
+                self.cookies = RequestsCookieJar()
+
             def get(self, url, **kwargs):
                 response = super().get(url, **kwargs)
                 if isinstance(response, Exception):
@@ -2045,14 +2094,64 @@ class AnubisRecoveryTests(unittest.TestCase):
                     self.cookies.update(hop.cookies)
                 return response
 
-        session = Session(responses)
-        session.cookies = RequestsCookieJar()
+        class FakeCloudscraper:
+            @staticmethod
+            def create_scraper(**kwargs):
+                return Session()
+
+        self.mod.cloudscraper = FakeCloudscraper
+        session = Session()
         session.cookies.set("PHPSESSID", "keep", domain="www.opensubtitles.org", path="/")
         provider = self.mod.OpenSubtitlesOrgProvider()
         provider._session = session
         return provider, session
 
-    def test_failed_pass_recovers_with_fresh_challenge_and_preserves_unrelated_cookies(self):
+    def test_rejected_browser_identity_recovers_with_fresh_session(self):
+        created = []
+
+        class RejectedSession(FakeSession):
+            def get(self, url, **kwargs):
+                self.calls.append(("GET", url, kwargs))
+                return FakeResponse(url, status_code=403)
+
+        class ClearedSession(FakeSession):
+            def get(self, url, **kwargs):
+                self.calls.append(("GET", url, kwargs))
+                return FakeResponse(url, text=SUBTITLES_HTML)
+
+        class FakeCloudscraper:
+            @staticmethod
+            def create_scraper(**kwargs):
+                session = RejectedSession([]) if not created else ClearedSession([])
+                if not created:
+                    session.cookies.set("techaro.lol-anubis-auth", "stale", domain=".opensubtitles.org")
+                created.append((kwargs, session))
+                return session
+
+        class GeneratedAgent:
+            def __init__(self, text):
+                self.text = text
+
+        self.mod.cloudscraper = FakeCloudscraper
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        with patch("ua_generator.generate", side_effect=[
+            GeneratedAgent("Mozilla/5.0 Chrome/127.0.0.0"),
+            GeneratedAgent("Mozilla/5.0 Chrome/128.0.0.0"),
+        ]), patch.object(self.mod.time, "sleep"):
+            response = provider._http_get(self.url, {})
+
+        self.assertEqual(response.text, SUBTITLES_HTML)
+        self.assertEqual(len(created), 2)
+        self.assertEqual(len(created[0][1].calls), 1)
+        self.assertEqual(len(created[1][1].calls), 1)
+        self.assertNotEqual(created[0][0]["browser"]["custom"], created[1][0]["browser"]["custom"])
+        self.assertEqual(created[0][1].headers["User-Agent"], created[0][0]["browser"]["custom"])
+        self.assertEqual(created[1][1].headers["User-Agent"], created[1][0]["browser"]["custom"])
+        self.assertEqual(len(created[0][1].cookies), 1)
+        self.assertEqual(len(created[1][1].cookies), 0)
+        self.assertIs(provider._session, created[1][1])
+
+    def test_failed_pass_recovers_with_fresh_challenge_and_discards_rejected_cookies(self):
         provider, session = self._provider([
             self._response(self.challenge, 401), self._response(self.challenge, 401),
             self._response(status=401),
@@ -2064,8 +2163,9 @@ class AnubisRecoveryTests(unittest.TestCase):
         self.assertEqual(response.text, SUBTITLES_HTML)
         self.assertEqual(len(session.calls), 7)
         self.assertEqual(sleep.call_count, 1)
-        self.assertEqual(session.cookies.get("PHPSESSID"), "keep")
-        self.assertEqual(session.cookies.get("techaro.lol-anubis-auth"), self.secret)
+        self.assertIsNot(provider._session, session)
+        self.assertIsNone(provider._session.cookies.get("PHPSESSID"))
+        self.assertEqual(provider._session.cookies.get("techaro.lol-anubis-auth"), self.secret)
 
     def test_malformed_challenges_stop_after_three_attempts_with_safe_diagnostics(self):
         malformed = '<script id="anubis_challenge">{"private":"' + self.secret + '"}</script>'
@@ -2172,6 +2272,7 @@ class AnubisRecoveryTests(unittest.TestCase):
                     with self.assertRaises(self.mod.RateLimited):
                         provider._http_get(self.url, {})
                 self.assertEqual(len(session.calls), len(responses))
+                self.assertIs(provider._session, session)
                 sleep.assert_not_called()
 
     def test_invalid_challenge_fields_fail_as_bounded_provider_errors(self):
@@ -2188,6 +2289,147 @@ class AnubisRecoveryTests(unittest.TestCase):
                     with self.assertRaises(self.mod.ServiceUnavailable):
                         provider._http_get(self.url, {})
                 self.assertEqual(len(session.calls), 6)
+
+
+class RecoveryDeadlineTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+    @staticmethod
+    def timeout_total(value):
+        return sum(value) if isinstance(value, tuple) else value * 2
+
+    def test_search_pages_share_one_deadline(self):
+        calls = []
+        clock = self
+
+        class Session(FakeSession):
+            def get(self, url, **kwargs):
+                calls.append((url, kwargs["timeout"]))
+                if len(calls) == 1:
+                    clock.now += 70
+                return FakeResponse(url, text="<html></html>")
+
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        provider._session = Session([])
+        with patch.object(self.mod.time, "monotonic", self.monotonic):
+            self.assertEqual(provider.search(HASH_EPISODE_VIDEO, LANGUAGES, {}), [])
+
+        self.assertEqual(len(calls), 2)
+        self.assertLessEqual(self.timeout_total(calls[1][1]), 40)
+
+    def test_download_page_and_link_share_one_deadline(self):
+        calls = []
+        clock = self
+
+        class Session(FakeSession):
+            def get(self, url, **kwargs):
+                calls.append((url, kwargs["timeout"]))
+                if len(calls) == 1:
+                    clock.now += 100
+                    return FakeResponse(url, text='<html><a href="/en/download/sub/123">download</a></html>')
+                return FakeResponse(url, content=SRT_BODY)
+
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        provider._session = Session([])
+        with patch.object(self.mod.time, "monotonic", self.monotonic):
+            result = provider.download({"subtitle_id": "123", "filename": "episode.srt"}, LANGUAGES[0], {})
+
+        self.assertTrue(result)
+        self.assertEqual(len(calls), 2)
+        self.assertLessEqual(self.timeout_total(calls[1][1]), 10)
+
+    def test_challenge_fetch_and_pass_consume_the_same_budget(self):
+        challenge = '<script id="anubis_challenge">' + json.dumps({"challenge": {
+            "id": "id", "randomData": "seed", "difficulty": 0, "method": "fast",
+        }}) + "</script>"
+        calls = []
+        clock = self
+
+        class Session(FakeSession):
+            def get(self, url, **kwargs):
+                calls.append((url, kwargs["timeout"]))
+                if len(calls) == 1:
+                    clock.now += 60
+                    return FakeResponse(url, status_code=401, text=challenge)
+                if len(calls) == 2:
+                    clock.now += 40
+                    return FakeResponse(url, status_code=401, text=challenge)
+                clock.now += clock.timeout_total(kwargs["timeout"])
+                raise TimeoutError("pass timed out")
+
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        provider._session = Session([])
+        with patch.object(self.mod.time, "monotonic", self.monotonic), patch.object(
+            self.mod.time, "sleep", self.sleep
+        ):
+            with self.assertRaisesRegex(self.mod.ServiceUnavailable, "stage=pass_submit budget_exhausted"):
+                provider._http_get("https://www.opensubtitles.org/en/search", {"timeout": 100})
+
+        self.assertEqual(len(calls), 3)
+        self.assertLessEqual(self.timeout_total(calls[2][1]), 10)
+        self.assertLessEqual(self.now, 110)
+
+    def test_flaresolverr_timeout_cannot_exceed_remaining_budget(self):
+        clock = self
+        calls = []
+
+        class Session(FakeSession):
+            def get(self, url, **kwargs):
+                calls.append((url, kwargs["timeout"]))
+                if len(calls) == 1:
+                    clock.now += 50
+                    return FakeResponse(url, status_code=403, text="Just a moment... challenge-platform",
+                                        headers={"cf-ray": "abc"})
+                return FakeResponse(url, text="<html>search</html>")
+
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        provider._session = Session([])
+        helper_calls = []
+        provider._post_flaresolverr = lambda url, payload, timeout: helper_calls.append((payload, timeout)) or {"solution": {}}
+        with patch.object(self.mod.time, "monotonic", self.monotonic):
+            provider._http_get("https://www.opensubtitles.org/en/search", {
+                "flaresolverr_url": "http://127.0.0.1:8191/v1", "flaresolverr_timeout_ms": 120000,
+            })
+
+        self.assertEqual(len(helper_calls), 1)
+        self.assertLessEqual(helper_calls[0][0]["maxTimeout"], 59000)
+        self.assertLessEqual(helper_calls[0][1], 60)
+        self.assertLessEqual(self.timeout_total(calls[1][1]), 60)
+
+    def test_flaresolverr_timeout_reports_budget_stage_without_retry(self):
+        calls = []
+        clock = self
+
+        class Session(FakeSession):
+            def get(self, url, **kwargs):
+                calls.append(url)
+                return FakeResponse(url, status_code=403, text="Just a moment... challenge-platform",
+                                    headers={"cf-ray": "abc"})
+
+        provider = self.mod.OpenSubtitlesOrgProvider()
+        provider._session = Session([])
+
+        def slow_helper(url, payload, timeout):
+            clock.now += timeout
+            raise self.mod.ServiceUnavailable("FlareSolverr unavailable")
+
+        provider._post_flaresolverr = slow_helper
+        with patch.object(self.mod.time, "monotonic", self.monotonic):
+            with self.assertRaisesRegex(self.mod.ServiceUnavailable, "stage=flaresolverr budget_exhausted"):
+                provider._http_get("https://www.opensubtitles.org/en/search", {
+                    "flaresolverr_url": "http://127.0.0.1:8191/v1", "flaresolverr_timeout_ms": 120000,
+                })
+
+        self.assertEqual(len(calls), 1)
+        self.assertLessEqual(self.now, 110)
 
 
 class ReturnedIMDbScoringTests(unittest.TestCase):
@@ -2208,7 +2450,7 @@ class ReturnedIMDbScoringTests(unittest.TestCase):
                     provider = self.mod.OpenSubtitlesOrgProvider()
                     calls = []
 
-                    def get(url, config):
+                    def get(url, config, deadline=None):
                         calls.append(url)
                         self.assertEqual(urlparse(url).path, "/en/search2")
                         if fail_refetch and len(calls) > 1:
@@ -2222,7 +2464,7 @@ class ReturnedIMDbScoringTests(unittest.TestCase):
     def test_tag_listing_does_not_claim_an_unqueried_imdb(self):
         provider = self.mod.OpenSubtitlesOrgProvider()
 
-        def get(url, config):
+        def get(url, config, deadline=None):
             self.assertIn("/tag-", urlparse(url).path)
             return FakeResponse(url, text=SUBTITLES_HTML)
 
@@ -2233,14 +2475,14 @@ class ReturnedIMDbScoringTests(unittest.TestCase):
         provider = self.mod.OpenSubtitlesOrgProvider()
         search_html = SEARCH_HTML.replace("imdbid-1480055", "idmovie-77777").replace(
             '<a href="https://www.imdb.com/title/tt1480055/">IMDb</a>', "")
-        provider._http_get = lambda url, config: FakeResponse(
+        provider._http_get = lambda url, config, deadline=None: FakeResponse(
             url, text=search_html if "/search2?" in url else SUBTITLES_HTML)
         self.assert_episode_without_imdb(provider.search(dict(EPISODE_VIDEO, imdb_id=None), LANGUAGES, {}))
 
     def test_parsed_result_preserves_confirmed_series_imdb(self):
         provider = self.mod.OpenSubtitlesOrgProvider()
         search_html = SEARCH_HTML.replace("1480055", "0944947")
-        provider._http_get = lambda url, config: FakeResponse(
+        provider._http_get = lambda url, config, deadline=None: FakeResponse(
             url, text=search_html if "/search2?" in url else SUBTITLES_HTML)
         results = provider.search(dict(EPISODE_VIDEO, imdb_id=None), LANGUAGES, {})
         self.assertEqual(len(results), 1)
@@ -2257,7 +2499,7 @@ class ReturnedIMDbScoringTests(unittest.TestCase):
         search_html = '<table id="search_results">' + "".join(rows) + "</table>"
         calls = []
 
-        def get(url, config):
+        def get(url, config, deadline=None):
             self.assertFalse(config.get("username") or config.get("password"))
             calls.append(url)
             if len(calls) == 1:
@@ -2316,7 +2558,7 @@ class ReturnedIMDbScoringTests(unittest.TestCase):
         for returned_url, matched in urls:
             with self.subTest(returned_url=returned_url):
                 provider = self.mod.OpenSubtitlesOrgProvider()
-                provider._http_get = lambda url, config: FakeResponse(returned_url, text=SUBTITLES_HTML)
+                provider._http_get = lambda url, config, deadline=None: FakeResponse(returned_url, text=SUBTITLES_HTML)
                 results = provider.search(dict(EPISODE_VIDEO, imdb_id=None), LANGUAGES, {})
                 self.assertEqual(len(results), 1)
                 self.assertEqual("imdb_id" in results[0]["matches"], matched)
@@ -2328,7 +2570,7 @@ class ReturnedIMDbScoringTests(unittest.TestCase):
                 provider = self.mod.OpenSubtitlesOrgProvider()
                 calls = []
 
-                def get(url, config):
+                def get(url, config, deadline=None):
                     calls.append(url)
                     if len(calls) == 1:
                         returned = (f"{self.mod.BASE_URL}/en/search/sublanguageid-all/imdbid-{initial_id}"
@@ -2348,7 +2590,7 @@ class ReturnedIMDbScoringTests(unittest.TestCase):
         for video in videos:
             with self.subTest(kind=video["kind"]):
                 provider = self.mod.OpenSubtitlesOrgProvider()
-                provider._http_get = lambda url, config: FakeResponse(url, text=SUBTITLES_HTML)
+                provider._http_get = lambda url, config, deadline=None: FakeResponse(url, text=SUBTITLES_HTML)
                 results = provider.search(video, LANGUAGES, {})
                 self.assertEqual(len(results), 1)
                 self.assertIn("imdb_id", results[0]["matches"])

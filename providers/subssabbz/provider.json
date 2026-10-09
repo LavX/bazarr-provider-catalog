@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "63a21f4a778068a9bb14ccf84020cff1507f60cc1c83022d5cc237729221c24a",
+  "bundle_sha256": "b37de3d6d5fb750bf6612bb16c3983e98c41c5e4faa9d44576996bdb4e2b27a5",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -16,13 +16,21 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Scrapes SubsSabBz for Bulgarian and English movie and episode subtitles. ZIP and RAR downloads are supported.",
   "entry_class": "SubsSabBzProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "9fb08869a1578b52e54de5050dba55ec3f2b3429d1ace3abf589055c113f473b"
+    "provider.py": "8811cebb7a5a1330cc613b58064bf78974c1aa75901a0024feb3d1733dd5b26c"
   },
   "languages": [
     "bul",
@@ -45,5 +53,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.6"
+  "version": "0.1.7"
 }

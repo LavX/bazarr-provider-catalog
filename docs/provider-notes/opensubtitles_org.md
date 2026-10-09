@@ -1,33 +1,19 @@
 # OpenSubtitles.org provider notes
 
-Historical provider id: `opensubtitles`.
-
-Catalog provider id: `opensubtitles`. The plugin reuses the built-in id; a trusted catalog install on the Provider Hub migration allow-list overwrites the built-in in place, so there is no duplicate provider and the existing `settings.opensubtitles` config and compat moviehash routing keep working.
+Catalog provider id: `opensubtitles`. A trusted catalog installation replaces the built-in provider under the same id, so existing `settings.opensubtitles` configuration and OpenSubtitles file-hash matching continue to work.
 
 ## Public behavior
 
-- Supported media: movies and episodes.
-- Default mode: external scraper helper at `http://localhost:8000`.
-- Helper health endpoint: `GET /health`.
-- Helper search endpoints:
-  - `POST /api/v1/search/tv`
-  - `POST /api/v1/search/movies`
-- Helper subtitle endpoint: `POST /api/v1/subtitles`.
-- Helper download endpoint: `POST /api/v1/download/subtitle`.
-- Legacy XML-RPC mode remains available through `api.opensubtitles.org/xml-rpc` or `vip-api.opensubtitles.org/xml-rpc`.
+- Searches movies and episodes on `www.opensubtitles.org`, then follows subtitle pages and download links on the site's own hosts.
+- Creates one randomized desktop Chrome identity per provider session. The browser header and cookies stay together across requests. An explicit Anubis failure or HTTP 401/403 replaces the whole session and retries within the existing three-attempt budget.
+- Solves Anubis challenges inline. `ai-cloudscraper` handles Cloudflare where possible; an optional FlareSolverr `/v1` endpoint is used only for a remaining Cloudflare browser challenge. A FlareSolverr user agent stays paired with its returned cookies until the session is replaced.
+- Stops immediately on HTTP 429, including rate limits returned by Anubis endpoints. Repeated challenge failures become a visible service error after the bounded attempts.
+- Shares a 110-second monotonic budget across every network step in one search or download. Direct provider probes have the same bound. Each request and optional FlareSolverr call receives a timeout limited by the remaining budget; new retries, challenge computation, and delays stop when it is exhausted, leaving time for the host worker to report the error.
 
 ## Compatibility notes
 
 - The worker keeps the legacy OpenSubtitles file hash key `opensubtitles`.
-- XML-RPC mode preserves hash, tag, and IMDB criteria construction.
-- Forced subtitles follow the legacy `only_foreign` and `also_foreign` behavior.
-- Hearing-impaired variants must be requested as hearing-impaired language payloads.
-- Wrong FPS subtitles keep the candidate but drop matches when `skip_wrong_fps` is enabled.
+- Forced subtitles follow `only_foreign` and `also_foreign`; hearing-impaired variants use the requested language payload.
+- When `skip_wrong_fps` is enabled, subtitles with a different FPS remain candidates but lose match claims.
 
-## Core promotion gate
-
-`opensubtitles` is on the Provider Hub built-in migration allow-list (`MIGRATED_BUILT_IN_PROVIDER_IDS`), so a trusted catalog plugin that reuses the id replaces the built-in directly via the same-id registry overwrite. No separate legacy alias is required.
-
-## Live smoke status
-
-Local verification on 2026-05-31 did not run against the helper because `localhost:8000` and `127.0.0.1:8000` were not listening. Unit fixtures cover the helper API contract, but live compat proof still requires a running OpenSubtitles scraper helper.
+An origin outage, account quota, or a changed challenge protocol can still block a search. A successful anonymous fetch does not establish download acceptance. Verify search, download-link creation, and a non-empty subtitle stream on the target Bazarr instance before promoting a candidate.

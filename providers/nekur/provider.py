@@ -13,6 +13,9 @@ import urllib.parse
 import urllib.request
 import zipfile
 
+import ua_generator
+from ua_generator.options import Options
+
 PROVIDER_ID = "nekur"
 BASE_URL = "https://subtitri.nekur.net"
 SEARCH_URL = f"{BASE_URL}/modules/Subtitles.php"
@@ -20,10 +23,6 @@ HTTP_TIMEOUT_SECONDS = 10
 SUPPORTED_LANGUAGES = {"lav": "lv"}
 LANGUAGE_ALIASES = {"lv": "lav", "lva": "lav", "lva-lv": "lav"}
 SUBTITLE_EXTENSIONS = (".srt", ".sub", ".ssa", ".ass", ".vtt")
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
-)
 
 _ROW_RE = re.compile(r"<tr\b[^>]*>(?P<body>.*?)</tr>", re.I | re.S)
 _CELL_RE = re.compile(r"<t[dh]\b[^>]*>(?P<body>.*?)</t[dh]>", re.I | re.S)
@@ -95,13 +94,21 @@ def derive_matches(video, item, searched_title=None):
 
 
 class NekurProvider:
+    def __init__(self):
+        self._user_agent = ua_generator.generate(
+            device="desktop",
+            platform=("linux", "windows"),
+            browser=("firefox", "chrome"),
+            options=Options(latest_versions=True),
+        ).text
+
     def _http_post_search(self, title, timeout=HTTP_TIMEOUT_SECONDS):
         data = urllib.parse.urlencode({"ajax": "1", "sSearch": title}).encode("utf-8")
         request = urllib.request.Request(
             SEARCH_URL,
             data=data,
             headers={
-                "User-Agent": USER_AGENT,
+                "User-Agent": self._user_agent,
                 "Referer": f"{BASE_URL}/",
                 "Content-Type": "application/x-www-form-urlencoded",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -122,7 +129,7 @@ class NekurProvider:
         request = urllib.request.Request(
             url,
             headers={
-                "User-Agent": USER_AGENT,
+                "User-Agent": self._user_agent,
                 "Referer": f"{BASE_URL}/",
                 "Accept": "*/*",
             },

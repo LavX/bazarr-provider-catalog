@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "722432a7b32a491a2b7497c1a35798067adcefa6182490cee13e2fb87f43fc88",
+  "bundle_sha256": "f9e3b1a69d2bcda3a374913d791f6bf084cbb787ee55e948296f951141f67443",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -16,14 +16,22 @@
     "type": "object"
   },
   "dependencies": {
-    "requirements": []
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:877285e6adab3d6b0f9b295d954d121fc21a0305be8526038218e8f08be76df6"
+        ],
+        "name": "ua-generator",
+        "version": "2.1.6"
+      }
+    ]
   },
   "description": "Scrapes subhd.tv for community subtitle files. No login or API key required.",
   "entry_class": "SubHDProvider",
   "entry_module": "provider",
   "files": {
     "captcha_templates.py": "92d62df74786303aac9b368f6be1b975abaef3ea285b1aca694a372372b056bf",
-    "provider.py": "837ee1f5ef79082d67fa693489934e57c073690ec0899fa0324481d9e05ce0e4"
+    "provider.py": "a0b22a8f5a500b5605ff3131ed3fa70add5b26ed9fb9edc3f400d92c7e166b68"
   },
   "languages": [
     "zho",
@@ -59,5 +67,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.4"
+  "version": "0.1.5"
 }
