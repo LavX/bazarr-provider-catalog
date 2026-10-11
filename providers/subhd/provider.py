@@ -1,14 +1,11 @@
 """SubHD provider for the Bazarr+ Provider Hub catalog."""
 
 import base64 as _base64
-import functools
 import hashlib as _hashlib
 import html
 import io
 import json
-import os
 import re
-import sys
 import time
 import unicodedata
 import urllib.parse
@@ -19,18 +16,12 @@ from http.cookiejar import CookieJar
 import ua_generator
 from ua_generator.options import Options
 
-_PROVIDER_DIR = os.path.dirname(__file__)
-if _PROVIDER_DIR and _PROVIDER_DIR not in sys.path:
-    sys.path.insert(0, _PROVIDER_DIR)
-
-from captcha_templates import CAPTCHA_TEMPLATE_ROWS
-
 PROVIDER_ID = "subhd"
 BASE_URL = "https://subhd.tv"
 API_DOWN_URL = f"{BASE_URL}/api/sub/down"
+API_PREPARE_DOWNLOAD_URL = f"{BASE_URL}/api/sub/prepare-download"
 HTTP_TIMEOUT_SECONDS = 15
 MAX_CANDIDATES_PER_QUERY = 12
-MAX_CAPTCHA_ATTEMPTS = 6
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt")
 
 
@@ -86,19 +77,16 @@ _DOWNLOAD_COUNT_RE = re.compile(
     rb'bi bi-download.*?</svg>\s*<span class="align-text-top me-3">(?P<count>\d+)</span>',
     re.I | re.S,
 )
-_RELEASE_RE = re.compile(rb'<div class="f16 fw-bold mb-2">(?P<release>.*?)</div>', re.I | re.S)
-_DOWN_LINK_RE = re.compile(
-    rb'<a class="btn btn-danger down"\s+sid="(?P<sid>[A-Za-z0-9]+)"\s+href="(?P<href>/down/[A-Za-z0-9]+)"',
+_RELEASE_RE = re.compile(rb'<div class="f16 fw-bold mb-2[^"]*">(?P<release>.*?)</div>', re.I | re.S)
+# Detail pages carry <button class="... down subtitle-prepare-download" data-sid=...>;
+# the one-time /down/ page carries <button class="... down download-submit" sid=...>.
+_DOWN_BUTTON_RE = re.compile(
+    rb'<(?:a|button)\b[^>]*\bclass="[^"]*\bdown\b[^"]*"[^>]*?\s(?:data-)?sid="(?P<sid>[A-Za-z0-9]+)"',
     re.I,
 )
-_DOWN_BUTTON_RE = re.compile(rb'<button class="btn btn-danger down"\s+sid="(?P<sid>[A-Za-z0-9]+)"', re.I)
 _FILE_RE = re.compile(rb'data-filename="(?P<filename>[^"]+)"', re.I)
-_TITLE_EN_RE = re.compile(rb"<b>Title</b>\s*[:\xef\xbc\x9a]\s*(?P<title>.*?)<br>", re.I | re.S)
+_TITLE_EN_RE = re.compile(rb"<b>Title</b>\s*(?::|\xef\xbc\x9a)\s*(?P<title>.*?)<br>", re.I | re.S)
 _NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
-_CAPTCHA_PATH_RE = re.compile(r"<path\b(?P<attrs>[^>]*)>", re.I | re.S)
-_CAPTCHA_D_RE = re.compile(r'\bd="(?P<d>[^"]+)"')
-_CAPTCHA_NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
-_CAPTCHA_TOKEN_RE = re.compile(r"[MmLlQqCcZz]|-?\d+(?:\.\d+)?")
 
 
 def _decode(data):
@@ -233,21 +221,12 @@ def parse_search_results(html_bytes):
 def parse_detail_page(html_bytes, detail_url):
     if not html_bytes:
         return {}
-    down_match = _DOWN_LINK_RE.search(html_bytes)
     button_match = _DOWN_BUTTON_RE.search(html_bytes)
-    sid = None
-    href = None
-    if down_match:
-        sid = _decode(down_match.group("sid"))
-        href = _decode(down_match.group("href"))
-    elif button_match:
-        sid = _decode(button_match.group("sid"))
-        href = f"/down/{sid}"
     release_match = _RELEASE_RE.search(html_bytes)
     title_match = _TITLE_EN_RE.search(html_bytes)
     files = [_decode(match.group("filename")) for match in _FILE_RE.finditer(html_bytes)]
     return {
-        "subtitle_id": sid,
+        "subtitle_id": _decode(button_match.group("sid")) if button_match else None,
         "media_title": _strip_tags(title_match.group("title")) if title_match else "",
         "release_info": _strip_tags(release_match.group("release")) if release_match else "",
         "languages": _languages_from_block(html_bytes),
@@ -255,213 +234,44 @@ def parse_detail_page(html_bytes, detail_url):
         "download_count": _download_count(html_bytes),
         "files": files,
         "detail_url": detail_url,
-        "download_url": _absolute_url(href),
     }
 
 
+def parse_prepare_download_response(body):
+    data = _parse_json_response(body, "prepare-download")
+    url = data.get("url")
+    if data.get("success") is not True or not isinstance(url, str) or "/down/" not in url:
+        raise ValueError(f"subhd prepare-download failed: {data.get('msg') or 'no temp page URL'}")
+    return _absolute_url(url)
+
+
+def parse_temp_page_sid(html_bytes, temp_url):
+    match = _DOWN_BUTTON_RE.search(html_bytes or b"")
+    if match:
+        return _decode(match.group("sid"))
+    return urllib.parse.urlparse(temp_url).path.rstrip("/").rsplit("/", 1)[-1]
+
+
 def parse_download_response(body):
-    data = _parse_download_response_data(body)
-    if not data.get("success"):
-        raise ValueError(data.get("msg") or "subhd download API failed")
-    if data.get("pass") is False:
-        raise ValueError("subhd captcha required")
+    data = _parse_json_response(body, "download")
+    # pass=false is a refusal (rate limit or spent temp page) with a plain-text msg.
+    # The temp page is single-use, so retrying the same sid cannot succeed.
+    if data.get("success") is not True or data.get("pass") is False:
+        raise ValueError(f"subhd download refused: {data.get('msg') or 'unknown error'}")
     url = data.get("url")
     if not isinstance(url, str) or not url:
         raise ValueError("subhd download API returned no file URL")
     return url
 
 
-def _parse_download_response_data(body):
+def _parse_json_response(body, api_name):
     try:
-        return json.loads(_decode(body))
+        data = json.loads(_decode(body))
     except json.JSONDecodeError as exc:
-        raise ValueError("subhd download API returned invalid JSON") from exc
-
-
-def _captcha_svg_from_response(body):
-    data = _parse_download_response_data(body)
-    if data.get("pass") is not False:
-        return None
-    msg = data.get("msg")
-    if isinstance(msg, str) and msg.lstrip().startswith("<svg"):
-        return msg
-    return None
-
-
-def _extract_captcha_paths(svg_text):
-    paths = []
-    for match in _CAPTCHA_PATH_RE.finditer(svg_text or ""):
-        tag = match.group(0)
-        if 'fill="none"' in tag or "fill='none'" in tag:
-            continue
-        path_match = _CAPTCHA_D_RE.search(tag)
-        if not path_match:
-            continue
-        path = path_match.group("d")
-        numbers = [float(value) for value in _CAPTCHA_NUMBER_RE.findall(path)]
-        xs = numbers[0::2]
-        if xs:
-            paths.append((min(xs), path))
-    return [path for _, path in sorted(paths)]
-
-
-def _captcha_path_contours(path):
-    tokens = _CAPTCHA_TOKEN_RE.findall(path)
-    index = 0
-    command = None
-    current = (0.0, 0.0)
-    start = None
-    contours = []
-    points = []
-
-    def is_command(token):
-        return len(token) == 1 and token.isalpha()
-
-    def number():
-        nonlocal index
-        value = float(tokens[index])
-        index += 1
-        return value
-
-    def close_current_contour():
-        nonlocal points, start
-        if start and (not points or points[-1] != start):
-            points.append(start)
-        if points:
-            contours.append(points)
-            points = []
-        start = None
-
-    while index < len(tokens):
-        if is_command(tokens[index]):
-            command = tokens[index]
-            index += 1
-        if command in "Mm":
-            x, y = number(), number()
-            current = (x, y)
-            start = current
-            if points:
-                contours.append(points)
-                points = []
-            points.append(current)
-            command = "L" if command == "M" else "l"
-        elif command in "Ll":
-            x, y = number(), number()
-            if command == "l":
-                x += current[0]
-                y += current[1]
-            current = (x, y)
-            points.append(current)
-        elif command in "Qq":
-            x1, y1, x, y = number(), number(), number(), number()
-            if command == "q":
-                x1 += current[0]
-                y1 += current[1]
-                x += current[0]
-                y += current[1]
-            x0, y0 = current
-            for step in range(1, 13):
-                t = step / 12
-                mt = 1 - t
-                points.append(
-                    (
-                        mt * mt * x0 + 2 * mt * t * x1 + t * t * x,
-                        mt * mt * y0 + 2 * mt * t * y1 + t * t * y,
-                    )
-                )
-            current = (x, y)
-        elif command in "Cc":
-            x1, y1, x2, y2, x, y = number(), number(), number(), number(), number(), number()
-            if command == "c":
-                x1 += current[0]
-                y1 += current[1]
-                x2 += current[0]
-                y2 += current[1]
-                x += current[0]
-                y += current[1]
-            x0, y0 = current
-            for step in range(1, 17):
-                t = step / 16
-                mt = 1 - t
-                points.append(
-                    (
-                        mt**3 * x0 + 3 * mt * mt * t * x1 + 3 * mt * t * t * x2 + t**3 * x,
-                        mt**3 * y0 + 3 * mt * mt * t * y1 + 3 * mt * t * t * y2 + t**3 * y,
-                    )
-                )
-            current = (x, y)
-        elif command in "Zz":
-            close_current_contour()
-        else:
-            raise ValueError("subhd captcha contains unsupported SVG path command")
-    if points:
-        contours.append(points)
-    return contours
-
-
-def _rasterize_captcha_path(path, size=32, pad=2):
-    contours = _captcha_path_contours(path)
-    all_points = [point for contour in contours for point in contour]
-    if not all_points:
-        raise ValueError("subhd captcha contained an empty glyph")
-    min_x = min(x for x, _ in all_points)
-    max_x = max(x for x, _ in all_points)
-    min_y = min(y for _, y in all_points)
-    max_y = max(y for _, y in all_points)
-    scale = (size - 2 * pad) / max(max_x - min_x, max_y - min_y)
-    offset_x = (size - (max_x - min_x) * scale) / 2 - min_x * scale
-    offset_y = (size - (max_y - min_y) * scale) / 2 - min_y * scale
-    scaled_contours = [
-        [(x * scale + offset_x, y * scale + offset_y) for x, y in contour]
-        for contour in contours
-    ]
-    rows = []
-    for pixel_y in range(size):
-        y = pixel_y + 0.5
-        row = 0
-        for pixel_x in range(size):
-            x = pixel_x + 0.5
-            winding = 0
-            for contour in scaled_contours:
-                for (x1, y1), (x2, y2) in zip(contour, contour[1:]):
-                    if (y1 <= y < y2) or (y2 <= y < y1):
-                        intersection_x = x1 + (y - y1) * (x2 - x1) / (y2 - y1) if y2 != y1 else x1
-                        if x < intersection_x:
-                            winding += 1 if y1 < y2 else -1
-            row = (row << 1) | (1 if winding else 0)
-        rows.append(row)
-    return tuple(rows)
-
-
-@functools.lru_cache(maxsize=1)
-def _captcha_templates():
-    templates = []
-    for line in CAPTCHA_TEMPLATE_ROWS.splitlines():
-        parts = line.split()
-        if len(parts) != 33:
-            raise ValueError("subhd captcha template row is invalid")
-        templates.append((parts[0], tuple(int(row, 16) for row in parts[1:])))
-    return tuple(templates)
-
-
-def _captcha_bitmap_distance(left, right):
-    return sum((left_row ^ right_row).bit_count() for left_row, right_row in zip(left, right))
-
-
-def solve_subhd_captcha(svg_text):
-    paths = _extract_captcha_paths(svg_text)
-    if len(paths) != 4:
-        raise ValueError("subhd captcha solver expected 4 glyphs")
-    solved = []
-    templates = _captcha_templates()
-    for path in paths:
-        bitmap = _rasterize_captcha_path(path)
-        character, _ = min(
-            templates,
-            key=lambda item: _captcha_bitmap_distance(bitmap, item[1]),
-        )
-        solved.append(character)
-    return "".join(solved)
+        raise ValueError(f"subhd {api_name} API returned invalid JSON") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"subhd {api_name} API returned invalid JSON")
+    return data
 
 
 def _normalize(text):
@@ -582,6 +392,7 @@ class SubHDProvider:
             "Accept": "application/json",
             "Content-Type": "application/json",
             "Accept-Language": "en-US,en;q=0.9",
+            "X-Requested-With": "XMLHttpRequest",
         }
         if referer:
             headers["Referer"] = referer
@@ -589,9 +400,6 @@ class SubHDProvider:
         request = urllib.request.Request(url, data=data, headers=headers, method="POST")
         with self._opener.open(request, timeout=timeout) as response:
             return response.read()
-
-    def _solve_captcha(self, svg_text):
-        return solve_subhd_captcha(svg_text)
 
     def search(self, video, languages, config):
         config = dict(config or {})
@@ -668,7 +476,6 @@ class SubHDProvider:
                 "schema": 1,
                 "subtitle_id": subtitle_id,
                 "detail_url": entry["detail_url"],
-                "download_url": entry.get("download_url") or f"{BASE_URL}/down/{subtitle_id}",
                 "language": alpha3,
                 "format": fmt,
                 "release_info": entry.get("release_info"),
@@ -682,32 +489,19 @@ class SubHDProvider:
         payload = provider_payload or {}
         subtitle_id = payload.get("subtitle_id")
         detail_url = payload.get("detail_url")
-        download_url = payload.get("download_url")
-        if not subtitle_id or not detail_url or not download_url:
-            raise ValueError("subhd download requires subtitle_id, detail_url, and download_url")
+        if not subtitle_id or not detail_url:
+            raise ValueError("subhd download requires subtitle_id and detail_url")
+        # /down/{sid} answers 403 unless prepare-download issued it first, and the
+        # issued temp page must be fetched once before /api/sub/down accepts its sid.
         self._http_get(detail_url)
-        self._http_get(download_url, referer=detail_url)
-        final_url = None
-        captcha = ""
-        for attempt in range(MAX_CAPTCHA_ATTEMPTS):
-            api_body = self._http_post_json(
-                API_DOWN_URL,
-                {"sid": subtitle_id, "cap": captcha},
-                referer=download_url,
-            )
-            try:
-                final_url = parse_download_response(api_body)
-                break
-            except ValueError:
-                captcha_svg = _captcha_svg_from_response(api_body)
-                if not captcha_svg or attempt == MAX_CAPTCHA_ATTEMPTS - 1:
-                    raise
-                captcha = self._solve_captcha(captcha_svg)
-                if not captcha:
-                    raise ValueError("subhd captcha solver returned no answer")
-        if not final_url:
-            raise ValueError("subhd download API returned no file URL")
-        body = self._http_get(final_url, referer=download_url)
+        temp_url = parse_prepare_download_response(
+            self._http_post_json(API_PREPARE_DOWNLOAD_URL, {"sid": subtitle_id}, referer=detail_url)
+        )
+        temp_sid = parse_temp_page_sid(self._http_get(temp_url, referer=detail_url), temp_url)
+        final_url = parse_download_response(
+            self._http_post_json(API_DOWN_URL, {"sid": temp_sid}, referer=temp_url)
+        )
+        body = self._http_get(final_url, referer=temp_url)
         if _is_archive_body(body):
             # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back
             # to the host, which extracts the member and detects encoding. subhd serves

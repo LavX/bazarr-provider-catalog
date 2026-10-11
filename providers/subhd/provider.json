@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "f9e3b1a69d2bcda3a374913d791f6bf084cbb787ee55e948296f951141f67443",
+  "bundle_sha256": "2c8cc9471a8ef5473cdf87f5d6d4e9572fb3739aac0954b84531f12fc6e51755",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -30,8 +30,7 @@
   "entry_class": "SubHDProvider",
   "entry_module": "provider",
   "files": {
-    "captcha_templates.py": "92d62df74786303aac9b368f6be1b975abaef3ea285b1aca694a372372b056bf",
-    "provider.py": "a0b22a8f5a500b5605ff3131ed3fa70add5b26ed9fb9edc3f400d92c7e166b68"
+    "provider.py": "90f185d7d02046e1427ee772330fca5318b504432bb99354f18df37b518bbe6b"
   },
   "languages": [
     "zho",
@@ -67,5 +66,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.5"
+  "version": "0.1.6"
 }
