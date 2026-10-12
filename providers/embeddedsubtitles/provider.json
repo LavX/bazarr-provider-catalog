@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "55884265db6cb23fe67b1ff3435d2363d17628d3e6cc453d2514968c64f6efb6",
+  "bundle_sha256": "d50024c48b65b0c0a4e5014e33fa9928b57389f072eaf4e8e39be804d2c558b8",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -58,7 +58,7 @@
   "entry_class": "EmbeddedSubtitlesProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "6acd29d7ccabce6da716713076fb44e296830b73627318908ceedd7a0313777c"
+    "provider.py": "049a36e8f75f6fabda67510f3210051235ed3dd18621cb3d163167ead354eb99"
   },
   "languages": [
     "afr",
@@ -129,6 +129,7 @@
     "pan",
     "pol",
     "por",
+    "por-BR",
     "pus",
     "ron",
     "rus",
@@ -140,6 +141,7 @@
     "snd",
     "som",
     "spa",
+    "spa-MX",
     "sqi",
     "srp",
     "sun",
@@ -159,7 +161,8 @@
     "vie",
     "yid",
     "yor",
-    "zho"
+    "zho",
+    "zho-TW"
   ],
   "name": "Embedded Subtitles",
   "provider_id": "embeddedsubtitles",
@@ -178,5 +181,5 @@
     "movie",
     "episode"
   ],
-  "version": "0.1.4"
+  "version": "0.1.5"
 }

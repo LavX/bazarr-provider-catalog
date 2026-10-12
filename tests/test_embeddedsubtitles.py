@@ -151,6 +151,245 @@ class EmbeddedSubtitlesParserTests(unittest.TestCase):
         self.assertEqual(streams[3]["language"]["alpha3"], "por")
         self.assertNotIn("country_alpha2", streams[3]["language"])
 
+    def test_parse_streams_derives_country_from_brazilian_title_markers(self):
+        payload = {
+            "streams": [
+                {"index": 2, "codec_name": "subrip",
+                 "tags": {"language": "por", "title": "Portuguese (Brazil)"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                {"index": 3, "codec_name": "subrip",
+                 "tags": {"language": "por", "title": "PT-BR Full"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                {"index": 4, "codec_name": "subrip",
+                 "tags": {"language": "por", "title": "Português (Brasil)"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                {"index": 5, "codec_name": "subrip",
+                 "tags": {"language": "por", "title": "Português Brasileiro"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                {"index": 6, "codec_name": "subrip",
+                 "tags": {"language": "por", "title": "pob"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                {"index": 7, "codec_name": "subrip",
+                 "tags": {"language": "por", "title": "PTBR"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                {"index": 8, "codec_name": "subrip",
+                 "tags": {"language": "por", "title": "Portugais (Brésil)"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+            ]
+        }
+
+        streams = self.mod.parse_probe_streams(payload, {})
+
+        self.assertEqual(
+            [stream["language"].get("country_alpha2") for stream in streams],
+            ["BR", "BR", "BR", "BR", "BR", "BR", "BR"],
+        )
+        self.assertTrue(all(stream["language"]["alpha3"] == "por" for stream in streams))
+
+    def test_parse_streams_derives_country_from_spanish_and_chinese_titles(self):
+        payload = {
+            "streams": [
+                {"index": 2, "codec_name": "subrip",
+                 "tags": {"language": "spa", "title": "Español Latino"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                {"index": 3, "codec_name": "subrip",
+                 "tags": {"language": "spa", "title": "Español (Latinoamérica)"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                {"index": 4, "codec_name": "subrip",
+                 "tags": {"language": "spa", "title": "Espagnol (Mexicain)"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                {"index": 5, "codec_name": "subrip",
+                 "tags": {"language": "spa", "title": "Argentinean Spanish"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                {"index": 6, "codec_name": "subrip",
+                 "tags": {"language": "spa", "title": "Subtitulos Mexicanos"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                {"index": 7, "codec_name": "subrip",
+                 "tags": {"language": "spa", "title": "Spanisch (Lateinamerika)"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                {"index": 8, "codec_name": "subrip",
+                 "tags": {"language": "spa", "title": "Spanish (LAT)"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                {"index": 9, "codec_name": "subrip",
+                 "tags": {"language": "zho", "title": "Traditional Chinese"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                {"index": 10, "codec_name": "subrip",
+                 "tags": {"language": "zho", "title": "Chinese ZHHant"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                {"index": 11, "codec_name": "subrip",
+                 "tags": {"language": "zho", "title": "CHT"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                {"index": 12, "codec_name": "subrip",
+                 "tags": {"language": "zho", "title": "Chinese (Taiwan)"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                {"index": 13, "codec_name": "subrip",
+                 "tags": {"language": "zho", "title": "Taiwanese Mandarin"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                {"index": 14, "codec_name": "subrip",
+                 "tags": {"language": "zho", "title": "Chinois (traditionnel)"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                {"index": 15, "codec_name": "subrip",
+                 "tags": {"language": "zho", "title": "Chinese (TC)"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+            ]
+        }
+
+        streams = self.mod.parse_probe_streams(payload, {})
+
+        self.assertEqual(
+            [(stream["language"]["alpha3"], stream["language"].get("country_alpha2"))
+             for stream in streams],
+            [
+                ("spa", "MX"), ("spa", "MX"), ("spa", "MX"),
+                ("spa", "MX"), ("spa", "MX"), ("spa", "MX"), ("spa", "MX"),
+                ("zho", "TW"), ("zho", "TW"), ("zho", "TW"), ("zho", "TW"),
+                ("zho", "TW"), ("zho", "TW"), ("zho", "TW"),
+            ],
+        )
+
+    def test_parse_streams_title_marker_guards(self):
+        payload = {
+            "streams": [
+                # An underscored subtag maps at the tag level.
+                {"index": 2, "codec_name": "subrip",
+                 "tags": {"language": "pt_BR", "title": "Portuguese"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                # ... and stays explicit against a contradicting title.
+                {"index": 3, "codec_name": "subrip",
+                 "tags": {"language": "pt_PT", "title": "Brasil"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                # An underscored marker folds to its hyphenated form.
+                {"index": 4, "codec_name": "subrip",
+                 "tags": {"language": "spa", "title": "es_LA"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                # A marker behind an accent needs the fold to match.
+                {"index": 5, "codec_name": "subrip",
+                 "tags": {"language": "spa", "title": "Español (México)"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                # A stem only matches at word start.
+                {"index": 6, "codec_name": "subrip",
+                 "tags": {"language": "spa", "title": "Español Platino"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                # A marker written as a plain subtag string in the title.
+                {"index": 7, "codec_name": "subrip",
+                 "tags": {"language": "spa", "title": "Spanish es-419"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                # CJK markers match inside CJK titles.
+                {"index": 8, "codec_name": "subrip",
+                 "tags": {"language": "zho", "title": "繁體中文"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                {"index": 9, "codec_name": "subrip",
+                 "tags": {"language": "zho", "title": "中文（繁體）"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                # A Simplified title stays plain.
+                {"index": 10, "codec_name": "subrip",
+                 "tags": {"language": "zho", "title": "简体中文"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                # Mixed-script labels carry Traditional characters inside a
+                # Simplified context and must not classify the track.
+                {"index": 11, "codec_name": "subrip",
+                 "tags": {"language": "zho", "title": "简繁中文"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                {"index": 12, "codec_name": "subrip",
+                 "tags": {"language": "zho", "title": "簡繁體中文"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                {"index": 13, "codec_name": "subrip",
+                 "tags": {"language": "zho", "title": "简繁体中文"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+            ]
+        }
+
+        streams = self.mod.parse_probe_streams(payload, {})
+
+        self.assertEqual(
+            [(stream["language"]["alpha3"], stream["language"].get("country_alpha2"))
+             for stream in streams],
+            [
+                ("por", "BR"), ("por", None), ("spa", "MX"), ("spa", "MX"),
+                ("spa", None), ("spa", "MX"), ("zho", "TW"), ("zho", "TW"),
+                ("zho", None), ("zho", None), ("zho", None), ("zho", None),
+            ],
+        )
+
+    def test_parse_streams_subtag_language_tags_win_over_titles(self):
+        payload = {
+            "streams": [
+                # An explicit unmodeled region beats contradicting title markers.
+                {"index": 2, "codec_name": "subrip",
+                 "tags": {"language": "pt-PT", "title": "Brasil"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                {"index": 3, "codec_name": "subrip",
+                 "tags": {"language": "zh-Hans", "title": "Traditional Chinese"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                # Modeled subtags map at the tag level.
+                {"index": 4, "codec_name": "subrip",
+                 "tags": {"language": "es-419", "title": "Spanish"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                {"index": 5, "codec_name": "subrip",
+                 "tags": {"language": "zh-Hant", "title": "Chinese"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                # es-AR joins es-419 as a Latin American subtag Bazarr itself
+                # files under its Latino variant.
+                {"index": 6, "codec_name": "subrip",
+                 "tags": {"language": "es-AR", "title": "Español"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+            ]
+        }
+
+        streams = self.mod.parse_probe_streams(payload, {})
+
+        self.assertEqual(
+            [(stream["language"]["alpha3"], stream["language"].get("country_alpha2"))
+             for stream in streams],
+            [("por", None), ("zho", None), ("spa", "MX"), ("zho", "TW"),
+             ("spa", "MX")],
+        )
+
+    def test_parse_streams_title_region_keeps_forced_and_hi_flags(self):
+        payload = {
+            "streams": [
+                {"index": 2, "codec_name": "subrip",
+                 "tags": {"language": "por", "title": "Brazilian Forced SDH"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+            ]
+        }
+
+        streams = self.mod.parse_probe_streams(payload, {})
+
+        self.assertEqual(streams[0]["language"]["country_alpha2"], "BR")
+        self.assertTrue(streams[0]["language"]["forced"])
+        self.assertTrue(streams[0]["language"]["hi"])
+
+    def test_parse_streams_title_markers_are_bounded_and_language_scoped(self):
+        payload = {
+            "streams": [
+                # `pob` inside a longer word must not match.
+                {"index": 2, "codec_name": "subrip",
+                 "tags": {"language": "por", "title": "Pobre Diablo"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                # A plain Portuguese title stays plain.
+                {"index": 3, "codec_name": "subrip",
+                 "tags": {"language": "por", "title": "Portuguese (Portugal)"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                # Markers never refine another language.
+                {"index": 4, "codec_name": "subrip",
+                 "tags": {"language": "eng", "title": "English (Brazil)"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+                # A regional language tag wins over contradicting title markers.
+                {"index": 5, "codec_name": "subrip",
+                 "tags": {"language": "pt-BR", "title": "Latin Spanish"},
+                 "disposition": {"forced": 0, "hearing_impaired": 0}},
+            ]
+        }
+
+        streams = self.mod.parse_probe_streams(payload, {})
+
+        self.assertEqual(
+            [(stream["language"]["alpha3"], stream["language"].get("country_alpha2"))
+             for stream in streams],
+            [("por", None), ("por", None), ("eng", None), ("por", "BR")],
+        )
+
     def test_unknown_language_can_use_fallback(self):
         payload = {
             "streams": [
@@ -270,6 +509,16 @@ class EmbeddedSubtitlesParserTests(unittest.TestCase):
         self.assertEqual(manifest["provider_id"], "embeddedsubtitles")
         self.assertNotIn("legacy_provider_id", manifest)
 
+    def test_manifest_declares_the_modeled_regional_variants(self):
+        manifest = json.loads((PROVIDER_DIR / "provider.json").read_text())
+
+        # The pool intersects the requested languages with the declared set as
+        # whole Languages, so Language("por", "BR") is only ever passed to the
+        # plugin when por-BR is declared alongside the base code.
+        languages = set(manifest["languages"])
+        for code in ("por", "por-BR", "spa", "spa-MX", "zho", "zho-TW"):
+            self.assertIn(code, languages)
+
 
 class EmbeddedSubtitlesProviderSearchTests(unittest.TestCase):
     def setUp(self):
@@ -382,6 +631,169 @@ class EmbeddedSubtitlesProviderSearchTests(unittest.TestCase):
         )
 
         self.assertEqual(results, [])
+
+    def test_search_returns_brazilian_title_track_for_regional_request(self):
+        # The reported case: a track remuxed with a legacy Matroska language
+        # element probes as plain `por` while its title carries the region.
+        payload = {
+            "streams": [
+                {
+                    "index": 2,
+                    "codec_name": "ass",
+                    "tags": {"language": "por", "title": "Portuguese (Brazil)"},
+                    "disposition": {"forced": 0, "hearing_impaired": 0},
+                },
+                {
+                    "index": 3,
+                    "codec_name": "subrip",
+                    "tags": {"language": "por", "title": "Portuguese"},
+                    "disposition": {"forced": 0, "hearing_impaired": 0},
+                },
+            ]
+        }
+        provider = self.mod.EmbeddedSubtitlesProvider(
+            probe_runner=FakeProbeRunner(payload),
+            path_exists=lambda path: True,
+        )
+
+        results = provider.search(
+            VIDEO,
+            [{"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR"}],
+            {},
+        )
+
+        self.assertEqual(
+            [item["provider_payload"]["stream_index"] for item in results], [2]
+        )
+        self.assertEqual(results[0]["language"]["alpha3"], "por")
+        self.assertEqual(results[0]["language"]["country_alpha2"], "BR")
+
+    def test_search_skips_brazilian_title_track_for_plain_request(self):
+        payload = {
+            "streams": [
+                {
+                    "index": 2,
+                    "codec_name": "ass",
+                    "tags": {"language": "por", "title": "Portuguese (Brazil)"},
+                    "disposition": {"forced": 0, "hearing_impaired": 0},
+                }
+            ]
+        }
+        provider = self.mod.EmbeddedSubtitlesProvider(
+            probe_runner=FakeProbeRunner(payload),
+            path_exists=lambda path: True,
+        )
+
+        results = provider.search(
+            VIDEO,
+            [{"alpha3": "por", "alpha2": "pt"}],
+            {},
+        )
+
+        self.assertEqual(results, [])
+
+    def test_search_returns_traditional_title_track_for_regional_request(self):
+        payload = {
+            "streams": [
+                {
+                    "index": 2,
+                    "codec_name": "subrip",
+                    "tags": {"language": "zho", "title": "Traditional Chinese"},
+                    "disposition": {"forced": 0, "hearing_impaired": 0},
+                }
+            ]
+        }
+        provider = self.mod.EmbeddedSubtitlesProvider(
+            probe_runner=FakeProbeRunner(payload),
+            path_exists=lambda path: True,
+        )
+
+        results = provider.search(
+            VIDEO,
+            [{"alpha3": "zho", "alpha2": "zh", "country_alpha2": "TW"}],
+            {},
+        )
+
+        self.assertEqual(
+            [item["provider_payload"]["stream_index"] for item in results], [2]
+        )
+        self.assertEqual(results[0]["language"]["country_alpha2"], "TW")
+
+    def test_search_unknown_fallback_survives_when_explicit_track_turns_regional(self):
+        # The explicit track is Brazilian now, so a plain por request no longer
+        # suppresses the unknown-language fallback: its key is the plain
+        # language, and no explicit stream shares it anymore.
+        payload = {
+            "streams": [
+                {
+                    "index": 2,
+                    "codec_name": "subrip",
+                    "tags": {"language": "und", "title": "Brazilian"},
+                    "disposition": {"forced": 0, "hearing_impaired": 0},
+                },
+                {
+                    "index": 3,
+                    "codec_name": "subrip",
+                    "tags": {"language": "por", "title": "Portuguese (Brazil)"},
+                    "disposition": {"forced": 0, "hearing_impaired": 0},
+                },
+            ]
+        }
+        provider = self.mod.EmbeddedSubtitlesProvider(
+            probe_runner=FakeProbeRunner(payload),
+            path_exists=lambda path: True,
+        )
+        config = {"unknown_as_fallback": True, "fallback_lang": "por"}
+
+        plain = provider.search(VIDEO, [{"alpha3": "por", "alpha2": "pt"}], config)
+        regional = provider.search(
+            VIDEO, [{"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR"}], config
+        )
+
+        # The fallback track carries no title-derived region: only a resolved
+        # bare language tag is refined, so it answers the plain request and the
+        # unknown-titled-Brazilian track never masquerades as regional.
+        self.assertEqual(
+            [item["provider_payload"]["stream_index"] for item in plain], [2]
+        )
+        self.assertEqual(
+            [item["provider_payload"]["stream_index"] for item in regional], [3]
+        )
+
+    def test_search_hi_fallback_flips_regional_hi_track_for_regional_request(self):
+        # The HI group is keyed by country, so the flip fires for the regional
+        # group even when a plain-language non-HI track exists alongside it.
+        payload = {
+            "streams": [
+                {
+                    "index": 2,
+                    "codec_name": "subrip",
+                    "tags": {"language": "por", "title": "Portuguese (Brazil) SDH"},
+                    "disposition": {"forced": 0, "hearing_impaired": 0},
+                },
+                {
+                    "index": 3,
+                    "codec_name": "subrip",
+                    "tags": {"language": "por", "title": "Portuguese"},
+                    "disposition": {"forced": 0, "hearing_impaired": 0},
+                },
+            ]
+        }
+        provider = self.mod.EmbeddedSubtitlesProvider(
+            probe_runner=FakeProbeRunner(payload),
+            path_exists=lambda path: True,
+        )
+
+        results = provider.search(
+            VIDEO,
+            [{"alpha3": "por", "alpha2": "pt", "country_alpha2": "BR", "hi": False}],
+            {"hi_fallback": True},
+        )
+
+        self.assertEqual(
+            [item["provider_payload"]["stream_index"] for item in results], [2]
+        )
+        self.assertFalse(results[0]["language"]["hi"])
 
     def test_search_hi_fallback_satisfies_non_hi_request(self):
         payload = {
