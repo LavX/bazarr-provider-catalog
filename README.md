@@ -28,7 +28,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`bollynook`](providers/bollynook/) | 0.1.4 | Scrapes [BollyNook](https://www.bollynook.com) for movie subtitles across Indian and international languages. No login or API key. |
 | [`bsplayer`](providers/bsplayer/) | 0.1.1 | Uses the BSPlayer subtitles SOAP API for hash and size based movie and episode subtitle lookup. No login or API key. |
 | [`cinemaz`](providers/cinemaz/) | 0.1.7 | Uses [CinemaZ](https://cinemaz.to) release pages from Sonarr or Radarr history to download attached subtitles. Requires session cookies. |
-| [`embeddedsubtitles`](providers/embeddedsubtitles/) | 0.1.4 | Extracts subtitle streams embedded in local movie and episode media files with ffprobe and ffmpeg, suppressing duplicate unknown-language fallbacks by language and disposition. No login or API key. |
+| [`embeddedsubtitles`](providers/embeddedsubtitles/) | 0.1.5 | Extracts subtitle streams embedded in local movie and episode media files with ffprobe and ffmpeg, suppressing duplicate unknown-language fallbacks by language and disposition, and exposing regional variants (Brazilian Portuguese, Latin American Spanish, Traditional Chinese) from language tags and track titles. No login or API key. |
 | [`fansubs`](providers/fansubs/) | 0.1.7 | Scrapes [fansubs.ru](http://fansubs.ru) for Russian anime and Asian cinema subtitles. No login or API key. |
 | [`gestdown`](providers/gestdown/) | 0.1.4 | Uses the public Gestdown API for episode subtitles by TVDB show id, season, episode, and language. No login or API key. |
 | [`greeksubs`](providers/greeksubs/) | 0.1.3 | Scrapes [GreekSubs](https://greeksubs.net) for Greek movie and episode subtitles by IMDb id. No login or API key. |
@@ -116,7 +116,7 @@ Browser-style providers generate a current desktop User-Agent once per provider 
 - `providers/betaseries/`: searches the BetaSeries API for token-authenticated French and English episode subtitles.
 - `providers/bollynook/`: scrapes BollyNook movie subtitle pages and downloads.
 - `providers/bsplayer/`: uses the BSPlayer subtitles SOAP API for hash and size based movie and episode subtitle lookup.
-- `providers/embeddedsubtitles/`: extracts subtitle streams embedded in local movie and episode media files with ffprobe and ffmpeg.
+- `providers/embeddedsubtitles/`: extracts subtitle streams embedded in local movie and episode media files with ffprobe and ffmpeg, exposing regional variants from language tags and track titles.
 - `providers/fansubs/`: production community provider, scrapes fansubs.ru for Russian anime and Asian cinema subtitle releases.
 - `providers/gestdown/`: uses the public Gestdown API for episode subtitles by TVDB id, season, episode, and language.
 - `providers/greeksubs/`: scrapes GreekSubs movie and episode subtitle listings by IMDb id.
