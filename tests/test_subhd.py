@@ -24,7 +24,9 @@ SEARCH_EPISODE = (FIXTURE_DIR / "subhd_search_chernobyl_s01e01.html").read_bytes
 DETAIL_EPISODE = (FIXTURE_DIR / "subhd_detail_chernobyl_s01e01.html").read_bytes()
 SEARCH_MOVIE = (FIXTURE_DIR / "subhd_search_project_hail_mary.html").read_bytes()
 DETAIL_MOVIE = (FIXTURE_DIR / "subhd_detail_project_hail_mary.html").read_bytes()
+DOWN_PAGE_EPISODE = (FIXTURE_DIR / "subhd_down_chernobyl.html").read_bytes()
 API_DOWN = (FIXTURE_DIR / "subhd_api_down_chernobyl.json").read_bytes()
+API_PREPARE = b'{"success":true,"url":"/down/uhC1c2"}'
 SRT_BODY = (FIXTURE_DIR / "subhd_download_chernobyl.srt").read_bytes()
 
 
@@ -90,14 +92,16 @@ class ParseDetailTests(unittest.TestCase):
     def test_episode_detail_extracts_download_metadata(self):
         detail = self.mod.parse_detail_page(DETAIL_EPISODE, "https://subhd.tv/a/uhC1c2")
         self.assertEqual(detail["subtitle_id"], "uhC1c2")
-        self.assertEqual(detail["download_url"], "https://subhd.tv/down/uhC1c2")
+        self.assertEqual(detail["media_title"], "Chernobyl")
         self.assertIn("Chernobyl s01e01", detail["release_info"])
         self.assertEqual(detail["format"], "srt")
         self.assertEqual(detail["languages"], ["zho"])
 
     def test_movie_detail_extracts_preview_file_and_metadata(self):
+        # Pre-redesign markup: <a class="btn btn-danger down" sid=... href="/down/...">.
         detail = self.mod.parse_detail_page(DETAIL_MOVIE, "https://subhd.tv/a/PuCsoN")
         self.assertEqual(detail["subtitle_id"], "PuCsoN")
+        self.assertEqual(detail["media_title"], "Project Hail Mary")
         self.assertEqual(detail["format"], "srt")
         self.assertEqual(detail["download_count"], 2343)
         self.assertEqual(detail["languages"], ["zho"])
@@ -112,10 +116,32 @@ class DownloadResponseTests(unittest.TestCase):
         url = self.mod.parse_download_response(API_DOWN)
         self.assertEqual(url, "https://dl.subhd.tv/2026/03/1772600046334.srt")
 
-    def test_download_api_response_rejects_captcha(self):
-        body = b'{"success":true,"pass":false,"msg":"<svg></svg>","url":null}'
-        with self.assertRaisesRegex(ValueError, "captcha"):
+    def test_download_api_response_rejects_refusal_with_site_message(self):
+        body = '{"success":true,"pass":false,"msg":"下载频率过高，请不要再试","url":null}'.encode("utf-8")
+        with self.assertRaisesRegex(ValueError, "refused: 下载频率过高"):
             self.mod.parse_download_response(body)
+
+    def test_download_api_response_rejects_expired_temp_page(self):
+        body = '{"success":false,"msg":"时间过长本临时页面已经失效","pass":false,"url":null}'.encode("utf-8")
+        with self.assertRaisesRegex(ValueError, "临时页面已经失效"):
+            self.mod.parse_download_response(body)
+
+    def test_prepare_download_response_exposes_temp_page(self):
+        url = self.mod.parse_prepare_download_response(API_PREPARE)
+        self.assertEqual(url, "https://subhd.tv/down/uhC1c2")
+
+    def test_prepare_download_response_rejects_failure(self):
+        body = '{"success":false,"msg":"准备下载失败"}'.encode("utf-8")
+        with self.assertRaisesRegex(ValueError, "prepare-download failed: 准备下载失败"):
+            self.mod.parse_prepare_download_response(body)
+
+    def test_temp_page_sid_comes_from_download_button(self):
+        sid = self.mod.parse_temp_page_sid(DOWN_PAGE_EPISODE, "https://subhd.tv/down/other")
+        self.assertEqual(sid, "uhC1c2")
+
+    def test_temp_page_sid_falls_back_to_url(self):
+        sid = self.mod.parse_temp_page_sid(b"<html></html>", "https://subhd.tv/down/Xy12ab?x=1")
+        self.assertEqual(sid, "Xy12ab")
 
 
 class SubHDProviderSearchTests(unittest.TestCase):
@@ -151,7 +177,7 @@ class SubHDProviderSearchTests(unittest.TestCase):
         self.assertEqual(first["language"]["alpha3"], "zho")
         self.assertIn("episode", first["matches"])
         self.assertEqual(first["provider_payload"]["subtitle_id"], "uhC1c2")
-        self.assertEqual(first["provider_payload"]["download_url"], "https://subhd.tv/down/uhC1c2")
+        self.assertEqual(first["provider_payload"]["detail_url"], "https://subhd.tv/a/uhC1c2")
 
     def test_search_rechecks_detail_languages_before_returning_english(self):
         responses = {
@@ -185,11 +211,22 @@ class SubHDProviderSearchTests(unittest.TestCase):
         self.assertEqual(results, [])
 
 
+PAYLOAD = {
+    "provider": "subhd",
+    "schema": 1,
+    "subtitle_id": "uhC1c2",
+    "detail_url": "https://subhd.tv/a/uhC1c2",
+    "season": 1,
+    "episode": 1,
+}
+FILE_URL = "https://dl.subhd.tv/2026/03/1772600046334.srt"
+
+
 class SubHDProviderDownloadTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
 
-    def test_download_seeds_session_posts_api_and_fetches_file(self):
+    def _stub_provider(self, file_body=SRT_BODY, down_body=API_DOWN):
         provider = self.mod.SubHDProvider()
         called = []
 
@@ -199,41 +236,52 @@ class SubHDProviderDownloadTests(unittest.TestCase):
             if url == "https://subhd.tv/a/uhC1c2":
                 return DETAIL_EPISODE
             if url == "https://subhd.tv/down/uhC1c2":
-                return b"<html>download page</html>"
-            if url == "https://dl.subhd.tv/2026/03/1772600046334.srt":
-                return SRT_BODY
+                return DOWN_PAGE_EPISODE
+            if url == FILE_URL:
+                return file_body
             raise AssertionError(f"unexpected GET: {url}")
 
         def post_stub(url, payload, timeout=15, referer=None):
             del timeout
             called.append(("POST", url, referer, payload))
-            self.assertEqual(payload, {"sid": "uhC1c2", "cap": ""})
-            return API_DOWN
+            if url == "https://subhd.tv/api/sub/prepare-download":
+                return API_PREPARE
+            if url == "https://subhd.tv/api/sub/down":
+                return down_body
+            raise AssertionError(f"unexpected POST: {url}")
 
         provider._http_get = get_stub
         provider._http_post_json = post_stub
+        return provider, called
 
-        result = provider.download(
-            {
-                "provider": "subhd",
-                "schema": 1,
-                "subtitle_id": "uhC1c2",
-                "detail_url": "https://subhd.tv/a/uhC1c2",
-                "download_url": "https://subhd.tv/down/uhC1c2",
-            },
-            {"alpha3": "eng", "alpha2": "en"},
-            {},
-        )
+    def test_download_prepares_temp_page_posts_api_and_fetches_file(self):
+        provider, called = self._stub_provider()
 
-        self.assertEqual(called[0], ("GET", "https://subhd.tv/a/uhC1c2", None))
-        self.assertEqual(called[1], ("GET", "https://subhd.tv/down/uhC1c2", "https://subhd.tv/a/uhC1c2"))
-        self.assertEqual(called[2][0], "POST")
-        self.assertEqual(called[3][0], "GET")
+        result = provider.download(dict(PAYLOAD), {"alpha3": "zho", "alpha2": "zh"}, {})
+
+        self.assertEqual(called, [
+            ("GET", "https://subhd.tv/a/uhC1c2", None),
+            ("POST", "https://subhd.tv/api/sub/prepare-download", "https://subhd.tv/a/uhC1c2",
+             {"sid": "uhC1c2"}),
+            ("GET", "https://subhd.tv/down/uhC1c2", "https://subhd.tv/a/uhC1c2"),
+            ("POST", "https://subhd.tv/api/sub/down", "https://subhd.tv/down/uhC1c2",
+             {"sid": "uhC1c2"}),
+            ("GET", FILE_URL, "https://subhd.tv/down/uhC1c2"),
+        ])
         self.assertEqual(result["format"], "srt")
         self.assertFalse(result["empty"])
         self.assertEqual(base64.b64decode(result["content_b64"]), SRT_BODY)
         self.assertEqual(result["content_sha256"], hashlib.sha256(SRT_BODY).hexdigest())
         self.assertNotIn("encoding", result)
+
+    def test_download_accepts_payload_with_legacy_download_url(self):
+        provider, called = self._stub_provider()
+        payload = dict(PAYLOAD, download_url="https://subhd.tv/down/uhC1c2")
+
+        result = provider.download(payload, {"alpha3": "zho", "alpha2": "zh"}, {})
+
+        self.assertEqual(called[1][1], "https://subhd.tv/api/sub/prepare-download")
+        self.assertEqual(base64.b64decode(result["content_b64"]), SRT_BODY)
 
     def test_download_returns_archive_bytes_for_zip_final_file(self):
         archive_bytes = io.BytesIO()
@@ -242,35 +290,9 @@ class SubHDProviderDownloadTests(unittest.TestCase):
             archive.writestr("Chernobyl.S01E01.srt", SRT_BODY)
             archive.writestr("readme.txt", b"ignore")
         zip_body = archive_bytes.getvalue()
+        provider, _ = self._stub_provider(file_body=zip_body)
 
-        provider = self.mod.SubHDProvider()
-
-        def get_stub(url, timeout=15, referer=None):
-            del timeout, referer
-            if url == "https://subhd.tv/a/uhC1c2":
-                return DETAIL_EPISODE
-            if url == "https://subhd.tv/down/uhC1c2":
-                return b"<html>download page</html>"
-            if url == "https://dl.subhd.tv/2026/03/1772600046334.srt":
-                return zip_body
-            raise AssertionError(f"unexpected GET: {url}")
-
-        provider._http_get = get_stub
-        provider._http_post_json = lambda url, payload, timeout=15, referer=None: API_DOWN
-
-        result = provider.download(
-            {
-                "provider": "subhd",
-                "schema": 1,
-                "subtitle_id": "uhC1c2",
-                "detail_url": "https://subhd.tv/a/uhC1c2",
-                "download_url": "https://subhd.tv/down/uhC1c2",
-                "season": 1,
-                "episode": 1,
-            },
-            {"alpha3": "zho", "alpha2": "zh"},
-            {},
-        )
+        result = provider.download(dict(PAYLOAD), {"alpha3": "zho", "alpha2": "zh"}, {})
 
         self.assertEqual(base64.b64decode(result["archive_b64"]), zip_body)
         self.assertEqual(result["archive_sha256"], hashlib.sha256(zip_body).hexdigest())
@@ -279,84 +301,33 @@ class SubHDProviderDownloadTests(unittest.TestCase):
         self.assertNotIn("content_b64", result)
         self.assertNotIn("encoding", result)
 
-    def test_download_solves_captcha_and_retries_api(self):
-        provider = self.mod.SubHDProvider()
-        called = []
-        captcha_body = (
-            b'{"success":true,"pass":false,'
-            b'"msg":"<svg xmlns=\\"http://www.w3.org/2000/svg\\"></svg>","url":null}'
-        )
+    def test_download_refusal_is_not_retried(self):
+        refusal = '{"success":true,"pass":false,"msg":"下载频率过高，请不要再试","url":null}'.encode("utf-8")
+        provider, called = self._stub_provider(down_body=refusal)
 
-        def get_stub(url, timeout=15, referer=None):
-            del timeout
-            called.append(("GET", url, referer))
-            if url == "https://subhd.tv/a/uhC1c2":
-                return DETAIL_EPISODE
-            if url == "https://subhd.tv/down/uhC1c2":
-                return b"<html>download page</html>"
-            if url == "https://dl.subhd.tv/2026/03/1772600046334.srt":
-                return SRT_BODY
-            raise AssertionError(f"unexpected GET: {url}")
+        with self.assertRaisesRegex(ValueError, "下载频率过高"):
+            provider.download(dict(PAYLOAD), {"alpha3": "zho", "alpha2": "zh"}, {})
 
-        def post_stub(url, payload, timeout=15, referer=None):
-            del timeout
-            called.append(("POST", url, referer, payload))
-            if payload == {"sid": "uhC1c2", "cap": ""}:
-                return captcha_body
-            if payload == {"sid": "uhC1c2", "cap": "57U1"}:
-                return API_DOWN
-            raise AssertionError(f"unexpected POST payload: {payload}")
-
-        provider._http_get = get_stub
-        provider._http_post_json = post_stub
-        provider._solve_captcha = lambda svg: "57U1"
-
-        result = provider.download(
-            {
-                "provider": "subhd",
-                "schema": 1,
-                "subtitle_id": "uhC1c2",
-                "detail_url": "https://subhd.tv/a/uhC1c2",
-                "download_url": "https://subhd.tv/down/uhC1c2",
-            },
-            {"alpha3": "zho", "alpha2": "zh"},
-            {},
-        )
-
-        self.assertEqual([item[3] for item in called if item[0] == "POST"], [
-            {"sid": "uhC1c2", "cap": ""},
-            {"sid": "uhC1c2", "cap": "57U1"},
+        posts = [item[1] for item in called if item[0] == "POST"]
+        self.assertEqual(posts, [
+            "https://subhd.tv/api/sub/prepare-download",
+            "https://subhd.tv/api/sub/down",
         ])
-        self.assertEqual(base64.b64decode(result["content_b64"]), SRT_BODY)
+
+    def test_download_requires_subtitle_id_and_detail_url(self):
+        provider, _ = self._stub_provider()
+        with self.assertRaisesRegex(ValueError, "requires subtitle_id and detail_url"):
+            provider.download({"subtitle_id": "uhC1c2"}, {"alpha3": "zho"}, {})
 
     def test_download_rejects_empty_final_file(self):
-        provider = self.mod.SubHDProvider()
-
-        def get_stub(url, timeout=15, referer=None):
-            del timeout, referer
-            if url == "https://subhd.tv/a/uhC1c2":
-                return DETAIL_EPISODE
-            if url == "https://subhd.tv/down/uhC1c2":
-                return b"<html>download page</html>"
-            if url == "https://dl.subhd.tv/2026/03/1772600046334.srt":
-                return b""
-            raise AssertionError(f"unexpected GET: {url}")
-
-        provider._http_get = get_stub
-        provider._http_post_json = lambda url, payload, timeout=15, referer=None: API_DOWN
-
+        provider, _ = self._stub_provider(file_body=b"")
         with self.assertRaisesRegex(ValueError, "empty subtitle"):
-            provider.download(
-                {
-                    "provider": "subhd",
-                    "schema": 1,
-                    "subtitle_id": "uhC1c2",
-                    "detail_url": "https://subhd.tv/a/uhC1c2",
-                    "download_url": "https://subhd.tv/down/uhC1c2",
-                },
-                {"alpha3": "zho", "alpha2": "zh"},
-                {},
-            )
+            provider.download(dict(PAYLOAD), {"alpha3": "zho", "alpha2": "zh"}, {})
+
+    def test_download_rejects_html_error_body(self):
+        provider, _ = self._stub_provider(file_body=b"<!DOCTYPE html><html><body>error</body></html>")
+        with self.assertRaisesRegex(ValueError, "HTML"):
+            provider.download(dict(PAYLOAD), {"alpha3": "zho", "alpha2": "zh"}, {})
 
     def test_archive_member_selection_prefers_shortest_srt(self):
         archive_body = io.BytesIO()
@@ -377,35 +348,6 @@ class SubHDProviderDownloadTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "no subtitle files"):
             self.mod._select_archive_member(archive_body.getvalue())
-
-    def test_download_rejects_html_error_body(self):
-        provider = self.mod.SubHDProvider()
-
-        def get_stub(url, timeout=15, referer=None):
-            del timeout, referer
-            if url == "https://subhd.tv/a/uhC1c2":
-                return DETAIL_EPISODE
-            if url == "https://subhd.tv/down/uhC1c2":
-                return b"<html>download page</html>"
-            if url == "https://dl.subhd.tv/2026/03/1772600046334.srt":
-                return b"<!DOCTYPE html><html><body>error</body></html>"
-            raise AssertionError(f"unexpected GET: {url}")
-
-        provider._http_get = get_stub
-        provider._http_post_json = lambda url, payload, timeout=15, referer=None: API_DOWN
-
-        with self.assertRaisesRegex(ValueError, "HTML"):
-            provider.download(
-                {
-                    "provider": "subhd",
-                    "schema": 1,
-                    "subtitle_id": "uhC1c2",
-                    "detail_url": "https://subhd.tv/a/uhC1c2",
-                    "download_url": "https://subhd.tv/down/uhC1c2",
-                },
-                {"alpha3": "zho", "alpha2": "zh"},
-                {},
-            )
 
 
 if __name__ == "__main__":
