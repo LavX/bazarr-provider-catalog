@@ -6,6 +6,7 @@ import json
 import os
 import re
 import subprocess
+import unicodedata
 
 PROVIDER_ID = "embeddedsubtitles"
 DEFAULT_CODECS = ("ass", "subrip", "webvtt", "mov_text")
@@ -140,11 +141,71 @@ ALIASES = {
 }
 # Region-bearing language tags the upstream Bazarr provider models as distinct
 # languages (Language("por", "BR"), Language("spa", "MX"), Language("zho", "TW")).
-# The region is preserved as country_alpha2 instead of being stripped.
+# The region is preserved as country_alpha2 instead of being stripped; the
+# subtags Bazarr models as its regional custom languages map the same way.
 COUNTRY_TAGS = {
     ("por", "br"): "BR",
     ("spa", "mx"): "MX",
+    ("spa", "419"): "MX",
+    ("spa", "ar"): "MX",
     ("zho", "tw"): "TW",
+    ("zho", "hant"): "TW",
+}
+# Track titles are the only regional signal for Matroska tracks remuxed with a
+# legacy `language` element: mkvmerge maps `pt-BR` to `por`, so the title keeps
+# the region the tag lost. A marker is a whole word, unless it ends with `*`,
+# which marks a word-start stem. The por and spa markers start from the upstream
+# provider (its vendored fese 0.3.0), which matched loose substrings; the stems
+# keep its coverage of `Latinoamérica` or `Argentinian` while the whole-word
+# `pob` keeps `Pobre` from matching. The zho markers start from the Traditional
+# Chinese custom language Bazarr itself matches on filenames (`.zht`, `.cht`,
+# `.tc`, `.big5`, `.traditional`, `繁體中文`). Both sets extend to translated
+# region names (`Brésil`, `Lateinamerika`, `Taiwanese`) and the CJK spellings
+# of Traditional (`繁體`, `正體`). A `繁` marker never counts when it directly
+# follows a Simplified character: `简繁` and `簡繁` are mixed-script labels.
+TITLE_REGION_MARKERS = {
+    "por": (
+        "BR",
+        ("pt-br", "por-br", "ptbr", "pob", "pb", "brazil*", "brasil*", "bresil*"),
+    ),
+    "spa": (
+        "MX",
+        (
+            "es-mx",
+            "es-la",
+            "es-419",
+            "spa-mx",
+            "spa-la",
+            "spl",
+            "mx",
+            "lat",
+            "latam",
+            "latein*",
+            "mexic*",
+            "latin*",
+            "argent*",
+        ),
+    ),
+    "zho": (
+        "TW",
+        (
+            "zh-tw",
+            "zh-hant",
+            "zhhant",
+            "zht",
+            "hant",
+            "big5",
+            "cht",
+            "tc",
+            "tradi*",
+            "taiwan*",
+            "繁體",
+            "繁体",
+            "繁中",
+            "正體",
+            "正体",
+        ),
+    ),
 }
 FORCED_TITLE_RE = re.compile(r"\bforced\b", re.I)
 HI_TITLE_RE = re.compile(r"\b(?:sdh|hi|hearing[ -]?impaired|cc)\b", re.I)
@@ -329,6 +390,15 @@ def _language_from_stream(stream, config):
     raw = str(tags.get("language") or "").strip()
     language = _language_from_tag(raw)
     if language is not None:
+        # Only a bare language tag may be refined from the title. A tag that
+        # carries a subtag is an explicit statement and wins, whether the
+        # subtag maps to a modeled region (pt-BR) or an unmodeled one (pt-PT,
+        # zh-Hans).
+        bare_tag = "-" not in raw.replace("_", "-")
+        if bare_tag and not _country(language):
+            region = _region_from_title(language["alpha3"], tags.get("title"))
+            if region:
+                language["country_alpha2"] = region
         return language, language["alpha3"], False
     if _as_bool((config or {}).get("unknown_as_fallback")):
         fallback = _language_from_tag((config or {}).get("fallback_lang") or "eng")
@@ -362,6 +432,38 @@ def _language_from_tag(tag):
     if country:
         language["country_alpha2"] = country
     return language
+
+
+def _region_from_title(alpha3, title):
+    """Return the modeled country for a base-language track whose title marks it.
+
+    A marker is a whole word; a trailing `*` marks a word-start stem, so
+    `brazil*` matches `Brazilian` and `latin*` matches `Latinoamérica`. Words
+    are bounded by the title edge or a character outside [a-z0-9] after accents
+    fold and underscores become hyphens, so `Pobre` never matches `pob`,
+    `Platino` never matches `latin*`, `México` matches `mexic*`, and CJK
+    characters bound `繁體` inside `繁體中文`. A `繁` marker directly after a
+    Simplified character never matches: `简繁` and `簡繁` are mixed-script
+    labels, not Traditional ones.
+    """
+    entry = TITLE_REGION_MARKERS.get(alpha3)
+    if not entry:
+        return None
+    country, markers = entry
+    folded = unicodedata.normalize("NFKD", str(title or ""))
+    value = "".join(char for char in folded if not unicodedata.combining(char)).lower()
+    value = value.replace("_", "-")
+    for marker in markers:
+        # `简繁中文` is a mixed-script label: its `繁` follows a Simplified
+        # character, so it must not classify the track as Traditional.
+        mixed_script = "(?<![简簡])" if marker.startswith("繁") else ""
+        if marker.endswith("*"):
+            pattern = rf"(?:^|[^a-z0-9]){mixed_script}{re.escape(marker[:-1])}[a-z]*(?:$|[^a-z0-9])"
+        else:
+            pattern = rf"(?:^|[^a-z0-9]){mixed_script}{re.escape(marker)}(?:$|[^a-z0-9])"
+        if re.search(pattern, value):
+            return country
+    return None
 
 
 def _language_payload(language):
