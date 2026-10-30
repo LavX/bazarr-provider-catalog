@@ -1,0 +1,142 @@
+{
+  "api_version": "bazarr.provider-hub.v1",
+  "bundle_sha256": "b8ab1742ae8d1eebc7703762d9b060dc9a6de5fdce9b4c2ca3b269492350eec9",
+  "config_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "api_keys": {
+        "description": "Whitespace-separated API keys, one per endpoint, in the same order as the endpoints.",
+        "minLength": 1,
+        "secret": true,
+        "title": "API keys",
+        "type": "string"
+      },
+      "endpoints": {
+        "description": "Whitespace-separated base URLs of the UNIT3D trackers to search, for example https://tracker.example.",
+        "minLength": 1,
+        "title": "Endpoints",
+        "type": "string"
+      },
+      "match_files": {
+        "default": true,
+        "description": "Send the video file size and name so that a tracker can flag the exact release.",
+        "title": "Match files",
+        "type": "boolean"
+      },
+      "timeout_seconds": {
+        "default": 30,
+        "description": "Whole-search time budget in seconds, shared by every endpoint and page.",
+        "maximum": 60,
+        "minimum": 10,
+        "title": "Search timeout (seconds)",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "endpoints",
+      "api_keys"
+    ],
+    "type": "object"
+  },
+  "dependencies": {
+    "requirements": []
+  },
+  "description": "Searches the UNIT3D subtitle API of one or more trackers, each with its own API key, inside one shared time budget.",
+  "entry_class": "UNIT3DProvider",
+  "entry_module": "provider",
+  "files": {
+    "provider.py": "f839a4df14038379d4c248e005421884fd0aa7dc988381c045198fdd3e71a908"
+  },
+  "languages": [
+    "ara",
+    "aze",
+    "bel",
+    "ben",
+    "bos",
+    "bul",
+    "cat",
+    "ces",
+    "dan",
+    "deu",
+    "ell",
+    "eng",
+    "epo",
+    "est",
+    "eus",
+    "fas",
+    "fin",
+    "fra",
+    "heb",
+    "hin",
+    "hrv",
+    "hun",
+    "hye",
+    "ind",
+    "isl",
+    "ita",
+    "jpn",
+    "kal",
+    "kan",
+    "kat",
+    "khm",
+    "kin",
+    "kor",
+    "kur",
+    "lav",
+    "lit",
+    "mal",
+    "mkd",
+    "mon",
+    "msa",
+    "mya",
+    "nep",
+    "nld",
+    "nor",
+    "pan",
+    "pol",
+    "por",
+    "pus",
+    "ron",
+    "rus",
+    "sin",
+    "slk",
+    "slv",
+    "som",
+    "spa",
+    "sqi",
+    "srp",
+    "sun",
+    "swa",
+    "swe",
+    "tam",
+    "tel",
+    "tgl",
+    "tha",
+    "tur",
+    "ukr",
+    "urd",
+    "vie",
+    "yor",
+    "zho"
+  ],
+  "name": "UNIT3D",
+  "provider_id": "unit3d",
+  "schema_version": 1,
+  "secret_fields": [
+    "api_keys"
+  ],
+  "source": {
+    "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+    "commit": "0000000000000000000000000000000000000000",
+    "path": "providers/unit3d",
+    "ref": "main",
+    "repo": "LavX/bazarr-provider-catalog",
+    "trusted": true,
+    "type": "github"
+  },
+  "supported_media": [
+    "movie",
+    "episode"
+  ],
+  "version": "0.1.0"
+}
