@@ -1,0 +1,154 @@
+{
+  "api_version": "bazarr.provider-hub.v1",
+  "bundle_sha256": "cfbf640d9d69348ada35c21ea4deb2122e87fb27a543efaf50a3dab9eb75ccfb",
+  "config_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "api_keys": {
+        "description": "Whitespace-separated Distribution Hub API keys, one per endpoint, in the same order as the endpoints. Over http the key travels in cleartext, so prefer https on a trusted network.",
+        "minLength": 1,
+        "secret": true,
+        "title": "API keys",
+        "type": "string"
+      },
+      "endpoints": {
+        "description": "Whitespace-separated addresses of the Bazarr+ instances to search, for example http://192.168.1.20:6767. Use the private network address that this Bazarr instance can reach. The peer must be reached at this address, because its forwarded headers build the download links. Public-internet peers are not supported.",
+        "minLength": 1,
+        "title": "Endpoints",
+        "type": "string"
+      },
+      "include_ai_translated": {
+        "default": false,
+        "description": "Include subtitles that the peer marks as AI translated.",
+        "title": "Include AI translated subtitles",
+        "type": "boolean"
+      },
+      "library_only": {
+        "default": true,
+        "description": "Search only the subtitles in the peer's own library. This needs the peer to serve its library. If the key has an allow-list, the key must include local.",
+        "title": "Library only",
+        "type": "boolean"
+      },
+      "timeout_seconds": {
+        "default": 45,
+        "description": "Whole-search time budget in seconds, shared by every peer. A search waits at most 90 seconds.",
+        "maximum": 90,
+        "minimum": 30,
+        "title": "Search timeout (seconds)",
+        "type": "integer"
+      },
+      "use_hash": {
+        "default": true,
+        "description": "Send the video's OpenSubtitles hash so that a peer can flag the exact release. When the host supplies no hash, it is computed from the local file.",
+        "title": "Use file hash",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "endpoints",
+      "api_keys"
+    ],
+    "type": "object"
+  },
+  "dependencies": {
+    "requirements": []
+  },
+  "description": "Bazarr+ instances on a private network can now search each other's subtitle libraries through the Distribution Hub, using its existing API keys.",
+  "entry_class": "BazarrPeerProvider",
+  "entry_module": "provider",
+  "files": {
+    "provider.py": "3342ecdff13ae253e61057407ee326cda9e0b7b441c3c743d5194196b295520c"
+  },
+  "languages": [
+    "ara",
+    "aze",
+    "bel",
+    "ben",
+    "bos",
+    "bul",
+    "cat",
+    "ces",
+    "dan",
+    "deu",
+    "ell",
+    "eng",
+    "epo",
+    "est",
+    "eus",
+    "fas",
+    "fin",
+    "fra",
+    "heb",
+    "hin",
+    "hrv",
+    "hun",
+    "hye",
+    "ind",
+    "isl",
+    "ita",
+    "jpn",
+    "kal",
+    "kan",
+    "kat",
+    "khm",
+    "kin",
+    "kor",
+    "kur",
+    "lav",
+    "lit",
+    "mal",
+    "mkd",
+    "mon",
+    "msa",
+    "mya",
+    "nep",
+    "nld",
+    "nor",
+    "pan",
+    "pol",
+    "por",
+    "pus",
+    "ron",
+    "rus",
+    "sin",
+    "slk",
+    "slv",
+    "som",
+    "spa",
+    "sqi",
+    "srp",
+    "sun",
+    "swa",
+    "swe",
+    "tam",
+    "tel",
+    "tgl",
+    "tha",
+    "tur",
+    "ukr",
+    "urd",
+    "vie",
+    "yor",
+    "zho"
+  ],
+  "name": "Bazarr+ Peer",
+  "provider_id": "bazarr_peer",
+  "schema_version": 1,
+  "secret_fields": [
+    "api_keys"
+  ],
+  "source": {
+    "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+    "commit": "0000000000000000000000000000000000000000",
+    "path": "providers/bazarr_peer",
+    "ref": "main",
+    "repo": "LavX/bazarr-provider-catalog",
+    "trusted": true,
+    "type": "github"
+  },
+  "supported_media": [
+    "movie",
+    "episode"
+  ],
+  "version": "0.1.0"
+}
