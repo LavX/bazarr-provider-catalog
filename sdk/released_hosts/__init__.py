@@ -11,18 +11,15 @@ module names and the settings sections. scripts/snapshot_released_host.py writes
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import importlib
 import json
-import sys
 import types
 from dataclasses import dataclass
 from pathlib import Path
 
 HOSTS_DIR = Path(__file__).resolve().parent
 RELEASED_HOSTS = ("bazarr_v2_6_2", "bazarr_v2_7_0", "bazarr_v2_7_2")
-_STUBBED_MODULES = ("app", "app.config", "subliminal_patch", "subliminal_patch.extensions")
 
 
 @dataclass(frozen=True)
@@ -48,36 +45,6 @@ def load_host(name: str) -> ReleasedHost:
     )
 
 
-@contextlib.contextmanager
-def host_environment(environment: dict):
-    """Stand in for the host modules a released manifest.py may import lazily.
-
-    The snapshots that carried those imports now import _stand_in instead, so this
-    only matters for a copy that still has the upstream imports.
-    """
-    saved = {name: sys.modules.get(name) for name in _STUBBED_MODULES}
-    app = types.ModuleType("app")
-    config = types.ModuleType("app.config")
-    config.validators = [types.SimpleNamespace(names=(f"{section}.enabled",)) for section in environment["settings_sections"]]
-    app.config = config
-    subliminal_patch = types.ModuleType("subliminal_patch")
-    extensions = types.ModuleType("subliminal_patch.extensions")
-    modules = tuple(environment["built_in_provider_modules"])
-    extensions.provider_registry = types.SimpleNamespace(names=lambda: list(modules))
-    subliminal_patch.extensions = extensions
-    sys.modules.update(
-        {"app": app, "app.config": config, "subliminal_patch": subliminal_patch, "subliminal_patch.extensions": extensions}
-    )
-    try:
-        yield
-    finally:
-        for name, module in saved.items():
-            if module is None:
-                sys.modules.pop(name, None)
-            else:
-                sys.modules[name] = module
-
-
 def built_in_provider_ids(host: ReleasedHost) -> set[str]:
     """service._built_in_provider_ids() with no hub plugins registered."""
     return (
@@ -90,9 +57,8 @@ def built_in_provider_ids(host: ReleasedHost) -> set[str]:
 def validate_for_host(host: ReleasedHost, manifest: dict) -> None:
     """Validate as the host does for an entry from its trusted official source."""
     provider_id = str(manifest.get("provider_id") or "") if isinstance(manifest, dict) else ""
-    with host_environment(host.environment):
-        allowed = host.migration.validation_built_in_provider_ids(provider_id, built_in_provider_ids(host), True)
-        host.manifest.validate_manifest(manifest, built_in_provider_ids=allowed)
+    allowed = host.migration.validation_built_in_provider_ids(provider_id, built_in_provider_ids(host), True)
+    host.manifest.validate_manifest(manifest, built_in_provider_ids=allowed)
 
 
 def released_host_errors(manifests) -> list[str]:

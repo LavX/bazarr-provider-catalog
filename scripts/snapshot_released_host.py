@@ -5,9 +5,8 @@ Reads a local LavX/bazarr clone at a tag or commit and writes, under
 sdk/released_hosts/<name>/:
 
 - __init__.py, manifest.py and migration.py from bazarr/provider_hub/, byte for byte
-  except for the transformations recorded in environment.json. Two kinds are
-  possible: lines left out with --drop-line, and the fixed rewrites in
-  RELEASED_REWRITES, which apply only to a copy whose source blob is listed there.
+  except for the fixed rewrites in RELEASED_REWRITES, which apply only to a copy
+  whose source blob is listed there. Each rewrite is recorded in environment.json.
 - registry.py, a stand-in that registers no hub plugins
 - _stand_in.py, written only when a rewrite imports it: the settings sections and
   built-in provider module names the rewritten imports read, taken from the same
@@ -32,8 +31,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 COPIED_FILES = ("__init__.py", "manifest.py", "migration.py")
 REGISTRY_STUB = (
-    "# Stand-in for bazarr/provider_hub/registry.py: the catalog check runs with no\n"
-    "# hub plugins registered, so the built-in set is the host's own providers.\n"
+    "\"\"\"Stand-in for bazarr/provider_hub/registry.py.\n"
+    "\n"
+    "It holds the registered provider hub ids that the vendored manifest module reads.\n"
+    "The 2.6.2 snapshot does not import this module; it is kept so that the three\n"
+    "snapshot directories share one layout.\n"
+    "\"\"\"\n"
     "_REGISTERED_PROVIDER_HUB_IDS: set[str] = set()\n"
 )
 STAND_IN_TEMPLATE = (
@@ -144,7 +147,7 @@ def stand_in_source(settings_sections, provider_modules):
 
 
 def apply_edits(filename, data, edits):
-    """Apply (file, old line, new line) edits in order. A new line of None drops the old line.
+    """Apply (file, old line, new line) edits in order.
 
     Each old line must occur exactly once in the file as it stands at that step.
     Returns the edited bytes and one record per edit.
@@ -159,14 +162,11 @@ def apply_edits(filename, data, edits):
             raise SystemExit(f"{filename}: expected exactly one line {old!r}, found {len(matches)}")
         index = matches[0]
         before = blob_id(data)
-        if new is None:
-            del lines[index]
-        else:
-            lines[index] = new
+        lines[index] = new
         data = "\n".join(lines).encode("utf-8")
         records.append({
             "file": filename,
-            "action": "drop" if new is None else "rewrite",
+            "action": "rewrite",
             "line": index + 1,
             "old": old,
             "new": new,
@@ -176,26 +176,23 @@ def apply_edits(filename, data, edits):
     return data, records
 
 
-def snapshot(repo, ref, name, drop_lines=()):
-    """`drop_lines` is a list of "<file>:<exact line>" the maintainer asked to leave out."""
+def snapshot(repo, ref, name):
     target = ROOT / "sdk" / "released_hosts" / name
     target.mkdir(parents=True, exist_ok=True)
     commit = git(repo, "rev-parse", f"{ref}^{{commit}}").decode().strip()
-    drop_edits = []
-    for spec in drop_lines:
-        wanted_file, _, wanted_line = spec.partition(":")
-        drop_edits.append((wanted_file, wanted_line, None))
     source_blobs, vendored_blobs, transformations = {}, {}, []
     for filename in COPIED_FILES:
         path = f"bazarr/provider_hub/{filename}"
         data = git(repo, "show", f"{commit}:{path}")
         source_blobs[filename] = git(repo, "rev-parse", f"{commit}:{path}").decode().strip()
-        edits = list(RELEASED_REWRITES.get(source_blobs[filename], ())) + drop_edits
+        edits = list(RELEASED_REWRITES.get(source_blobs[filename], ()))
         data, records = apply_edits(filename, data, edits)
         transformations.extend(records)
         (target / filename).write_bytes(data)
         vendored_blobs[filename] = blob_id(data)
-    (target / "registry.py").write_text(REGISTRY_STUB, encoding="utf-8")
+    registry = REGISTRY_STUB.encode("utf-8")
+    (target / "registry.py").write_bytes(registry)
+    vendored_blobs["registry.py"] = blob_id(registry)
     provider_modules = built_in_provider_modules(repo, commit)
     settings_sections = extract_settings_sections(git(repo, "show", f"{commit}:bazarr/app/config.py"))
     if any(record["new"] and record["new"].lstrip().startswith(STAND_IN_IMPORT_PREFIX) for record in transformations):
@@ -220,12 +217,10 @@ def main(argv=None):
     parser.add_argument("--bazarr-repo", required=True, help="path to a LavX/bazarr clone")
     parser.add_argument("--ref", required=True, help="tag or commit to copy from")
     parser.add_argument("--name", required=True, help="package name under sdk/released_hosts/")
-    parser.add_argument("--drop-line", action="append", default=[], metavar="FILE:LINE",
-                        help="leave one exact line out of one copied file (recorded in environment.json)")
     args = parser.parse_args(argv)
     if not args.name.isidentifier():
         parser.error("--name must be a Python identifier")
-    target = snapshot(Path(args.bazarr_repo), args.ref, args.name, args.drop_line)
+    target = snapshot(Path(args.bazarr_repo), args.ref, args.name)
     print(f"wrote {target.relative_to(ROOT)}")
     return 0
 

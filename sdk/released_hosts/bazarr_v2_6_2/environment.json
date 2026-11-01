@@ -117,6 +117,7 @@
   "vendored_blobs": {
     "__init__.py": "4a7f6c7944fd95b642968dff177af9a240b5e5d2",
     "manifest.py": "e1fa81b1bc8b2a7340c20521b7300cb8a94b1873",
-    "migration.py": "5cdb7e00b1affee90dde8a66e31e068aa45f9c34"
+    "migration.py": "5cdb7e00b1affee90dde8a66e31e068aa45f9c34",
+    "registry.py": "9dca1155835a777bfe00f129eb687465d50fb9e7"
   }
 }

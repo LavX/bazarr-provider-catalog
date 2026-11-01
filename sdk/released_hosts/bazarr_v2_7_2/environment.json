@@ -142,6 +142,7 @@
     "__init__.py": "4a7f6c7944fd95b642968dff177af9a240b5e5d2",
     "_stand_in.py": "8cf69f8799fffb36031b64327265b93b453020ca",
     "manifest.py": "02752862cc5c65c2d8e5b9f05f96ae8c877884d5",
-    "migration.py": "63dea10698a926d4587df078f689e42f1a7cb7fa"
+    "migration.py": "63dea10698a926d4587df078f689e42f1a7cb7fa",
+    "registry.py": "9dca1155835a777bfe00f129eb687465d50fb9e7"
   }
 }

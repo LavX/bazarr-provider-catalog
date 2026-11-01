@@ -85,11 +85,6 @@ class ReleasedValidatorTests(unittest.TestCase):
         manifest["provider_id"] = "addic7ed"  # migrated built-in, shadowable by a trusted entry
         self.assertEqual(released_hosts.released_host_errors([manifest]), [])
 
-    def test_stub_modules_do_not_leak(self):
-        released_hosts.released_host_errors([smoke_manifest()])
-        for name in ("app", "app.config", "subliminal_patch", "subliminal_patch.extensions"):
-            self.assertNotIn(name, sys.modules)
-
     def test_reserved_sections_exclude_provider_sections(self):
         reserved = released_hosts.reserved_settings_sections()
         self.assertIn("sonarr", reserved)
