@@ -7,6 +7,7 @@ sdk/released_hosts/<name>/:
 - __init__.py, manifest.py and migration.py from bazarr/provider_hub/, byte for byte
   except for the fixed rewrites in RELEASED_REWRITES, which apply only to a copy
   whose source blob is listed there. Each rewrite is recorded in environment.json.
+  A copy that still imports outside the standard library after its rewrites is refused.
 - registry.py, a stand-in that registers no hub plugins
 - _stand_in.py, written only when a rewrite imports it: the settings sections and
   built-in provider module names the rewritten imports read, taken from the same
@@ -176,6 +177,24 @@ def apply_edits(filename, data, edits):
     return data, records
 
 
+def refuse_outside_imports(filename, data):
+    """Refuse a copied file that imports anything outside the standard library.
+
+    Relative imports name the vendored package itself and are allowed. Any host
+    module, or any other third-party module, must be removed by a recorded rewrite.
+    """
+    for node in ast.walk(ast.parse(data)):
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.level == 0:
+            names = [node.module or ""]
+        else:
+            continue
+        for name in names:
+            if name.split(".", 1)[0] not in sys.stdlib_module_names:
+                raise SystemExit(f"{filename}: line {node.lineno} imports {name!r}, which is outside the standard library")
+
+
 def snapshot(repo, ref, name):
     target = ROOT / "sdk" / "released_hosts" / name
     target.mkdir(parents=True, exist_ok=True)
@@ -187,6 +206,7 @@ def snapshot(repo, ref, name):
         source_blobs[filename] = git(repo, "rev-parse", f"{commit}:{path}").decode().strip()
         edits = list(RELEASED_REWRITES.get(source_blobs[filename], ()))
         data, records = apply_edits(filename, data, edits)
+        refuse_outside_imports(filename, data)
         transformations.extend(records)
         (target / filename).write_bytes(data)
         vendored_blobs[filename] = blob_id(data)

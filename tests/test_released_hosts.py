@@ -111,6 +111,21 @@ class SnapshotScriptTests(unittest.TestCase):
         self.assertFalse(snapshot_released_host.registers_provider("class Provider:\n    pass\nclass _HiddenProvider:\n    pass\n"))
         self.assertFalse(snapshot_released_host.registers_provider("AGENTS = ['x']\n"))
 
+    def test_copied_file_importing_outside_the_standard_library_is_refused(self):
+        for source in ("from app.config import validators\n", "import subliminal_patch\n", "def load():\n    import app\n"):
+            with self.subTest(source=source):
+                with self.assertRaises(SystemExit):
+                    snapshot_released_host.refuse_outside_imports("manifest.py", source.encode("utf-8"))
+
+    def test_standard_library_and_relative_imports_are_allowed(self):
+        source = b"from __future__ import annotations\nimport re\nfrom . import PROVIDER_HUB_API_VERSION\nfrom .registry import NAME\n"
+        snapshot_released_host.refuse_outside_imports("manifest.py", source)
+
+    def test_vendored_copies_import_only_the_standard_library_and_their_package(self):
+        for path in released_hosts.HOSTS_DIR.glob("*/*.py"):
+            with self.subTest(file=str(path)):
+                snapshot_released_host.refuse_outside_imports(path.name, path.read_bytes())
+
 
 if __name__ == "__main__":
     unittest.main()
