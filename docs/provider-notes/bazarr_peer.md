@@ -17,7 +17,7 @@
 - An endpoint's tag is the first 16 hex characters of the SHA-256 of its normalized URL. Candidate ids have the form `<tag>:<subtitle id>`, and download payloads carry the tag.
 - The OpenSubtitles service (`api.opensubtitles.com` and its subdomains) is refused at configuration time, before any request. The key is never sent there.
 - `timeout_seconds` is the whole-search budget, from 30 to 90 seconds, with 45 as the default. Every endpoint searches in parallel inside that budget.
-- `library_only` (default on) limits the search to the peer's own library. `use_hash` (default on) sends the file hash. `include_ai_translated` (default off) keeps subtitles the peer marks as AI translated.
+- `library_only` (default on) limits the search to the peer's own library. `use_hash` (default on) sends the file hash. `include_ai_translated` (default off) keeps subtitles the peer marks as AI translated. Local rows always report that flag as false; see Known Gaps.
 
 ## Search And Download
 
@@ -33,7 +33,7 @@
 - Library-only searches: when a library-only search returns no rows from an endpoint, the provider checks the providers probe. The check runs only when the rows are empty before the AI-translated filter, so a search emptied only by that filter does not probe. If the peer lists no `local` provider for this key, the endpoint is logged as `library_not_served` and contributes nothing. The probe answer is kept for 10 minutes per endpoint and key, in worker memory only.
 - The probe is not sent when the search budget is spent, and it waits at most the time left in that budget. A 401 or 403 probe is an `AuthenticationError`, and a compat-disabled probe is "Distribution Hub is off". Any other probe failure (a timeout, a 404 without the compat-disabled header, a 503, or another status) is logged as `probe_failed` with its exception class. The empty result stands. A refused probe sets no cooldown, because the search itself answered.
 - Hash: the file hash comes from the payload when it carries one, checked in the order `bsplayer`, `opensubtitlescom`, `napisy24`, then `opensubtitles`. Otherwise it is computed from the local file: its size plus the first and last 64 KiB, read as little-endian 64-bit words. A file under 128 KiB, or an unreadable path, sends no hash, and the search goes on without it. The log names the exception class, never the path.
-- A candidate claims its hash only when the peer reports `moviehash_match` and the row names a release. The peer's `url` becomes `page_link` only when it is not empty. The candidate carries the peer's `ai_translated` flag at the top level, so the host can honor it.
+- A candidate claims its hash only when the peer reports `moviehash_match` and the row names a release. The peer's `url` becomes `page_link` only when it is not empty. The candidate carries the peer's `ai_translated` flag at the top level, so the host can honor it. Local rows always report `false` there; see Known Gaps.
 - Candidates from one endpoint are deduplicated on the candidate id, and the first row wins.
 - Local rows (subtitles the peer stores) get a new trailing file id on every search. Their stable key is the subtitle id without that trailing id, plus the file name.
 - The download payload keeps the endpoint tag, the row kind, the subtitle id, the file extension, the file id, and the search context with its stable key. A query longer than 128 characters is dropped from the context and logged as `query_dropped`. A payload over 1024 bytes drops its context and stable key, keeps the other fields, and is logged as `context_too_large`. A later 404 for such a payload skips as `stale_no_context`.
@@ -55,7 +55,9 @@
 - The library probe answer is cached for 600 seconds, in worker memory only.
 - A link origin mismatch is refused, not relaxed. Operators behind a reverse proxy must forward `X-Forwarded-Proto` and `X-Forwarded-Host`, so that the peer builds links at the configured address.
 - The manifest lists plain language codes and declares no hearing-impaired variants.
+- Local rows (subtitles the peer stores) always report `ai_translated` as false. `include_ai_translated` therefore cannot tell an AI translated library subtitle from a human one. The provider passes the peer's flag through and does not infer provenance.
+- This 60-second value is provisional. A two-instance check, with one instance querying another, would settle it.
 
 ## Live Checks
 
-- Not run. A live peer and a valid API key are required. Local mock-server tests cover the provider.
+- Not run. A live peer and a valid API key are required. Local mock-server tests cover the provider. A two-instance check, with one instance querying another, has not been run.

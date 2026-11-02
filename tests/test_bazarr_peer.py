@@ -118,7 +118,7 @@ def _envelope(rows, total=None):
 
 
 def _throttled(retry_after=None):
-    """A rate-limit refusal as the compat route sends it: x-reason throttled and a reset time (routes.py 88-98)."""
+    """A rate-limit refusal as the peer sends it: x-reason throttled and a reset time. It sets the cooldown."""
     headers = {"x-reason": "throttled"}
     if retry_after is not None:
         headers["Retry-After"] = retry_after
@@ -864,7 +864,8 @@ class FailureIsolationTests(PeerTestCase):
             self.search([(base, "key-a")])
 
     def test_compat_disabled_503_body_is_a_configuration_error(self):
-        # Runtime disable answers 503 with the "error" key and no x-reason header (routes.py 157).
+        # Runtime disable answers 503 with the "error" key and no x-reason header.
+        # The search raises a configuration error that reads "Distribution Hub is off on this instance".
         _server, base = self.serve(lambda record: _json({"error": "compat endpoint disabled"}, status=503))
         with self.assertRaisesRegex(self.mod.ConfigurationError, DISTRIBUTION_OFF):
             self.search([(base, "key-a")])
@@ -2023,7 +2024,8 @@ class DownloadTests(PeerTestCase):
         self.assertEqual(target.requests, [])
 
     def test_stream_statuses_are_candidate_skips_with_a_reason_each(self):
-        # Each status comes with the x-reason and the body the peer sends for it (routes.py 405-479).
+        # Each status comes with the x-reason and the body the peer sends for it. Each one skips the
+        # candidate, logs its reason label, and keeps the peer's message out of the log.
         cases = (
             (410, "not_found", "stream token expired", "stream_expired"),
             (404, "not_found", "stream not found", "not_found"),
