@@ -112,17 +112,33 @@ class SnapshotScriptTests(unittest.TestCase):
         self.assertFalse(snapshot_released_host.registers_provider("AGENTS = ['x']\n"))
 
     def test_copied_file_importing_outside_the_standard_library_is_refused(self):
-        for source in ("from app.config import validators\n", "import subliminal_patch\n", "def load():\n    import app\n"):
+        cases = (
+            ("manifest.py", "from app.config import validators\n", 1, "app.config"),
+            ("manifest.py", "import subliminal_patch\n", 1, "subliminal_patch"),
+            ("manifest.py", "def load():\n    import app\n", 2, "app"),
+            ("manifest.py", "import re, app\n", 1, "app"),
+            ("manifest.py", "from app import (\n    validators,\n)\n", 1, "app"),
+        )
+        for filename, source, line, module in cases:
             with self.subTest(source=source):
-                with self.assertRaises(SystemExit):
-                    snapshot_released_host.refuse_outside_imports("manifest.py", source.encode("utf-8"))
+                with self.assertRaises(SystemExit) as raised:
+                    snapshot_released_host.refuse_outside_imports(filename, source.encode("utf-8"))
+                self.assertIn(f"{filename}: line {line} imports {module!r}", str(raised.exception))
 
     def test_standard_library_and_relative_imports_are_allowed(self):
-        source = b"from __future__ import annotations\nimport re\nfrom . import PROVIDER_HUB_API_VERSION\nfrom .registry import NAME\n"
+        source = (
+            b"from __future__ import annotations\n"
+            b"import re\n"
+            b"from collections.abc import Callable\n"
+            b"from . import PROVIDER_HUB_API_VERSION\n"
+            b"from .registry import NAME\n"
+        )
         snapshot_released_host.refuse_outside_imports("manifest.py", source)
 
-    def test_vendored_copies_import_only_the_standard_library_and_their_package(self):
-        for path in released_hosts.HOSTS_DIR.glob("*/*.py"):
+    def test_copied_host_files_import_only_the_standard_library_or_relatively(self):
+        paths = list(released_hosts.HOSTS_DIR.glob("*/*.py"))
+        self.assertTrue(paths)
+        for path in paths:
             with self.subTest(file=str(path)):
                 snapshot_released_host.refuse_outside_imports(path.name, path.read_bytes())
 
