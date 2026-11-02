@@ -22,6 +22,7 @@ A provider is done only when all of these are true:
 - Forced-only and hearing-impaired-only requests are handled, and the provider never advertises a variant it cannot produce.
 - Brazilian Portuguese uses `alpha3: "por"` with `country_alpha2: "BR"`, never a `por-BR` alpha3 or a custom country key, and language names or slugs match the upstream site exactly.
 - Compiled dependencies pass the wheel-matrix gate in `sdk validate`.
+- A `providers/*/provider.json` that uses any field listed in `SCHEMA_2_ONLY_FIELDS` in `sdk/cli.py` is refused by `build-catalog` and `validate`, because released hosts ignore those fields; a plugin that needs them is published as a schema 2 entry under `plugins/`.
 
 Do not stop at "the provider appears in native search". The compat path is what Jellyfin-style clients exercise.
 

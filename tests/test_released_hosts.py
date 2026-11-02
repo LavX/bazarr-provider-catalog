@@ -23,7 +23,7 @@ class VendoredCopyTests(unittest.TestCase):
                     data = (released_hosts.HOSTS_DIR / name / filename).read_bytes()
                     self.assertEqual(released_hosts.git_blob_id(data), blob)
 
-    def test_snapshots_pin_the_agreed_commits(self):
+    def test_snapshots_pin_the_recorded_commits(self):
         self.assertEqual(
             released_hosts.load_host("bazarr_v2_6_2").environment["bazarr_commit"],
             "6c354d646dbb11852bd4cdec667cbbfb8170782f",
