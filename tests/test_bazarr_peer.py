@@ -1648,6 +1648,23 @@ class CandidateTests(PeerTestCase):
         self.assertEqual(self.search([(base, "key-a")], provider=provider), [])
         self.assertEqual(len(self.searches(server)), 2)
 
+    def test_remote_row_without_a_download_file_id_produces_no_candidate(self):
+        remote = _row(
+            1001,
+            url="https://peer-tracker.example/subtitles/1001",
+            hearing_impaired=True,
+            foreign_parts_only=True,
+        )
+        del remote["attributes"]["files"][0]["file_id"]
+        _server, base = self.serve(lambda record: _envelope([remote]))
+        self.assertEqual(self.search([(base, "key-a")]), [])
+
+    def test_local_row_without_a_download_file_id_produces_no_candidate(self):
+        local = _local_row(1234, moviehash_match=True, hearing_impaired=True, foreign_parts_only=True)
+        del local["attributes"]["files"][0]["file_id"]
+        _server, base = self.serve(lambda record: _envelope([local]))
+        self.assertEqual(self.search([(base, "key-a")]), [])
+
     def test_version_skew_missing_optional_attributes_default_safely(self):
         row = {
             "id": "77",
