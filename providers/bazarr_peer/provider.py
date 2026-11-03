@@ -24,6 +24,7 @@ import math
 import os
 import re
 import ssl
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -695,11 +696,12 @@ def _parse_object(body, message):
     return payload
 
 
-def _row_identity(row):
+def _row_identity(row, endpoint):
     """The ids one search row carries: its subtitle id, its stable key, its download file id and its kind.
 
     A local row (a subtitle the peer stores) gets a key without its trailing file id, which
-    the peer mints on every search. A remote row's key is its subtitle id.
+    the peer mints on every search. Its key carries the file name, so a local row without a
+    non-empty file name has no identity and is not offered. A remote row's key is its subtitle id.
     """
     if not isinstance(row, dict):
         return None
@@ -717,6 +719,13 @@ def _row_identity(row):
     name = first.get("file_name")
     file_name = name if isinstance(name, str) and name else f"subtitle-{file_id}.srt"
     if subtitle_id.startswith("local-"):
+        if not isinstance(name, str) or not name:
+            LOGGER.debug(
+                "Bazarr+ Peer endpoint %s: a local row without a file name is not offered (file %s)",
+                endpoint.tag,
+                file_id,
+            )
+            return None
         stem = subtitle_id.rsplit("-", 1)[0]
         return {
             "subtitle_id": subtitle_id,
@@ -741,13 +750,20 @@ def _extension(file_name):
 
 
 def _row_language(value, requested):
-    """(alpha3, alpha2, country) for a row's language code, or None when it is not requested."""
+    """(alpha3, alpha2, country) for a row's language code, or None when it is not requested.
+
+    requested maps each requested alpha3 code to the countries asked for under it, with None for a
+    plain request. A row with a country is kept only for a plain request or one that asks for that
+    country. A row without a country is kept whenever its language is requested.
+    """
     text = value if isinstance(value, str) else ""
     base, _separator, country = text.partition("-")
     alpha3 = _ALPHA2_TO_CODE.get(base.lower())
     if alpha3 is None or alpha3 not in requested:
         return None
     region = country.upper() if len(country) == 2 and country.isalpha() else None
+    if region is not None and None not in requested[alpha3] and region not in requested[alpha3]:
+        return None
     return alpha3, base.lower(), region
 
 
@@ -788,7 +804,7 @@ def _score(matches):
 
 def _candidate(video, endpoint, row, requested, options, identity):
     """One worker candidate from one search row, or None when the row cannot be offered."""
-    ident = _row_identity(row)
+    ident = _row_identity(row, endpoint)
     if ident is None:
         return None
     attributes = row["attributes"]
@@ -993,6 +1009,8 @@ class BazarrPeerProvider:
         # Credential key (see _credential_key) to (the monotonic time its cooldown ends, the error that cooled it).
         # The worker keeps one provider instance, so cooldowns last across searches.
         self._cooldowns = {}
+        # Guards the cooldown writes, which the search threads and the download call both make.
+        self._cooldown_lock = threading.Lock()
         # Credential key to the bearer token the peer minted for it. Re-minted on a 401.
         self._tokens = {}
         # Credential key to (the monotonic time the cache ends, the provider names the peer listed).
@@ -1011,7 +1029,10 @@ class BazarrPeerProvider:
             for endpoint in endpoints:
                 LOGGER.info("Bazarr+ Peer endpoint %s skipped: the video has no identifier to search by", endpoint.tag)
             return []
-        requested = {alpha3 for alpha3, _code in pairs}
+        # Each requested alpha3 code maps to the countries asked for under it. None is a plain request.
+        requested = {}
+        for alpha3, code in pairs:
+            requested.setdefault(alpha3, set()).add(code.partition("-")[2] or None)
         codes = ",".join(code for _alpha3, code in pairs)
         deadline = _monotonic() + timeout
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(endpoints)) as pool:
@@ -1192,9 +1213,19 @@ class BazarrPeerProvider:
         )
 
     def _cool_down(self, endpoint, error, seconds=DEFAULT_COOLDOWN_SECONDS):
-        """Skip the endpoint in later searches for the given seconds, and keep the error that cooled it."""
-        # The copy carries no traceback, so the stored error keeps no frames or response alive.
-        self._cooldowns[_credential_key(endpoint)] = (_monotonic() + seconds, type(error)(str(error)))
+        """Skip the endpoint in later searches for the given seconds, and keep the error that cooled it.
+
+        A cooldown already in force that ends at or after the new one is kept, so a shorter cooldown
+        never shortens it.
+        """
+        key = _credential_key(endpoint)
+        until = _monotonic() + seconds
+        with self._cooldown_lock:
+            current = self._cooldowns.get(key)
+            if current is not None and current[0] >= until:
+                return
+            # The copy carries no traceback, so the stored error keeps no frames or response alive.
+            self._cooldowns[key] = (until, type(error)(str(error)))
 
     def _refuse(self, endpoint, refusal):
         """The exception one HTTP refusal raises as. A 429 also cools the endpoint down."""
@@ -1288,7 +1319,7 @@ class BazarrPeerProvider:
         except ServiceUnavailable:
             raise _Skip("recovery_failed") from None
         for row in rows:
-            ident = _row_identity(row)
+            ident = _row_identity(row, endpoint)
             if ident is not None and ident["key"] == payload["key"]:
                 return ident["file_id"]
         raise _Skip("stale_not_found")

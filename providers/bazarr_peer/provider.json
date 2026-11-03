@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "cfbf640d9d69348ada35c21ea4deb2122e87fb27a543efaf50a3dab9eb75ccfb",
+  "bundle_sha256": "e2e42566b04383b7789ea9ea91c5dd2aec6ad0da73138d101f048369f23e864c",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -13,6 +13,7 @@
       },
       "endpoints": {
         "description": "Whitespace-separated addresses of the Bazarr+ instances to search, for example http://192.168.1.20:6767. Use the private network address that this Bazarr instance can reach. The peer must be reached at this address, because its forwarded headers build the download links. Public-internet peers are not supported.",
+        "format": "uri",
         "minLength": 1,
         "title": "Endpoints",
         "type": "string"
@@ -57,7 +58,7 @@
   "entry_class": "BazarrPeerProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "3342ecdff13ae253e61057407ee326cda9e0b7b441c3c743d5194196b295520c"
+    "provider.py": "0dfaf00b2ea887d7bbe6e02907913578394356effbb2ce4a323921d868409361"
   },
   "languages": [
     "ara",
@@ -107,6 +108,7 @@
     "pan",
     "pol",
     "por",
+    "por-BR",
     "pus",
     "ron",
     "rus",

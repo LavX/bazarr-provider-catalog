@@ -1455,6 +1455,13 @@ class CandidateTests(PeerTestCase):
         self.assertEqual(candidate["language"]["country_alpha2"], "BR")
         self.assertNotIn("por-BR", json.dumps(candidate["language"]))
 
+    def test_regional_request_keeps_the_brazilian_rows_and_drops_the_portugal_rows(self):
+        regional = {"alpha3": "por", "country_alpha2": "BR", "hi": False, "forced": False}
+        records = [_row(9, language="pt-BR"), _row(10, language="pt-PT"), _row(11, language="pt")]
+        _server, base = self.serve(lambda record: _envelope(records))
+        ids = {candidate["id"] for candidate in self.search([(base, "key-a")], languages=[regional])}
+        self.assertEqual(ids, {f"{_tag(base)}:9", f"{_tag(base)}:11"})
+
     def test_page_link_comes_from_the_url_field_only_when_it_is_not_empty(self):
         records = [_row(1, url="https://peer-tracker.example/subtitles/1"), _row(2, url="")]
         _server, base = self.serve(lambda record: _envelope(records))
@@ -1537,6 +1544,19 @@ class CandidateTests(PeerTestCase):
         (candidate,) = self.search([(base, "key-a")])
         self.assertTrue(candidate["hash_verifiable"])
         self.assertIn("hash", candidate["matches"])
+
+    def test_local_row_without_a_file_name_is_not_offered_under_any_file_id(self):
+        rows = [_local_row(1234, name="")]
+        server, base = self.serve(lambda record: _envelope(rows))
+        provider = self.mod.BazarrPeerProvider()
+        with self.assertLogs("bazarr_peer", level="DEBUG") as logs:
+            self.assertEqual(self.search([(base, "key-a")], provider=provider), [])
+        output = "\n".join(logs.output)
+        self.assertIn(f"endpoint {_tag(base)}: a local row without a file name is not offered (file 1234)", output)
+        self.assertNotIn("local-movie", output)
+        rows[:] = [_local_row(5678, name="")]
+        self.assertEqual(self.search([(base, "key-a")], provider=provider), [])
+        self.assertEqual(len(self.searches(server)), 2)
 
     def test_version_skew_missing_optional_attributes_default_safely(self):
         row = {
@@ -1705,6 +1725,22 @@ class DownloadTests(PeerTestCase):
             self.search([(base, "key-a")], provider=provider)
         self.assertEqual(self.searches(server), [])
 
+    def test_download_cooldown_never_shortens_a_rate_limit_cooldown_still_in_force(self):
+        server, base = self.routes(
+            search=lambda record: _throttled("600"),
+            login=lambda record: _json({"message": "Invalid API key"}, status=403, headers={"x-reason": "auth"}),
+        )
+        provider = self.mod.BazarrPeerProvider()
+        with self.assertRaises(self.mod.APIThrottled):
+            self.search([(base, "key-a")], provider=provider)
+        self.clock.now += 100
+        with self.assertLogs("bazarr_peer", level="WARNING"):
+            self.assertTrue(self.download(base, provider=provider)["empty"])
+        with self.assertRaises(self.mod.APIThrottled) as caught:
+            self.search([(base, "key-a")], provider=provider)
+        self.assertEqual(caught.exception.retry_after, 500)
+        self.assertEqual(len(self.searches(server)), 1)
+
     def test_quota_exhausted_406_is_a_candidate_skip_and_the_provider_stays_good(self):
         state = {"posts": 0}
         body = b"1\n00:00:01,000 --> 00:00:02,000\nHi\n"
@@ -1803,6 +1839,31 @@ class DownloadTests(PeerTestCase):
         self.assertFalse(content["empty"])
         (post,) = [request for request in server.requests if request["path"] == "/api/v1/download"]
         self.assertEqual(json.loads(post["body"]), {"file_id": 5678, "sub_format": "srt"})
+
+    def test_named_local_candidate_recovers_from_its_saved_payload_after_a_file_id_change(self):
+        rows = [_local_row(1234)]
+        state = {"posts": []}
+        body = b"1\n00:00:01,000 --> 00:00:02,000\nHi\n"
+
+        def download(record):
+            file_id = json.loads(record["body"])["file_id"]
+            state["posts"].append(file_id)
+            if file_id == 1234:
+                return _json({"message": "subtitle not found"}, status=404, headers={"x-reason": "not_found"})
+            return _download_response(record)
+
+        _server, base = self.routes(
+            search=lambda record: _envelope(rows),
+            login=_login_response,
+            download=download,
+            stream=lambda record: (200, {"Content-Type": "application/x-subrip"}, body),
+        )
+        provider = self.mod.BazarrPeerProvider()
+        (candidate,) = self.search([(base, "key-a")], provider=provider)
+        rows[:] = [_local_row(5678)]
+        content = self.download(base, payload=candidate["provider_payload"], provider=provider)
+        self.assertFalse(content["empty"])
+        self.assertEqual(state["posts"], [1234, 5678])
 
     def test_recovery_without_a_matching_row_is_a_candidate_skip_with_a_logged_reason(self):
         state = {"posts": 0}
@@ -1936,6 +1997,36 @@ class DownloadTests(PeerTestCase):
         self.assertEqual(self.searches(server), [])
         self.search([(base, "key-a")], provider=provider)
         self.assertEqual(len(self.searches(server)), 1)
+
+    def test_tls_failure_on_the_recovery_search_skips_the_candidate_and_cools_the_endpoint(self):
+        server, base = self.routes(
+            search=lambda record: _envelope([_row(1001, file_id=77)]),
+            login=_login_response,
+            download=lambda record: _json(
+                {"message": "subtitle not found"}, status=404, headers={"x-reason": "not_found"}
+            ),
+        )
+        recording_open = self.mod._OPENER.open
+        state = {"searches": 0}
+
+        def open_second_search_failing_handshake(fullurl, data=None, timeout=None):
+            if fullurl.full_url.startswith(f"{base}/api/v1/subtitles"):
+                state["searches"] += 1
+                if state["searches"] == 2:
+                    raise urllib.error.URLError(ssl.SSLError("the TLS handshake failed"))
+            return recording_open(fullurl, data=data, timeout=timeout)
+
+        provider = self.mod.BazarrPeerProvider()
+        with patch.object(self.mod._OPENER, "open", open_second_search_failing_handshake):
+            (candidate,) = self.search([(base, "key-a")], provider=provider)
+            with self.assertLogs("bazarr_peer", level="WARNING"):
+                content = self.download(base, payload=candidate["provider_payload"], provider=provider)
+        self.assertTrue(content["empty"])
+        self.assertEqual(state["searches"], 2)
+        ((endpoint_key, (cooled_until, error)),) = provider._cooldowns.items()
+        self.assertEqual(endpoint_key[0], _tag(base))
+        self.assertIsInstance(error, self.mod.ConfigurationError)
+        self.assertEqual(cooled_until - self.clock.now, 60)
 
     def test_recovery_refusal_skips_without_cooldown(self):
         state = {"searches": 0}
@@ -2373,9 +2464,13 @@ class ManifestTests(PeerTestCase):
         self.assertEqual(manifest["name"], "Bazarr+ Peer")
         self.assertEqual(manifest["entry_class"], "BazarrPeerProvider")
         self.assertTrue(hasattr(self.mod, manifest["entry_class"]))
-        self.assertEqual(manifest["languages"], sorted(self.mod._LANGUAGE_CODES))
+        self.assertEqual(manifest["languages"], sorted([*self.mod._LANGUAGE_CODES, "por-BR"]))
         self.assertEqual(manifest["supported_media"], ["movie", "episode"])
         self.assertEqual(manifest["source"]["path"], "providers/bazarr_peer")
+
+    def test_endpoints_setting_declares_the_uri_format(self):
+        manifest = json.loads((PROVIDER_DIR / "provider.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["config_schema"]["properties"]["endpoints"]["format"], "uri")
 
 
 if __name__ == "__main__":
