@@ -38,8 +38,8 @@ MAX_ENDPOINTS = 16
 MIN_TIMEOUT_SECONDS = 30
 DEFAULT_TIMEOUT_SECONDS = 45
 MAX_TIMEOUT_SECONDS = 90
-# A rate limit without a usable Retry-After header, and any other failed search
-# in which the endpoint sent requests and none succeeded, cools its endpoint for this long.
+# A rate limit without a usable Retry-After header, any other failed search in which the endpoint sent
+# requests and none succeeded, and an endpoint-level download error, cool its endpoint for this long.
 DEFAULT_COOLDOWN_SECONDS = 60
 MAX_COOLDOWN_SECONDS = 86400
 # The peer's answer on whether it lists its local provider is reused for this long.
@@ -846,9 +846,10 @@ def _candidate(video, endpoint, row, requested, options, identity):
             "Bazarr+ Peer endpoint %s: context_too_large, the subtitle cannot be recovered after a peer restart",
             endpoint.tag,
         )
+    # The stable key keeps a local row's id the same when the peer mints a new file id for it.
     candidate = {
         "provider": PROVIDER_ID,
-        "id": f"{endpoint.tag}:{ident['subtitle_id']}",
+        "id": f"{endpoint.tag}:{ident['key']}",
         "language": language_fields,
         "release_info": release,
         "filename": ident["file_name"],
@@ -1046,6 +1047,13 @@ class BazarrPeerProvider:
             return self._download_content(endpoint, payload, file_id, options, deadline, recovered=False)
         except _Skip as skip:
             return _skip_download(endpoint, file_id, skip.reason)
+        except (AuthenticationError, ConfigurationError, APIThrottled) as error:
+            # An endpoint-level error skips this candidate and cools the endpoint, as a failed search does.
+            # A rate limit already cooled the endpoint in _refuse, with its Retry-After interval.
+            if not isinstance(error, APIThrottled):
+                self._cool_down(endpoint, error)
+            _log_failure(endpoint, error)
+            return _empty_download()
 
     def _search_contained(self, endpoint, video, identity, codes, requested, options, deadline):
         """Run one endpoint's search. An unexpected exception fails only this endpoint."""

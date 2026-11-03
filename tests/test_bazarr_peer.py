@@ -1292,7 +1292,7 @@ class LibraryTests(PeerTestCase):
     def test_serve_local_on_returns_the_library_rows_with_the_local_shape(self):
         _server, base = self.serve(lambda record: _envelope([_local_row(1234)]))
         (candidate,) = self.search([(base, "key-a")])
-        self.assertEqual(candidate["id"], f"{_tag(base)}:local-movie-1160419-en-1234")
+        self.assertEqual(candidate["id"], f"{_tag(base)}:local-movie-1160419-en|{FILE_NAME}")
         self.assertEqual(candidate["provider_payload"]["row"], "local")
 
     def test_probe_carries_the_api_key_and_no_authorization_header(self):
@@ -1518,7 +1518,7 @@ class CandidateTests(PeerTestCase):
         self.assertEqual(remote_candidate["provider_payload"]["subtitle_id"], "1001")
         self.assertEqual(remote_candidate["provider_payload"]["file_id"], 10010)
         self.assertEqual(remote_candidate["provider_payload"]["extension"], "srt")
-        local_candidate = by_id[f"{_tag(base)}:local-movie-1160419-en-1234"]
+        local_candidate = by_id[f"{_tag(base)}:local-movie-1160419-en|{FILE_NAME}"]
         self.assertEqual(local_candidate["display"]["uploader"], "bazarr:local")
         self.assertEqual(local_candidate["release_info"], FILE_NAME)
         self.assertEqual(local_candidate["filename"], FILE_NAME)
@@ -1677,23 +1677,33 @@ class DownloadTests(PeerTestCase):
         self.assertFalse(content["empty"])
         self.assertEqual([request["path"] for request in server.requests].count("/api/v1/login"), 2)
 
-    def test_second_401_after_the_remint_is_an_authentication_error(self):
+    def test_second_401_after_the_remint_skips_the_candidate_and_cools_the_endpoint(self):
         server, base = self.routes(
             login=_login_response,
             download=lambda record: _json({"message": "Token invalid or expired"}, status=401),
         )
-        with self.assertRaises(self.mod.AuthenticationError):
-            self.download(base)
+        provider = self.mod.BazarrPeerProvider()
+        with self.assertLogs("bazarr_peer", level="WARNING") as logs:
+            self.assertTrue(self.download(base, provider=provider)["empty"])
+        self.assertIn("AuthenticationError", "\n".join(logs.output))
         self.assertEqual([request["path"] for request in server.requests].count("/api/v1/login"), 2)
+        with self.assertRaises(self.mod.AuthenticationError):
+            self.search([(base, "key-a")], provider=provider)
+        self.assertEqual(self.searches(server), [])
 
-    def test_forbidden_download_is_an_authentication_error_without_a_relogin(self):
+    def test_forbidden_download_skips_the_candidate_without_a_relogin_and_cools_the_endpoint(self):
         server, base = self.routes(
             login=_login_response,
             download=lambda record: _json({"message": "Invalid API key"}, status=403, headers={"x-reason": "auth"}),
         )
-        with self.assertRaises(self.mod.AuthenticationError):
-            self.download(base)
+        provider = self.mod.BazarrPeerProvider()
+        with self.assertLogs("bazarr_peer", level="WARNING") as logs:
+            self.assertTrue(self.download(base, provider=provider)["empty"])
+        self.assertIn("AuthenticationError", "\n".join(logs.output))
         self.assertEqual([request["path"] for request in server.requests].count("/api/v1/login"), 1)
+        with self.assertRaises(self.mod.AuthenticationError):
+            self.search([(base, "key-a")], provider=provider)
+        self.assertEqual(self.searches(server), [])
 
     def test_quota_exhausted_406_is_a_candidate_skip_and_the_provider_stays_good(self):
         state = {"posts": 0}
@@ -1772,6 +1782,27 @@ class DownloadTests(PeerTestCase):
         content = self.download(base, payload=payload)
         self.assertFalse(content["empty"])
         self.assertEqual(state["posts"], [1234, 5678])
+
+    def test_local_candidate_id_survives_a_new_file_id_and_its_download_still_resolves(self):
+        rows = [_local_row(1234)]
+        body = b"1\n00:00:01,000 --> 00:00:02,000\nHi\n"
+        server, base = self.routes(
+            search=lambda record: _envelope(rows),
+            login=_login_response,
+            download=_download_response,
+            stream=lambda record: (200, {"Content-Type": "application/x-subrip"}, body),
+        )
+        provider = self.mod.BazarrPeerProvider()
+        (first,) = self.search([(base, "key-a")], provider=provider)
+        rows[:] = [_local_row(5678)]
+        (second,) = self.search([(base, "key-a")], provider=provider)
+        self.assertEqual(second["id"], first["id"])
+        self.assertEqual(second["id"], f"{_tag(base)}:local-movie-1160419-en|{FILE_NAME}")
+        self.assertEqual(second["provider_payload"]["file_id"], 5678)
+        content = self.download(base, payload=second["provider_payload"], provider=provider)
+        self.assertFalse(content["empty"])
+        (post,) = [request for request in server.requests if request["path"] == "/api/v1/download"]
+        self.assertEqual(json.loads(post["body"]), {"file_id": 5678, "sub_format": "srt"})
 
     def test_recovery_without_a_matching_row_is_a_candidate_skip_with_a_logged_reason(self):
         state = {"posts": 0}
@@ -1973,14 +2004,19 @@ class DownloadTests(PeerTestCase):
         self.assertIn(": budget_spent", "\n".join(logs.output))
         self.assertEqual([request["path"] for request in server.requests].count("/api/v1/subtitles"), 0)
 
-    def test_compat_disabled_on_the_download_is_a_configuration_error_without_a_recovery(self):
+    def test_compat_disabled_on_the_download_skips_without_a_recovery_and_cools_the_endpoint(self):
         server, base = self.routes(
             login=_login_response,
             download=lambda record: _json({"message": "disabled"}, status=404, headers={"x-reason": "compat-disabled"}),
         )
-        with self.assertRaisesRegex(self.mod.ConfigurationError, DISTRIBUTION_OFF):
-            self.download(base)
+        provider = self.mod.BazarrPeerProvider()
+        with self.assertLogs("bazarr_peer", level="WARNING") as logs:
+            self.assertTrue(self.download(base, provider=provider)["empty"])
+        self.assertIn(DISTRIBUTION_OFF, "\n".join(logs.output))
         self.assertEqual([request["path"] for request in server.requests].count("/api/v1/subtitles"), 0)
+        with self.assertRaisesRegex(self.mod.ConfigurationError, DISTRIBUTION_OFF):
+            self.search([(base, "key-a")], provider=provider)
+        self.assertEqual(self.searches(server), [])
 
     def test_a_dropped_context_skips_a_stale_download_with_stale_no_context(self):
         long_row = _row(1001, file_id=77, subtitle_id="x" * 1100)
@@ -2092,7 +2128,7 @@ class DownloadTests(PeerTestCase):
             self.assertTrue(self.download(base)["empty"])
         self.assertEqual(target.requests, [])
 
-    def test_tls_handshake_failure_on_the_stream_is_a_configuration_error(self):
+    def test_tls_handshake_failure_on_the_stream_skips_the_candidate_and_cools_the_endpoint(self):
         server, base = self.routes(login=_login_response, download=_download_response)
         recording_open = self.mod._OPENER.open
 
@@ -2101,10 +2137,15 @@ class DownloadTests(PeerTestCase):
                 raise urllib.error.URLError(ssl.SSLError("the TLS handshake failed"))
             return recording_open(fullurl, data=data, timeout=timeout)
 
+        provider = self.mod.BazarrPeerProvider()
         with patch.object(self.mod._OPENER, "open", open_failing_handshake):
-            with self.assertRaises(self.mod.ConfigurationError):
-                self.download(base)
+            with self.assertLogs("bazarr_peer", level="WARNING") as logs:
+                self.assertTrue(self.download(base, provider=provider)["empty"])
+        self.assertIn("ConfigurationError: the TLS handshake with the endpoint failed", "\n".join(logs.output))
         self.assertEqual([request["path"] for request in server.requests], ["/api/v1/login", "/api/v1/download"])
+        with self.assertRaises(self.mod.ConfigurationError):
+            self.search([(base, "key-a")], provider=provider)
+        self.assertEqual(self.searches(server), [])
 
     def test_slow_drip_stream_is_cut_at_the_deadline(self):
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _SlowDripHandler)
@@ -2157,25 +2198,31 @@ class DownloadTests(PeerTestCase):
                 with self.assertLogs("bazarr_peer", level="WARNING"):
                     self.assertTrue(self.download(base)["empty"])
 
-    def test_bad_request_on_the_download_is_a_configuration_error(self):
-        _server, base = self.routes(
+    def test_bad_request_on_the_download_skips_the_candidate_and_cools_the_endpoint(self):
+        server, base = self.routes(
             login=_login_response,
             download=lambda record: _json({"message": "bad"}, status=400, headers={"x-reason": "bad-request"}),
         )
+        provider = self.mod.BazarrPeerProvider()
+        with self.assertLogs("bazarr_peer", level="WARNING") as logs:
+            self.assertTrue(self.download(base, provider=provider)["empty"])
+        self.assertIn("bad_request", "\n".join(logs.output))
         with self.assertRaisesRegex(self.mod.ConfigurationError, "bad_request"):
-            self.download(base)
+            self.search([(base, "key-a")], provider=provider)
+        self.assertEqual(self.searches(server), [])
 
-    def test_rate_limited_download_raises_api_throttled_and_cools_the_endpoint(self):
+    def test_rate_limited_download_skips_the_candidate_and_cools_the_endpoint_for_its_retry_after(self):
         server, base = self.routes(
             login=_login_response,
             download=lambda record: _throttled("120"),
         )
         provider = self.mod.BazarrPeerProvider()
+        with self.assertLogs("bazarr_peer", level="WARNING") as logs:
+            self.assertTrue(self.download(base, provider=provider)["empty"])
+        self.assertIn("APIThrottled", "\n".join(logs.output))
         with self.assertRaises(self.mod.APIThrottled) as caught:
-            self.download(base, provider=provider)
-        self.assertEqual(caught.exception.retry_after, 120)
-        with self.assertRaises(self.mod.APIThrottled):
             self.search([(base, "key-a")], provider=provider)
+        self.assertEqual(caught.exception.retry_after, 120)
         self.assertEqual([request["path"] for request in server.requests].count("/api/v1/subtitles"), 0)
 
     def test_download_for_an_endpoint_that_is_not_configured_is_a_candidate_skip_with_no_request(self):
@@ -2276,9 +2323,9 @@ class DownloadTests(PeerTestCase):
             login=_login_response,
             download=lambda record: _json(leak("BAD"), status=400, headers={"x-reason": "bad-request"}),
         )
-        with self.assertRaises(self.mod.ConfigurationError) as caught:
-            self.download(base)
-        self.assertNotIn("SECRET-BAD", str(caught.exception))
+        with self.assertLogs("bazarr_peer", level="DEBUG") as logs:
+            self.assertTrue(self.download(base)["empty"])
+        self.assertNotIn("SECRET-BAD", "\n".join(logs.output))
 
 
 class HashTests(PeerTestCase):
