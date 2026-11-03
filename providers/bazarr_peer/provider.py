@@ -39,8 +39,8 @@ MAX_ENDPOINTS = 16
 MIN_TIMEOUT_SECONDS = 30
 DEFAULT_TIMEOUT_SECONDS = 45
 MAX_TIMEOUT_SECONDS = 90
-# A rate limit without a usable Retry-After header, any other failed search in which the endpoint sent
-# requests and none succeeded, and an endpoint-level download error, cool its endpoint for this long.
+# A rate limit without a usable Retry-After header, and any other failed search
+# in which the endpoint sent requests and none succeeded, cools its endpoint for this long.
 DEFAULT_COOLDOWN_SECONDS = 60
 MAX_COOLDOWN_SECONDS = 86400
 # The peer's answer on whether it lists its local provider is reused for this long.
@@ -788,8 +788,7 @@ def _matches(video, details):
     """The match keys one row earns against the video, from its feature details.
 
     Episode series identity uses the series IMDb id, so a bare season or episode number
-    is never a match on its own. An episode matched by series IMDb id also reports the
-    series match. A missing value on either side is never a match.
+    never reports the series match. A missing value on either side is never a match.
     """
     matches = []
     if video.get("kind") == "episode":
@@ -1096,13 +1095,6 @@ class BazarrPeerProvider:
             return self._download_content(endpoint, payload, file_id, options, deadline, recovered=False)
         except _Skip as skip:
             return _skip_download(endpoint, file_id, skip.reason)
-        except (AuthenticationError, ConfigurationError, APIThrottled) as error:
-            # An endpoint-level error skips this candidate and cools the endpoint, as a failed search does.
-            # A rate limit already cooled the endpoint in _refuse, with its Retry-After interval.
-            if not isinstance(error, APIThrottled):
-                self._cool_down(endpoint, error)
-            _log_failure(endpoint, error)
-            return _empty_download()
 
     def _search_contained(self, endpoint, video, identity, codes, requested, options, deadline):
         """Run one endpoint's search. An unexpected exception fails only this endpoint."""

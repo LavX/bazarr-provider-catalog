@@ -1658,12 +1658,16 @@ class CandidateTests(PeerTestCase):
         del remote["attributes"]["files"][0]["file_id"]
         _server, base = self.serve(lambda record: _envelope([remote]))
         self.assertEqual(self.search([(base, "key-a")]), [])
+        remote["attributes"]["files"][0]["file_id"] = 10010
+        self.assertEqual(len(self.search([(base, "key-a")])), 1)
 
     def test_local_row_without_a_download_file_id_produces_no_candidate(self):
         local = _local_row(1234, moviehash_match=True, hearing_impaired=True, foreign_parts_only=True)
         del local["attributes"]["files"][0]["file_id"]
         _server, base = self.serve(lambda record: _envelope([local]))
         self.assertEqual(self.search([(base, "key-a")]), [])
+        local["attributes"]["files"][0]["file_id"] = 1234
+        self.assertEqual(len(self.search([(base, "key-a")])), 1)
 
     def test_version_skew_missing_optional_attributes_default_safely(self):
         row = {
@@ -1804,49 +1808,23 @@ class DownloadTests(PeerTestCase):
         self.assertFalse(content["empty"])
         self.assertEqual([request["path"] for request in server.requests].count("/api/v1/login"), 2)
 
-    def test_second_401_after_the_remint_skips_the_candidate_and_cools_the_endpoint(self):
+    def test_second_401_after_the_remint_is_an_authentication_error(self):
         server, base = self.routes(
             login=_login_response,
             download=lambda record: _json({"message": "Token invalid or expired"}, status=401),
         )
-        provider = self.mod.BazarrPeerProvider()
-        with self.assertLogs("bazarr_peer", level="WARNING") as logs:
-            self.assertTrue(self.download(base, provider=provider)["empty"])
-        self.assertIn("AuthenticationError", "\n".join(logs.output))
-        self.assertEqual([request["path"] for request in server.requests].count("/api/v1/login"), 2)
         with self.assertRaises(self.mod.AuthenticationError):
-            self.search([(base, "key-a")], provider=provider)
-        self.assertEqual(self.searches(server), [])
+            self.download(base)
+        self.assertEqual([request["path"] for request in server.requests].count("/api/v1/login"), 2)
 
-    def test_forbidden_download_skips_the_candidate_without_a_relogin_and_cools_the_endpoint(self):
+    def test_forbidden_download_is_an_authentication_error_without_a_relogin(self):
         server, base = self.routes(
             login=_login_response,
             download=lambda record: _json({"message": "Invalid API key"}, status=403, headers={"x-reason": "auth"}),
         )
-        provider = self.mod.BazarrPeerProvider()
-        with self.assertLogs("bazarr_peer", level="WARNING") as logs:
-            self.assertTrue(self.download(base, provider=provider)["empty"])
-        self.assertIn("AuthenticationError", "\n".join(logs.output))
-        self.assertEqual([request["path"] for request in server.requests].count("/api/v1/login"), 1)
         with self.assertRaises(self.mod.AuthenticationError):
-            self.search([(base, "key-a")], provider=provider)
-        self.assertEqual(self.searches(server), [])
-
-    def test_download_cooldown_never_shortens_a_rate_limit_cooldown_still_in_force(self):
-        server, base = self.routes(
-            search=lambda record: _throttled("600"),
-            login=lambda record: _json({"message": "Invalid API key"}, status=403, headers={"x-reason": "auth"}),
-        )
-        provider = self.mod.BazarrPeerProvider()
-        with self.assertRaises(self.mod.APIThrottled):
-            self.search([(base, "key-a")], provider=provider)
-        self.clock.now += 100
-        with self.assertLogs("bazarr_peer", level="WARNING"):
-            self.assertTrue(self.download(base, provider=provider)["empty"])
-        with self.assertRaises(self.mod.APIThrottled) as caught:
-            self.search([(base, "key-a")], provider=provider)
-        self.assertEqual(caught.exception.retry_after, 500)
-        self.assertEqual(len(self.searches(server)), 1)
+            self.download(base)
+        self.assertEqual([request["path"] for request in server.requests].count("/api/v1/login"), 1)
 
     def test_quota_exhausted_406_is_a_candidate_skip_and_the_provider_stays_good(self):
         state = {"posts": 0}
@@ -2105,7 +2083,7 @@ class DownloadTests(PeerTestCase):
         self.search([(base, "key-a")], provider=provider)
         self.assertEqual(len(self.searches(server)), 1)
 
-    def test_tls_failure_on_the_recovery_search_skips_the_candidate_and_cools_the_endpoint(self):
+    def test_tls_failure_on_the_recovery_search_raises_a_configuration_error(self):
         server, base = self.routes(
             search=lambda record: _envelope([_row(1001, file_id=77)]),
             login=_login_response,
@@ -2126,14 +2104,10 @@ class DownloadTests(PeerTestCase):
         provider = self.mod.BazarrPeerProvider()
         with patch.object(self.mod._OPENER, "open", open_second_search_failing_handshake):
             (candidate,) = self.search([(base, "key-a")], provider=provider)
-            with self.assertLogs("bazarr_peer", level="WARNING"):
-                content = self.download(base, payload=candidate["provider_payload"], provider=provider)
-        self.assertTrue(content["empty"])
+            with self.assertRaises(self.mod.ConfigurationError):
+                self.download(base, payload=candidate["provider_payload"], provider=provider)
         self.assertEqual(state["searches"], 2)
-        ((endpoint_key, (cooled_until, error)),) = provider._cooldowns.items()
-        self.assertEqual(endpoint_key[0], _tag(base))
-        self.assertIsInstance(error, self.mod.ConfigurationError)
-        self.assertEqual(cooled_until - self.clock.now, 60)
+        self.assertEqual(provider._cooldowns, {})
 
     def test_recovery_refusal_skips_without_cooldown(self):
         state = {"searches": 0}
@@ -2202,19 +2176,14 @@ class DownloadTests(PeerTestCase):
         self.assertIn(": budget_spent", "\n".join(logs.output))
         self.assertEqual([request["path"] for request in server.requests].count("/api/v1/subtitles"), 0)
 
-    def test_compat_disabled_on_the_download_skips_without_a_recovery_and_cools_the_endpoint(self):
+    def test_compat_disabled_on_the_download_is_a_configuration_error_without_a_recovery(self):
         server, base = self.routes(
             login=_login_response,
             download=lambda record: _json({"message": "disabled"}, status=404, headers={"x-reason": "compat-disabled"}),
         )
-        provider = self.mod.BazarrPeerProvider()
-        with self.assertLogs("bazarr_peer", level="WARNING") as logs:
-            self.assertTrue(self.download(base, provider=provider)["empty"])
-        self.assertIn(DISTRIBUTION_OFF, "\n".join(logs.output))
-        self.assertEqual([request["path"] for request in server.requests].count("/api/v1/subtitles"), 0)
         with self.assertRaisesRegex(self.mod.ConfigurationError, DISTRIBUTION_OFF):
-            self.search([(base, "key-a")], provider=provider)
-        self.assertEqual(self.searches(server), [])
+            self.download(base)
+        self.assertEqual([request["path"] for request in server.requests].count("/api/v1/subtitles"), 0)
 
     def test_a_dropped_context_skips_a_stale_download_with_stale_no_context(self):
         long_row = _row(1001, file_id=77, subtitle_id="x" * 1100)
@@ -2326,7 +2295,7 @@ class DownloadTests(PeerTestCase):
             self.assertTrue(self.download(base)["empty"])
         self.assertEqual(target.requests, [])
 
-    def test_tls_handshake_failure_on_the_stream_skips_the_candidate_and_cools_the_endpoint(self):
+    def test_tls_handshake_failure_on_the_stream_is_a_configuration_error(self):
         server, base = self.routes(login=_login_response, download=_download_response)
         recording_open = self.mod._OPENER.open
 
@@ -2335,15 +2304,10 @@ class DownloadTests(PeerTestCase):
                 raise urllib.error.URLError(ssl.SSLError("the TLS handshake failed"))
             return recording_open(fullurl, data=data, timeout=timeout)
 
-        provider = self.mod.BazarrPeerProvider()
         with patch.object(self.mod._OPENER, "open", open_failing_handshake):
-            with self.assertLogs("bazarr_peer", level="WARNING") as logs:
-                self.assertTrue(self.download(base, provider=provider)["empty"])
-        self.assertIn("ConfigurationError: the TLS handshake with the endpoint failed", "\n".join(logs.output))
+            with self.assertRaises(self.mod.ConfigurationError):
+                self.download(base)
         self.assertEqual([request["path"] for request in server.requests], ["/api/v1/login", "/api/v1/download"])
-        with self.assertRaises(self.mod.ConfigurationError):
-            self.search([(base, "key-a")], provider=provider)
-        self.assertEqual(self.searches(server), [])
 
     def test_slow_drip_stream_is_cut_at_the_deadline(self):
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _SlowDripHandler)
@@ -2396,31 +2360,25 @@ class DownloadTests(PeerTestCase):
                 with self.assertLogs("bazarr_peer", level="WARNING"):
                     self.assertTrue(self.download(base)["empty"])
 
-    def test_bad_request_on_the_download_skips_the_candidate_and_cools_the_endpoint(self):
-        server, base = self.routes(
+    def test_bad_request_on_the_download_is_a_configuration_error(self):
+        _server, base = self.routes(
             login=_login_response,
             download=lambda record: _json({"message": "bad"}, status=400, headers={"x-reason": "bad-request"}),
         )
-        provider = self.mod.BazarrPeerProvider()
-        with self.assertLogs("bazarr_peer", level="WARNING") as logs:
-            self.assertTrue(self.download(base, provider=provider)["empty"])
-        self.assertIn("bad_request", "\n".join(logs.output))
         with self.assertRaisesRegex(self.mod.ConfigurationError, "bad_request"):
-            self.search([(base, "key-a")], provider=provider)
-        self.assertEqual(self.searches(server), [])
+            self.download(base)
 
-    def test_rate_limited_download_skips_the_candidate_and_cools_the_endpoint_for_its_retry_after(self):
+    def test_rate_limited_download_raises_api_throttled_and_cools_the_endpoint(self):
         server, base = self.routes(
             login=_login_response,
             download=lambda record: _throttled("120"),
         )
         provider = self.mod.BazarrPeerProvider()
-        with self.assertLogs("bazarr_peer", level="WARNING") as logs:
-            self.assertTrue(self.download(base, provider=provider)["empty"])
-        self.assertIn("APIThrottled", "\n".join(logs.output))
         with self.assertRaises(self.mod.APIThrottled) as caught:
-            self.search([(base, "key-a")], provider=provider)
+            self.download(base, provider=provider)
         self.assertEqual(caught.exception.retry_after, 120)
+        with self.assertRaises(self.mod.APIThrottled):
+            self.search([(base, "key-a")], provider=provider)
         self.assertEqual([request["path"] for request in server.requests].count("/api/v1/subtitles"), 0)
 
     def test_download_for_an_endpoint_that_is_not_configured_is_a_candidate_skip_with_no_request(self):
@@ -2521,9 +2479,9 @@ class DownloadTests(PeerTestCase):
             login=_login_response,
             download=lambda record: _json(leak("BAD"), status=400, headers={"x-reason": "bad-request"}),
         )
-        with self.assertLogs("bazarr_peer", level="DEBUG") as logs:
-            self.assertTrue(self.download(base)["empty"])
-        self.assertNotIn("SECRET-BAD", "\n".join(logs.output))
+        with self.assertRaises(self.mod.ConfigurationError) as caught:
+            self.download(base)
+        self.assertNotIn("SECRET-BAD", str(caught.exception))
 
 
 class HashTests(PeerTestCase):
