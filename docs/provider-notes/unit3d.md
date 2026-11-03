@@ -44,7 +44,7 @@
 
 ## Known Gaps
 
-- An HI-specific search does not reach the provider with its HI variant. The host intersects hearing-impaired requests with the manifest, and this manifest declares no hearing-impaired variants. The matching test is an expected failure.
+- An HI-specific search does not reach the provider with its HI variant. The host intersects hearing-impaired requests with the manifest, and this manifest declares no hearing-impaired variants, so the gap depends on host support that this catalog does not contain. The matching test is an expected failure, and it stays in place until that support lands.
 - A key that is valid but lacks the search or download permission is not diagnosed. A search reports it as an authentication failure, and a download is skipped. The status endpoint is not called.
 
 ## Live Checks
