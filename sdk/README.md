@@ -6,7 +6,7 @@ Authoring tooling for building subtitle provider plugins distributed through the
 
 ## Commands
 
-- `python3 -B -m sdk validate`: validate `catalog.json`, manifests, file hashes, bundle hashes, and dependency locks. It also runs the released-host validators against the vendored snapshots in `sdk/released_hosts/`.
+- `python3 -B -m sdk validate`: validate `catalog.json`, manifests, file hashes, bundle hashes, and dependency locks. It also checks every catalog manifest with the released-host validators vendored in `sdk/released_hosts/`.
 - `python3 -B -m sdk hash providers/<id>`: print the deterministic bundle SHA256 for a provider folder.
 - `python3 -B -m sdk build-catalog`: refresh provider file hashes and regenerate the embedded catalog.
 - `python3 -B -m sdk runtime-matrix`: print the supported Bazarr+ Provider Hub Python runtimes and wheel tags.
@@ -38,7 +38,7 @@ drain_events() -> list[dict]
 itself (rar/7z are not stdlib-listable). When `download()` returns `select_member: true`
 with the raw `archive_b64`, the host lists the members and calls `select_archive_member`
 with their names; the worker runs its own language tagging and returns
-`{"member": <name>|None, "decision": "pin"|"defer"|"reject"}` — **pin** the named member,
+`{"member": <name>|None, "decision": "pin"|"defer"|"reject"}`: **pin** the named member,
 **defer** to the host's episode pick (safe for single-language archives), or **reject**
 (host fails loud, e.g. a multilingual archive missing the requested language). This keeps
 language selection identical for zip and rar/7z and avoids silent wrong-language downloads.
