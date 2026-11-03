@@ -1113,7 +1113,7 @@ class CandidateTests(UNIT3DTestCase):
         self.assertFalse(candidate["hearing_impaired_verifiable"])
         self.assertIsNone(candidate["language"]["forced"])
 
-    def test_hash_is_not_claimed_for_exact_or_candidate_matches(self):
+    def test_hash_is_claimed_only_when_the_tracker_flags_the_exact_file(self):
         records = [
             _record(1, release_match={"file_size": True, "file_name": True}),
             _record(2, release_match={"file_size": True, "file_name": False}),
@@ -1122,8 +1122,8 @@ class CandidateTests(UNIT3DTestCase):
         _server, base = self.serve(lambda record: _page(records))
         by_id = {candidate["id"]: candidate for candidate in self.search([(base, "key-a")])}
         exact = by_id[f"{_tag(base)}:1"]
-        self.assertNotIn("hash", exact["matches"])
-        self.assertFalse(exact["hash_verifiable"])
+        self.assertIn("hash", exact["matches"])
+        self.assertTrue(exact["hash_verifiable"])
         self.assertEqual(exact["release_info"], "Dune.2021.1080p.WEBRip.x264-GRP")
         for record_id in (2, 3):
             candidate = by_id[f"{_tag(base)}:{record_id}"]

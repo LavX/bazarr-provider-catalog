@@ -559,6 +559,15 @@ def _matches(video, record, matched_by):
     return matches
 
 
+def _exact_file(release_match):
+    """True when the tracker flagged both the size and the name of the exact file."""
+    return (
+        isinstance(release_match, dict)
+        and release_match.get("file_size") is True
+        and release_match.get("file_name") is True
+    )
+
+
 def _score(matches):
     """Identity strength: a verified hash is highest, an exact episode, title or movie id match is high."""
     if "hash" in matches:
@@ -589,8 +598,11 @@ def _candidate(video, endpoint, record, matched_by, requested):
     release = record.get("release") if isinstance(record.get("release"), str) else ""
     matches = _matches(video, record, matched_by)
     score_without_hash = _score(matches)
-    # The provider compares no hash, so hosts keep their episode checks.
-    hash_verifiable = False
+    # The tracker's flag for the exact file is the basis for the hash claim. The host
+    # verifies the claim against series, season, episode and source.
+    hash_verifiable = bool(release) and _exact_file(record.get("release_match"))
+    if hash_verifiable:
+        matches.append("hash")
     payload = {
         "provider": PROVIDER_ID,
         "schema": 1,
