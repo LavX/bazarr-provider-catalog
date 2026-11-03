@@ -64,7 +64,7 @@ class ReleasedValidatorTests(unittest.TestCase):
         self.assertIn("bazarr_v2_7_2 refuses sonarr", errors[1])
         self.assertIn("reserved by a Bazarr settings section", errors[0])
 
-    def test_new_host_features_are_refused_by_both(self):
+    def test_new_host_features_are_refused_by_every_released_host(self):
         manifest = smoke_manifest()
         manifest["schema_version"] = 2
         errors = released_hosts.released_host_errors([manifest])
@@ -80,17 +80,23 @@ class ReleasedValidatorTests(unittest.TestCase):
         self.assertEqual(len(errors), 6)
         self.assertTrue(all(" refuses " in line for line in errors))
 
-    def test_untrusted_shadowing_rule_is_the_hosts(self):
+    def test_migrated_built_in_id_passes_for_a_trusted_entry(self):
         manifest = smoke_manifest()
         manifest["provider_id"] = "addic7ed"  # migrated built-in, shadowable by a trusted entry
         self.assertEqual(released_hosts.released_host_errors([manifest]), [])
 
     def test_reserved_sections_exclude_provider_sections(self):
-        reserved = released_hosts.reserved_settings_sections()
+        reserved = set()
+        built_in = set()
+        for name in released_hosts.RELEASED_HOSTS:
+            host = released_hosts.load_host(name)
+            host_built_in = released_hosts.built_in_provider_ids(host)
+            built_in |= host_built_in
+            reserved |= set(host.environment["settings_sections"]) - host_built_in
         self.assertIn("sonarr", reserved)
         self.assertIn("translator", reserved)
         self.assertNotIn("subdl", reserved)
-        self.assertIn("podnapisi", released_hosts.all_built_in_provider_ids())
+        self.assertIn("podnapisi", built_in)
 
 
 class SnapshotScriptTests(unittest.TestCase):

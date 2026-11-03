@@ -6,7 +6,7 @@ Authoring tooling for building subtitle provider plugins distributed through the
 
 ## Commands
 
-- `python3 -B -m sdk validate`: validate `catalog.json`, manifests, file hashes, bundle hashes, and dependency locks.
+- `python3 -B -m sdk validate`: validate `catalog.json`, manifests, file hashes, bundle hashes, and dependency locks. It also runs the released-host validators against the vendored snapshots in `sdk/released_hosts/`.
 - `python3 -B -m sdk hash providers/<id>`: print the deterministic bundle SHA256 for a provider folder.
 - `python3 -B -m sdk build-catalog`: refresh provider file hashes and regenerate the embedded catalog.
 - `python3 -B -m sdk runtime-matrix`: print the supported Bazarr+ Provider Hub Python runtimes and wheel tags.

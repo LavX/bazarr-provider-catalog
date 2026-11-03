@@ -73,20 +73,3 @@ def released_host_errors(manifests) -> list[str]:
                 label = manifest.get("provider_id") if isinstance(manifest, dict) else None
                 errors.append(f"{name} refuses {label or '?'}: {error}")
     return errors
-
-
-def reserved_settings_sections() -> frozenset[str]:
-    """Settings sections no plugin id may take, across every released host."""
-    reserved = set()
-    for name in RELEASED_HOSTS:
-        host = load_host(name)
-        reserved |= set(host.environment["settings_sections"]) - built_in_provider_ids(host)
-    return frozenset(reserved)
-
-
-def all_built_in_provider_ids() -> frozenset[str]:
-    """Built-in, migrated and retired provider ids across every released host."""
-    ids = set()
-    for name in RELEASED_HOSTS:
-        ids |= built_in_provider_ids(load_host(name))
-    return frozenset(ids)
