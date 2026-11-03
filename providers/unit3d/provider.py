@@ -22,6 +22,7 @@ import logging
 import math
 import re
 import ssl
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -553,15 +554,6 @@ def _matches(video, record, matched_by):
     return matches
 
 
-def _exact_file(release_match):
-    """True when the tracker flagged both the size and the name of the exact file."""
-    return (
-        isinstance(release_match, dict)
-        and release_match.get("file_size") is True
-        and release_match.get("file_name") is True
-    )
-
-
 def _score(matches):
     """Identity strength: a verified hash is highest, an exact episode, title or movie id match is high."""
     if "hash" in matches:
@@ -707,6 +699,8 @@ class UNIT3DProvider:
         # Cooldown key (see _cooldown_key) to (the monotonic time its cooldown ends, a copy of the error).
         # The worker keeps one provider instance, so cooldowns last across searches.
         self._cooldowns = {}
+        # Guards the cooldown writes, which the search threads and the download call both make.
+        self._cooldown_lock = threading.Lock()
 
     def search(self, video, languages, config):
         endpoints = _configured_endpoints(config)
@@ -871,9 +865,19 @@ class UNIT3DProvider:
         return _Outcome([], errors[-1] if rate_limited else errors[0], True)
 
     def _cool_down(self, endpoint, error, seconds=DEFAULT_COOLDOWN_SECONDS):
-        """Skip the endpoint in later searches for the given seconds, and keep a copy of the error."""
-        # The copy carries no traceback, so the stored error keeps no frames or response alive.
-        self._cooldowns[_cooldown_key(endpoint)] = (_monotonic() + seconds, type(error)(str(error)))
+        """Skip the endpoint in later searches for the given seconds, and keep a copy of the error.
+
+        A cooldown already in force that ends later than the new one is kept, so a shorter cooldown
+        never shortens it.
+        """
+        key = _cooldown_key(endpoint)
+        until = _monotonic() + seconds
+        with self._cooldown_lock:
+            current = self._cooldowns.get(key)
+            if current is not None and current[0] > until:
+                return
+            # The copy carries no traceback, so the stored error keeps no frames or response alive.
+            self._cooldowns[key] = (until, type(error)(str(error)))
 
     def _refuse(self, endpoint, refusal):
         """The exception one HTTP refusal raises as. A 429 also cools the endpoint down."""

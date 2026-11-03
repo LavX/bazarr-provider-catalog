@@ -1078,6 +1078,17 @@ class CooldownTests(UNIT3DTestCase):
         self.assertEqual(len(self.search([(base, "key-b")], provider=provider)), 1)
         self.assertEqual([request["auth"] for request in server.requests], ["Bearer key-a", "Bearer key-b"])
 
+    def test_shorter_cooldown_keeps_the_active_longer_one_and_its_error(self):
+        base = "https://timeout.example"
+        (endpoint,) = self.mod._configured_endpoints(_config([(base, "key-a")]))
+        provider = self.mod.UNIT3DProvider()
+        provider._cool_down(endpoint, self.mod.APIThrottled("the tracker is rate limiting the API"), 3600)
+        provider._cool_down(endpoint, self.mod.ServiceUnavailable("the endpoint is unreachable"))
+        expiry, error = provider._cooldowns[self.mod._cooldown_key(endpoint)]
+        self.assertEqual(expiry, self.clock.now + 3600)
+        self.assertIsInstance(error, self.mod.APIThrottled)
+        self.assertEqual(str(error), "the tracker is rate limiting the API")
+
 
 class CandidateTests(UNIT3DTestCase):
     def test_candidate_carries_the_documented_fields_and_keeps_unknown_flags_unknown(self):
@@ -1090,7 +1101,7 @@ class CandidateTests(UNIT3DTestCase):
         self.assertFalse(candidate["hearing_impaired_verifiable"])
         self.assertIsNone(candidate["language"]["forced"])
 
-    def test_hash_is_claimed_only_when_the_tracker_flags_the_exact_file(self):
+    def test_hash_is_not_claimed_for_exact_or_candidate_matches(self):
         records = [
             _record(1, release_match={"file_size": True, "file_name": True}),
             _record(2, release_match={"file_size": True, "file_name": False}),
