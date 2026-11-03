@@ -343,7 +343,7 @@ def _options(config):
 
     def flag(name, default):
         value = settings.get(name)
-        return default if value is None else bool(value)
+        return value if isinstance(value, bool) else default
 
     return _Options(
         library_only=flag("library_only", True),
@@ -470,6 +470,8 @@ def _identity(video, options):
         if digest is not None:
             identity["moviehash"] = digest
         size = _positive_int(video.get("size"))
+        if size is None and digest is not None:
+            size = _file_size(video.get("original_path"))
         if size is not None:
             identity["moviebytesize"] = size
     return identity if _has_identifier(identity) else None
@@ -509,6 +511,16 @@ def _opensubtitles_hash(path):
         for offset in range(0, len(block) - 7, 8):
             total = (total + int.from_bytes(block[offset:offset + 8], "little")) & 0xFFFFFFFFFFFFFFFF
     return f"{total:016x}"
+
+
+def _file_size(path):
+    """The size in bytes of a file, or None when the path is not a string or os.stat fails on it."""
+    if not isinstance(path, str):
+        return None
+    try:
+        return os.stat(path).st_size
+    except OSError:
+        return None
 
 
 def _response_socket(response):
@@ -821,8 +833,11 @@ def _candidate(video, endpoint, row, requested, options, identity):
     if ai_translated and not options.include_ai_translated:
         return None
     alpha3, alpha2, region = language
-    hearing_impaired = attributes.get("hearing_impaired") is True
-    forced = attributes.get("foreign_parts_only") is True
+    # A flag the peer omits, or sends as a non-boolean, is unknown: None, not False.
+    hearing_impaired = attributes.get("hearing_impaired")
+    forced = attributes.get("foreign_parts_only")
+    hearing_impaired = hearing_impaired if isinstance(hearing_impaired, bool) else None
+    forced = forced if isinstance(forced, bool) else None
     release = attributes.get("release") if isinstance(attributes.get("release"), str) else ""
     # The peer's hash match is its own claim. It is offered as verified only with a release name.
     hash_verifiable = attributes.get("moviehash_match") is True and bool(release)
@@ -886,7 +901,7 @@ def _candidate(video, endpoint, row, requested, options, identity):
         "provider_payload": payload,
     }
     url = attributes.get("url")
-    if isinstance(url, str) and url:
+    if _is_web_url(url):
         candidate["page_link"] = url
     return candidate
 
@@ -927,6 +942,17 @@ def _link_belongs_to(link, endpoint):
     if (parts.hostname or "").lower() != (base.hostname or "").lower() or port != base_port:
         return False
     return parts.path.startswith(base.path.rstrip("/") + "/api/v1/download/stream/")
+
+
+def _is_web_url(value):
+    """True for an absolute http or https URL that names a host."""
+    if not isinstance(value, str):
+        return False
+    try:
+        parts = urllib.parse.urlsplit(value)
+    except ValueError:
+        return False
+    return parts.scheme in ("http", "https") and bool(parts.hostname)
 
 
 def _is_archive(body):

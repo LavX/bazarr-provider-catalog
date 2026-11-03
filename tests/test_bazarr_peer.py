@@ -550,6 +550,11 @@ class ConfigurationTests(PeerTestCase):
         with self.assertRaisesRegex(self.mod.ConfigurationError, "endpoint 17 has an API key"):
             self.search(pairs)
 
+    def test_non_boolean_setting_falls_back_to_its_default(self):
+        pairs = [("https://peer.example", "key-a")]
+        self.assertTrue(self.mod._options(_config(pairs, library_only="false")).library_only)
+        self.assertFalse(self.mod._options(_config(pairs, library_only=False)).library_only)
+
 
 class SearchRequestTests(PeerTestCase):
     def test_movie_search_sends_identity_scope_budget_and_paging(self):
@@ -628,6 +633,19 @@ class SearchRequestTests(PeerTestCase):
             self.search([(base, "key-a")], video=video)
         (request,) = self.searches(server)
         self.assertEqual(request["query"]["moviehash"], _reference_hash(data))
+
+    def test_hash_search_sends_the_file_size_when_the_host_gives_none(self):
+        data = bytes(range(256)) * 1024
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "Dune.2021.mkv")
+            with open(path, "wb") as handle:
+                handle.write(data)
+            server, base = self.serve(lambda record: _envelope([]))
+            video = dict(MOVIE_VIDEO, size=None, original_path=path)
+            self.search([(base, "key-a")], video=video)
+        (request,) = self.searches(server)
+        self.assertEqual(request["query"]["moviehash"], _reference_hash(data))
+        self.assertEqual(request["query"]["moviebytesize"], str(len(data)))
 
     def test_small_file_sends_no_hash_and_raises_nothing(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1457,6 +1475,22 @@ class CandidateTests(PeerTestCase):
         self.assertTrue(candidate["language"]["forced"])
         self.assertFalse(candidate["hearing_impaired"])
 
+    def test_absent_flags_stay_unknown(self):
+        absent = _row(7)
+        del absent["attributes"]["hearing_impaired"]
+        del absent["attributes"]["foreign_parts_only"]
+        flagged = _row(8, hearing_impaired=True, foreign_parts_only=True)
+        _server, base = self.serve(lambda record: _envelope([absent, flagged]))
+        by_id = {candidate["id"]: candidate for candidate in self.search([(base, "key-a")])}
+        unknown = by_id[f"{_tag(base)}:7"]
+        self.assertIsNone(unknown["hearing_impaired"])
+        self.assertIsNone(unknown["language"]["hi"])
+        self.assertIsNone(unknown["language"]["forced"])
+        known = by_id[f"{_tag(base)}:8"]
+        self.assertIs(known["hearing_impaired"], True)
+        self.assertIs(known["language"]["hi"], True)
+        self.assertIs(known["language"]["forced"], True)
+
     def test_hash_is_claimed_only_when_the_peer_matched_the_hash_and_a_release_is_named(self):
         records = [
             _row(1, moviehash_match=True),
@@ -1496,6 +1530,18 @@ class CandidateTests(PeerTestCase):
         by_id = {candidate["id"]: candidate for candidate in self.search([(base, "key-a")])}
         self.assertEqual(by_id[f"{_tag(base)}:1"]["page_link"], "https://peer-tracker.example/subtitles/1")
         self.assertNotIn("page_link", by_id[f"{_tag(base)}:2"])
+
+    def test_page_link_keeps_only_an_absolute_web_url(self):
+        records = [
+            _row(1, url="javascript:alert(1)"),
+            _row(2, url="ftp://peer-tracker.example/subtitles/2"),
+            _row(3, url="https://peer-tracker.example/subtitles/3"),
+        ]
+        _server, base = self.serve(lambda record: _envelope(records))
+        by_id = {candidate["id"]: candidate for candidate in self.search([(base, "key-a")])}
+        self.assertNotIn("page_link", by_id[f"{_tag(base)}:1"])
+        self.assertNotIn("page_link", by_id[f"{_tag(base)}:2"])
+        self.assertEqual(by_id[f"{_tag(base)}:3"]["page_link"], "https://peer-tracker.example/subtitles/3")
 
     def test_ai_translated_rows_are_dropped_unless_the_setting_includes_them(self):
         records = [_row(1), _row(2, ai_translated=True)]
@@ -1596,7 +1642,7 @@ class CandidateTests(PeerTestCase):
         (candidate,) = self.search([(base, "key-a")])
         self.assertEqual(candidate["release_info"], "")
         self.assertFalse(candidate["hash_verifiable"])
-        self.assertFalse(candidate["hearing_impaired"])
+        self.assertIsNone(candidate["hearing_impaired"])
         self.assertNotIn("page_link", candidate)
 
     def test_worker_ids_are_namespaced_by_endpoint(self):
