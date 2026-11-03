@@ -113,11 +113,36 @@
     "manifest.py": "e1fa81b1bc8b2a7340c20521b7300cb8a94b1873",
     "migration.py": "5cdb7e00b1affee90dde8a66e31e068aa45f9c34"
   },
-  "transformations": [],
+  "transformations": [
+    {
+      "action": "insert_notice",
+      "blob_after": "22ce1ce9830469b397bc3367a17f93a567007269",
+      "blob_before": "4a7f6c7944fd95b642968dff177af9a240b5e5d2",
+      "file": "__init__.py",
+      "line": 2,
+      "new": "# This file is a copy of bazarr/provider_hub/__init__.py from the Bazarr project at v2.6.2.\n# Bazarr is licensed under GPL-3.0. Its license file is LICENSE at v2.6.2 of that project.\n"
+    },
+    {
+      "action": "insert_notice",
+      "blob_after": "2bb544222f07aec72ff626abccea0fd1d018e8bf",
+      "blob_before": "e1fa81b1bc8b2a7340c20521b7300cb8a94b1873",
+      "file": "manifest.py",
+      "line": 2,
+      "new": "# This file is a copy of bazarr/provider_hub/manifest.py from the Bazarr project at v2.6.2.\n# Bazarr is licensed under GPL-3.0. Its license file is LICENSE at v2.6.2 of that project.\n"
+    },
+    {
+      "action": "insert_notice",
+      "blob_after": "7280f8cfe8c14b8786121563e5e93a11b9339e30",
+      "blob_before": "5cdb7e00b1affee90dde8a66e31e068aa45f9c34",
+      "file": "migration.py",
+      "line": 2,
+      "new": "# This file is a copy of bazarr/provider_hub/migration.py from the Bazarr project at v2.6.2.\n# Bazarr is licensed under GPL-3.0. Its license file is LICENSE at v2.6.2 of that project.\n"
+    }
+  ],
   "vendored_blobs": {
-    "__init__.py": "4a7f6c7944fd95b642968dff177af9a240b5e5d2",
-    "manifest.py": "e1fa81b1bc8b2a7340c20521b7300cb8a94b1873",
-    "migration.py": "5cdb7e00b1affee90dde8a66e31e068aa45f9c34",
+    "__init__.py": "22ce1ce9830469b397bc3367a17f93a567007269",
+    "manifest.py": "2bb544222f07aec72ff626abccea0fd1d018e8bf",
+    "migration.py": "7280f8cfe8c14b8786121563e5e93a11b9339e30",
     "registry.py": "9dca1155835a777bfe00f129eb687465d50fb9e7"
   }
 }

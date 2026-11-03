@@ -6,7 +6,9 @@ sdk/released_hosts/<name>/:
 
 - __init__.py, manifest.py and migration.py from bazarr/provider_hub/, byte for byte
   except for the fixed rewrites in RELEASED_REWRITES, which apply only to a copy
-  whose source blob is listed there. Each rewrite is recorded in environment.json.
+  whose source blob is listed there, and a notice after the first line that names
+  the upstream tag and states that Bazarr is licensed under GPL-3.0 (NOTICE_TEMPLATE).
+  Each rewrite and each notice is recorded in environment.json.
   A copy that still imports outside the standard library after its rewrites is refused.
 - registry.py, a stand-in that registers no hub plugins
 - _stand_in.py, written only when a rewrite imports it: the settings sections and
@@ -31,6 +33,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COPIED_FILES = ("__init__.py", "manifest.py", "migration.py")
+NOTICE_TEMPLATE = (
+    "# This file is a copy of bazarr/provider_hub/{filename} from the Bazarr project at {ref}.\n"
+    "# Bazarr is licensed under GPL-3.0. Its license file is LICENSE at {ref} of that project.\n"
+)
 REGISTRY_STUB = (
     "\"\"\"Stand-in for bazarr/provider_hub/registry.py.\n"
     "\n"
@@ -62,8 +68,8 @@ SKIPPED_PROVIDER_MODULES = {"__init__.py", "mixins.py", "utils.py"}
 # Fixed rewrites, keyed by the git blob id of the released file they apply to.
 # Each entry is (file, exact old line, new line). Released manifest.py at v2.7.0
 # and v2.7.2 imports two Bazarr host modules at run time; the vendored copy
-# imports _stand_in instead. Other releases (v2.6.x) have no entry and are copied
-# unchanged.
+# imports _stand_in instead. Other releases (v2.6.x) have no entry, so their
+# copies get no rewrite.
 RELEASED_REWRITES = {
     "17e2ff71b8c77f3122ba4841038569b68ca265da": (
         (
@@ -177,6 +183,22 @@ def apply_edits(filename, data, edits):
     return data, records
 
 
+def insert_notice(filename, data, ref):
+    """Insert NOTICE_TEMPLATE after the first line, so the coding declaration stays first."""
+    before = blob_id(data)
+    first, _, rest = data.partition(b"\n")
+    notice = NOTICE_TEMPLATE.format(filename=filename, ref=ref)
+    data = first + b"\n" + notice.encode("utf-8") + rest
+    return data, {
+        "file": filename,
+        "action": "insert_notice",
+        "line": 2,
+        "new": notice,
+        "blob_before": before,
+        "blob_after": blob_id(data),
+    }
+
+
 def refuse_outside_imports(filename, data):
     """Refuse a copied file that imports an absolute module outside the standard library.
 
@@ -208,8 +230,10 @@ def snapshot(repo, ref, name):
         source_blobs[filename] = git(repo, "rev-parse", f"{commit}:{path}").decode().strip()
         edits = list(RELEASED_REWRITES.get(source_blobs[filename], ()))
         data, records = apply_edits(filename, data, edits)
+        data, notice = insert_notice(filename, data, ref)
         refuse_outside_imports(filename, data)
         transformations.extend(records)
+        transformations.append(notice)
         (target / filename).write_bytes(data)
         vendored_blobs[filename] = blob_id(data)
     registry = REGISTRY_STUB.encode("utf-8")

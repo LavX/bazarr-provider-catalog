@@ -120,6 +120,14 @@
   },
   "transformations": [
     {
+      "action": "insert_notice",
+      "blob_after": "85498dc1712407364781499fc0ffe07a63363d0a",
+      "blob_before": "4a7f6c7944fd95b642968dff177af9a240b5e5d2",
+      "file": "__init__.py",
+      "line": 2,
+      "new": "# This file is a copy of bazarr/provider_hub/__init__.py from the Bazarr project at v2.7.0.\n# Bazarr is licensed under GPL-3.0. Its license file is LICENSE at v2.7.0 of that project.\n"
+    },
+    {
       "action": "rewrite",
       "blob_after": "370e0a7874a61f6e253b541690c12ebc4cfd7262",
       "blob_before": "17e2ff71b8c77f3122ba4841038569b68ca265da",
@@ -136,13 +144,29 @@
       "line": 126,
       "new": "        from ._stand_in import provider_registry",
       "old": "        from subliminal_patch.extensions import provider_registry"
+    },
+    {
+      "action": "insert_notice",
+      "blob_after": "741b13c0f8d9c27248cc87edb9fbeeb3fdb2f29c",
+      "blob_before": "02752862cc5c65c2d8e5b9f05f96ae8c877884d5",
+      "file": "manifest.py",
+      "line": 2,
+      "new": "# This file is a copy of bazarr/provider_hub/manifest.py from the Bazarr project at v2.7.0.\n# Bazarr is licensed under GPL-3.0. Its license file is LICENSE at v2.7.0 of that project.\n"
+    },
+    {
+      "action": "insert_notice",
+      "blob_after": "65a3439d3499c00f343bea670becedc273c0d5e8",
+      "blob_before": "5cdb7e00b1affee90dde8a66e31e068aa45f9c34",
+      "file": "migration.py",
+      "line": 2,
+      "new": "# This file is a copy of bazarr/provider_hub/migration.py from the Bazarr project at v2.7.0.\n# Bazarr is licensed under GPL-3.0. Its license file is LICENSE at v2.7.0 of that project.\n"
     }
   ],
   "vendored_blobs": {
-    "__init__.py": "4a7f6c7944fd95b642968dff177af9a240b5e5d2",
+    "__init__.py": "85498dc1712407364781499fc0ffe07a63363d0a",
     "_stand_in.py": "8cf69f8799fffb36031b64327265b93b453020ca",
-    "manifest.py": "02752862cc5c65c2d8e5b9f05f96ae8c877884d5",
-    "migration.py": "5cdb7e00b1affee90dde8a66e31e068aa45f9c34",
+    "manifest.py": "741b13c0f8d9c27248cc87edb9fbeeb3fdb2f29c",
+    "migration.py": "65a3439d3499c00f343bea670becedc273c0d5e8",
     "registry.py": "9dca1155835a777bfe00f129eb687465d50fb9e7"
   }
 }

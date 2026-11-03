@@ -4,9 +4,10 @@ Hosts up to 2.7 read only the `providers` list, validate nothing when they
 refresh the catalog, and offer the highest version of an id as an update. An
 entry they cannot load is therefore only discovered on a user's machine. Each
 package here is a copy of bazarr/provider_hub/{__init__,manifest,migration}.py at
-one released commit, with the transformations recorded in its environment.json,
-plus the host-side facts the validator reads at run time: the built-in provider
-module names and the settings sections. scripts/snapshot_released_host.py writes them.
+one released commit. Each copy has a GPL-3.0 notice after its first line that names
+the release tag. The package records its transformations in environment.json and holds
+the host-side facts the validator reads at run time: the built-in provider module names
+and the settings sections. scripts/snapshot_released_host.py writes all of these.
 """
 
 from __future__ import annotations

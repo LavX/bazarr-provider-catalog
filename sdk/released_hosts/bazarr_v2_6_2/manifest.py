@@ -1,4 +1,6 @@
 # coding=utf-8
+# This file is a copy of bazarr/provider_hub/manifest.py from the Bazarr project at v2.6.2.
+# Bazarr is licensed under GPL-3.0. Its license file is LICENSE at v2.6.2 of that project.
 from __future__ import annotations
 
 import re
