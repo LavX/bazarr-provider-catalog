@@ -1099,8 +1099,8 @@ class CandidateTests(UNIT3DTestCase):
         _server, base = self.serve(lambda record: _page(records))
         by_id = {candidate["id"]: candidate for candidate in self.search([(base, "key-a")])}
         exact = by_id[f"{_tag(base)}:1"]
-        self.assertIn("hash", exact["matches"])
-        self.assertTrue(exact["hash_verifiable"])
+        self.assertNotIn("hash", exact["matches"])
+        self.assertFalse(exact["hash_verifiable"])
         self.assertEqual(exact["release_info"], "Dune.2021.1080p.WEBRip.x264-GRP")
         for record_id in (2, 3):
             candidate = by_id[f"{_tag(base)}:{record_id}"]

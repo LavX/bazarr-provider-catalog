@@ -592,11 +592,8 @@ def _candidate(video, endpoint, record, matched_by, requested):
     release = record.get("release") if isinstance(record.get("release"), str) else ""
     matches = _matches(video, record, matched_by)
     score_without_hash = _score(matches)
-    # The host validates a claimed hash against the release name, so the claim
-    # needs that name and the tracker's confirmation of the exact file.
-    hash_verifiable = bool(release) and _exact_file(record.get("release_match"))
-    if hash_verifiable:
-        matches.append("hash")
+    # The provider compares no hash, so hosts keep their episode checks.
+    hash_verifiable = False
     payload = {
         "provider": PROVIDER_ID,
         "schema": 1,
