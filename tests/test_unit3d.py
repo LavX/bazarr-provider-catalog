@@ -1079,7 +1079,7 @@ class CooldownTests(UNIT3DTestCase):
         self.assertEqual([request["auth"] for request in server.requests], ["Bearer key-a", "Bearer key-b"])
 
     def test_shorter_cooldown_keeps_the_active_longer_one_and_its_error(self):
-        base = "https://timeout.example"
+        base = "https://cooldown.example"
         (endpoint,) = self.mod._configured_endpoints(_config([(base, "key-a")]))
         provider = self.mod.UNIT3DProvider()
         provider._cool_down(endpoint, self.mod.APIThrottled("the tracker is rate limiting the API"), 3600)
@@ -1088,6 +1088,18 @@ class CooldownTests(UNIT3DTestCase):
         self.assertEqual(expiry, self.clock.now + 3600)
         self.assertIsInstance(error, self.mod.APIThrottled)
         self.assertEqual(str(error), "the tracker is rate limiting the API")
+
+    def test_rate_limit_reports_the_cooldown_in_force_when_a_longer_one_is_kept(self):
+        _throttled, base = self.serve(lambda record: _json({}, status=429, headers={"Retry-After": "60"}))
+        (endpoint,) = self.mod._configured_endpoints(_config([(base, "key-a")]))
+        provider = self.mod.UNIT3DProvider()
+        provider._cool_down(endpoint, self.mod.APIThrottled("the tracker is rate limiting the API"), 3600)
+        with self.assertRaises(self.mod._Refused) as caught:
+            self.mod._fetch(endpoint, "/api/subtitles", {}, 30, self.mod.MAX_SEARCH_BYTES, self.clock.now + 30)
+        error = provider._refuse(endpoint, caught.exception)
+        self.assertEqual(error.retry_after, 3600)
+        expiry, _error = provider._cooldowns[self.mod._cooldown_key(endpoint)]
+        self.assertEqual(expiry, self.clock.now + 3600)
 
 
 class CandidateTests(UNIT3DTestCase):

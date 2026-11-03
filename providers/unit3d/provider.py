@@ -852,7 +852,7 @@ class UNIT3DProvider:
                 page += 1
             if budget_spent or rate_limited:
                 break
-        # A rate limit already set its own cooldown in _refuse, with its Retry-After interval.
+        # A rate limit already put its cooldown in force in _refuse.
         if not successes and errors and not rate_limited:
             self._cool_down(endpoint, errors[0])
         if not successes and not errors:
@@ -868,16 +868,17 @@ class UNIT3DProvider:
         """Skip the endpoint in later searches for the given seconds, and keep a copy of the error.
 
         A cooldown already in force that ends later than the new one is kept, so a shorter cooldown
-        never shortens it.
+        never shortens it. It returns the expiry in force after the call, as a monotonic time.
         """
         key = _cooldown_key(endpoint)
         until = _monotonic() + seconds
         with self._cooldown_lock:
             current = self._cooldowns.get(key)
             if current is not None and current[0] > until:
-                return
+                return current[0]
             # The copy carries no traceback, so the stored error keeps no frames or response alive.
             self._cooldowns[key] = (until, type(error)(str(error)))
+            return until
 
     def _refuse(self, endpoint, refusal):
         """The exception one HTTP refusal raises as. A 429 also cools the endpoint down."""
@@ -895,7 +896,8 @@ class UNIT3DProvider:
         if status == 429:
             interval = _retry_after_seconds(refusal.retry_after) or DEFAULT_COOLDOWN_SECONDS
             error = APIThrottled(f"the tracker is rate limiting the API (HTTP {status})", retry_after=interval)
-            self._cool_down(endpoint, error, interval)
+            ends_at = self._cool_down(endpoint, error, interval)
+            error.retry_after = math.ceil(ends_at - _monotonic())
             return error
         if 300 <= status < 400:
             return ServiceUnavailable(f"redirects are refused (HTTP {status})")
