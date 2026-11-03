@@ -174,7 +174,7 @@ Browser-style providers generate a current desktop User-Agent once per provider 
 - `providers/zimuku/`: scrapes Zimuku / srtku.com for Chinese and English movie and episode subtitles, with native Yunsuo image verification and optional helper settings.
 - `sdk/`: standalone authoring tools and templates, see the [SDK reference](sdk/README.md).
 - `providers/titulky/`: scrapes Titulky.com Czech and Slovak movie and episode subtitle listings and archive downloads.
-- `tests/`: catalog validation tests that do not import Bazarr internals.
+- `tests/`: catalog validation tests. The released-host tests load vendored copies of Bazarr's `manifest.py` and `migration.py` from `sdk/released_hosts/` and import the snapshot script from `scripts/`.
 
 ## Writing your own provider
 
