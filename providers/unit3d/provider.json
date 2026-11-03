@@ -19,7 +19,7 @@
       },
       "match_files": {
         "default": true,
-        "description": "Send the video file size and name so that a tracker can flag the exact release.",
+        "description": "Send the video file size and name with each search. The tracker decides how to use them.",
         "title": "Match files",
         "type": "boolean"
       },
