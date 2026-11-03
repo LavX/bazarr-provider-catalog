@@ -552,7 +552,7 @@ class ConfigurationTests(PeerTestCase):
 
     def test_non_boolean_setting_falls_back_to_its_default(self):
         pairs = [("https://peer.example", "key-a")]
-        self.assertTrue(self.mod._options(_config(pairs, library_only="false")).library_only)
+        self.assertTrue(self.mod._options(_config(pairs, library_only=0)).library_only)
         self.assertFalse(self.mod._options(_config(pairs, library_only=False)).library_only)
 
 
