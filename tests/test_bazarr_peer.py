@@ -1559,9 +1559,25 @@ class CandidateTests(PeerTestCase):
     def test_episode_matches_come_from_the_series_imdb_and_the_season_and_episode(self):
         _server, base = self.serve(lambda record: _envelope([_episode_row(4)]))
         (candidate,) = self.search([(base, "key-a")], video=EPISODE_VIDEO)
-        self.assertEqual(candidate["matches"], ["series_imdb_id", "season", "episode"])
+        self.assertEqual(candidate["matches"], ["series_imdb_id", "series", "season", "episode"])
         self.assertEqual(candidate["score"], 95)
         self.assertEqual(candidate["score_without_hash"], 95)
+
+    def test_episode_matched_by_series_imdb_id_also_reports_the_series_match(self):
+        row = _episode_row(4)
+        row["attributes"]["feature_details"]["season_number"] = 2
+        row["attributes"]["feature_details"]["episode_number"] = 9
+        _server, base = self.serve(lambda record: _envelope([row]))
+        (candidate,) = self.search([(base, "key-a")], video=EPISODE_VIDEO)
+        self.assertEqual(candidate["matches"], ["series_imdb_id", "series"])
+
+    def test_season_and_episode_alone_do_not_report_the_series_match(self):
+        row = _episode_row(4)
+        row["attributes"]["feature_details"]["imdb_id"] = 1160419
+        _server, base = self.serve(lambda record: _envelope([row]))
+        (candidate,) = self.search([(base, "key-a")], video=EPISODE_VIDEO)
+        self.assertEqual(candidate["matches"], ["season", "episode"])
+        self.assertNotIn("series", candidate["matches"])
 
     def test_movie_matches_on_imdb_id(self):
         _server, base = self.serve(lambda record: _envelope([_row(1)]))
