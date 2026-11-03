@@ -55,7 +55,7 @@
 - The library probe answer is cached for 600 seconds, in worker memory only.
 - A link origin mismatch is refused, not relaxed. Operators behind a reverse proxy must forward `X-Forwarded-Proto` and `X-Forwarded-Host`, so that the peer builds links at the configured address.
 - The manifest lists plain language codes and declares no hearing-impaired variants.
-- The peer reports `ai_translated` as false for local rows (subtitles the peer stores). `include_ai_translated` therefore cannot tell an AI translated library subtitle from a human one. The provider passes the peer's flag through and does not enforce it or infer provenance.
+- The peer reports `ai_translated` as false for local rows (subtitles the peer stores). `include_ai_translated` therefore cannot tell an AI translated library subtitle from a human one. The provider passes the peer's flag through and does not verify it or infer provenance.
 - The 60-second cooldown default is provisional. A two-instance check, with one instance querying another, would settle it.
 
 ## Live Checks
