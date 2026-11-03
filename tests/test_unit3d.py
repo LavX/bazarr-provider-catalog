@@ -1200,6 +1200,32 @@ class CandidateTests(UNIT3DTestCase):
         ids = {candidate["id"].split(":", 1)[1] for candidate in self.search([(base, "key-a")], video=EPISODE_VIDEO)}
         self.assertEqual(ids, {"1"})
 
+    def test_episode_found_by_series_imdb_id_reports_the_series_match(self):
+        records = [
+            _record(
+                1, type="episode", season=1, episode=2, pack=None,
+                tvdb_id=None, imdb_id="tt0903747",
+            ),
+        ]
+        _server, base = self.serve(lambda record: _page(records))
+        (candidate,) = self.search([(base, "key-a")], video=EPISODE_VIDEO)
+        self.assertCountEqual(
+            candidate["matches"],
+            ["series", "series_imdb_id", "season", "episode"],
+        )
+
+    def test_episode_matched_only_on_season_and_episode_does_not_report_series(self):
+        records = [
+            _record(
+                1, type="episode", season=1, episode=2, pack=None,
+                tvdb_id=None, imdb_id="tt1160419",
+            ),
+        ]
+        _server, base = self.serve(lambda record: _page(records))
+        (candidate,) = self.search([(base, "key-a")], video=EPISODE_VIDEO)
+        self.assertNotIn("series", candidate["matches"])
+        self.assertCountEqual(candidate["matches"], ["season", "episode"])
+
     def test_movie_matched_on_tmdb_id_earns_the_same_tier_as_an_imdb_match(self):
         records = [
             _record(1, tmdb_id=438631, imdb_id="tt9999999"),

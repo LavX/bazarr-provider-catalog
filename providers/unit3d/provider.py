@@ -528,7 +528,8 @@ def _matches(video, record, matched_by):
 
     Episode series identity uses the series keys, because a bare imdb_id or
     tvdb_id would also award season and episode equivalence. A missing value on
-    either side is never a match.
+    either side is never a match. An episode matched by series id also reports
+    the series match, which the host requires before it accepts an episode.
     """
     matches = []
     if video.get("kind") == "episode":
@@ -536,6 +537,8 @@ def _matches(video, record, matched_by):
             matches.append("series_imdb_id")
         if _same_id(video.get("series_tvdb_id"), record.get("tvdb_id")):
             matches.append("series_tvdb_id")
+        if "series_imdb_id" in matches or "series_tvdb_id" in matches:
+            matches.append("series")
         season = _as_int(record.get("season"))
         if season is not None and season == _as_int(video.get("season")):
             matches.append("season")
@@ -543,7 +546,9 @@ def _matches(video, record, matched_by):
         if episode is not None and episode == _as_int(video.get("episode")):
             matches.append("episode")
         if matched_by == "title":
-            matches.extend(("series", "year"))
+            if "series" not in matches:
+                matches.append("series")
+            matches.append("year")
     else:
         if _same_id(video.get("tmdb_id"), record.get("tmdb_id")):
             matches.append("tmdb_id")
