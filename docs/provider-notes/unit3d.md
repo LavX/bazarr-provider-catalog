@@ -21,7 +21,7 @@
 - Duplicate normalized URLs are refused. The first 16 endpoints are used, and extra endpoints are logged and dropped.
 - An endpoint's tag is the first 16 hex characters of the SHA-256 of its normalized URL. Candidate ids have the form `<tag>:<subtitle id>`, and download payloads carry the tag.
 - `timeout_seconds` is the whole-search budget, from 10 to 60 seconds, with 30 as the default. Every endpoint searches in parallel inside that budget.
-- `match_files` is on by default. It sends the video's file size and file name so that a tracker can flag the exact release.
+- `match_files` is on by default. It sends the video's file size and file name with each search. The tracker decides how to use them.
 
 ## Search And Download
 
