@@ -1207,6 +1207,8 @@ class BazarrPeerProvider:
             return ServiceUnavailable(TRANSIENT_MESSAGE)
         except ServiceUnavailable:
             return ServiceUnavailable(TRANSIENT_MESSAGE)
+        except ConfigurationError as error:
+            return error
         return ConfigurationError(
             "the subtitles route is missing on this instance (version_or_path); "
             "check the address and the Bazarr+ version"
@@ -1216,16 +1218,17 @@ class BazarrPeerProvider:
         """Skip the endpoint in later searches for the given seconds, and keep the error that cooled it.
 
         A cooldown already in force that ends at or after the new one is kept, so a shorter cooldown
-        never shortens it.
+        never shortens it. It returns the expiry in force, on the monotonic clock.
         """
         key = _credential_key(endpoint)
         until = _monotonic() + seconds
         with self._cooldown_lock:
             current = self._cooldowns.get(key)
             if current is not None and current[0] >= until:
-                return
+                return current[0]
             # The copy carries no traceback, so the stored error keeps no frames or response alive.
             self._cooldowns[key] = (until, type(error)(str(error)))
+            return until
 
     def _refuse(self, endpoint, refusal):
         """The exception one HTTP refusal raises as. A 429 also cools the endpoint down."""
@@ -1235,7 +1238,8 @@ class BazarrPeerProvider:
         if status == 429:
             interval = _retry_after_seconds(refusal.retry_after) or DEFAULT_COOLDOWN_SECONDS
             error = APIThrottled("the peer is rate limiting searches (HTTP 429)", retry_after=interval)
-            self._cool_down(endpoint, error, interval)
+            ends_at = self._cool_down(endpoint, error, interval)
+            error.retry_after = math.ceil(ends_at - _monotonic())
             return error
         if status in (401, 403):
             return AuthenticationError(f"the peer rejected the API key (HTTP {status})")

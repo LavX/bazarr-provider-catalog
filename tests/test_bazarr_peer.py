@@ -1095,6 +1095,23 @@ class CompatibilityTests(PeerTestCase):
             ["/api/v1/subtitles", "/api/v1/providers"],
         )
 
+    def test_failed_route_probe_with_a_tls_error_is_a_configuration_error(self):
+        _server, base = self.routes(
+            search=lambda record: _json({"message": "Not Found"}, status=404),
+            providers=lambda record: _json({"data": [{"name": "Subs"}]}),
+        )
+        provider = self.mod.BazarrPeerProvider()
+        tls_error = self.mod.ConfigurationError("the TLS handshake with the endpoint failed")
+        with patch.object(self.mod.BazarrPeerProvider, "_provider_names", side_effect=tls_error):
+            with self.assertLogs("bazarr_peer", level="WARNING"), self.assertRaisesRegex(
+                self.mod.ConfigurationError, "the TLS handshake with the endpoint failed"
+            ):
+                self.search([(base, "key-a")], provider=provider)
+        ((endpoint_key, (cooled_until, error)),) = provider._cooldowns.items()
+        self.assertEqual(endpoint_key[0], _tag(base))
+        self.assertIsInstance(error, self.mod.ConfigurationError)
+        self.assertEqual(cooled_until - self.clock.now, 60)
+
     def test_probe_404_means_the_address_is_not_a_bazarr_plus_instance(self):
         _server, base = self.routes(
             search=lambda record: _json({}, status=404), providers=lambda record: _json({}, status=404)
@@ -1205,6 +1222,17 @@ class CooldownTests(PeerTestCase):
             self.search([(base, "key-a")], provider=provider)
         self.assertEqual(len(throttled.requests), 1)
         self.assertEqual(caught.exception.retry_after, 120)
+
+    def test_rate_limit_reports_the_cooldown_in_force_when_a_longer_one_is_kept(self):
+        _server, base = self.serve(lambda record: _throttled("60"))
+        endpoint = self.mod._configured_endpoints(_config([(base, "key-a")]))[0]
+        provider = self.mod.BazarrPeerProvider()
+        provider._cool_down(endpoint, self.mod.APIThrottled("the peer is rate limiting searches"), 3600)
+        with self.assertRaises(self.mod._Refused) as caught:
+            self.mod._fetch(endpoint, "/api/v1/subtitles", None, 45, self.mod.MAX_SEARCH_BYTES, self.clock.now + 45)
+        error = provider._refuse(endpoint, caught.exception)
+        self.assertEqual(error.retry_after, 3600)
+        self.assertEqual(provider._cooldowns[self.mod._credential_key(endpoint)][0], self.clock.now + 3600)
 
     def test_timed_out_endpoint_is_skipped_for_sixty_seconds_then_queried_again(self):
         _healthy, base_b = self.serve(lambda record: _envelope([_row(4)]))
