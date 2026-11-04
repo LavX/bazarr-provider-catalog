@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import unittest
+import urllib.error
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
@@ -26,6 +27,20 @@ SUGGESTIONS_HTML = (FIXTURE_DIR / "subs4series_suggestions.html").read_bytes()
 EPISODE_HTML = (FIXTURE_DIR / "subs4series_episode_game_of_thrones_s01e01.html").read_bytes()
 DIRECT_DOWNLOAD_HTML = (FIXTURE_DIR / "subs4series_download_page_direct.html").read_bytes()
 CAPTCHA_DOWNLOAD_HTML = (FIXTURE_DIR / "subs4series_download_page_captcha.html").read_bytes()
+# Two shows share the title "The Office": the 2024 one (path "the-office-") and the 2005 one.
+OFFICE_SUGGESTIONS_HTML = b"""<select name="Mov_sel">
+<option value="/tv-series/mr-bates-vs-the-post-office/s16df1514b8">Mr Bates vs. The Post Office</option>
+<option value="/tv-series/the-office-/s2361cdce2f">The Office</option>
+<option value="/tv-series/the-office/s4fcba70b44">The Office</option>
+</select>"""
+OFFICE_2024_EPISODE_URL = "https://www.subs4series.com/tv-series/the-office-/s2361cdce2f/season-1/episode-1"
+OFFICE_2005_EPISODE_URL = "https://www.subs4series.com/tv-series/the-office/s4fcba70b44/season-1/episode-1"
+
+
+def _episode_html_of_year(year):
+    """The episode fixture with its header year (Game of Thrones (2011)) swapped for another."""
+    assert EPISODE_HTML.count(b"</u> (2011)") == 1
+    return EPISODE_HTML.replace(b"</u> (2011)", f"</u> ({year})".encode("ascii"))
 
 # Two-step getSub flow: the detail page only links to the getSub page; the reCAPTCHA gate
 # and the real POST form live on that getSub page (not on the detail page).
@@ -373,6 +388,199 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         # The host needs episode (and season) to pick the archive member.
         self.assertEqual(first["provider_payload"]["season"], 1)
         self.assertEqual(first["provider_payload"]["episode"], 1)
+
+    def _same_title_search(self, video, episode_pages):
+        """Search "The Office" with two shows of that title; episode_pages maps URL to body or error."""
+        provider = self.mod.Subs4SeriesProvider()
+        calls = []
+        responses = {
+            "https://www.subs4series.com/search_report.php?search=The+Office&searchType=1": OFFICE_SUGGESTIONS_HTML,
+            **episode_pages,
+        }
+
+        def stub(url, timeout=15, referer=None, config=None):
+            del timeout, referer, config
+            calls.append(url)
+            if url not in responses:
+                raise AssertionError(f"unexpected URL: {url}")
+            if isinstance(responses[url], Exception):
+                raise responses[url]
+            return responses[url]
+
+        provider._http_get = stub
+        video = {"kind": "episode", "series": "The Office", "season": 1, "episode": 1, **video}
+        results = provider.search(video, [{"alpha3": "ell", "alpha2": "el"}], {"request_delay_ms": 0})
+        return results, calls
+
+    def test_search_keeps_only_the_same_title_show_of_the_video_year(self):
+        results, calls = self._same_title_search(
+            {"year": 2005},
+            {OFFICE_2024_EPISODE_URL: _episode_html_of_year(2024), OFFICE_2005_EPISODE_URL: _episode_html_of_year(2005)},
+        )
+
+        self.assertEqual(calls[1:], [OFFICE_2024_EPISODE_URL, OFFICE_2005_EPISODE_URL])
+        self.assertTrue(results)
+        self.assertEqual({item["provider_payload"]["page_link"] for item in results}, {OFFICE_2005_EPISODE_URL})
+
+    def test_search_allows_one_year_of_slack_between_bazarr_and_the_site(self):
+        results, _calls = self._same_title_search(
+            {"year": 2006},
+            {OFFICE_2024_EPISODE_URL: _episode_html_of_year(2024), OFFICE_2005_EPISODE_URL: _episode_html_of_year(2005)},
+        )
+
+        self.assertEqual({item["provider_payload"]["page_link"] for item in results}, {OFFICE_2005_EPISODE_URL})
+
+    def test_pages_for_year_prefers_the_same_year_over_one_year_off(self):
+        pages = [("a", 2006, []), ("b", 2005, []), ("c", 2024, [])]
+
+        self.assertEqual(self.mod._pages_for_year(pages, 2005), [("b", 2005, [])])
+        self.assertEqual(self.mod._pages_for_year(pages[::2], 2005), [("a", 2006, [])])
+        self.assertEqual(self.mod._pages_for_year(pages, 1990), pages)
+        self.assertEqual(self.mod._pages_for_year(pages, None), pages)
+        self.assertEqual(self.mod._pages_for_year(pages[2:], 2005), pages[2:])
+
+    def test_search_keeps_every_same_title_show_without_a_video_year(self):
+        results, _calls = self._same_title_search(
+            {},
+            {OFFICE_2024_EPISODE_URL: _episode_html_of_year(2024), OFFICE_2005_EPISODE_URL: _episode_html_of_year(2005)},
+        )
+
+        # Both pages carry the same fixture rows, so dedupe keeps the first show's copies.
+        self.assertEqual({item["provider_payload"]["page_link"] for item in results}, {OFFICE_2024_EPISODE_URL})
+
+    def test_search_keeps_every_same_title_show_when_none_matches_the_year(self):
+        results, _calls = self._same_title_search(
+            {"year": 1995},
+            {OFFICE_2024_EPISODE_URL: _episode_html_of_year(2024), OFFICE_2005_EPISODE_URL: _episode_html_of_year(2005)},
+        )
+
+        self.assertEqual({item["provider_payload"]["page_link"] for item in results}, {OFFICE_2024_EPISODE_URL})
+
+    def test_search_skips_a_same_title_show_without_the_episode(self):
+        not_found = urllib.error.HTTPError(OFFICE_2024_EPISODE_URL, 404, "Not Found", {}, None)
+        results, calls = self._same_title_search(
+            {"year": 2005},
+            {OFFICE_2024_EPISODE_URL: not_found, OFFICE_2005_EPISODE_URL: _episode_html_of_year(2005)},
+        )
+
+        self.assertEqual(calls[1:], [OFFICE_2024_EPISODE_URL, OFFICE_2005_EPISODE_URL])
+        self.assertTrue(results)
+        self.assertEqual({item["provider_payload"]["page_link"] for item in results}, {OFFICE_2005_EPISODE_URL})
+
+    def test_search_skips_a_requests_404_too(self):
+        class _Response:
+            status_code = 404
+
+        class _RequestsHTTPError(Exception):
+            response = _Response()
+
+        results, _calls = self._same_title_search(
+            {"year": 2005},
+            {OFFICE_2024_EPISODE_URL: _RequestsHTTPError("404 Client Error"), OFFICE_2005_EPISODE_URL: _episode_html_of_year(2005)},
+        )
+
+        self.assertEqual({item["provider_payload"]["page_link"] for item in results}, {OFFICE_2005_EPISODE_URL})
+
+    def test_search_still_raises_errors_other_than_404(self):
+        unavailable = urllib.error.HTTPError(OFFICE_2024_EPISODE_URL, 503, "Service Unavailable", {}, None)
+
+        with self.assertRaises(urllib.error.HTTPError):
+            self._same_title_search(
+                {"year": 2005},
+                {OFFICE_2024_EPISODE_URL: unavailable, OFFICE_2005_EPISODE_URL: _episode_html_of_year(2005)},
+            )
+
+    def test_title_matches_without_qualifier(self):
+        match = self.mod._title_matches_without_qualifier
+
+        self.assertTrue(match("Shameless (US)", "Shameless", 2011))
+        self.assertTrue(match("Shameless (US)", "Shameless (US)", 2011))
+        self.assertTrue(match("The Office", "The Office (US)", 2005))
+        self.assertTrue(match("Doctor Who (2005)", "Doctor Who", 2005))
+        self.assertFalse(match("Doctor Who (2005)", "Doctor Who", 2006))
+        self.assertFalse(match("Shameless (US)", "Shameless (UK)", 2004))
+        self.assertFalse(match("Doctor Who (1963)", "Doctor Who", 2005))
+        # A dated site title is never taken without a video year to back it.
+        self.assertFalse(match("Doctor Who (2005)", "Doctor Who", None))
+        self.assertFalse(match("Shameless (US)", "Shame", 2011))
+        self.assertFalse(match("Mr Bates vs. The Post Office", "The Office (US)", 2005))
+
+    def _find_show_paths(self, video, suggestions_html):
+        provider = self.mod.Subs4SeriesProvider()
+        calls = []
+
+        def stub(url, timeout=15, referer=None, config=None):
+            del timeout, referer, config
+            calls.append(url)
+            return suggestions_html
+
+        provider._http_get = stub
+        return provider._find_show_paths({"kind": "episode", **video}, {}), calls
+
+    def test_find_show_paths_takes_a_site_title_with_a_country_qualifier(self):
+        html = b'<select name="Mov_sel"><option value="/tv-series/shameless-us/s8a71806125">Shameless (US)</option></select>'
+
+        paths, _calls = self._find_show_paths({"series": "Shameless", "year": 2011}, html)
+        self.assertEqual(paths, ["tv-series/shameless-us/s8a71806125"])
+
+        paths, _calls = self._find_show_paths({"series": "Shameless (UK)", "year": 2004}, html)
+        self.assertEqual(paths, [])
+
+    def test_find_show_paths_takes_a_plain_site_title_for_a_sonarr_country_title(self):
+        paths, _calls = self._find_show_paths({"series": "The Office (US)", "year": 2005}, OFFICE_SUGGESTIONS_HTML)
+
+        # Both shows named "The Office" qualify here; the episode page years pick the 2005 one.
+        self.assertEqual(paths, ["tv-series/the-office-/s2361cdce2f", "tv-series/the-office/s4fcba70b44"])
+
+    def test_find_show_paths_prefers_an_exact_title_over_a_qualified_one(self):
+        html = (
+            b'<select name="Mov_sel">'
+            b'<option value="/tv-series/shameless-us/s8a71806125">Shameless (US)</option>'
+            b'<option value="/tv-series/shameless/s1234567890">Shameless</option>'
+            b"</select>"
+        )
+
+        paths, _calls = self._find_show_paths({"series": "Shameless", "year": 2004}, html)
+        self.assertEqual(paths, ["tv-series/shameless/s1234567890"])
+
+    def test_find_show_paths_takes_dated_site_titles_only_for_their_year(self):
+        html = (
+            b'<select name="Mov_sel">'
+            b'<option value="/tv-series/doctor-who-2023/s1">Doctor Who (2023)</option>'
+            b'<option value="/tv-series/doctor-who-2005/s2">Doctor Who (2005)</option>'
+            b'<option value="/tv-series/doctor-who-1963/s3">Doctor Who (1963)</option>'
+            b"</select>"
+        )
+
+        paths, _calls = self._find_show_paths({"series": "Doctor Who", "year": 2005}, html)
+        self.assertEqual(paths, ["tv-series/doctor-who-2005/s2"])
+
+        paths, _calls = self._find_show_paths({"series": "Doctor Who"}, html)
+        self.assertEqual(paths, [])
+
+    def test_search_finds_the_sonarr_country_title_on_the_plain_site_title(self):
+        provider = self.mod.Subs4SeriesProvider()
+        responses = {
+            "https://www.subs4series.com/search_report.php?search=The+Office+%28US%29&searchType=1": OFFICE_SUGGESTIONS_HTML,
+            OFFICE_2024_EPISODE_URL: _episode_html_of_year(2024),
+            OFFICE_2005_EPISODE_URL: _episode_html_of_year(2005),
+        }
+
+        def stub(url, timeout=15, referer=None, config=None):
+            del timeout, referer, config
+            if url not in responses:
+                raise AssertionError(f"unexpected URL: {url}")
+            return responses[url]
+
+        provider._http_get = stub
+        results = provider.search(
+            {"kind": "episode", "series": "The Office (US)", "year": 2005, "season": 1, "episode": 1},
+            [{"alpha3": "ell", "alpha2": "el"}],
+            {},
+        )
+
+        self.assertTrue(results)
+        self.assertEqual({item["provider_payload"]["page_link"] for item in results}, {OFFICE_2005_EPISODE_URL})
 
     def test_search_rejects_movies(self):
         provider = self.mod.Subs4SeriesProvider()
