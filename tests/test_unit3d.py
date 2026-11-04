@@ -37,7 +37,6 @@ DOCUMENTED_FIELDS = (
     "score_out_of",
     "hash_verifiable",
     "hearing_impaired_verifiable",
-    "hearing_impaired",
     "display",
     "provider_payload",
 )
@@ -495,6 +494,21 @@ class SearchRequestTests(UNIT3DTestCase):
         self.assertEqual([candidate["id"] for candidate in results], [f"{_tag(base)}:9"])
         self.assertIn("partial", "\n".join(logs.output))
 
+    def test_refused_language_chunk_ends_the_endpoint_search_before_the_next_chunk(self):
+        alpha3_codes = ALPHA3_ORDER[:60]
+        alpha2_codes = [self.mod._LANGUAGE_CODES[code] for code in alpha3_codes]
+
+        def respond(record):
+            if record["query"]["language"].startswith(alpha2_codes[0] + ","):
+                return _json({"message": "Unauthenticated."}, status=401)
+            return _page([_record(9, language=alpha2_codes[50])])
+
+        server, base = self.serve(respond)
+        languages = [{"alpha3": code, "hi": False, "forced": False} for code in alpha3_codes]
+        with self.assertLogs("unit3d", level="WARNING"), self.assertRaises(self.mod.AuthenticationError):
+            self.search([(base, "key-a")], languages=languages)
+        self.assertEqual(len(server.requests), 1)
+
 
 class PaginationAndBudgetTests(UNIT3DTestCase):
     def test_second_page_is_requested_and_every_candidate_is_returned(self):
@@ -781,7 +795,7 @@ class FailureIsolationTests(UNIT3DTestCase):
             self.search([(base, "key-a")])
         self.assertEqual(target.requests, [])
 
-    def test_tls_handshake_failure_is_a_configuration_error(self):
+    def test_tls_handshake_failure_is_a_service_unavailable(self):
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.addCleanup(listener.close)
         listener.bind(("127.0.0.1", 0))
@@ -798,7 +812,7 @@ class FailureIsolationTests(UNIT3DTestCase):
 
         threading.Thread(target=answer_in_plain_text, daemon=True).start()
         base = f"https://127.0.0.1:{listener.getsockname()[1]}"
-        with self.assertRaises(self.mod.ConfigurationError):
+        with self.assertRaises(self.mod.ServiceUnavailable):
             self.search([(base, "key-a")])
 
     def test_tls_error_while_reading_a_body_is_a_service_unavailable(self):
@@ -1109,9 +1123,9 @@ class CandidateTests(UNIT3DTestCase):
         for field in DOCUMENTED_FIELDS:
             self.assertIn(field, candidate)
         self.assertEqual(candidate["id"], f"{_tag(base)}:7")
-        self.assertIsNone(candidate["hearing_impaired"])
+        self.assertNotIn("hearing_impaired", candidate)
         self.assertFalse(candidate["hearing_impaired_verifiable"])
-        self.assertIsNone(candidate["language"]["forced"])
+        self.assertNotIn("forced", candidate["language"])
 
     def test_hash_is_claimed_only_when_the_tracker_flags_the_exact_file(self):
         records = [
@@ -1248,9 +1262,9 @@ class CandidateTests(UNIT3DTestCase):
         _server, base = self.serve(lambda record: _page([_record(8)]))
         hi_request = {"alpha3": "eng", "hi": True, "forced": False}
         (candidate,) = self.search([(base, "key-a")], languages=[hi_request])
-        self.assertIsNone(candidate["hearing_impaired"])
+        self.assertNotIn("hearing_impaired", candidate)
         self.assertFalse(candidate["hearing_impaired_verifiable"])
-        self.assertIsNone(candidate["language"]["hi"])
+        self.assertNotIn("hi", candidate["language"])
 
     def test_huge_imdb_digit_string_is_treated_as_absent(self):
         _server, base = self.serve(lambda record: _page([_record(1, imdb_id="tt" + "9" * 5000)]))
@@ -1400,9 +1414,9 @@ class DownloadTests(UNIT3DTestCase):
 class HearingImpairedRoutingTests(UNIT3DTestCase):
     @unittest.expectedFailure
     def test_hi_specific_search_reaches_worker_with_hi_variant(self):
-        """Expected failure until the host routes hearing-impaired requests to this provider.
+        """The host drops hearing-impaired requests when the manifest declares no hearing-impaired variants.
 
-        The manifest declares no hearing-impaired variants.
+        The test fails until the host passes them through or the manifest declares them.
         """
         manifest = json.loads((PROVIDER_DIR / "provider.json").read_text(encoding="utf-8"))
         requested = ("eng", True)

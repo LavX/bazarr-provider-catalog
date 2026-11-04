@@ -40,7 +40,6 @@ MAX_TIMEOUT_SECONDS = 60
 # A rate limit without a usable Retry-After header, and any other failed search
 # in which the endpoint attempted requests and none succeeded, cools its endpoint for this long.
 DEFAULT_COOLDOWN_SECONDS = 60
-MAX_COOLDOWN_SECONDS = 86400
 PER_PAGE = 50
 # The API matches at most this many language codes in one request.
 LANGUAGE_CHUNK = 50
@@ -324,7 +323,7 @@ def _imdb_number(value):
 
 def _retry_after_seconds(value):
     seconds = _positive_int(value)
-    return min(seconds, MAX_COOLDOWN_SECONDS) if seconds else None
+    return seconds
 
 
 def _file_name(video):
@@ -485,10 +484,10 @@ def _fetch(endpoint, path, params, timeout, max_bytes, deadline):
             error.close()
     except urllib.error.URLError as error:
         if isinstance(error.reason, ssl.SSLError):
-            raise ConfigurationError("the TLS handshake with the endpoint failed") from None
+            raise ServiceUnavailable("the TLS handshake with the endpoint failed") from None
         raise ServiceUnavailable("the endpoint is unreachable") from None
     except ssl.SSLError:
-        raise ConfigurationError("the TLS handshake with the endpoint failed") from None
+        raise ServiceUnavailable("the TLS handshake with the endpoint failed") from None
     except (OSError, http.client.HTTPException):
         raise ServiceUnavailable("the endpoint closed the connection or timed out") from None
     if len(body) > max_bytes:
@@ -617,7 +616,7 @@ def _candidate(video, endpoint, record, matched_by, requested):
     candidate = {
         "provider": PROVIDER_ID,
         "id": f"{endpoint.tag}:{record_id}",
-        "language": {"alpha3": alpha3, "alpha2": alpha2, "hi": None, "forced": None},
+        "language": {"alpha3": alpha3, "alpha2": alpha2},
         "release_info": release,
         "filename": filename,
         "matches": matches,
@@ -626,7 +625,6 @@ def _candidate(video, endpoint, record, matched_by, requested):
         "score_out_of": 100,
         "hash_verifiable": hash_verifiable,
         "hearing_impaired_verifiable": False,
-        "hearing_impaired": None,
         "display": {
             "source": PROVIDER_ID,
             "tracker": endpoint.host,
@@ -826,6 +824,7 @@ class UNIT3DProvider:
         successes = 0
         budget_spent = False
         rate_limited = False
+        access_refused = False
         for chunk in chunks:
             page = 1
             while True:
@@ -851,6 +850,8 @@ class UNIT3DProvider:
                     errors.append(self._refuse(endpoint, refusal))
                     # A rate limit ends the endpoint's search, so its remaining chunks are not requested.
                     rate_limited = refusal.status == 429
+                    # A rejected key or a missing API ends the search the same way.
+                    access_refused = refusal.status in (401, 403, 404)
                     break
                 except (ServiceUnavailable, ConfigurationError) as error:
                     errors.append(error)
@@ -867,15 +868,15 @@ class UNIT3DProvider:
                 if current >= last:
                     break
                 page += 1
-            if budget_spent or rate_limited:
+            if budget_spent or rate_limited or access_refused:
                 break
         # A rate limit already put its cooldown in force in _refuse.
         if not successes and errors and not rate_limited:
             self._cool_down(endpoint, errors[0])
         if not successes and not errors:
             errors.append(ServiceUnavailable("the search budget was spent before this endpoint was queried"))
-        for error in errors:
-            _log_failure(endpoint, error, partial=successes > 0)
+        if errors:
+            _log_failure(endpoint, errors[-1] if rate_limited else errors[0], partial=successes > 0)
         if successes:
             return _Outcome(candidates, None, False)
         # A rate limit is the error the cooldown replays, so the first search raises the same class.
