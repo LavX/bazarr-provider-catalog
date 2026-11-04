@@ -509,6 +509,30 @@ class SearchRequestTests(UNIT3DTestCase):
             self.search([(base, "key-a")], languages=languages)
         self.assertEqual(len(server.requests), 1)
 
+    def test_two_failed_language_chunks_log_one_line_for_the_endpoint_search(self):
+        alpha3_codes = ALPHA3_ORDER[:60]
+        _server, base = self.serve(lambda record: _json({"error": "boom"}, status=500))
+        languages = [{"alpha3": code, "hi": False, "forced": False} for code in alpha3_codes]
+        with self.assertLogs("unit3d", level="WARNING") as logs, self.assertRaises(self.mod.ServiceUnavailable):
+            self.search([(base, "key-a")], languages=languages)
+        self.assertEqual([record.levelname for record in logs.records], ["WARNING"])
+
+    def test_failed_chunk_then_refused_chunk_logs_and_raises_the_authentication_error(self):
+        alpha3_codes = ALPHA3_ORDER[:60]
+        alpha2_codes = [self.mod._LANGUAGE_CODES[code] for code in alpha3_codes]
+
+        def respond(record):
+            if record["query"]["language"].startswith(alpha2_codes[0] + ","):
+                return _json({"error": "boom"}, status=500)
+            return _json({"message": "Unauthenticated."}, status=401)
+
+        _server, base = self.serve(respond)
+        languages = [{"alpha3": code, "hi": False, "forced": False} for code in alpha3_codes]
+        with self.assertLogs("unit3d", level="WARNING") as logs, self.assertRaises(self.mod.AuthenticationError):
+            self.search([(base, "key-a")], languages=languages)
+        self.assertEqual([record.levelname for record in logs.records], ["WARNING"])
+        self.assertIn("AuthenticationError", "\n".join(logs.output))
+
 
 class PaginationAndBudgetTests(UNIT3DTestCase):
     def test_second_page_is_requested_and_every_candidate_is_returned(self):
@@ -1140,9 +1164,9 @@ class CandidateTests(UNIT3DTestCase):
         for field in DOCUMENTED_FIELDS:
             self.assertIn(field, candidate)
         self.assertEqual(candidate["id"], f"{_tag(base)}:7")
-        self.assertNotIn("hearing_impaired", candidate)
+        self.assertIsNone(candidate["hearing_impaired"])
         self.assertFalse(candidate["hearing_impaired_verifiable"])
-        self.assertNotIn("forced", candidate["language"])
+        self.assertIsNone(candidate["language"]["forced"])
 
     def test_hash_is_claimed_only_when_the_tracker_flags_the_exact_file(self):
         records = [
@@ -1279,9 +1303,9 @@ class CandidateTests(UNIT3DTestCase):
         _server, base = self.serve(lambda record: _page([_record(8)]))
         hi_request = {"alpha3": "eng", "hi": True, "forced": False}
         (candidate,) = self.search([(base, "key-a")], languages=[hi_request])
-        self.assertNotIn("hearing_impaired", candidate)
+        self.assertIsNone(candidate["hearing_impaired"])
         self.assertFalse(candidate["hearing_impaired_verifiable"])
-        self.assertNotIn("hi", candidate["language"])
+        self.assertIsNone(candidate["language"]["hi"])
 
     def test_huge_imdb_digit_string_is_treated_as_absent(self):
         _server, base = self.serve(lambda record: _page([_record(1, imdb_id="tt" + "9" * 5000)]))

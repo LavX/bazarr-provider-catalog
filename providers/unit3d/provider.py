@@ -623,7 +623,7 @@ def _candidate(video, endpoint, record, matched_by, requested):
     candidate = {
         "provider": PROVIDER_ID,
         "id": f"{endpoint.tag}:{record_id}",
-        "language": {"alpha3": alpha3, "alpha2": alpha2},
+        "language": {"alpha3": alpha3, "alpha2": alpha2, "hi": None, "forced": None},
         "release_info": release,
         "filename": filename,
         "matches": matches,
@@ -632,6 +632,7 @@ def _candidate(video, endpoint, record, matched_by, requested):
         "score_out_of": 100,
         "hash_verifiable": hash_verifiable,
         "hearing_impaired_verifiable": False,
+        "hearing_impaired": None,
         "display": {
             "source": PROVIDER_ID,
             "tracker": endpoint.host,
@@ -877,17 +878,20 @@ class UNIT3DProvider:
                 page += 1
             if budget_spent or rate_limited or access_refused:
                 break
+        # The error that ended a rate-limited or refused search is the one reported.
+        reported = (errors[-1] if rate_limited or access_refused else errors[0]) if errors else None
         # A rate limit already put its cooldown in force in _refuse.
         if not successes and errors and not rate_limited:
-            self._cool_down(endpoint, errors[0])
+            self._cool_down(endpoint, reported)
         if not successes and not errors:
             errors.append(ServiceUnavailable("the search budget was spent before this endpoint was queried"))
+            reported = errors[0]
         if errors:
-            _log_failure(endpoint, errors[-1] if rate_limited else errors[0], partial=successes > 0)
+            _log_failure(endpoint, reported, partial=successes > 0)
         if successes:
             return _Outcome(candidates, None, False)
-        # A rate limit is the error the cooldown replays, so the first search raises the same class.
-        return _Outcome([], errors[-1] if rate_limited else errors[0], True)
+        # The reported error is the one a later cooldown replays, so the first search raises the same class.
+        return _Outcome([], reported, True)
 
     def _cool_down(self, endpoint, error, seconds=DEFAULT_COOLDOWN_SECONDS):
         """Skip the endpoint in later searches for the given seconds, and keep a copy of the error.
