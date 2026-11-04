@@ -7,6 +7,7 @@ arithmetic is exact, and the opener records the timeout of every request.
 """
 
 import base64
+import email.utils
 import hashlib
 import http.server
 import importlib.util
@@ -1057,6 +1058,35 @@ class CooldownTests(UNIT3DTestCase):
             self.search(pairs, provider=provider)
         self.assertEqual(len(throttled.requests), 2)
 
+    def test_retry_after_http_date_waits_until_that_date(self):
+        date = email.utils.formatdate(time.time() + 3600, usegmt=True)
+        _throttled, base = self.serve(lambda record: _json({}, status=429, headers={"Retry-After": date}))
+        with self.assertRaises(self.mod.APIThrottled) as caught:
+            self.search([(base, "key-a")])
+        self.assertGreaterEqual(caught.exception.retry_after, 3500)
+        self.assertLessEqual(caught.exception.retry_after, 3601)
+
+    def test_retry_after_of_zero_or_a_past_date_waits_for_nothing(self):
+        past = email.utils.formatdate(time.time() - 3600, usegmt=True)
+        for value in ("0", past):
+            with self.subTest(value=value):
+                _throttled, base = self.serve(
+                    lambda record, value=value: _json({}, status=429, headers={"Retry-After": value})
+                )
+                with self.assertRaises(self.mod.APIThrottled) as caught:
+                    self.search([(base, "key-a")])
+                self.assertEqual(caught.exception.retry_after, 0)
+
+    def test_unusable_retry_after_waits_the_default_sixty_seconds(self):
+        for value in ("soon", "-5"):
+            with self.subTest(value=value):
+                _throttled, base = self.serve(
+                    lambda record, value=value: _json({}, status=429, headers={"Retry-After": value})
+                )
+                with self.assertRaises(self.mod.APIThrottled) as caught:
+                    self.search([(base, "key-a")])
+                self.assertEqual(caught.exception.retry_after, 60)
+
     def test_retry_after_is_honored_even_when_another_endpoint_succeeds(self):
         throttled, base_a = self.serve(lambda record: _json({}, status=429, headers={"Retry-After": "120"}))
         _well, base_b = self.serve(lambda record: _page([_record(4)]))
@@ -1334,7 +1364,7 @@ class CandidateTests(UNIT3DTestCase):
 
 
 class DownloadTests(UNIT3DTestCase):
-    def download(self, base, subtitle_id=42, extension="srt", episode=None, provider=None):
+    def download(self, base, subtitle_id=42, extension="srt", episode=None, provider=None, season=None):
         payload = {
             "provider": "unit3d",
             "schema": 1,
@@ -1344,6 +1374,8 @@ class DownloadTests(UNIT3DTestCase):
         }
         if episode is not None:
             payload["episode"] = episode
+        if season is not None:
+            payload["season"] = season
         return (provider or self.mod.UNIT3DProvider()).download(
             provider_payload=payload,
             language=ENGLISH,
@@ -1375,15 +1407,33 @@ class DownloadTests(UNIT3DTestCase):
         self.assertEqual(content["format"], "srt")
         self.assertFalse(content["empty"])
 
+    def test_text_download_leaves_the_encoding_to_the_host(self):
+        body = b"1\n00:00:01,000 --> 00:00:02,000\nHello\n"
+        _server, base = self.serve(lambda record: (200, {"Content-Type": "application/x-subrip"}, body))
+        self.assertEqual(
+            self.download(base),
+            {
+                "content_b64": base64.b64encode(body).decode("ascii"),
+                "content_sha256": hashlib.sha256(body).hexdigest(),
+                "content_type": "application/x-subrip",
+                "format": "srt",
+                "encoding": None,
+                "empty": False,
+            },
+        )
+
     def test_missing_subtitle_is_a_candidate_skip_not_an_error(self):
         _server, base = self.serve(lambda record: _json({"message": "Not Found"}, status=404))
         content = self.download(base)
         self.assertTrue(content["empty"])
         self.assertEqual(content["content_b64"], "")
 
-    def test_refused_download_is_a_candidate_skip_not_an_error(self):
-        _server, base = self.serve(lambda record: _json({"message": "revoked"}, status=403))
-        self.assertTrue(self.download(base)["empty"])
+    def test_rejected_download_key_raises_authentication_error(self):
+        for status in (401, 403):
+            with self.subTest(status=status):
+                _server, base = self.serve(lambda record, status=status: _json({"message": "revoked"}, status=status))
+                with self.assertRaises(self.mod.AuthenticationError):
+                    self.download(base)
 
     def test_json_body_on_a_download_is_a_candidate_skip(self):
         _server, base = self.serve(lambda record: _json({"message": "refused for this account"}))
@@ -1402,6 +1452,17 @@ class DownloadTests(UNIT3DTestCase):
         self.assertNotIn("encoding", content)
         self.assertNotIn("content_b64", content)
 
+    def test_season_pack_archive_names_its_season_and_selects_the_member(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("Show.S01E02.srt", "1\n00:00:01,000 --> 00:00:02,000\nHi\n")
+        archive_bytes = buffer.getvalue()
+        _server, base = self.serve(lambda record: (200, {"Content-Type": "application/zip"}, archive_bytes))
+        content = self.download(base, extension="zip", episode=2, season=1)
+        self.assertEqual(content["season"], 1)
+        self.assertEqual(content["episode"], 2)
+        self.assertIs(content["select_member"], True)
+
     def test_empty_and_html_downloads_are_candidate_skips(self):
         _empty, base_empty = self.serve(lambda record: (200, {"Content-Type": "text/plain"}, b""))
         _html, base_html = self.serve(
@@ -1412,8 +1473,8 @@ class DownloadTests(UNIT3DTestCase):
             self.assertTrue(self.download(base_html)["empty"])
         self.assertEqual(len(logs.output), 2)
 
-    def test_refused_downloads_are_candidate_skips_with_one_log_line_each(self):
-        for status in (401, 422, 500):
+    def test_other_refused_downloads_are_candidate_skips_with_one_log_line_each(self):
+        for status in (422, 500):
             with self.subTest(status=status):
                 _server, base = self.serve(lambda record, status=status: _json({}, status=status))
                 with self.assertLogs("unit3d", level="WARNING") as logs:
