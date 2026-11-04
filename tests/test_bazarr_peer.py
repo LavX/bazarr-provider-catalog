@@ -1130,6 +1130,19 @@ class CompatibilityTests(PeerTestCase):
         self.assertIsInstance(error, self.mod.ConfigurationError)
         self.assertEqual(cooled_until - self.clock.now, 60)
 
+    def test_a_tls_failure_on_the_library_probe_sets_no_cooldown(self):
+        _server, base = self.routes(
+            search=lambda record: _envelope([]),
+            providers=lambda record: _json({"data": [{"name": "Subs"}]}),
+        )
+        provider = self.mod.BazarrPeerProvider()
+        tls_error = self.mod.ConfigurationError("the TLS handshake with the endpoint failed")
+        with patch.object(
+            self.mod.BazarrPeerProvider, "_provider_names", side_effect=tls_error
+        ), self.assertRaisesRegex(self.mod.ConfigurationError, "the TLS handshake with the endpoint failed"):
+            self.search([(base, "key-a")], provider=provider)
+        self.assertEqual(provider._cooldowns, {})
+
     def test_probe_404_means_the_address_is_not_a_bazarr_plus_instance(self):
         _server, base = self.routes(
             search=lambda record: _json({}, status=404), providers=lambda record: _json({}, status=404)
