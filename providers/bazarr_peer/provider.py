@@ -788,7 +788,8 @@ def _matches(video, details):
     """The match keys one row earns against the video, from its feature details.
 
     Episode series identity uses the series IMDb id, so a bare season or episode number
-    never reports the series match. A missing value on either side is never a match.
+    never reports the series match. An episode matched by series IMDb id also reports the
+    series match. A missing value on either side is never a match.
     """
     matches = []
     if video.get("kind") == "episode":

@@ -1813,18 +1813,22 @@ class DownloadTests(PeerTestCase):
             login=_login_response,
             download=lambda record: _json({"message": "Token invalid or expired"}, status=401),
         )
+        provider = self.mod.BazarrPeerProvider()
         with self.assertRaises(self.mod.AuthenticationError):
-            self.download(base)
+            self.download(base, provider=provider)
         self.assertEqual([request["path"] for request in server.requests].count("/api/v1/login"), 2)
+        self.assertEqual(provider._cooldowns, {})
 
     def test_forbidden_download_is_an_authentication_error_without_a_relogin(self):
         server, base = self.routes(
             login=_login_response,
             download=lambda record: _json({"message": "Invalid API key"}, status=403, headers={"x-reason": "auth"}),
         )
+        provider = self.mod.BazarrPeerProvider()
         with self.assertRaises(self.mod.AuthenticationError):
-            self.download(base)
+            self.download(base, provider=provider)
         self.assertEqual([request["path"] for request in server.requests].count("/api/v1/login"), 1)
+        self.assertEqual(provider._cooldowns, {})
 
     def test_quota_exhausted_406_is_a_candidate_skip_and_the_provider_stays_good(self):
         state = {"posts": 0}
@@ -2181,9 +2185,11 @@ class DownloadTests(PeerTestCase):
             login=_login_response,
             download=lambda record: _json({"message": "disabled"}, status=404, headers={"x-reason": "compat-disabled"}),
         )
+        provider = self.mod.BazarrPeerProvider()
         with self.assertRaisesRegex(self.mod.ConfigurationError, DISTRIBUTION_OFF):
-            self.download(base)
+            self.download(base, provider=provider)
         self.assertEqual([request["path"] for request in server.requests].count("/api/v1/subtitles"), 0)
+        self.assertEqual(provider._cooldowns, {})
 
     def test_a_dropped_context_skips_a_stale_download_with_stale_no_context(self):
         long_row = _row(1001, file_id=77, subtitle_id="x" * 1100)
@@ -2304,10 +2310,12 @@ class DownloadTests(PeerTestCase):
                 raise urllib.error.URLError(ssl.SSLError("the TLS handshake failed"))
             return recording_open(fullurl, data=data, timeout=timeout)
 
+        provider = self.mod.BazarrPeerProvider()
         with patch.object(self.mod._OPENER, "open", open_failing_handshake):
-            with self.assertRaises(self.mod.ConfigurationError):
-                self.download(base)
+            with self.assertRaisesRegex(self.mod.ConfigurationError, "the TLS handshake with the endpoint failed"):
+                self.download(base, provider=provider)
         self.assertEqual([request["path"] for request in server.requests], ["/api/v1/login", "/api/v1/download"])
+        self.assertEqual(provider._cooldowns, {})
 
     def test_slow_drip_stream_is_cut_at_the_deadline(self):
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _SlowDripHandler)
@@ -2365,8 +2373,10 @@ class DownloadTests(PeerTestCase):
             login=_login_response,
             download=lambda record: _json({"message": "bad"}, status=400, headers={"x-reason": "bad-request"}),
         )
+        provider = self.mod.BazarrPeerProvider()
         with self.assertRaisesRegex(self.mod.ConfigurationError, "bad_request"):
-            self.download(base)
+            self.download(base, provider=provider)
+        self.assertEqual(provider._cooldowns, {})
 
     def test_rate_limited_download_raises_api_throttled_and_cools_the_endpoint(self):
         server, base = self.routes(
@@ -2443,7 +2453,7 @@ class DownloadTests(PeerTestCase):
         self.assertIn("file 10: HTTP 500", "\n".join(logs.output))
         self.assertEqual([request["method"] for request in server.requests], ["POST", "POST", "GET"])
 
-    def test_download_logs_never_carry_the_token_the_link_or_the_body(self):
+    def test_download_logs_and_raised_errors_never_carry_the_token_the_link_or_the_body(self):
         def leak(name):
             return {"error": f"SECRET-{name}-ERROR", "message": f"SECRET-{name}-MESSAGE"}
 
