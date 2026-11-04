@@ -1,7 +1,10 @@
 import base64
+import email.message
+import email.utils
 import hashlib
 import importlib.util
 import io
+import time
 import unittest
 import urllib.error
 import urllib.parse
@@ -635,6 +638,30 @@ class Subs4FreeAnubisTests(unittest.TestCase):
         challenge = self.mod._extract_anubis_challenge(page)
         self.assertEqual((challenge["method"], challenge["difficulty"]), ("slow", 2))
 
+    def test_extract_accepts_string_form_challenge(self):
+        # Older Anubis builds publish the random data as a bare string, as subs4series parses.
+        page = (
+            '<script id="anubis_challenge" type="application/json">'
+            '{"rules":{"algorithm":"fast","difficulty":3},"challenge":"abc123"}</script>'
+        )
+        challenge = self.mod._extract_anubis_challenge(page)
+        self.assertEqual(challenge, {"id": "abc123", "randomData": "abc123", "difficulty": 3, "method": "fast"})
+        with_id = page.replace('"challenge":"abc123"', '"id":"c-1","challenge":"abc123"')
+        self.assertEqual(self.mod._extract_anubis_challenge(with_id)["id"], "c-1")
+        empty = page.replace('"challenge":"abc123"', '"challenge":""')
+        self.assertIsNone(self.mod._extract_anubis_challenge(empty))
+
+    def test_extract_reads_algorithm_or_method_from_either_place(self):
+        template = '<script id="anubis_challenge" type="application/json">{%s}</script>'
+        cases = [
+            ('"challenge":{"id":"a","randomData":"b","algorithm":"slow"}', "slow"),
+            ('"rules":{"method":"preact"},"challenge":{"id":"a","randomData":"b"}', "preact"),
+            ('"challenge":{"id":"a","randomData":"b"}', "fast"),
+        ]
+        for body, method in cases:
+            with self.subTest(body=body):
+                self.assertEqual(self.mod._extract_anubis_challenge(template % body)["method"], method)
+
     def test_proof_of_work_meets_difficulty(self):
         nonce, digest = self.mod._solve_pow("abc", 4)
         self.assertEqual(digest, hashlib.sha256(f"abc{nonce}".encode()).hexdigest())
@@ -805,6 +832,36 @@ class Subs4FreeAnubisTests(unittest.TestCase):
         provider._fetch = lambda request, timeout, opener=None: (429, request.full_url, b"")
         with self.assertRaises(self.mod.RateLimited):
             provider._http_get("https://www.subs4free.info/")
+
+    def _rate_limited_by_opener(self, retry_after):
+        provider = self.mod.Subs4FreeProvider()
+        headers = email.message.Message()
+        if retry_after is not None:
+            headers["Retry-After"] = retry_after
+
+        def open_(request, timeout=None):
+            del timeout
+            raise urllib.error.HTTPError(request.full_url, 429, "Too Many Requests", headers, io.BytesIO(b""))
+
+        provider._opener.open = open_
+        with self.assertRaises(self.mod.RateLimited) as raised:
+            provider._http_get("https://www.subs4free.info/")
+        return raised.exception
+
+    def test_rate_limit_carries_retry_after_seconds(self):
+        # The worker sends error.retry_after to the host with the RateLimited class name.
+        self.assertEqual(self._rate_limited_by_opener("120").retry_after, 120)
+
+    def test_rate_limit_carries_retry_after_http_date(self):
+        when = email.utils.formatdate(time.time() + 300, usegmt=True)
+        self.assertAlmostEqual(self._rate_limited_by_opener(when).retry_after, 300, delta=5)
+
+    def test_rate_limit_ignores_unusable_retry_after(self):
+        self.assertIsNone(self._rate_limited_by_opener(None).retry_after)
+        past = email.utils.formatdate(time.time() - 60, usegmt=True)
+        for value in ("soon", "0", "-5", "inf", "nan", past):
+            with self.subTest(value=value):
+                self.assertIsNone(self.mod._retry_after_seconds(value))
 
     def test_plain_http_error_is_not_a_provider_throttle(self):
         provider = self.mod.Subs4FreeProvider()

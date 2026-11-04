@@ -1,11 +1,14 @@
 """Subs4Free provider for the Bazarr+ Provider Hub catalog."""
 
 import base64
+import datetime
+import email.utils
 import hashlib
 import html
 import io
 import json
 import logging
+import math
 import random
 import re
 import time
@@ -332,7 +335,36 @@ class Subs4FreeError(RuntimeError):
 
 
 class RateLimited(Subs4FreeError):
-    """The upstream service asked the caller to slow down."""
+    """The upstream service asked the caller to slow down.
+
+    retry_after is the site's Retry-After in seconds, when it sent a usable one. The
+    worker passes it to the host, which keeps the provider out at least that long.
+    """
+
+    def __init__(self, message, retry_after=None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+def _retry_after_seconds(value):
+    # Retry-After is either delta-seconds or an HTTP-date (RFC 9110, section 10.2.3).
+    # Anything unparseable, non-finite, or already past is ignored.
+    value = (value or "").strip()
+    if not value:
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            when = email.utils.parsedate_to_datetime(value)
+        except (TypeError, ValueError, IndexError):
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=datetime.timezone.utc)
+        seconds = (when - datetime.datetime.now(datetime.timezone.utc)).total_seconds()
+    if not math.isfinite(seconds) or seconds <= 0:
+        return None
+    return seconds
 
 
 class ServiceUnavailable(Subs4FreeError):
@@ -364,6 +396,10 @@ def _extract_anubis_challenge(html_text):
     if not isinstance(data, dict):
         return None
     challenge = data.get("challenge")
+    if isinstance(challenge, str):
+        # Older Anubis builds publish the random data as a bare string, with the id (if
+        # any) at the top level and the policy only under "rules".
+        challenge = {"id": data.get("id") or challenge, "randomData": challenge}
     if not isinstance(challenge, dict) or "randomData" not in challenge or "id" not in challenge:
         return None
     if any(not isinstance(challenge[key], str) or not challenge[key] for key in ("id", "randomData")):
@@ -377,11 +413,18 @@ def _extract_anubis_challenge(html_text):
         return None
     if difficulty < 0:
         return None
+    method = (
+        challenge.get("method")
+        or challenge.get("algorithm")
+        or rules.get("method")
+        or rules.get("algorithm")
+        or "fast"
+    )
     return {
         "id": challenge["id"],
         "randomData": challenge["randomData"],
         "difficulty": difficulty,
-        "method": challenge.get("method") or rules.get("algorithm") or "fast",
+        "method": method,
     }
 
 
@@ -584,6 +627,13 @@ class Subs4FreeProvider:
             with (opener or self._opener).open(request, timeout=timeout) as response:
                 return response.getcode(), response.geturl(), response.read()
         except urllib.error.HTTPError as error:
+            if error.code == 429:
+                # Raised here, where the headers are still at hand, so the site's
+                # Retry-After reaches the host on every request (page, challenge, pass).
+                raise RateLimited(
+                    "subs4free rate limited the request",
+                    retry_after=_retry_after_seconds((error.headers or {}).get("Retry-After")),
+                ) from None
             try:
                 body = error.read()
             except Exception:
