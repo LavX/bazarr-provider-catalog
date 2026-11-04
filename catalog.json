@@ -1553,7 +1553,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "2b066badd93df00f59dba5cf6837f8525bbb34a8151be7dcc28f73cb36260627",
+        "bundle_sha256": "98c2f1ee0d8961bdc7f322b620cbc162e2da5abd3db7cb2059e7bfc920b56128",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1583,7 +1583,7 @@
         "entry_class": "GreekSubsProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "cd3c38610644fc54ef3871693b6f59a7d253892557c778f53d9369ac786ffb1b"
+          "provider.py": "e14e06dbe8fb43ca10220a4b2df38a9fc8a90bb88e03774f6381c760aa3cb841"
         },
         "languages": [
           "ell"
@@ -1605,7 +1605,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.3"
+        "version": "0.2.0"
       }
     },
     {
