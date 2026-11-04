@@ -15,6 +15,8 @@ reported as lacking it.
 
 import base64
 import concurrent.futures
+import datetime
+import email.utils
 import hashlib
 import http.client
 import json
@@ -322,8 +324,22 @@ def _imdb_number(value):
 
 
 def _retry_after_seconds(value):
-    seconds = _positive_int(value)
+    """Whole seconds to wait for a Retry-After value, or None when it is unusable.
+
+    The value is a count of seconds or an HTTP date (RFC 9110 section 10.2.3). A date that has
+    already passed asks for no wait, so it gives 0.
+    """
+    seconds = _as_int(value)
     if seconds is None:
+        try:
+            when = email.utils.parsedate_to_datetime(value)
+        except (OverflowError, TypeError, ValueError):
+            return None
+        if when.tzinfo is None:
+            # A date with the -0000 zone has no offset. HTTP dates are always GMT, so read it as UTC.
+            when = when.replace(tzinfo=datetime.timezone.utc)
+        return max(0, math.ceil((when - datetime.datetime.now(datetime.timezone.utc)).total_seconds()))
+    if seconds < 0:
         return None
     try:
         float(seconds)
@@ -776,7 +792,8 @@ class UNIT3DProvider:
                 _monotonic() + DOWNLOAD_TIMEOUT_SECONDS,
             )
         except _Refused as refusal:
-            if refusal.status == 429:
+            # A rejected key or a rate limit raises, as in a search. Other refusals skip the candidate.
+            if refusal.status in (401, 403, 429):
                 raise self._refuse(endpoint, refusal) from None
             return _skip_download(endpoint, subtitle_id, subtitle_format, f"HTTP {refusal.status}")
         except (ServiceUnavailable, ConfigurationError) as error:
@@ -790,18 +807,21 @@ class UNIT3DProvider:
             return {
                 "archive_b64": base64.b64encode(body).decode("ascii"),
                 "archive_sha256": hashlib.sha256(body).hexdigest(),
+                "season": _as_int(payload.get("season")),
                 "episode": _as_int(payload.get("episode")),
+                "select_member": True,
             }
         if _is_json(body, content_type):
             return _skip_download(endpoint, subtitle_id, subtitle_format, "the tracker answered with JSON")
         if _looks_like_html(body):
             return _skip_download(endpoint, subtitle_id, subtitle_format, "the tracker returned a web page")
-        # No encoding is declared: the host detects it when it normalizes the text.
+        # The encoding is None, so the host detects it when it normalizes the text.
         return {
             "content_b64": base64.b64encode(body).decode("ascii"),
             "content_sha256": hashlib.sha256(body).hexdigest(),
             "content_type": _content_type(subtitle_format),
             "format": subtitle_format,
+            "encoding": None,
             "empty": False,
         }
 
@@ -923,7 +943,9 @@ class UNIT3DProvider:
             )
             return ConfigurationError(f"the tracker rejected the request as invalid (HTTP {status})")
         if status == 429:
-            interval = _retry_after_seconds(refusal.retry_after) or DEFAULT_COOLDOWN_SECONDS
+            interval = _retry_after_seconds(refusal.retry_after)
+            if interval is None:
+                interval = DEFAULT_COOLDOWN_SECONDS
             error = APIThrottled(f"the tracker is rate limiting the API (HTTP {status})", retry_after=interval)
             ends_at = self._cool_down(endpoint, error, interval)
             error.retry_after = math.ceil(ends_at - _monotonic())

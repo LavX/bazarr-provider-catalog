@@ -37,6 +37,7 @@ DOCUMENTED_FIELDS = (
     "score_out_of",
     "hash_verifiable",
     "hearing_impaired_verifiable",
+    "hearing_impaired",
     "display",
     "provider_payload",
 )
@@ -532,6 +533,25 @@ class SearchRequestTests(UNIT3DTestCase):
             self.search([(base, "key-a")], languages=languages)
         self.assertEqual([record.levelname for record in logs.records], ["WARNING"])
         self.assertIn("AuthenticationError", "\n".join(logs.output))
+
+    def test_failed_chunk_then_refused_chunk_makes_the_next_search_raise_from_the_cooldown(self):
+        alpha3_codes = ALPHA3_ORDER[:60]
+        alpha2_codes = [self.mod._LANGUAGE_CODES[code] for code in alpha3_codes]
+
+        def respond(record):
+            if record["query"]["language"].startswith(alpha2_codes[0] + ","):
+                return _json({"error": "boom"}, status=500)
+            return _json({"message": "Unauthenticated."}, status=401)
+
+        server, base = self.serve(respond)
+        languages = [{"alpha3": code, "hi": False, "forced": False} for code in alpha3_codes]
+        provider = self.mod.UNIT3DProvider()
+        with self.assertLogs("unit3d", level="WARNING"), self.assertRaises(self.mod.AuthenticationError):
+            self.search([(base, "key-a")], languages=languages, provider=provider)
+        requests_before = len(server.requests)
+        with self.assertRaises(self.mod.AuthenticationError):
+            self.search([(base, "key-a")], languages=languages, provider=provider)
+        self.assertEqual(len(server.requests), requests_before)
 
 
 class PaginationAndBudgetTests(UNIT3DTestCase):
