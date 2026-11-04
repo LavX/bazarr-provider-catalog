@@ -996,6 +996,23 @@ class CooldownTests(UNIT3DTestCase):
         self.assertEqual(len(self.search(pairs, provider=provider)), 1)
         self.assertEqual(len(throttled.requests), 2)
 
+    def test_retry_after_beyond_the_float_range_counts_as_no_header(self):
+        throttled, base = self.serve(lambda record: _json({}, status=429, headers={"Retry-After": "9" * 400}))
+        pairs = [(base, "key-a")]
+        provider = self.mod.UNIT3DProvider()
+        with self.assertRaises(self.mod.APIThrottled) as caught:
+            self.search(pairs, provider=provider)
+        self.assertEqual(caught.exception.retry_after, 60)
+        self.assertEqual(len(throttled.requests), 1)
+        self.clock.now += 59
+        with self.assertRaises(self.mod.APIThrottled):
+            self.search(pairs, provider=provider)
+        self.assertEqual(len(throttled.requests), 1)
+        self.clock.now += 1
+        with self.assertRaises(self.mod.APIThrottled):
+            self.search(pairs, provider=provider)
+        self.assertEqual(len(throttled.requests), 2)
+
     def test_retry_after_is_honored_even_when_another_endpoint_succeeds(self):
         throttled, base_a = self.serve(lambda record: _json({}, status=429, headers={"Retry-After": "120"}))
         _well, base_b = self.serve(lambda record: _page([_record(4)]))

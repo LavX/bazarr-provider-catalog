@@ -323,6 +323,13 @@ def _imdb_number(value):
 
 def _retry_after_seconds(value):
     seconds = _positive_int(value)
+    if seconds is None:
+        return None
+    try:
+        float(seconds)
+    except OverflowError:
+        # A count beyond the float range cannot time a cooldown, so it counts as no usable header.
+        return None
     return seconds
 
 

@@ -8142,7 +8142,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "6204fbd2475ca151291311663a92ca70325d761082258f22a51deac3785f1f74",
+        "bundle_sha256": "49f4f146055e6b592d4c902e248ceb83dcbe56942b3fb6b7af87e3885feb3c06",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -8187,7 +8187,7 @@
         "entry_class": "UNIT3DProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "a60987fc4ab86bc1a3d4c1a0455b2e7c1f9ae596afa04a31071ade45bfe4025b"
+          "provider.py": "958458c56620006f435d8f19c07599b9dca223256aef912ae2ad66921929fd2c"
         },
         "languages": [
           "ara",
