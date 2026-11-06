@@ -388,6 +388,28 @@ class _HeaderDripHandler(socketserver.BaseRequestHandler):
             return  # the client closed the connection at its deadline
 
 
+class _ChunkDripHandler(socketserver.BaseRequestHandler):
+    """Answers 200 with a chunked body whose first chunk-size line arrives one zero at a time, for ten seconds.
+
+    The headers are complete, and every gap is far inside any socket timeout, so only an absolute
+    deadline held through the body can cut the request.
+    """
+
+    def handle(self):
+        self.request.settimeout(5)
+        try:
+            self.request.recv(65536)
+            self.request.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\n\r\n"
+            )
+            for _ in range(50):
+                if self.server.release.wait(0.2):
+                    return
+                self.request.sendall(b"0")
+        except OSError:
+            return  # the client closed the connection at its deadline
+
+
 class _SilentHandler(socketserver.BaseRequestHandler):
     """Accepts the connection and then says nothing, so a client that speaks first waits for the reply."""
 
@@ -2575,22 +2597,59 @@ class DownloadTests(PeerTestCase):
         self.addCleanup(server.shutdown)
         self.addCleanup(server.release.set)
         port = server.server_address[1]
-        real_create = socket.create_connection
+        real_connect = socket.socket.connect
         pause = threading.Event()
 
-        def slow_create(address, *args, **kwargs):
+        def slow_connect(sock, address):
             pause.wait(1.3)
-            return real_create(address, *args, **kwargs)
+            return real_connect(sock, address)
 
         link = f"http://127.0.0.1:{port}/api/v1/download/stream/tok-1"
         with patch.object(self.mod, "_monotonic", time.monotonic), patch.object(
-            socket, "create_connection", slow_create
+            socket.socket, "connect", slow_connect
         ):
             started = time.monotonic()
             with self.assertRaises(self.mod.ServiceUnavailable):
                 self.mod._fetch_stream(link, 10, started + 1.0)
             self.assertLess(time.monotonic() - started, 1.9)
         self.assertFalse(server.started.wait(0.3))
+
+    def test_unresponsive_addresses_share_one_deadline(self):
+        # Three resolved addresses that never answer. Each attempt waits for its own socket timeout,
+        # so with the full timeout per attempt this would take thirty seconds.
+        real_connect = socket.socket.connect
+
+        def unresponsive_connect(sock, address):
+            if address[1] != 9:
+                return real_connect(sock, address)
+            time.sleep(sock.gettimeout())
+            raise TimeoutError("timed out")
+
+        resolved = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 9))] * 3
+        with patch.object(self.mod, "_monotonic", time.monotonic), patch.object(
+            socket, "getaddrinfo", lambda *args, **kwargs: resolved
+        ), patch.object(socket.socket, "connect", unresponsive_connect):
+            started = time.monotonic()
+            with self.assertRaises(self.mod.ServiceUnavailable):
+                self.mod._fetch_stream("http://peer.invalid:9/api/v1/download/stream/tok-1", 10, started + 1.0)
+            self.assertLess(time.monotonic() - started, 1.6)
+            self.assertGreater(time.monotonic() - started, 0.8)
+
+    def test_chunk_framing_drip_is_cut_at_the_deadline(self):
+        server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _ChunkDripHandler)
+        server.daemon_threads = True
+        server.release = threading.Event()
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.addCleanup(server.release.set)
+        link = f"http://127.0.0.1:{server.server_address[1]}/api/v1/download/stream/tok-1"
+        with patch.object(self.mod, "_monotonic", time.monotonic):
+            started = time.monotonic()
+            with self.assertRaises(self.mod.ServiceUnavailable):
+                self.mod._fetch_stream(link, 10, started + 1.0)
+            self.assertLess(time.monotonic() - started, 1.6)
+            self.assertGreater(time.monotonic() - started, 0.8)
 
     def test_a_cut_that_lands_as_the_response_returns_is_not_a_success(self):
         closed = []
@@ -2606,7 +2665,7 @@ class DownloadTests(PeerTestCase):
 
         with patch.object(self.mod._OPENER, "open", open_then_fire):
             with self.assertRaises(self.mod.ServiceUnavailable):
-                self.mod._open_by_deadline("http://127.0.0.1:1/", 5, self.mod._monotonic() + 30)
+                self.mod._request("http://127.0.0.1:1/", {}, 5, 100, self.mod._monotonic() + 30)
         self.assertEqual(closed, [True])
 
     def test_an_error_response_cut_at_the_deadline_is_closed(self):
@@ -2620,7 +2679,7 @@ class DownloadTests(PeerTestCase):
 
         with patch.object(self.mod._OPENER, "open", fail_after_fire):
             with self.assertRaises(self.mod.ServiceUnavailable):
-                self.mod._open_by_deadline("http://127.0.0.1:1/", 5, self.mod._monotonic() + 30)
+                self.mod._request("http://127.0.0.1:1/", {}, 5, 100, self.mod._monotonic() + 30)
         self.assertTrue(body.closed)
 
     def test_header_drip_ends_a_search_at_the_deadline(self):

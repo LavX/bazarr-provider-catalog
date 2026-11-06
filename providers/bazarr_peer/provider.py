@@ -215,61 +215,94 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class _Watch:
-    """The connections one request opened, so a timer can cut them at the request deadline.
+    """One absolute deadline for a whole request: connect, TLS, headers and every body read.
 
     A socket timeout bounds the silence between two reads, not the whole wait. A peer that sends
-    its response headers a line at a time never trips it, so the open call alone could outlast
-    the deadline. Shutting the socket down from the timer wakes the blocked read at the deadline.
+    a line at a time, in the response headers or in the chunk framing of a body, never trips it.
+    The watch holds a duplicate of every socket the request creates, one per address attempt, and
+    a timer shuts them all down at the deadline. A shutdown wakes a blocked read, and it reaches a
+    TLS socket whose raw socket was detached by wrapping, because the duplicate shares the connection.
+
+    The request ends the watch with finish() once the body is read, or when it fails. Name
+    resolution is not bounded by the timer: the checks around each connect end the request as soon
+    as the lookup returns.
     """
 
-    def __init__(self):
-        self.connections = []
+    def __init__(self, deadline):
+        delay = deadline - _monotonic()
+        if delay <= 0:
+            raise ServiceUnavailable("the time budget was spent before the request was sent")
+        self.deadline = deadline
         self.fired = False
         self._done = False
+        self._cutters = []
         self._lock = threading.Lock()
+        self._timer = threading.Timer(min(delay, _MAX_WATCH_SECONDS), self.cut)
+        self._timer.daemon = True
+        self._timer.start()
 
-    def add(self, connection):
+    def add(self, sock):
+        """Watch a socket. Raises ServiceUnavailable when the deadline already passed."""
+        cutter = sock.dup()
         with self._lock:
-            self.connections.append(connection)
-            fired = self.fired
-        if fired:
-            self._cut(connection)
+            if not self.fired:
+                self._cutters.append(cutter)
+                return
+        cutter.close()
+        raise ServiceUnavailable(_DEADLINE_MESSAGE)
 
     def cut(self):
         with self._lock:
             if self._done:
                 return
             self.fired = True
-            connections = list(self.connections)
-        for connection in connections:
-            self._cut(connection)
+            for cutter in self._cutters:
+                try:
+                    cutter.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
 
     def finish(self):
-        """Stop the timer from cutting anything from now on, and say whether it already did.
+        """Stop the timer, close the duplicates, and say whether the deadline already cut the request.
 
         Cancelling a timer does not wait for a cut that is already running, so the caller asks
-        here: True means the deadline passed and the connection may have been shut down.
+        here: True means the deadline passed and a connection may have been shut down.
         """
+        self._timer.cancel()
         with self._lock:
             self._done = True
+            cutters, self._cutters = self._cutters, []
+            for cutter in cutters:
+                cutter.close()
             return self.fired
 
-    @staticmethod
-    def _cut(connection):
-        # The cutter is a duplicate of the raw socket, kept while a connect is in progress. TLS
-        # wrapping detaches the raw socket before the handshake, so the socket the connection
-        # holds then cannot be shut down, but the duplicate reaches the same connection.
-        # The base class shutdown, not SSLSocket.shutdown, which would drop the TLS state under the reader.
-        for sock in (connection.cutter, connection.sock):
-            if sock is None:
-                continue
+    def connect(self, address, timeout, source_address=None):
+        """Connect like socket.create_connection, but every attempt gets the time left, and is watched."""
+        host, port = address
+        limit = timeout if isinstance(timeout, (int, float)) else None
+        failure = None
+        for family, kind, proto, _name, target in socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM):
+            remaining = self.deadline - _monotonic()
+            if self.fired or remaining <= 0:
+                raise ServiceUnavailable(_DEADLINE_MESSAGE)
+            sock = socket.socket(family, kind, proto)
             try:
-                socket.socket.shutdown(sock, socket.SHUT_RDWR)
-            except OSError:
-                pass
-        # Name resolution is not bounded by the timer, and every resolved address gets the full
-        # socket timeout. A connection that has no socket yet cannot be cut here, so the checks in
-        # _WatchedConnection end it as soon as the connect call returns.
+                self.add(sock)
+                sock.settimeout(remaining if limit is None else min(limit, remaining))
+                if source_address:
+                    sock.bind(source_address)
+                sock.connect(target)
+                if self.fired:
+                    raise ServiceUnavailable(_DEADLINE_MESSAGE)
+                sock.settimeout(socket.getdefaulttimeout() if limit is None else limit)
+                return sock
+            except OSError as error:
+                sock.close()
+                failure = error
+            except BaseException:
+                sock.close()
+                raise
+        raise failure or OSError("name resolution returned no address")
 
 
 _LOCAL = threading.local()
@@ -277,47 +310,13 @@ _DEADLINE_MESSAGE = "the endpoint did not answer within the time budget"
 
 
 class _WatchedConnection:
-    """Registers each connection a request opens with that request's watch."""
+    """Opens every socket of a connection through the watch of the request that made it."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.cutter = None
-        self._watch = getattr(_LOCAL, "watch", None)
-        if self._watch is not None:
-            create = self._create_connection
-
-            def create_watched(*create_args, **create_kwargs):
-                sock = create(*create_args, **create_kwargs)
-                self._keep_cutter(sock)
-                return sock
-
-            self._create_connection = create_watched
-            self._watch.add(self)
-
-    def _keep_cutter(self, sock):
-        # Assign before checking fired: a cut that ran earlier left fired set, a later one sees the cutter.
-        try:
-            self.cutter = sock.dup()
-        except OSError:
-            self.cutter = None
-        if self._watch.fired:
-            sock.close()
-            self._drop_cutter()
-            raise ServiceUnavailable(_DEADLINE_MESSAGE)
-
-    def _drop_cutter(self):
-        cutter, self.cutter = self.cutter, None
-        if cutter is not None:
-            cutter.close()
-
-    def connect(self):
-        try:
-            super().connect()
-        finally:
-            self._drop_cutter()
-        if self._watch is not None and self._watch.fired:
-            self.close()
-            raise ServiceUnavailable(_DEADLINE_MESSAGE)
+        watch = getattr(_LOCAL, "watch", None)
+        if watch is not None:
+            self._create_connection = watch.connect
 
 
 class _WatchedHTTPConnection(_WatchedConnection, http.client.HTTPConnection):
@@ -341,35 +340,6 @@ class _WatchedHTTPSHandler(urllib.request.HTTPSHandler):
 _OPENER = urllib.request.build_opener(_NoRedirect, _WatchedHTTPHandler, _WatchedHTTPSHandler)
 # The longest a watch timer waits. A deadline further out than this is bounded by the socket timeout alone.
 _MAX_WATCH_SECONDS = 86400
-
-
-def _open_by_deadline(request, timeout, deadline):
-    """Open a request, and cut its connection when the deadline passes before the response headers are in."""
-    delay = deadline - _monotonic()
-    if delay <= 0:
-        raise ServiceUnavailable("the time budget was spent before the request was sent")
-    watch = _Watch()
-    timer = threading.Timer(min(delay, _MAX_WATCH_SECONDS), watch.cut)
-    timer.daemon = True
-    _LOCAL.watch = watch
-    timer.start()
-    try:
-        try:
-            response = _OPENER.open(request, timeout=timeout)
-        except (OSError, http.client.HTTPException) as error:
-            if watch.finish():
-                if isinstance(error, urllib.error.HTTPError):
-                    error.close()
-                raise ServiceUnavailable(_DEADLINE_MESSAGE) from None
-            raise
-        if watch.finish():
-            # The cut may have landed while the response came back, and a shut-down body reads as a clean end.
-            response.close()
-            raise ServiceUnavailable(_DEADLINE_MESSAGE)
-        return response
-    finally:
-        _LOCAL.watch = None
-        timer.cancel()
 
 
 class _Endpoint(NamedTuple):
@@ -748,11 +718,11 @@ def _error_detail(error, deadline):
 def _request(url, headers, timeout, max_bytes, deadline, method="GET", data=None):
     """Send one request and return (body, content_type) for HTTP 200.
 
-    The timeout bounds the connection and the silence between two reads of the response
-    headers. The deadline is an absolute monotonic time that also bounds the wait for the
-    headers, through a timer that cuts the connection, and the whole body: each body
-    read waits no longer than the time left before it when the socket is reachable,
-    and the deadline is checked between reads otherwise.
+    The timeout bounds the connection and the silence between two reads. The deadline is an
+    absolute monotonic time for the whole exchange, held by one watch from the first connect
+    attempt to the end of the body read, error bodies included. A timer shuts every socket the
+    request opened down at the deadline, and each body read also waits no longer than the time left
+    when the socket is reachable.
 
     Redirects are refused, so the key never follows a Location header. Failures
     carry a fixed message only: never the URL, the key, the token or a response body.
@@ -761,35 +731,57 @@ def _request(url, headers, timeout, max_bytes, deadline, method="GET", data=None
     if timeout <= 0:
         raise ServiceUnavailable("the time budget was spent before the request was sent")
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    watch = _Watch(deadline)
+    _LOCAL.watch = watch
     try:
-        with _open_by_deadline(request, timeout, deadline) as response:
-            status = response.getcode()
-            if status != 200:
-                raise _Refused(status)
-            try:
-                body = _read_body(response, max_bytes, deadline)
-            except ssl.SSLError:
-                raise ServiceUnavailable(
-                    "the endpoint closed the TLS connection before the body was complete"
-                ) from None
-            content_type = response.headers.get("Content-Type") or ""
-    except urllib.error.HTTPError as error:
         try:
-            headers_out = error.headers
-            retry_after = headers_out.get("Retry-After") if headers_out is not None else None
-            reason = headers_out.get("x-reason") if headers_out is not None else None
-            detail_key, detail = _error_detail(error, deadline)
-            raise _Refused(error.code, retry_after, reason, detail, detail_key) from None
-        finally:
-            error.close()
-    except urllib.error.URLError as error:
-        if isinstance(error.reason, ssl.SSLError):
+            try:
+                response = _OPENER.open(request, timeout=timeout)
+            except (OSError, http.client.HTTPException) as error:
+                if watch.fired:
+                    if isinstance(error, urllib.error.HTTPError):
+                        error.close()
+                    raise ServiceUnavailable(_DEADLINE_MESSAGE) from None
+                raise
+            finally:
+                _LOCAL.watch = None
+            if watch.fired:
+                # The cut may have landed while the response came back, and a shut-down body reads as a clean end.
+                response.close()
+                raise ServiceUnavailable(_DEADLINE_MESSAGE)
+            with response:
+                status = response.getcode()
+                if status != 200:
+                    raise _Refused(status)
+                try:
+                    body = _read_body(response, max_bytes, deadline)
+                except ssl.SSLError:
+                    raise ServiceUnavailable(
+                        "the endpoint closed the TLS connection before the body was complete"
+                    ) from None
+                content_type = response.headers.get("Content-Type") or ""
+            if watch.finish():
+                raise ServiceUnavailable(_DEADLINE_MESSAGE)
+        except urllib.error.HTTPError as error:
+            try:
+                headers_out = error.headers
+                retry_after = headers_out.get("Retry-After") if headers_out is not None else None
+                reason = headers_out.get("x-reason") if headers_out is not None else None
+                detail_key, detail = _error_detail(error, deadline)
+                raise _Refused(error.code, retry_after, reason, detail, detail_key) from None
+            finally:
+                error.close()
+        except urllib.error.URLError as error:
+            if isinstance(error.reason, ssl.SSLError):
+                raise ConfigurationError("the TLS handshake with the endpoint failed") from None
+            raise ServiceUnavailable("the endpoint is unreachable") from None
+        except ssl.SSLError:
             raise ConfigurationError("the TLS handshake with the endpoint failed") from None
-        raise ServiceUnavailable("the endpoint is unreachable") from None
-    except ssl.SSLError:
-        raise ConfigurationError("the TLS handshake with the endpoint failed") from None
-    except (OSError, http.client.HTTPException):
-        raise ServiceUnavailable("the endpoint closed the connection or timed out") from None
+        except (OSError, http.client.HTTPException):
+            raise ServiceUnavailable("the endpoint closed the connection or timed out") from None
+    finally:
+        _LOCAL.watch = None
+        watch.finish()
     if len(body) > max_bytes:
         raise ServiceUnavailable("the endpoint sent a response larger than the limit")
     return body, content_type

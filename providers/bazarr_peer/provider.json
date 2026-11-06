@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "7b36caaa5220a986dd495d98400923eca304cf966f30d4ac160835696508eefb",
+  "bundle_sha256": "915492a4dc74ca9c209924f234469de409efacd7fee6037590b29cce8a9dd786",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -58,7 +58,7 @@
   "entry_class": "BazarrPeerProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "63a048b401b8ec7b98a0cd5692a6f9f59367508e34e3c6ebbe95f2d220de01bf"
+    "provider.py": "283039fd7906d5ea01f14b08d7372551a4021c3fea0fed25779692ace27ce2dc"
   },
   "languages": [
     "ara",
