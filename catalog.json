@@ -716,7 +716,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "47c705bb501d5dc0ecfa2470979ab71e4a7a34d7b5dc50831a1f7bd62ddb6d9c",
+        "bundle_sha256": "70b3a25746e0870b0994691cad97740f8b3f3e0580423244e00174e297c01a45",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -742,7 +742,7 @@
             },
             "library_only": {
               "default": true,
-              "description": "Search only the subtitles in the peer's own library. This needs the peer to serve its library. If the key has an allow-list, the key must include local.",
+              "description": "Search only the subtitles in the peer's own library. This needs the peer's serve_local_subs setting turned on. If the key has an allow-list, the key must include local.",
               "title": "Library only",
               "type": "boolean"
             },
@@ -774,7 +774,7 @@
         "entry_class": "BazarrPeerProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "a7d6e8493fa82b21fb442740d58b63145564a0efcea8e3d7e3b7092d312c372a"
+          "provider.py": "3d59faf3f67e351843f328b0e2d72fbb04b5db7c6d9c7bee3dc5f66e0944f532"
         },
         "languages": [
           "ara",
@@ -868,7 +868,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.2"
+        "version": "0.1.3"
       }
     },
     {

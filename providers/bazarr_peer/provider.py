@@ -287,6 +287,15 @@ def _configured_endpoints(config):
             f"Bazarr+ Peer has {len(urls)} endpoint(s) but {len(keys)} API key(s); "
             "list one key per endpoint, in the same order"
         )
+    if len(urls) > MAX_ENDPOINTS:
+        LOGGER.warning(
+            "Bazarr+ Peer accepts at most %d endpoints; ignoring the last %d of %d",
+            MAX_ENDPOINTS,
+            len(urls) - MAX_ENDPOINTS,
+            len(urls),
+        )
+        urls = urls[:MAX_ENDPOINTS]
+        keys = keys[:MAX_ENDPOINTS]
     endpoints = []
     bases = set()
     tags = set()
@@ -309,14 +318,6 @@ def _configured_endpoints(config):
         bases.add(base)
         tags.add(tag)
         endpoints.append(_Endpoint(tag, base, host, key))
-    if len(endpoints) > MAX_ENDPOINTS:
-        LOGGER.warning(
-            "Bazarr+ Peer accepts at most %d endpoints; ignoring the last %d of %d",
-            MAX_ENDPOINTS,
-            len(endpoints) - MAX_ENDPOINTS,
-            len(endpoints),
-        )
-        endpoints = endpoints[:MAX_ENDPOINTS]
     return endpoints
 
 
@@ -1354,7 +1355,7 @@ class BazarrPeerProvider:
         try:
             link = self._post_download(endpoint, file_id, deadline)
         except _Refused as refusal:
-            if refusal.status == 406 and refusal.reason == "throttled":
+            if refusal.status == 406:
                 raise _Skip("the download quota is exhausted") from None
             if refusal.status == 404 and not _is_compat_disabled(refusal):
                 # A stale file id gets one recovery search and one more download. A second 404 is final.

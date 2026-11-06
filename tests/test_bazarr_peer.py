@@ -1863,6 +1863,17 @@ class DownloadTests(PeerTestCase):
             self.assertTrue(self.download(base, provider=provider)["empty"])
         self.assertFalse(self.download(base, provider=provider)["empty"])
 
+    def test_quota_406_without_a_reason_header_is_a_candidate_skip(self):
+        _server, base = self.routes(
+            login=_login_response,
+            download=lambda record: _json({"message": "download quota exhausted"}, status=406),
+        )
+        provider = self.mod.BazarrPeerProvider()
+        with self.assertLogs("bazarr_peer", level="WARNING") as logs:
+            self.assertTrue(self.download(base, provider=provider)["empty"])
+        self.assertIn(": the download quota is exhausted", "\n".join(logs.output))
+        self.assertEqual(provider._cooldowns, {})
+
     def test_stale_remote_file_id_recovers_through_the_saved_context(self):
         body = b"1\n00:00:01,000 --> 00:00:02,000\nHi\n"
         state = {"posts": []}

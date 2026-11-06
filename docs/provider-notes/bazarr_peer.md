@@ -13,7 +13,7 @@
 
 - `endpoints` is a whitespace-separated list of base URLs. `api_keys` holds one key per endpoint, in the same order. The two counts must match. Each key is printable ASCII without spaces.
 - Each URL must use `http` or `https` and carry a host. Credentials, query strings, and fragments are refused. A trailing slash is removed and the base path is kept. The host and path must be ASCII.
-- Every entry is validated, including entries past the sixteenth. Duplicate normalized URLs are refused. The first 16 endpoints are used, and the rest are logged and dropped in one line.
+- The two counts are checked over the whole lists. The lists are then cut to their first 16 entries, and the rest are logged and dropped in one line without being validated. Each kept entry is validated, and duplicate normalized URLs among the kept entries are refused.
 - An endpoint's tag is the first 16 hex characters of the SHA-256 of its normalized URL. Candidate ids have the form `<tag>:<stable key>`, and download payloads carry the tag. A remote row's stable key is its subtitle id. A local row's stable key is described under Search And Download.
 - The OpenSubtitles service (`api.opensubtitles.com` and its subdomains) is refused at configuration time, before any request. The key is never sent there.
 - `timeout_seconds` is the whole-search budget, from 30 to 90 seconds, with 45 as the default. Every endpoint searches in parallel inside that budget.
@@ -54,7 +54,7 @@
 - The download call has a 30-second budget. Its login, its download request, and its one recovery search share that budget. The stream fetch has a 30-second deadline of its own.
 - The library probe answer is cached for 600 seconds, in worker memory only.
 - A link origin mismatch is refused, not relaxed. Operators behind a reverse proxy must forward `X-Forwarded-Proto` and `X-Forwarded-Host`, so that the peer builds links at the configured address.
-- The manifest lists plain language codes and `por-BR`, and declares no hearing-impaired variants. A `por-BR` request keeps the rows of Brazil and the rows with no country, and drops rows of another country, such as `pt-PT`. A plain request keeps every row of its language.
+- The manifest lists alpha3 codes and `por-BR`, and declares no hearing-impaired variants. A `por-BR` request keeps the rows of Brazil and the rows with no country, and drops rows of another country, such as `pt-PT`. A plain request keeps every row of its language.
 - The peer reports `ai_translated` as false for local rows (subtitles the peer stores). `include_ai_translated` therefore cannot tell an AI translated library subtitle from a human one. The provider passes the peer's flag through (only a JSON `true` counts as set) and does not verify it or infer AI provenance.
 - The 60-second cooldown default is provisional. A two-instance check, with one instance querying another, would settle it.
 
