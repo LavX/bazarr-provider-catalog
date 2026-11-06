@@ -28,6 +28,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "bazarr_peer"
+FIXTURE_DIR = ROOT / "tests" / "fixtures"
 DOCUMENTED_FIELDS = (
     "provider",
     "id",
@@ -65,6 +66,21 @@ EPISODE_VIDEO = {
     "series_tvdb_id": 81189,
     "size": 900,
     "original_name": "breaking.bad.s01e02.720p.mkv",
+}
+SAMPLE_MOVIE_VIDEO = {
+    "kind": "movie",
+    "title": "Sample Feature",
+    "year": 2020,
+    "imdb_id": "tt1234567",
+}
+SAMPLE_EPISODE_VIDEO = {
+    "kind": "episode",
+    "series": "Sample Show",
+    "title": "Second Episode",
+    "year": 2019,
+    "season": 1,
+    "episode": 2,
+    "series_imdb_id": "tt7654321",
 }
 DISTRIBUTION_OFF = "Distribution Hub is off on this instance"
 FILE_NAME = "Dune.2021.1080p.WEBRip.x264-GRP.srt"
@@ -250,6 +266,20 @@ def _reference_hash(data):
     for index in range(len(data) - 65536, len(data), 8):
         total += int.from_bytes(data[index:index + 8], "little")
     return f"{total % 2 ** 64:016x}"
+
+
+def _fixture_bytes(name):
+    return (FIXTURE_DIR / name).read_bytes()
+
+
+def _fixture_reply(name, content_type="application/json", status=200, headers=None):
+    return status, {"Content-Type": content_type, **(headers or {})}, _fixture_bytes(name)
+
+
+def _download_link_reply(record):
+    """The download fixture with the mock peer's host filled in, since the mock listens on a random port."""
+    body = _fixture_bytes("bazarr_peer_download_link.json").replace(b"{host}", record["host"].encode("ascii"))
+    return 200, {"Content-Type": "application/json"}, body
 
 
 class _Clock:
@@ -2560,6 +2590,180 @@ class HashTests(PeerTestCase):
             self.assertIsNone(self.mod._opensubtitles_hash(path))
             self.assertIsNone(self.mod._opensubtitles_hash(os.path.join(directory, "missing.mkv")))
             self.assertIsNone(self.mod._opensubtitles_hash(None))
+
+
+class FixtureTests(PeerTestCase):
+    def fixture_payload(self, base):
+        return {
+            "provider": "bazarr_peer",
+            "schema": 1,
+            "endpoint": _tag(base),
+            "row": "remote",
+            "key": "5001",
+            "file_id": 9001,
+            "subtitle_id": "5001",
+            "extension": "srt",
+            "context": {"type": "movie", "imdb_id": "tt1234567", "languages": ["en"]},
+        }
+
+    def fixture_download(self, base, provider=None):
+        return (provider or self.mod.BazarrPeerProvider()).download(
+            provider_payload=self.fixture_payload(base),
+            language=ENGLISH,
+            config=_config([(base, "key-a")]),
+        )
+
+    def test_login_fixture_mints_the_token_the_download_sends(self):
+        server, base = self.routes(
+            login=lambda record: _fixture_reply("bazarr_peer_login.json"),
+            download=_download_link_reply,
+            stream=lambda record: _fixture_reply("bazarr_peer_download_movie.srt", "application/x-subrip"),
+        )
+        self.fixture_download(base)
+        login, post, stream = server.requests
+        self.assertEqual(
+            (login["method"], login["path"], login["api_key"], login["auth"]),
+            ("POST", "/api/v1/login", "key-a", None),
+        )
+        self.assertEqual(
+            (post["path"], post["api_key"], post["auth"]),
+            ("/api/v1/download", "key-a", "Bearer fixture-bearer-token"),
+        )
+        self.assertEqual((stream["method"], stream["api_key"], stream["auth"]), ("GET", None, None))
+
+    def test_movie_search_fixture_maps_each_row_to_a_candidate(self):
+        server, base = self.routes(search=lambda record: _fixture_reply("bazarr_peer_search_movie.json"))
+        results = self.search([(base, "key-a")], video=SAMPLE_MOVIE_VIDEO, library_only=False, use_hash=False)
+        self.assertEqual(len(results), 2)
+        remote, local = results
+        tag = _tag(base)
+        self.assertEqual(remote["id"], f"{tag}:5001")
+        self.assertEqual(remote["language"], {"alpha3": "eng", "alpha2": "en", "hi": False, "forced": False})
+        self.assertEqual(remote["release_info"], "Sample.Feature.2020.1080p.WEB-DL.x264-EXAMPLE")
+        self.assertEqual(remote["filename"], "Sample.Feature.2020.1080p.WEB-DL.x264-EXAMPLE.srt")
+        self.assertEqual(remote["matches"], ["imdb_id", "hash"])
+        self.assertEqual((remote["score"], remote["score_without_hash"]), (100, 95))
+        self.assertTrue(remote["hash_verifiable"])
+        self.assertEqual(remote["page_link"], "https://subtitles.example/sample-feature-2020/5001")
+        self.assertEqual(
+            remote["display"],
+            {"source": "bazarr_peer", "peer": "127.0.0.1", "uploader": "example-uploader", "downloads": 17},
+        )
+        self.assertEqual((remote["provider_payload"]["row"], remote["provider_payload"]["file_id"]), ("remote", 9001))
+        self.assertEqual(local["id"], f"{tag}:local-movie-1234567-en|Sample.Feature.2020.720p.HDTV.x264-EXAMPLE.srt")
+        self.assertEqual((local["matches"], local["score"], local["hash_verifiable"]), (["imdb_id"], 95, False))
+        self.assertNotIn("page_link", local)
+        self.assertEqual(local["display"]["uploader"], "bazarr:local")
+        self.assertEqual((local["provider_payload"]["row"], local["provider_payload"]["file_id"]), ("local", 881))
+        (request,) = self.searches(server)
+        self.assertEqual(
+            (request["query"]["type"], request["query"]["imdb_id"], request["query"]["languages"]),
+            ("movie", "tt1234567", "en"),
+        )
+        self.assertNotIn("only_providers", request["query"])
+
+    def test_episode_search_fixture_matches_the_series_season_and_episode(self):
+        server, base = self.routes(search=lambda record: _fixture_reply("bazarr_peer_search_episode.json"))
+        (candidate,) = self.search(
+            [(base, "key-a")], video=SAMPLE_EPISODE_VIDEO, library_only=False, use_hash=False
+        )
+        self.assertEqual(candidate["id"], f"{_tag(base)}:6101")
+        self.assertEqual(candidate["filename"], "Sample.Show.S01E02.720p.WEB-DL.x264-EXAMPLE.srt")
+        self.assertEqual(candidate["matches"], ["series_imdb_id", "series", "season", "episode"])
+        self.assertEqual((candidate["score"], candidate["hash_verifiable"]), (95, False))
+        self.assertEqual(candidate["provider_payload"]["episode"], 2)
+        self.assertEqual(
+            candidate["provider_payload"]["context"],
+            {"type": "episode", "season_number": 1, "episode_number": 2, "imdb_id": "tt7654321", "languages": ["en"]},
+        )
+        (request,) = self.searches(server)
+        self.assertEqual(
+            (
+                request["query"]["type"],
+                request["query"]["season_number"],
+                request["query"]["episode_number"],
+                request["query"]["imdb_id"],
+                request["query"]["languages"],
+            ),
+            ("episode", "1", "2", "tt7654321", "en"),
+        )
+
+    def test_hearing_impaired_episode_search_fixture_keeps_each_row_flag(self):
+        server, base = self.routes(
+            search=lambda record: _fixture_reply("bazarr_peer_search_episode_hearing_impaired.json")
+        )
+        results = self.search(
+            [(base, "key-a")],
+            video=SAMPLE_EPISODE_VIDEO,
+            languages=[{"alpha3": "eng", "hi": True, "forced": False}],
+            library_only=False,
+            use_hash=False,
+        )
+        self.assertEqual(len(results), 2)
+        impaired, plain = results
+        self.assertEqual(impaired["id"], f"{_tag(base)}:6201")
+        self.assertEqual(impaired["language"], {"alpha3": "eng", "alpha2": "en", "hi": True, "forced": False})
+        self.assertIs(impaired["hearing_impaired_verifiable"], False)
+        self.assertEqual(plain["id"], f"{_tag(base)}:6202")
+        self.assertEqual(plain["language"], {"alpha3": "eng", "alpha2": "en", "hi": False, "forced": False})
+        (request,) = self.searches(server)
+        self.assertEqual(request["query"]["languages"], "en")
+        self.assertNotIn("hi", request["query"])
+
+    def test_library_probe_fixture_marks_the_local_library_as_served(self):
+        server, base = self.routes(
+            search=lambda record: _envelope([]),
+            providers=lambda record: _fixture_reply("bazarr_peer_library_probe.json"),
+        )
+        provider = self.mod.BazarrPeerProvider()
+        self.assertEqual(self.search([(base, "key-a")], video=SAMPLE_MOVIE_VIDEO, provider=provider), [])
+        (probe,) = [request for request in server.requests if request["path"] == "/api/v1/providers"]
+        self.assertEqual((probe["method"], probe["api_key"], probe["auth"]), ("GET", "key-a", None))
+        self.assertEqual([served for _expires, served in provider._libraries.values()], [True])
+
+    def test_download_fixture_is_returned_as_the_subtitle_bytes_and_digest(self):
+        body = _fixture_bytes("bazarr_peer_download_movie.srt")
+        server, base = self.routes(
+            login=lambda record: _fixture_reply("bazarr_peer_login.json"),
+            download=_download_link_reply,
+            stream=lambda record: _fixture_reply("bazarr_peer_download_movie.srt", "application/x-subrip"),
+        )
+        content = self.fixture_download(base)
+        self.assertEqual(base64.b64decode(content["content_b64"]), body)
+        self.assertEqual(content["content_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(
+            (content["content_type"], content["format"], content["empty"]),
+            ("application/x-subrip", "srt", False),
+        )
+        (post,) = [request for request in server.requests if request["path"] == "/api/v1/download"]
+        self.assertEqual(json.loads(post["body"]), {"file_id": 9001, "sub_format": "srt"})
+
+    def test_quota_fixture_skips_the_download_and_leaves_the_endpoint_usable(self):
+        _server, base = self.routes(
+            search=lambda record: _fixture_reply("bazarr_peer_search_movie.json"),
+            login=lambda record: _fixture_reply("bazarr_peer_login.json"),
+            download=lambda record: _fixture_reply(
+                "bazarr_peer_download_quota.json", status=406, headers={"x-reason": "throttled"}
+            ),
+        )
+        provider = self.mod.BazarrPeerProvider()
+        with self.assertLogs("bazarr_peer", level="WARNING") as logs:
+            content = self.fixture_download(base, provider=provider)
+        self.assertEqual((content["content_b64"], content["empty"]), ("", True))
+        self.assertIn("the download quota is exhausted", "\n".join(logs.output))
+        self.assertEqual(provider._cooldowns, {})
+        results = self.search(
+            [(base, "key-a")], video=SAMPLE_MOVIE_VIDEO, provider=provider, library_only=False, use_hash=False
+        )
+        self.assertEqual(len(results), 2)
+
+    def test_malformed_search_fixture_fails_the_endpoint_with_service_unavailable(self):
+        _server, base = self.routes(search=lambda record: _fixture_reply("bazarr_peer_search_malformed.json"))
+        with self.assertLogs("bazarr_peer", level="WARNING") as logs:
+            with self.assertRaises(self.mod.ServiceUnavailable):
+                self.search([(base, "key-a")], video=SAMPLE_MOVIE_VIDEO)
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("the search response is not JSON", logs.output[0])
 
 
 class ManifestTests(PeerTestCase):

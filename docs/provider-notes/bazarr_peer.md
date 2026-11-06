@@ -61,3 +61,4 @@
 ## Live Checks
 
 - Not run. A live peer and a valid API key are required. Local mock-server tests cover the provider. A two-instance check, with one instance querying another, has not been run.
+- Fixtures are hand-written from the documented contract. No live check has been run.
