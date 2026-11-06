@@ -135,14 +135,15 @@ Never include secret values in `release_info`, `display`, `provider_payload`, er
 
 ### Endpoint Lists
 
-A setting that holds several endpoints is a whitespace-separated string. A secret field that pairs with it, such as one API key per endpoint, uses the same order, and its count must match. Raise `ConfigurationError` when the counts differ, and name both counts in the message.
+A setting that holds several endpoints is a whitespace-separated string. A secret field that pairs with it, such as one API key per endpoint, uses the same order, and its count must match. Compare the counts over the whole lists first. Raise `ConfigurationError` when they differ, and name both counts in the message, as they were given.
 
-Validate each endpoint before the first request:
+Then keep at most 16 endpoints, with their keys. Log a warning that names how many were dropped, and ignore the rest: entries past the sixteenth are never validated, so a bad one there cannot fail the search.
+
+Validate each kept endpoint before the first request:
 
 - Accept only `http` and `https` URLs with a host. Refuse user credentials, query strings, and fragments.
 - Remove a trailing slash and keep the base path.
 - Refuse duplicate normalized URLs.
-- Use at most 16 endpoints. Log a warning that names how many were dropped, and ignore the rest.
 - Derive each endpoint's tag from the first 16 hex characters of the SHA-256 of its normalized URL. Refuse tag collisions.
 
 Use the tag in candidate ids and `provider_payload`, not the URL. Never log a key, a credential, or a response body.

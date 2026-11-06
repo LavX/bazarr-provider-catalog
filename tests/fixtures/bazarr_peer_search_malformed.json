@@ -1,0 +1,12 @@
+{
+  "total_pages": 1,
+  "total_count": 1,
+  "per_page": 50,
+  "page": 1,
+  "data": [
+    {
+      "id": "7001",
+      "type": "subtitle",
+      "attributes": {
+        "subtitle_id": "7001",
+        "language": "en",
