@@ -1,0 +1,51 @@
+{
+  "data": [
+    {
+      "id": 101,
+      "language": "en",
+      "extension": "srt",
+      "filename": "[English Subtitle]Sample.Feature.2020.1080p.WEB-DL.x264-EXAMPLE.srt",
+      "type": "movie",
+      "pack": null,
+      "season": null,
+      "episode": null,
+      "release": "Sample.Feature.2020.1080p.WEB-DL.x264-EXAMPLE",
+      "release_match": {
+        "file_size": true,
+        "file_name": true
+      },
+      "uploader": "example-uploader",
+      "downloads": 12,
+      "torrent_id": 4321,
+      "imdb_id": "tt1234567",
+      "tmdb_id": 123456,
+      "tvdb_id": null
+    },
+    {
+      "id": 102,
+      "language": "en",
+      "extension": "srt",
+      "filename": "Sample.Feature.2020.720p.HDTV.x264-EXAMPLE.srt",
+      "type": "movie",
+      "pack": null,
+      "season": null,
+      "episode": null,
+      "release": "Sample.Feature.2020.720p.HDTV.x264-EXAMPLE",
+      "release_match": {
+        "file_size": true,
+        "file_name": false
+      },
+      "uploader": "example-uploader-two",
+      "downloads": 3,
+      "torrent_id": 4322,
+      "imdb_id": "tt1234567",
+      "tmdb_id": 123456,
+      "tvdb_id": null
+    }
+  ],
+  "meta": {
+    "current_page": 1,
+    "last_page": 1,
+    "matched_by": "imdb"
+  }
+}

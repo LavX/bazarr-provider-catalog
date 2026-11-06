@@ -51,3 +51,4 @@
 ## Live Checks
 
 - Not run. A live tracker and a valid API key are required. Local mock-server tests cover the provider.
+- The test fixtures are hand-written from the documented contract, not captured from a live tracker.

@@ -26,6 +26,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "unit3d"
+FIXTURE_DIR = ROOT / "tests" / "fixtures"
 DOCUMENTED_FIELDS = (
     "provider",
     "id",
@@ -63,6 +64,15 @@ EPISODE_VIDEO = {
     "series_tvdb_id": 81189,
     "size": 900,
     "original_name": "breaking.bad.s01e02.720p.mkv",
+}
+SAMPLE_MOVIE_VIDEO = {
+    "kind": "movie",
+    "title": "Sample Feature",
+    "year": 2020,
+    "tmdb_id": 123456,
+    "imdb_id": "tt1234567",
+    "size": 1500000000,
+    "original_name": "/media/Sample.Feature.2020.1080p.WEB-DL.x264-EXAMPLE.mkv",
 }
 
 
@@ -138,6 +148,14 @@ def _record(record_id, **overrides):
     }
     record.update(overrides)
     return record
+
+
+def _fixture_bytes(name):
+    return (FIXTURE_DIR / name).read_bytes()
+
+
+def _fixture_json(name):
+    return json.loads(_fixture_bytes(name).decode("utf-8"))
 
 
 class _Clock:
@@ -1401,6 +1419,41 @@ class CandidateTests(UNIT3DTestCase):
         (candidate,) = self.search([(base, "key-a")])
         self.assertEqual(candidate["matches"], ["tmdb_id"])
 
+    def test_search_fixture_maps_each_result_to_a_candidate(self):
+        body = _fixture_bytes("unit3d_search_movie.json")
+        _server, base = self.serve(lambda request: (200, {"Content-Type": "application/json"}, body))
+        by_id = {
+            candidate["id"]: candidate
+            for candidate in self.search([(base, "key-a")], video=SAMPLE_MOVIE_VIDEO)
+        }
+        self.assertEqual(set(by_id), {f"{_tag(base)}:101", f"{_tag(base)}:102"})
+        exact = by_id[f"{_tag(base)}:101"]
+        self.assertIn("hash", exact["matches"])
+        self.assertTrue(exact["hash_verifiable"])
+        self.assertEqual(exact["page_link"], f"{base}/torrents/4321")
+        partial = by_id[f"{_tag(base)}:102"]
+        self.assertNotIn("hash", partial["matches"])
+        self.assertFalse(partial["hash_verifiable"])
+
+    def test_record_fixture_becomes_a_hash_verified_candidate(self):
+        record = _fixture_json("unit3d_record_movie.json")
+        _server, base = self.serve(lambda request: _page([record]))
+        (candidate,) = self.search([(base, "key-a")], video=SAMPLE_MOVIE_VIDEO)
+        self.assertEqual(candidate["id"], f"{_tag(base)}:101")
+        self.assertEqual(candidate["language"], {"alpha3": "eng", "alpha2": "en", "hi": None, "forced": None})
+        self.assertEqual(candidate["release_info"], "Sample.Feature.2020.1080p.WEB-DL.x264-EXAMPLE")
+        self.assertEqual(candidate["filename"], "[English Subtitle]Sample.Feature.2020.1080p.WEB-DL.x264-EXAMPLE.srt")
+        self.assertCountEqual(candidate["matches"], ["tmdb_id", "imdb_id", "hash"])
+        self.assertEqual(candidate["score"], 100)
+        self.assertEqual(candidate["score_without_hash"], 95)
+        self.assertTrue(candidate["hash_verifiable"])
+        self.assertEqual(candidate["page_link"], f"{base}/torrents/4321")
+        self.assertEqual(
+            candidate["display"],
+            {"source": "unit3d", "tracker": "127.0.0.1", "uploader": "example-uploader", "downloads": 12},
+        )
+        self.assertEqual(candidate["provider_payload"]["subtitle_id"], 101)
+
 
 class DownloadTests(UNIT3DTestCase):
     def download(self, base, subtitle_id=42, extension="srt", episode=None, provider=None, season=None):
@@ -1460,6 +1513,15 @@ class DownloadTests(UNIT3DTestCase):
                 "empty": False,
             },
         )
+
+    def test_download_fixture_is_returned_as_a_text_subtitle(self):
+        body = _fixture_bytes("unit3d_download_movie.srt")
+        _server, base = self.serve(lambda record: (200, {"Content-Type": "application/x-subrip"}, body))
+        content = self.download(base)
+        self.assertEqual(base64.b64decode(content["content_b64"]), body)
+        self.assertEqual(content["content_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(content["format"], "srt")
+        self.assertFalse(content["empty"])
 
     def test_missing_subtitle_is_a_candidate_skip_not_an_error(self):
         _server, base = self.serve(lambda record: _json({"message": "Not Found"}, status=404))
