@@ -803,6 +803,23 @@ class SearchRequestTests(PeerTestCase):
         self.search([(base, "key-a")], languages=[{"alpha3": "por", "hi": False, "forced": False}])
         self.assertEqual([request["query"]["languages"] for request in self.searches(server)], ["pt-BR", "pt"])
 
+    def test_por_dash_br_code_is_requested_as_pt_dash_br_like_the_country_field(self):
+        server, base = self.serve(lambda record: _envelope([]))
+        for language in (
+            {"alpha3": "por-BR", "hi": False, "forced": False},
+            {"alpha3": "por-br", "hi": False, "forced": False},
+            {"alpha3": "por", "country_alpha2": "BR", "hi": False, "forced": False},
+            "por-BR",
+        ):
+            self.search([(base, "key-a")], languages=[language])
+        self.assertEqual([request["query"]["languages"] for request in self.searches(server)], ["pt-BR"] * 4)
+
+    def test_an_explicit_country_beats_the_code_suffix_and_other_languages_ignore_it(self):
+        server, base = self.serve(lambda record: _envelope([]))
+        self.search([(base, "key-a")], languages=[{"alpha3": "por-BR", "country_alpha2": "PT", "hi": False}])
+        self.search([(base, "key-a")], languages=[{"alpha3": "eng-US", "hi": False}])
+        self.assertEqual([request["query"]["languages"] for request in self.searches(server)], ["pt", "en"])
+
     def test_forced_only_requests_and_unsupported_media_send_nothing(self):
         server, base = self.serve(lambda record: _envelope([]))
         forced = {"alpha3": "eng", "hi": False, "forced": True}
@@ -1637,6 +1654,18 @@ class CandidateTests(PeerTestCase):
         _server, base = self.serve(lambda record: _envelope(records))
         ids = {candidate["id"] for candidate in self.search([(base, "key-a")], languages=[regional])}
         self.assertEqual(ids, {f"{_tag(base)}:9", f"{_tag(base)}:11"})
+
+    def test_por_dash_br_code_keeps_the_brazilian_rows_and_drops_the_portugal_rows(self):
+        records = [_row(9, language="pt-BR"), _row(10, language="pt-PT"), _row(11, language="pt")]
+        _server, base = self.serve(lambda record: _envelope(records))
+        for language in (
+            {"alpha3": "por-BR", "hi": False, "forced": False},
+            {"alpha3": "por", "country_alpha2": "BR", "hi": False, "forced": False},
+        ):
+            candidates = self.search([(base, "key-a")], languages=[language])
+            self.assertEqual({candidate["id"] for candidate in candidates}, {f"{_tag(base)}:9", f"{_tag(base)}:11"})
+            by_id = {candidate["id"]: candidate for candidate in candidates}
+            self.assertEqual(by_id[f"{_tag(base)}:9"]["language"]["country_alpha2"], "BR")
 
     def test_page_link_comes_from_the_url_field_only_when_it_is_not_empty(self):
         records = [_row(1, url="https://peer-tracker.example/subtitles/1"), _row(2, url="")]

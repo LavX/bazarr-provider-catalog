@@ -502,7 +502,7 @@ def _requested_codes(languages):
     """The (alpha3, code) pairs asked for, in request order, where code is the peer's language code.
 
     Forced requests are skipped because the peer has no forced-only search. Portuguese for
-    Brazil is searched as pt-BR; every other request maps to its base language. Hearing-impaired
+    Brazil is searched as pt-BR, whether the country comes as country_alpha2 or as a "por-BR" code; every other request maps to its base language. Hearing-impaired
     requests are searched as the plain language.
     """
     pairs = []
@@ -516,12 +516,16 @@ def _requested_codes(languages):
             country = language.get("country_alpha2")
         else:
             alpha3 = language
-        base = str(alpha3 or "").split("-", 1)[0].lower()
+        base, _separator, suffix = str(alpha3 or "").partition("-")
+        base = base.lower()
         alpha2 = _LANGUAGE_CODES.get(base)
         if alpha2 is None:
             continue
+        # An explicit country wins. The SDK CLI sends the country inside the code, as "por-BR".
+        if not isinstance(country, str) or not country:
+            country = suffix
         code = alpha2
-        if base == "por" and isinstance(country, str) and country.upper() == "BR":
+        if base == "por" and country.upper() == "BR":
             code = "pt-BR"
         if code in seen:
             continue
