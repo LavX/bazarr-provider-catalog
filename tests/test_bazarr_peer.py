@@ -388,6 +388,17 @@ class _HeaderDripHandler(socketserver.BaseRequestHandler):
             return  # the client closed the connection at its deadline
 
 
+class _SilentHandler(socketserver.BaseRequestHandler):
+    """Accepts the connection and then says nothing, so a client that speaks first waits for the reply."""
+
+    def handle(self):
+        self.request.settimeout(5)
+        try:
+            self.server.release.wait(5)
+        except OSError:
+            return
+
+
 class _ClockedBody:
     """A response stand-in with a Content-Length. Each read returns the next chunk and moves the clock on."""
 
@@ -2538,6 +2549,79 @@ class DownloadTests(PeerTestCase):
                 self.mod._fetch_stream(link, 10, started + 1.0)
             self.assertLess(time.monotonic() - started, 1.6)
             self.assertGreater(time.monotonic() - started, 0.8)
+
+    def test_stalled_tls_handshake_is_cut_at_the_deadline(self):
+        server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _SilentHandler)
+        server.daemon_threads = True
+        server.release = threading.Event()
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.addCleanup(server.release.set)
+        link = f"https://127.0.0.1:{server.server_address[1]}/api/v1/download/stream/tok-1"
+        with patch.object(self.mod, "_monotonic", time.monotonic):
+            started = time.monotonic()
+            with self.assertRaises(self.mod.ServiceUnavailable):
+                self.mod._fetch_stream(link, 10, started + 1.0)
+            self.assertLess(time.monotonic() - started, 1.6)
+            self.assertGreater(time.monotonic() - started, 0.8)
+
+    def test_slow_connect_ends_at_the_deadline_without_sending_the_request(self):
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _SlowDripHandler)
+        server.started = threading.Event()
+        server.release = threading.Event()
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.addCleanup(server.release.set)
+        port = server.server_address[1]
+        real_create = socket.create_connection
+        pause = threading.Event()
+
+        def slow_create(address, *args, **kwargs):
+            pause.wait(1.3)
+            return real_create(address, *args, **kwargs)
+
+        link = f"http://127.0.0.1:{port}/api/v1/download/stream/tok-1"
+        with patch.object(self.mod, "_monotonic", time.monotonic), patch.object(
+            socket, "create_connection", slow_create
+        ):
+            started = time.monotonic()
+            with self.assertRaises(self.mod.ServiceUnavailable):
+                self.mod._fetch_stream(link, 10, started + 1.0)
+            self.assertLess(time.monotonic() - started, 1.9)
+        self.assertFalse(server.started.wait(0.3))
+
+    def test_a_cut_that_lands_as_the_response_returns_is_not_a_success(self):
+        closed = []
+
+        class Response:
+            def close(self):
+                closed.append(True)
+
+        def open_then_fire(request, timeout=None):
+            del request, timeout
+            self.mod._LOCAL.watch.fired = True
+            return Response()
+
+        with patch.object(self.mod._OPENER, "open", open_then_fire):
+            with self.assertRaises(self.mod.ServiceUnavailable):
+                self.mod._open_by_deadline("http://127.0.0.1:1/", 5, self.mod._monotonic() + 30)
+        self.assertEqual(closed, [True])
+
+    def test_an_error_response_cut_at_the_deadline_is_closed(self):
+        body = io.BytesIO(b"late")
+        error = urllib.error.HTTPError("http://127.0.0.1:1/", 503, "unavailable", {}, body)
+
+        def fail_after_fire(request, timeout=None):
+            del request, timeout
+            self.mod._LOCAL.watch.fired = True
+            raise error
+
+        with patch.object(self.mod._OPENER, "open", fail_after_fire):
+            with self.assertRaises(self.mod.ServiceUnavailable):
+                self.mod._open_by_deadline("http://127.0.0.1:1/", 5, self.mod._monotonic() + 30)
+        self.assertTrue(body.closed)
 
     def test_header_drip_ends_a_search_at_the_deadline(self):
         server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _HeaderDripHandler)

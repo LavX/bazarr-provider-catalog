@@ -225,6 +225,7 @@ class _Watch:
     def __init__(self):
         self.connections = []
         self.fired = False
+        self._done = False
         self._lock = threading.Lock()
 
     def add(self, connection):
@@ -236,24 +237,43 @@ class _Watch:
 
     def cut(self):
         with self._lock:
+            if self._done:
+                return
             self.fired = True
             connections = list(self.connections)
         for connection in connections:
             self._cut(connection)
 
+    def finish(self):
+        """Stop the timer from cutting anything from now on, and say whether it already did.
+
+        Cancelling a timer does not wait for a cut that is already running, so the caller asks
+        here: True means the deadline passed and the connection may have been shut down.
+        """
+        with self._lock:
+            self._done = True
+            return self.fired
+
     @staticmethod
     def _cut(connection):
-        sock = connection.sock
-        if sock is None:
-            return  # still connecting: the connect timeout is the time left, so it ends by itself
-        try:
-            # The base class method reaches the raw socket, whether or not TLS wraps it.
-            socket.socket.shutdown(sock, socket.SHUT_RDWR)
-        except OSError:
-            pass
+        # The cutter is a duplicate of the raw socket, kept while a connect is in progress. TLS
+        # wrapping detaches the raw socket before the handshake, so the socket the connection
+        # holds then cannot be shut down, but the duplicate reaches the same connection.
+        # The base class shutdown, not SSLSocket.shutdown, which would drop the TLS state under the reader.
+        for sock in (connection.cutter, connection.sock):
+            if sock is None:
+                continue
+            try:
+                socket.socket.shutdown(sock, socket.SHUT_RDWR)
+            except OSError:
+                pass
+        # Name resolution is not bounded by the timer, and every resolved address gets the full
+        # socket timeout. A connection that has no socket yet cannot be cut here, so the checks in
+        # _WatchedConnection end it as soon as the connect call returns.
 
 
 _LOCAL = threading.local()
+_DEADLINE_MESSAGE = "the endpoint did not answer within the time budget"
 
 
 class _WatchedConnection:
@@ -261,9 +281,43 @@ class _WatchedConnection:
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        watch = getattr(_LOCAL, "watch", None)
-        if watch is not None:
-            watch.add(self)
+        self.cutter = None
+        self._watch = getattr(_LOCAL, "watch", None)
+        if self._watch is not None:
+            create = self._create_connection
+
+            def create_watched(*create_args, **create_kwargs):
+                sock = create(*create_args, **create_kwargs)
+                self._keep_cutter(sock)
+                return sock
+
+            self._create_connection = create_watched
+            self._watch.add(self)
+
+    def _keep_cutter(self, sock):
+        # Assign before checking fired: a cut that ran earlier left fired set, a later one sees the cutter.
+        try:
+            self.cutter = sock.dup()
+        except OSError:
+            self.cutter = None
+        if self._watch.fired:
+            sock.close()
+            self._drop_cutter()
+            raise ServiceUnavailable(_DEADLINE_MESSAGE)
+
+    def _drop_cutter(self):
+        cutter, self.cutter = self.cutter, None
+        if cutter is not None:
+            cutter.close()
+
+    def connect(self):
+        try:
+            super().connect()
+        finally:
+            self._drop_cutter()
+        if self._watch is not None and self._watch.fired:
+            self.close()
+            raise ServiceUnavailable(_DEADLINE_MESSAGE)
 
 
 class _WatchedHTTPConnection(_WatchedConnection, http.client.HTTPConnection):
@@ -300,11 +354,19 @@ def _open_by_deadline(request, timeout, deadline):
     _LOCAL.watch = watch
     timer.start()
     try:
-        return _OPENER.open(request, timeout=timeout)
-    except (OSError, http.client.HTTPException):
-        if watch.fired:
-            raise ServiceUnavailable("the endpoint did not answer within the time budget") from None
-        raise
+        try:
+            response = _OPENER.open(request, timeout=timeout)
+        except (OSError, http.client.HTTPException) as error:
+            if watch.finish():
+                if isinstance(error, urllib.error.HTTPError):
+                    error.close()
+                raise ServiceUnavailable(_DEADLINE_MESSAGE) from None
+            raise
+        if watch.finish():
+            # The cut may have landed while the response came back, and a shut-down body reads as a clean end.
+            response.close()
+            raise ServiceUnavailable(_DEADLINE_MESSAGE)
+        return response
     finally:
         _LOCAL.watch = None
         timer.cancel()
@@ -502,8 +564,9 @@ def _requested_codes(languages):
     """The (alpha3, code) pairs asked for, in request order, where code is the peer's language code.
 
     Forced requests are skipped because the peer has no forced-only search. Portuguese for
-    Brazil is searched as pt-BR, whether the country comes as country_alpha2 or as a "por-BR" code; every other request maps to its base language. Hearing-impaired
-    requests are searched as the plain language.
+    Brazil is searched as pt-BR, whether the country comes as country_alpha2 or as a "por-BR"
+    code; every other request maps to its base language. Hearing-impaired requests are searched
+    as the plain language.
     """
     pairs = []
     seen = set()
