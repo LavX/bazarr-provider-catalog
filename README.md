@@ -24,7 +24,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`animetosho_xyz`](providers/animetosho_xyz/) | 0.1.3 | Searches the separate AnimeTosho JSON feeds for embedded anime episode subtitles. No login or API key. |
 | [`assrt`](providers/assrt/) | 0.1.6 | Searches the [Assrt](https://assrt.net) API for Chinese and English movie and episode subtitles. Requires an API token. |
 | [`avistaz`](providers/avistaz/) | 0.1.6 | Uses [AvistaZ](https://avistaz.to) release pages from Sonarr or Radarr history to download attached subtitles. Requires session cookies. |
-| [`bazarr_peer`](providers/bazarr_peer/) | 0.1.1 | Searches other Bazarr+ instances through their Distribution Hub compat API, with each instance's own API key. Requires the endpoint address and API key for each instance ([notes](docs/provider-notes/bazarr_peer.md)). |
+| [`bazarr_peer`](providers/bazarr_peer/) | 0.1.2 | Searches other Bazarr+ instances through their Distribution Hub compat API, with each instance's own API key. Requires the endpoint address and API key for each instance ([notes](docs/provider-notes/bazarr_peer.md)). |
 | [`betaseries`](providers/betaseries/) | 0.1.6 | Searches the [BetaSeries](https://www.betaseries.com) API for French and English episode subtitles. Requires an API key. |
 | [`bollynook`](providers/bollynook/) | 0.1.4 | Scrapes [BollyNook](https://www.bollynook.com) for movie subtitles across Indian and international languages. No login or API key. |
 | [`bsplayer`](providers/bsplayer/) | 0.1.1 | Uses the BSPlayer subtitles SOAP API for hash and size based movie and episode subtitle lookup. No login or API key. |
