@@ -23,6 +23,7 @@ import logging
 import math
 import os
 import re
+import socket
 import ssl
 import threading
 import time
@@ -213,7 +214,100 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_OPENER = urllib.request.build_opener(_NoRedirect)
+class _Watch:
+    """The connections one request opened, so a timer can cut them at the request deadline.
+
+    A socket timeout bounds the silence between two reads, not the whole wait. A peer that sends
+    its response headers a line at a time never trips it, so the open call alone could outlast
+    the deadline. Shutting the socket down from the timer wakes the blocked read at the deadline.
+    """
+
+    def __init__(self):
+        self.connections = []
+        self.fired = False
+        self._lock = threading.Lock()
+
+    def add(self, connection):
+        with self._lock:
+            self.connections.append(connection)
+            fired = self.fired
+        if fired:
+            self._cut(connection)
+
+    def cut(self):
+        with self._lock:
+            self.fired = True
+            connections = list(self.connections)
+        for connection in connections:
+            self._cut(connection)
+
+    @staticmethod
+    def _cut(connection):
+        sock = connection.sock
+        if sock is None:
+            return  # still connecting: the connect timeout is the time left, so it ends by itself
+        try:
+            # The base class method reaches the raw socket, whether or not TLS wraps it.
+            socket.socket.shutdown(sock, socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+
+_LOCAL = threading.local()
+
+
+class _WatchedConnection:
+    """Registers each connection a request opens with that request's watch."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        watch = getattr(_LOCAL, "watch", None)
+        if watch is not None:
+            watch.add(self)
+
+
+class _WatchedHTTPConnection(_WatchedConnection, http.client.HTTPConnection):
+    pass
+
+
+class _WatchedHTTPSConnection(_WatchedConnection, http.client.HTTPSConnection):
+    pass
+
+
+class _WatchedHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_WatchedHTTPConnection, req)
+
+
+class _WatchedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_WatchedHTTPSConnection, req, context=self._context)
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect, _WatchedHTTPHandler, _WatchedHTTPSHandler)
+# The longest a watch timer waits. A deadline further out than this is bounded by the socket timeout alone.
+_MAX_WATCH_SECONDS = 86400
+
+
+def _open_by_deadline(request, timeout, deadline):
+    """Open a request, and cut its connection when the deadline passes before the response headers are in."""
+    delay = deadline - _monotonic()
+    if delay <= 0:
+        raise ServiceUnavailable("the time budget was spent before the request was sent")
+    watch = _Watch()
+    timer = threading.Timer(min(delay, _MAX_WATCH_SECONDS), watch.cut)
+    timer.daemon = True
+    _LOCAL.watch = watch
+    timer.start()
+    try:
+        return _OPENER.open(request, timeout=timeout)
+    except (OSError, http.client.HTTPException):
+        if watch.fired:
+            raise ServiceUnavailable("the endpoint did not answer within the time budget") from None
+        raise
+    finally:
+        _LOCAL.watch = None
+        timer.cancel()
 
 
 class _Endpoint(NamedTuple):
@@ -587,8 +681,9 @@ def _error_detail(error, deadline):
 def _request(url, headers, timeout, max_bytes, deadline, method="GET", data=None):
     """Send one request and return (body, content_type) for HTTP 200.
 
-    The timeout bounds the connection and each read of the response headers. The
-    deadline is an absolute monotonic time that bounds the whole body: each body
+    The timeout bounds the connection and the silence between two reads of the response
+    headers. The deadline is an absolute monotonic time that also bounds the wait for the
+    headers, through a timer that cuts the connection, and the whole body: each body
     read waits no longer than the time left before it when the socket is reachable,
     and the deadline is checked between reads otherwise.
 
@@ -600,7 +695,7 @@ def _request(url, headers, timeout, max_bytes, deadline, method="GET", data=None
         raise ServiceUnavailable("the time budget was spent before the request was sent")
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with _OPENER.open(request, timeout=timeout) as response:
+        with _open_by_deadline(request, timeout, deadline) as response:
             status = response.getcode()
             if status != 200:
                 raise _Refused(status)

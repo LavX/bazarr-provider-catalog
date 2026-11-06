@@ -14,6 +14,7 @@ import io
 import json
 import os
 import socket
+import socketserver
 import ssl
 import tempfile
 import threading
@@ -366,6 +367,25 @@ class _SlowDripHandler(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, *args):
         del args
+
+
+class _HeaderDripHandler(socketserver.BaseRequestHandler):
+    """Answers with a status line, then one header every 0.2 seconds for ten seconds, and never ends the headers.
+
+    Every gap is far inside any socket timeout, so only an absolute deadline can cut the request.
+    """
+
+    def handle(self):
+        self.request.settimeout(5)
+        try:
+            self.request.recv(65536)
+            self.request.sendall(b"HTTP/1.1 200 OK\r\n")
+            for index in range(50):
+                if self.server.release.wait(0.2):
+                    return
+                self.request.sendall(f"X-Drip-{index}: x\r\n".encode("ascii"))
+        except OSError:
+            return  # the client closed the connection at its deadline
 
 
 class _ClockedBody:
@@ -2473,6 +2493,40 @@ class DownloadTests(PeerTestCase):
                 self.mod._fetch_stream(link, 10, started + 1.0)
             self.assertLess(time.monotonic() - started, 1.5)
             self.assertTrue(server.started.wait(5))
+
+    def test_header_drip_is_cut_at_the_deadline(self):
+        server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _HeaderDripHandler)
+        server.daemon_threads = True
+        server.release = threading.Event()
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.addCleanup(server.release.set)
+        link = f"http://127.0.0.1:{server.server_address[1]}/api/v1/download/stream/tok-1"
+        with patch.object(self.mod, "_monotonic", time.monotonic):
+            started = time.monotonic()
+            with self.assertRaises(self.mod.ServiceUnavailable):
+                self.mod._fetch_stream(link, 10, started + 1.0)
+            self.assertLess(time.monotonic() - started, 1.6)
+            self.assertGreater(time.monotonic() - started, 0.8)
+
+    def test_header_drip_ends_a_search_at_the_deadline(self):
+        server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _HeaderDripHandler)
+        server.daemon_threads = True
+        server.release = threading.Event()
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.addCleanup(server.release.set)
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        # The configured minimum is 30 seconds, so the one second budget is set past the config check.
+        with patch.object(self.mod, "_monotonic", time.monotonic), patch.object(
+            self.mod, "_timeout_seconds", lambda config: 1
+        ):
+            started = time.monotonic()
+            with self.assertRaises(self.mod.ServiceUnavailable):
+                self.search([(base, "key-a")])
+            self.assertLess(time.monotonic() - started, 1.6)
 
     def test_slow_drip_error_body_is_cut_at_the_deadline(self):
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _SlowDripHandler)
