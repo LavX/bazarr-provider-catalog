@@ -806,13 +806,13 @@ class UNIT3DProvider:
         if _is_rar(body):
             return _skip_download(endpoint, subtitle_id, subtitle_format, "the tracker sent a RAR archive")
         if _is_archive(body):
-            # The host lists the archive and picks the member for this episode.
+            # The host lists the archive and picks the member for this season and episode. The
+            # provider offers no select_archive_member callback, so it does not set select_member.
             return {
                 "archive_b64": base64.b64encode(body).decode("ascii"),
                 "archive_sha256": hashlib.sha256(body).hexdigest(),
                 "season": _as_int(payload.get("season")),
                 "episode": _as_int(payload.get("episode")),
-                "select_member": True,
             }
         if _is_json(body, content_type):
             return _skip_download(endpoint, subtitle_id, subtitle_format, "the tracker answered with JSON")

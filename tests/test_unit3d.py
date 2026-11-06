@@ -15,6 +15,7 @@ import io
 import json
 import socket
 import ssl
+import sys
 import threading
 import time
 import unittest
@@ -1553,7 +1554,7 @@ class DownloadTests(UNIT3DTestCase):
         self.assertNotIn("encoding", content)
         self.assertNotIn("content_b64", content)
 
-    def test_season_pack_archive_names_its_season_and_selects_the_member(self):
+    def test_season_pack_archive_names_its_season_and_episode_for_host_extraction(self):
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as archive:
             archive.writestr("Show.S01E02.srt", "1\n00:00:01,000 --> 00:00:02,000\nHi\n")
@@ -1562,7 +1563,42 @@ class DownloadTests(UNIT3DTestCase):
         content = self.download(base, extension="zip", episode=2, season=1)
         self.assertEqual(content["season"], 1)
         self.assertEqual(content["episode"], 2)
-        self.assertIs(content["select_member"], True)
+        # No select_archive_member method exists, so the archive contract forbids asking for one.
+        self.assertFalse(hasattr(self.mod.UNIT3DProvider, "select_archive_member"))
+        self.assertNotIn("select_member", content)
+
+    def test_season_pack_download_passes_the_sdk_smoke_contract(self):
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
+        from sdk import cli as sdk_cli
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("Show.S01E01.srt", "1\n00:00:01,000 --> 00:00:02,000\nOne\n")
+            archive.writestr("Show.S01E02.srt", "1\n00:00:01,000 --> 00:00:02,000\nTwo\n")
+        archive_bytes = buffer.getvalue()
+
+        def respond(record):
+            if record["path"].endswith("/download"):
+                return 200, {"Content-Type": "application/zip"}, archive_bytes
+            return _page(
+                [
+                    _record(
+                        42, type="episode", extension="zip", pack="season", season=1, episode=None,
+                        tvdb_id=81189, imdb_id="tt0903747", filename="Show.S01.Pack.zip",
+                    )
+                ]
+            )
+
+        _server, base = self.serve(respond)
+        provider_id = sdk_cli.smoke_test(
+            ROOT,
+            "unit3d",
+            config=_config([(base, "key-a")]),
+            videos=[dict(EPISODE_VIDEO)],
+            languages=[dict(ENGLISH)],
+        )
+        self.assertEqual(provider_id, "unit3d")
 
     def test_empty_and_html_downloads_are_candidate_skips(self):
         _empty, base_empty = self.serve(lambda record: (200, {"Content-Type": "text/plain"}, b""))
