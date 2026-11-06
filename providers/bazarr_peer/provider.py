@@ -560,16 +560,20 @@ def _read_body(response, max_bytes, deadline):
     return bytes(body)
 
 
-def _error_detail(error):
+def _error_detail(error, deadline):
     """The text of the JSON "error" value of a small error body, or else its "message" value, with its key.
 
-    Returns (None, None) when the body carries neither. The body is never logged.
+    The body is read in chunks that stop at the deadline, like any other body. Returns (None, None) when
+    the body carries neither value, is unreadable, or is not finished by the deadline. The body is never logged.
     """
+    response = getattr(error, "fp", None)
+    if response is None:
+        return None, None
     # A chunked body that is cut short or malformed raises HTTPException (IncompleteRead, LineTooLong), not OSError.
     try:
-        raw = error.read(MAX_ERROR_BYTES)
+        raw = _read_body(response, MAX_ERROR_BYTES, deadline)[:MAX_ERROR_BYTES]
         payload = json.loads(raw.decode("utf-8"))
-    except (OSError, ValueError, RecursionError, http.client.HTTPException):
+    except (OSError, ValueError, RecursionError, http.client.HTTPException, ServiceUnavailable):
         return None, None
     if not isinstance(payload, dict):
         return None, None
@@ -612,7 +616,7 @@ def _request(url, headers, timeout, max_bytes, deadline, method="GET", data=None
             headers_out = error.headers
             retry_after = headers_out.get("Retry-After") if headers_out is not None else None
             reason = headers_out.get("x-reason") if headers_out is not None else None
-            detail_key, detail = _error_detail(error)
+            detail_key, detail = _error_detail(error, deadline)
             raise _Refused(error.code, retry_after, reason, detail, detail_key) from None
         finally:
             error.close()

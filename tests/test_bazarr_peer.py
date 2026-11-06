@@ -18,6 +18,7 @@ import ssl
 import tempfile
 import threading
 import time
+import types
 import unittest
 import urllib.error
 import urllib.parse
@@ -344,14 +345,14 @@ class _Upstream(http.server.ThreadingHTTPServer):
 
 
 class _SlowDripHandler(http.server.BaseHTTPRequestHandler):
-    """Sends the headers of a 40 byte body, then holds the body until the test sets release.
+    """Sends the headers of a 40 byte body, with the status the server sets (200 by default), then holds the body until the test sets release.
 
     The server sets its started event once the headers are out. The hold ends when release is set,
     or after ten seconds, so a test that never sets it cannot block the server thread for long.
     """
 
     def do_GET(self):
-        self.send_response(200)
+        self.send_response(getattr(self.server, "status", 200))
         self.send_header("Content-Type", "text/plain")
         self.send_header("Content-Length", "40")
         self.end_headers()
@@ -1030,7 +1031,8 @@ class FailureIsolationTests(PeerTestCase):
     def test_error_detail_keeps_at_most_the_detail_cap_of_a_long_error_value(self):
         body = json.dumps({"error": "a" * 300 + "TAIL-MARKER"}).encode("utf-8")
         self.assertLess(len(body), self.mod.MAX_ERROR_BYTES)
-        key, detail = self.mod._error_detail(io.BytesIO(body))
+        error = types.SimpleNamespace(fp=_ClockedBody([body], self.clock, step=0))
+        key, detail = self.mod._error_detail(error, self.clock.now + 30)
         self.assertEqual(key, "error")
         self.assertLessEqual(len(detail), self.mod.DETAIL_MAX_CHARS)
         self.assertEqual(detail, "a" * self.mod.DETAIL_MAX_CHARS)
@@ -2447,6 +2449,31 @@ class DownloadTests(PeerTestCase):
                 self.mod._fetch_stream(link, 10, started + 1.0)
             self.assertLess(time.monotonic() - started, 1.5)
             self.assertTrue(server.started.wait(5))
+
+    def test_slow_drip_error_body_is_cut_at_the_deadline(self):
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _SlowDripHandler)
+        server.status = 503
+        server.started = threading.Event()
+        server.release = threading.Event()
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.addCleanup(server.release.set)
+        link = f"http://127.0.0.1:{server.server_address[1]}/api/v1/download/stream/tok-1"
+        with patch.object(self.mod, "_monotonic", time.monotonic):
+            started = time.monotonic()
+            with self.assertRaises(self.mod._Refused) as caught:
+                self.mod._fetch_stream(link, 10, started + 1.0)
+            self.assertLess(time.monotonic() - started, 1.5)
+            self.assertTrue(server.started.wait(5))
+        self.assertEqual(caught.exception.status, 503)
+        self.assertIsNone(caught.exception.detail)
+
+    def test_error_body_past_the_deadline_gives_no_detail(self):
+        body = json.dumps({"error": "late"}).encode("utf-8")
+        error = types.SimpleNamespace(fp=_ClockedBody([body[:8], body[8:]], self.clock, step=50))
+        self.assertEqual(self.mod._error_detail(error, self.clock.now + 30), (None, None))
+        self.assertEqual(error.fp.reads, 1)
 
     def test_pack_archive_is_returned_unchanged_with_its_episode(self):
         buffer = io.BytesIO()
