@@ -538,17 +538,42 @@ class ConfigurationTests(PeerTestCase):
         self.assertEqual(len(logs.output), 1)
         self.assertIn("16", "\n".join(logs.output))
 
-    def test_a_duplicate_endpoint_past_the_sixteenth_is_still_refused(self):
-        pairs = [(f"https://peer{number}.example", f"key-{number}") for number in range(16)]
-        pairs.append(("https://Peer0.example/", "key-17"))
-        with self.assertRaisesRegex(self.mod.ConfigurationError, "endpoint 17 duplicates"):
-            self.search(pairs)
+    def test_a_duplicate_endpoint_past_the_sixteenth_is_ignored(self):
+        def respond(record):
+            number = int(record["path"].split("/t", 1)[1].split("/", 1)[0])
+            return _envelope([_row(number + 1)])
 
-    def test_an_invalid_key_past_the_sixteenth_endpoint_is_still_refused(self):
-        pairs = [(f"https://peer{number}.example", f"key-{number}") for number in range(16)]
-        pairs.append(("https://peer16.example", "bad\u00e9key"))
-        with self.assertRaisesRegex(self.mod.ConfigurationError, "endpoint 17 has an API key"):
-            self.search(pairs)
+        server, base = self.serve(respond)
+        pairs = [(f"{base}/t{number}", f"key-{number}") for number in range(16)]
+        pairs.append((f"{base}/t0/", "key-17"))
+        with self.assertLogs("bazarr_peer", level="WARNING") as logs:
+            results = self.search(pairs)
+        self.assertEqual(len(results), 16)
+        self.assertEqual(len(server.requests), 16)
+        self.assertEqual(
+            {record["path"] for record in server.requests},
+            {f"/t{number}/api/v1/subtitles" for number in range(16)},
+        )
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("ignoring the last 1 of 17", logs.output[0])
+
+    def test_an_invalid_key_past_the_sixteenth_endpoint_is_ignored(self):
+        def respond(record):
+            number = int(record["path"].split("/t", 1)[1].split("/", 1)[0])
+            return _envelope([_row(number + 1)])
+
+        server, base = self.serve(respond)
+        pairs = [(f"{base}/t{number}", f"key-{number}") for number in range(16)]
+        pairs.append((f"{base}/t16", "bad\u00e9key"))
+        with self.assertLogs("bazarr_peer", level="WARNING") as logs:
+            results = self.search(pairs)
+        self.assertEqual(len(results), 16)
+        self.assertEqual(
+            {record["path"] for record in server.requests},
+            {f"/t{number}/api/v1/subtitles" for number in range(16)},
+        )
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("ignoring the last 1 of 17", logs.output[0])
 
     def test_non_boolean_setting_falls_back_to_its_default(self):
         pairs = [("https://peer.example", "key-a")]
