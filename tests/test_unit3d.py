@@ -1673,7 +1673,7 @@ class DownloadTests(UNIT3DTestCase):
 class HearingImpairedRoutingTests(UNIT3DTestCase):
     """The host maps a hearing-impaired request to its base language before the worker call."""
 
-    def test_base_language_search_reads_tracker_null_flags_as_unknown(self):
+    def test_base_language_search_reports_both_flags_as_unknown(self):
         body = _fixture_bytes("unit3d_search_movie.json")
         records = json.loads(body.decode("utf-8"))["data"]
         self.assertTrue(all(r["hearing_impaired"] is None and r["forced"] is None for r in records))
@@ -1685,6 +1685,21 @@ class HearingImpairedRoutingTests(UNIT3DTestCase):
             self.assertIsNone(candidate["hearing_impaired"])
             self.assertFalse(candidate["hearing_impaired_verifiable"])
             self.assertEqual(candidate["language"], {"alpha3": "eng", "alpha2": "en", "hi": None, "forced": None})
+
+    def test_tracker_hearing_impaired_true_is_still_reported_as_unknown(self):
+        payload = _fixture_json("unit3d_search_movie.json")
+        for record in payload["data"]:
+            record["hearing_impaired"] = True
+            record["forced"] = True
+        body = json.dumps(payload).encode("utf-8")
+        _server, base = self.serve(lambda request: (200, {"Content-Type": "application/json"}, body))
+        candidates = self.search([(base, "key-a")], video=SAMPLE_MOVIE_VIDEO)
+        self.assertEqual(len(candidates), 2)
+        for candidate in candidates:
+            self.assertIsNone(candidate["hearing_impaired"])
+            self.assertFalse(candidate["hearing_impaired_verifiable"])
+            self.assertIsNone(candidate["language"]["hi"])
+            self.assertIsNone(candidate["language"]["forced"])
 
     def test_hearing_impaired_request_is_searched_as_the_base_language(self):
         server, base = self.serve(lambda record: _page([_record(5)]))
