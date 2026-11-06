@@ -133,6 +133,22 @@ class ExampleProvider:
 
 Never include secret values in `release_info`, `display`, `provider_payload`, errors, or subtitle content.
 
+### Endpoint Lists
+
+A setting that holds several endpoints is a whitespace-separated string. A secret field that pairs with it, such as one API key per endpoint, uses the same order, and its count must match. Raise `ConfigurationError` when the counts differ, and name both counts in the message.
+
+Validate each endpoint before the first request:
+
+- Accept only `http` and `https` URLs with a host. Refuse user credentials, query strings, and fragments.
+- Remove a trailing slash and keep the base path.
+- Refuse duplicate normalized URLs.
+- Use at most 16 endpoints. Log a warning that names how many were dropped, and ignore the rest.
+- Derive each endpoint's tag from the first 16 hex characters of the SHA-256 of its normalized URL. Refuse tag collisions.
+
+Use the tag in candidate ids and `provider_payload`, not the URL. Never log a key, a credential, or a response body.
+
+A failed endpoint contributes no results and logs one bounded line with its tag, exception class, and reason. A valid empty response is a success. Raise ConfigurationError before any request when the settings are invalid. Otherwise raise only when every endpoint failed: raise the shared class when all of them failed the same way, and `ServiceUnavailable` otherwise. Raise with `from None` so that transport exceptions do not chain into worker output.
+
 ## Dependency Locks
 
 Dependencies are installed into the provider venv, not into Bazarr. Each requirement must be exact and hash-locked.

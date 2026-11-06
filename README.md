@@ -82,6 +82,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`turkcealtyaziorg`](providers/turkcealtyaziorg/) | 0.1.8 | Scrapes [TurkceAltyazi.org](https://turkcealtyazi.org) by IMDb id for Turkish and English movie and episode subtitles. Uses ai-cloudscraper by default with inline Anubis solving and optional FlareSolverr fallback for Cloudflare challenges. |
 | [`tvsubtitles`](providers/tvsubtitles/) | 0.1.4 | Searches the official [tvsubtitles.net](https://www.tvsubtitles.net) show index for multilingual episode subtitles, with a stable generated desktop browser identity. No login or API key. |
 | [`tsukihime`](providers/tsukihime/) | 0.1.3 | Uses the [TsukiHime](https://tsukihime.org) API with AniList movie ids, the AniDB series id and the AniDB episode number. XZ downloads are size-bounded. |
+| [`unit3d`](providers/unit3d/) | 0.1.4 | Searches the UNIT3D subtitle API of one or more trackers, each with its own API key, inside one shared time budget. Requires tracker endpoints and API keys. |
 | [`vladoon`](providers/vladoon/) | 0.1.3 | Searches the [Vladoon](https://vladoon.com) JSON API for Bulgarian movie and episode subtitles, including season packs, and hands its ZIP downloads to Bazarr for member extraction. No login or API key. |
 | [`wizdom`](providers/wizdom/) | 0.1.5 | Uses [wizdom.xyz](https://wizdom.xyz) for Hebrew movie and episode subtitles, with TMDB lookup when an IMDb id is not supplied. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback for Cloudflare browser challenges. |
 | [`whisperai`](providers/whisperai/) | 0.1.2 | Generates subtitles through a user-supplied Whisper web service by extracting local audio with ffmpeg. Requires endpoint configuration. |
@@ -167,6 +168,7 @@ Browser-style providers generate a current desktop User-Agent once per provider 
 - `providers/titlovi/`: uses the Titlovi Kodi API for authenticated movie and episode subtitle search and downloads.
 - `providers/turkcealtyaziorg/`: scrapes TurkceAltyazi.org movie and episode subtitle listings by IMDb id.
 - `providers/tvsubtitles/`: scrapes tvsubtitles.net episode subtitle listings and ZIP downloads.
+- `providers/unit3d/`: searches the UNIT3D subtitle API of one or more trackers, each with its own API key, inside one shared time budget.
 - `providers/vladoon/`: searches the Vladoon JSON API for Bulgarian movie and episode subtitles, including season packs, with ZIP archive downloads.
 - `providers/wizdom/`: uses wizdom.xyz for Hebrew movie and episode subtitles, with TMDB lookup when an IMDb id is missing. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback for Cloudflare browser challenges.
 - `providers/whisperai/`: generates subtitles through a configured Whisper web service after extracting local audio with ffmpeg.
