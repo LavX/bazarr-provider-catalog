@@ -7,6 +7,7 @@ arithmetic is exact, and the opener records the timeout of every request.
 """
 
 import base64
+import email.utils
 import hashlib
 import http.server
 import importlib.util
@@ -14,6 +15,7 @@ import io
 import json
 import socket
 import ssl
+import sys
 import threading
 import time
 import unittest
@@ -25,6 +27,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "unit3d"
+FIXTURE_DIR = ROOT / "tests" / "fixtures"
 DOCUMENTED_FIELDS = (
     "provider",
     "id",
@@ -62,6 +65,15 @@ EPISODE_VIDEO = {
     "series_tvdb_id": 81189,
     "size": 900,
     "original_name": "breaking.bad.s01e02.720p.mkv",
+}
+SAMPLE_MOVIE_VIDEO = {
+    "kind": "movie",
+    "title": "Sample Feature",
+    "year": 2020,
+    "tmdb_id": 123456,
+    "imdb_id": "tt1234567",
+    "size": 1500000000,
+    "original_name": "/media/Sample.Feature.2020.1080p.WEB-DL.x264-EXAMPLE.mkv",
 }
 
 
@@ -137,6 +149,14 @@ def _record(record_id, **overrides):
     }
     record.update(overrides)
     return record
+
+
+def _fixture_bytes(name):
+    return (FIXTURE_DIR / name).read_bytes()
+
+
+def _fixture_json(name):
+    return json.loads(_fixture_bytes(name).decode("utf-8"))
 
 
 class _Clock:
@@ -495,6 +515,64 @@ class SearchRequestTests(UNIT3DTestCase):
         self.assertEqual([candidate["id"] for candidate in results], [f"{_tag(base)}:9"])
         self.assertIn("partial", "\n".join(logs.output))
 
+    def test_refused_language_chunk_ends_the_endpoint_search_before_the_next_chunk(self):
+        alpha3_codes = ALPHA3_ORDER[:60]
+        alpha2_codes = [self.mod._LANGUAGE_CODES[code] for code in alpha3_codes]
+
+        def respond(record):
+            if record["query"]["language"].startswith(alpha2_codes[0] + ","):
+                return _json({"message": "Unauthenticated."}, status=401)
+            return _page([_record(9, language=alpha2_codes[50])])
+
+        server, base = self.serve(respond)
+        languages = [{"alpha3": code, "hi": False, "forced": False} for code in alpha3_codes]
+        with self.assertLogs("unit3d", level="WARNING"), self.assertRaises(self.mod.AuthenticationError):
+            self.search([(base, "key-a")], languages=languages)
+        self.assertEqual(len(server.requests), 1)
+
+    def test_two_failed_language_chunks_log_one_line_for_the_endpoint_search(self):
+        alpha3_codes = ALPHA3_ORDER[:60]
+        _server, base = self.serve(lambda record: _json({"error": "boom"}, status=500))
+        languages = [{"alpha3": code, "hi": False, "forced": False} for code in alpha3_codes]
+        with self.assertLogs("unit3d", level="WARNING") as logs, self.assertRaises(self.mod.ServiceUnavailable):
+            self.search([(base, "key-a")], languages=languages)
+        self.assertEqual([record.levelname for record in logs.records], ["WARNING"])
+
+    def test_failed_chunk_then_refused_chunk_logs_and_raises_the_authentication_error(self):
+        alpha3_codes = ALPHA3_ORDER[:60]
+        alpha2_codes = [self.mod._LANGUAGE_CODES[code] for code in alpha3_codes]
+
+        def respond(record):
+            if record["query"]["language"].startswith(alpha2_codes[0] + ","):
+                return _json({"error": "boom"}, status=500)
+            return _json({"message": "Unauthenticated."}, status=401)
+
+        _server, base = self.serve(respond)
+        languages = [{"alpha3": code, "hi": False, "forced": False} for code in alpha3_codes]
+        with self.assertLogs("unit3d", level="WARNING") as logs, self.assertRaises(self.mod.AuthenticationError):
+            self.search([(base, "key-a")], languages=languages)
+        self.assertEqual([record.levelname for record in logs.records], ["WARNING"])
+        self.assertIn("AuthenticationError", "\n".join(logs.output))
+
+    def test_failed_chunk_then_refused_chunk_makes_the_next_search_raise_from_the_cooldown(self):
+        alpha3_codes = ALPHA3_ORDER[:60]
+        alpha2_codes = [self.mod._LANGUAGE_CODES[code] for code in alpha3_codes]
+
+        def respond(record):
+            if record["query"]["language"].startswith(alpha2_codes[0] + ","):
+                return _json({"error": "boom"}, status=500)
+            return _json({"message": "Unauthenticated."}, status=401)
+
+        server, base = self.serve(respond)
+        languages = [{"alpha3": code, "hi": False, "forced": False} for code in alpha3_codes]
+        provider = self.mod.UNIT3DProvider()
+        with self.assertLogs("unit3d", level="WARNING"), self.assertRaises(self.mod.AuthenticationError):
+            self.search([(base, "key-a")], languages=languages, provider=provider)
+        requests_before = len(server.requests)
+        with self.assertRaises(self.mod.AuthenticationError):
+            self.search([(base, "key-a")], languages=languages, provider=provider)
+        self.assertEqual(len(server.requests), requests_before)
+
 
 class PaginationAndBudgetTests(UNIT3DTestCase):
     def test_second_page_is_requested_and_every_candidate_is_returned(self):
@@ -781,7 +859,7 @@ class FailureIsolationTests(UNIT3DTestCase):
             self.search([(base, "key-a")])
         self.assertEqual(target.requests, [])
 
-    def test_tls_handshake_failure_is_a_configuration_error(self):
+    def test_tls_handshake_failure_is_a_service_unavailable(self):
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.addCleanup(listener.close)
         listener.bind(("127.0.0.1", 0))
@@ -798,7 +876,7 @@ class FailureIsolationTests(UNIT3DTestCase):
 
         threading.Thread(target=answer_in_plain_text, daemon=True).start()
         base = f"https://127.0.0.1:{listener.getsockname()[1]}"
-        with self.assertRaises(self.mod.ConfigurationError):
+        with self.assertRaises(self.mod.ServiceUnavailable):
             self.search([(base, "key-a")])
 
     def test_tls_error_while_reading_a_body_is_a_service_unavailable(self):
@@ -982,6 +1060,91 @@ class CooldownTests(UNIT3DTestCase):
         self.assertEqual(len(self.search(pairs, provider=provider)), 1)
         self.assertEqual(len(throttled.requests), 2)
 
+    def test_retry_after_beyond_the_float_range_counts_as_one_hour(self):
+        throttled, base = self.serve(lambda record: _json({}, status=429, headers={"Retry-After": "9" * 400}))
+        pairs = [(base, "key-a")]
+        provider = self.mod.UNIT3DProvider()
+        with self.assertRaises(self.mod.APIThrottled) as caught:
+            self.search(pairs, provider=provider)
+        self.assertEqual(caught.exception.retry_after, 3600)
+        self.assertEqual(len(throttled.requests), 1)
+        self.clock.now += 3599
+        with self.assertRaises(self.mod.APIThrottled):
+            self.search(pairs, provider=provider)
+        self.assertEqual(len(throttled.requests), 1)
+        self.clock.now += 1
+        with self.assertRaises(self.mod.APIThrottled):
+            self.search(pairs, provider=provider)
+        self.assertEqual(len(throttled.requests), 2)
+
+    def test_retry_after_http_date_waits_until_that_date(self):
+        date = email.utils.formatdate(time.time() + 3600, usegmt=True)
+        _throttled, base = self.serve(lambda record: _json({}, status=429, headers={"Retry-After": date}))
+        with self.assertRaises(self.mod.APIThrottled) as caught:
+            self.search([(base, "key-a")])
+        self.assertGreaterEqual(caught.exception.retry_after, 3500)
+        self.assertLessEqual(caught.exception.retry_after, 3601)
+
+    def test_retry_after_longer_than_one_hour_counts_as_one_hour(self):
+        # A count too large for a float is still a valid count, so it is capped.
+        for value in ("7200", "1" * 301):
+            with self.subTest(length=len(value)):
+                throttled, base = self.serve(
+                    lambda record, value=value: _json({}, status=429, headers={"Retry-After": value})
+                )
+                pairs = [(base, "key-a")]
+                provider = self.mod.UNIT3DProvider()
+                with self.assertRaises(self.mod.APIThrottled) as caught:
+                    self.search(pairs, provider=provider)
+                self.assertEqual(caught.exception.retry_after, 3600)
+                self.clock.now += 3599
+                with self.assertRaises(self.mod.APIThrottled):
+                    self.search(pairs, provider=provider)
+                self.assertEqual(len(throttled.requests), 1)
+                self.clock.now += 1
+                with self.assertRaises(self.mod.APIThrottled):
+                    self.search(pairs, provider=provider)
+                self.assertEqual(len(throttled.requests), 2)
+
+    def test_retry_after_of_one_hour_or_less_is_kept(self):
+        for value, expected in (("1800", 1800), ("3600", 3600)):
+            with self.subTest(value=value):
+                _throttled, base = self.serve(
+                    lambda record, value=value: _json({}, status=429, headers={"Retry-After": value})
+                )
+                with self.assertRaises(self.mod.APIThrottled) as caught:
+                    self.search([(base, "key-a")])
+                self.assertEqual(caught.exception.retry_after, expected)
+
+    def test_retry_after_http_date_a_year_away_counts_as_one_hour(self):
+        date = email.utils.formatdate(time.time() + 365 * 24 * 3600, usegmt=True)
+        _throttled, base = self.serve(lambda record: _json({}, status=429, headers={"Retry-After": date}))
+        with self.assertRaises(self.mod.APIThrottled) as caught:
+            self.search([(base, "key-a")])
+        self.assertGreaterEqual(caught.exception.retry_after, 3500)
+        self.assertLessEqual(caught.exception.retry_after, 3601)
+
+    def test_retry_after_of_zero_or_a_past_date_waits_for_nothing(self):
+        past = email.utils.formatdate(time.time() - 3600, usegmt=True)
+        for value in ("0", past):
+            with self.subTest(value=value):
+                _throttled, base = self.serve(
+                    lambda record, value=value: _json({}, status=429, headers={"Retry-After": value})
+                )
+                with self.assertRaises(self.mod.APIThrottled) as caught:
+                    self.search([(base, "key-a")])
+                self.assertEqual(caught.exception.retry_after, 0)
+
+    def test_unusable_retry_after_waits_the_default_sixty_seconds(self):
+        for value in ("soon", "-5"):
+            with self.subTest(value=value):
+                _throttled, base = self.serve(
+                    lambda record, value=value: _json({}, status=429, headers={"Retry-After": value})
+                )
+                with self.assertRaises(self.mod.APIThrottled) as caught:
+                    self.search([(base, "key-a")])
+                self.assertEqual(caught.exception.retry_after, 60)
+
     def test_retry_after_is_honored_even_when_another_endpoint_succeeds(self):
         throttled, base_a = self.serve(lambda record: _json({}, status=429, headers={"Retry-After": "120"}))
         _well, base_b = self.serve(lambda record: _page([_record(4)]))
@@ -1077,6 +1240,29 @@ class CooldownTests(UNIT3DTestCase):
             self.search([(base, "key-a")], provider=provider)
         self.assertEqual(len(self.search([(base, "key-b")], provider=provider)), 1)
         self.assertEqual([request["auth"] for request in server.requests], ["Bearer key-a", "Bearer key-b"])
+
+    def test_shorter_cooldown_keeps_the_active_longer_one_and_its_error(self):
+        base = "https://cooldown.example"
+        (endpoint,) = self.mod._configured_endpoints(_config([(base, "key-a")]))
+        provider = self.mod.UNIT3DProvider()
+        provider._cool_down(endpoint, self.mod.APIThrottled("the tracker is rate limiting the API"), 3600)
+        provider._cool_down(endpoint, self.mod.ServiceUnavailable("the endpoint is unreachable"))
+        expiry, error = provider._cooldowns[self.mod._cooldown_key(endpoint)]
+        self.assertEqual(expiry, self.clock.now + 3600)
+        self.assertIsInstance(error, self.mod.APIThrottled)
+        self.assertEqual(str(error), "the tracker is rate limiting the API")
+
+    def test_rate_limit_reports_the_cooldown_in_force_when_a_longer_one_is_kept(self):
+        _throttled, base = self.serve(lambda record: _json({}, status=429, headers={"Retry-After": "60"}))
+        (endpoint,) = self.mod._configured_endpoints(_config([(base, "key-a")]))
+        provider = self.mod.UNIT3DProvider()
+        provider._cool_down(endpoint, self.mod.APIThrottled("the tracker is rate limiting the API"), 3600)
+        with self.assertRaises(self.mod._Refused) as caught:
+            self.mod._fetch(endpoint, "/api/subtitles", {}, 30, self.mod.MAX_SEARCH_BYTES, self.clock.now + 30)
+        error = provider._refuse(endpoint, caught.exception)
+        self.assertEqual(error.retry_after, 3600)
+        expiry, _error = provider._cooldowns[self.mod._cooldown_key(endpoint)]
+        self.assertEqual(expiry, self.clock.now + 3600)
 
 
 class CandidateTests(UNIT3DTestCase):
@@ -1177,6 +1363,32 @@ class CandidateTests(UNIT3DTestCase):
         ids = {candidate["id"].split(":", 1)[1] for candidate in self.search([(base, "key-a")], video=EPISODE_VIDEO)}
         self.assertEqual(ids, {"1"})
 
+    def test_episode_found_by_series_imdb_id_reports_the_series_match(self):
+        records = [
+            _record(
+                1, type="episode", season=1, episode=2, pack=None,
+                tvdb_id=None, imdb_id="tt0903747",
+            ),
+        ]
+        _server, base = self.serve(lambda record: _page(records))
+        (candidate,) = self.search([(base, "key-a")], video=EPISODE_VIDEO)
+        self.assertCountEqual(
+            candidate["matches"],
+            ["series", "series_imdb_id", "season", "episode"],
+        )
+
+    def test_episode_matched_only_on_season_and_episode_does_not_report_series(self):
+        records = [
+            _record(
+                1, type="episode", season=1, episode=2, pack=None,
+                tvdb_id=None, imdb_id="tt1160419",
+            ),
+        ]
+        _server, base = self.serve(lambda record: _page(records))
+        (candidate,) = self.search([(base, "key-a")], video=EPISODE_VIDEO)
+        self.assertNotIn("series", candidate["matches"])
+        self.assertCountEqual(candidate["matches"], ["season", "episode"])
+
     def test_movie_matched_on_tmdb_id_earns_the_same_tier_as_an_imdb_match(self):
         records = [
             _record(1, tmdb_id=438631, imdb_id="tt9999999"),
@@ -1208,9 +1420,44 @@ class CandidateTests(UNIT3DTestCase):
         (candidate,) = self.search([(base, "key-a")])
         self.assertEqual(candidate["matches"], ["tmdb_id"])
 
+    def test_search_fixture_maps_each_result_to_a_candidate(self):
+        body = _fixture_bytes("unit3d_search_movie.json")
+        _server, base = self.serve(lambda request: (200, {"Content-Type": "application/json"}, body))
+        by_id = {
+            candidate["id"]: candidate
+            for candidate in self.search([(base, "key-a")], video=SAMPLE_MOVIE_VIDEO)
+        }
+        self.assertEqual(set(by_id), {f"{_tag(base)}:101", f"{_tag(base)}:102"})
+        exact = by_id[f"{_tag(base)}:101"]
+        self.assertIn("hash", exact["matches"])
+        self.assertTrue(exact["hash_verifiable"])
+        self.assertEqual(exact["page_link"], f"{base}/torrents/4321")
+        partial = by_id[f"{_tag(base)}:102"]
+        self.assertNotIn("hash", partial["matches"])
+        self.assertFalse(partial["hash_verifiable"])
+
+    def test_record_fixture_becomes_a_hash_verified_candidate(self):
+        record = _fixture_json("unit3d_record_movie.json")
+        _server, base = self.serve(lambda request: _page([record]))
+        (candidate,) = self.search([(base, "key-a")], video=SAMPLE_MOVIE_VIDEO)
+        self.assertEqual(candidate["id"], f"{_tag(base)}:101")
+        self.assertEqual(candidate["language"], {"alpha3": "eng", "alpha2": "en", "hi": None, "forced": None})
+        self.assertEqual(candidate["release_info"], "Sample.Feature.2020.1080p.WEB-DL.x264-EXAMPLE")
+        self.assertEqual(candidate["filename"], "[English Subtitle]Sample.Feature.2020.1080p.WEB-DL.x264-EXAMPLE.srt")
+        self.assertCountEqual(candidate["matches"], ["tmdb_id", "imdb_id", "hash"])
+        self.assertEqual(candidate["score"], 100)
+        self.assertEqual(candidate["score_without_hash"], 95)
+        self.assertTrue(candidate["hash_verifiable"])
+        self.assertEqual(candidate["page_link"], f"{base}/torrents/4321")
+        self.assertEqual(
+            candidate["display"],
+            {"source": "unit3d", "tracker": "127.0.0.1", "uploader": "example-uploader", "downloads": 12},
+        )
+        self.assertEqual(candidate["provider_payload"]["subtitle_id"], 101)
+
 
 class DownloadTests(UNIT3DTestCase):
-    def download(self, base, subtitle_id=42, extension="srt", episode=None, provider=None):
+    def download(self, base, subtitle_id=42, extension="srt", episode=None, provider=None, season=None):
         payload = {
             "provider": "unit3d",
             "schema": 1,
@@ -1220,6 +1467,8 @@ class DownloadTests(UNIT3DTestCase):
         }
         if episode is not None:
             payload["episode"] = episode
+        if season is not None:
+            payload["season"] = season
         return (provider or self.mod.UNIT3DProvider()).download(
             provider_payload=payload,
             language=ENGLISH,
@@ -1251,15 +1500,42 @@ class DownloadTests(UNIT3DTestCase):
         self.assertEqual(content["format"], "srt")
         self.assertFalse(content["empty"])
 
+    def test_text_download_leaves_the_encoding_to_the_host(self):
+        body = b"1\n00:00:01,000 --> 00:00:02,000\nHello\n"
+        _server, base = self.serve(lambda record: (200, {"Content-Type": "application/x-subrip"}, body))
+        self.assertEqual(
+            self.download(base),
+            {
+                "content_b64": base64.b64encode(body).decode("ascii"),
+                "content_sha256": hashlib.sha256(body).hexdigest(),
+                "content_type": "application/x-subrip",
+                "format": "srt",
+                "encoding": None,
+                "empty": False,
+            },
+        )
+
+    def test_download_fixture_is_returned_as_a_text_subtitle(self):
+        body = _fixture_bytes("unit3d_download_movie.srt")
+        _server, base = self.serve(lambda record: (200, {"Content-Type": "application/x-subrip"}, body))
+        content = self.download(base)
+        self.assertEqual(base64.b64decode(content["content_b64"]), body)
+        self.assertEqual(content["content_sha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(content["format"], "srt")
+        self.assertFalse(content["empty"])
+
     def test_missing_subtitle_is_a_candidate_skip_not_an_error(self):
         _server, base = self.serve(lambda record: _json({"message": "Not Found"}, status=404))
         content = self.download(base)
         self.assertTrue(content["empty"])
         self.assertEqual(content["content_b64"], "")
 
-    def test_refused_download_is_a_candidate_skip_not_an_error(self):
-        _server, base = self.serve(lambda record: _json({"message": "revoked"}, status=403))
-        self.assertTrue(self.download(base)["empty"])
+    def test_rejected_download_key_raises_authentication_error(self):
+        for status in (401, 403):
+            with self.subTest(status=status):
+                _server, base = self.serve(lambda record, status=status: _json({"message": "revoked"}, status=status))
+                with self.assertRaises(self.mod.AuthenticationError):
+                    self.download(base)
 
     def test_json_body_on_a_download_is_a_candidate_skip(self):
         _server, base = self.serve(lambda record: _json({"message": "refused for this account"}))
@@ -1278,6 +1554,66 @@ class DownloadTests(UNIT3DTestCase):
         self.assertNotIn("encoding", content)
         self.assertNotIn("content_b64", content)
 
+    def test_season_pack_archive_names_its_season_and_episode_for_host_extraction(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("Show.S01E02.srt", "1\n00:00:01,000 --> 00:00:02,000\nHi\n")
+        archive_bytes = buffer.getvalue()
+        _server, base = self.serve(lambda record: (200, {"Content-Type": "application/zip"}, archive_bytes))
+        content = self.download(base, extension="zip", episode=2, season=1)
+        self.assertEqual(content["season"], 1)
+        self.assertEqual(content["episode"], 2)
+        # No select_archive_member method exists, so the archive contract forbids asking for one.
+        self.assertFalse(hasattr(self.mod.UNIT3DProvider, "select_archive_member"))
+        self.assertNotIn("select_member", content)
+
+    def test_plain_movie_zip_is_returned_as_an_archive_without_season_or_episode(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("Movie.2020.srt", "1\n00:00:01,000 --> 00:00:02,000\nHi\n")
+        archive_bytes = buffer.getvalue()
+        _server, base = self.serve(lambda record: (200, {"Content-Type": "application/zip"}, archive_bytes))
+        content = self.download(base, extension="zip")
+        self.assertEqual(base64.b64decode(content["archive_b64"]), archive_bytes)
+        self.assertEqual(content["archive_sha256"], hashlib.sha256(archive_bytes).hexdigest())
+        self.assertIsNone(content["season"])
+        self.assertIsNone(content["episode"])
+        self.assertNotIn("select_member", content)
+        self.assertNotIn("content_b64", content)
+
+    def test_season_pack_download_passes_the_sdk_smoke_contract(self):
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
+        from sdk import cli as sdk_cli
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("Show.S01E01.srt", "1\n00:00:01,000 --> 00:00:02,000\nOne\n")
+            archive.writestr("Show.S01E02.srt", "1\n00:00:01,000 --> 00:00:02,000\nTwo\n")
+        archive_bytes = buffer.getvalue()
+
+        def respond(record):
+            if record["path"].endswith("/download"):
+                return 200, {"Content-Type": "application/zip"}, archive_bytes
+            return _page(
+                [
+                    _record(
+                        42, type="episode", extension="zip", pack="season", season=1, episode=None,
+                        tvdb_id=81189, imdb_id="tt0903747", filename="Show.S01.Pack.zip",
+                    )
+                ]
+            )
+
+        _server, base = self.serve(respond)
+        provider_id = sdk_cli.smoke_test(
+            ROOT,
+            "unit3d",
+            config=_config([(base, "key-a")]),
+            videos=[dict(EPISODE_VIDEO)],
+            languages=[dict(ENGLISH)],
+        )
+        self.assertEqual(provider_id, "unit3d")
+
     def test_empty_and_html_downloads_are_candidate_skips(self):
         _empty, base_empty = self.serve(lambda record: (200, {"Content-Type": "text/plain"}, b""))
         _html, base_html = self.serve(
@@ -1288,8 +1624,8 @@ class DownloadTests(UNIT3DTestCase):
             self.assertTrue(self.download(base_html)["empty"])
         self.assertEqual(len(logs.output), 2)
 
-    def test_refused_downloads_are_candidate_skips_with_one_log_line_each(self):
-        for status in (401, 422, 500):
+    def test_other_refused_downloads_are_candidate_skips_with_one_log_line_each(self):
+        for status in (422, 500):
             with self.subTest(status=status):
                 _server, base = self.serve(lambda record, status=status: _json({}, status=status))
                 with self.assertLogs("unit3d", level="WARNING") as logs:
@@ -1349,21 +1685,52 @@ class DownloadTests(UNIT3DTestCase):
 
 
 class HearingImpairedRoutingTests(UNIT3DTestCase):
-    @unittest.expectedFailure
-    def test_hi_specific_search_reaches_worker_with_hi_variant(self):
-        """Expected failure until the host routes hearing-impaired requests to this provider.
+    """The host maps a hearing-impaired request to its base language before the worker call."""
 
-        The manifest declares no hearing-impaired variants.
-        """
-        manifest = json.loads((PROVIDER_DIR / "provider.json").read_text(encoding="utf-8"))
-        requested = ("eng", True)
-        declared = {(alpha3, False) for alpha3 in manifest["languages"]}
-        self.assertIn(
-            requested,
-            declared,
-            "the host intersects hearing-impaired requests with the manifest, "
-            "and this manifest declares no hearing-impaired variants",
-        )
+    def test_base_language_search_reports_both_flags_as_unknown(self):
+        body = _fixture_bytes("unit3d_search_movie.json")
+        records = json.loads(body.decode("utf-8"))["data"]
+        self.assertTrue(all(r["hearing_impaired"] is None and r["forced"] is None for r in records))
+        server, base = self.serve(lambda request: (200, {"Content-Type": "application/json"}, body))
+        candidates = self.search([(base, "key-a")], video=SAMPLE_MOVIE_VIDEO)
+        self.assertEqual(len(candidates), 2)
+        self.assertEqual(server.requests[0]["query"]["language"], "en")
+        for candidate in candidates:
+            self.assertIsNone(candidate["hearing_impaired"])
+            self.assertFalse(candidate["hearing_impaired_verifiable"])
+            self.assertEqual(candidate["language"], {"alpha3": "eng", "alpha2": "en", "hi": None, "forced": None})
+
+    def test_tracker_hearing_impaired_true_is_still_reported_as_unknown(self):
+        payload = _fixture_json("unit3d_search_movie.json")
+        for record in payload["data"]:
+            record["hearing_impaired"] = True
+            record["forced"] = True
+        body = json.dumps(payload).encode("utf-8")
+        _server, base = self.serve(lambda request: (200, {"Content-Type": "application/json"}, body))
+        candidates = self.search([(base, "key-a")], video=SAMPLE_MOVIE_VIDEO)
+        self.assertEqual(len(candidates), 2)
+        for candidate in candidates:
+            self.assertIsNone(candidate["hearing_impaired"])
+            self.assertFalse(candidate["hearing_impaired_verifiable"])
+            self.assertIsNone(candidate["language"]["hi"])
+            self.assertIsNone(candidate["language"]["forced"])
+
+    def test_hearing_impaired_request_is_searched_as_the_base_language(self):
+        server, base = self.serve(lambda record: _page([_record(5)]))
+        hi_request = {"alpha3": "eng", "hi": True, "forced": False}
+        (candidate,) = self.search([(base, "key-a")], languages=[hi_request])
+        (request,) = server.requests
+        self.assertEqual(request["query"]["language"], "en")
+        self.assertEqual(candidate["language"]["alpha3"], "eng")
+        self.assertIsNone(candidate["hearing_impaired"])
+
+    def test_plain_and_hearing_impaired_requests_for_one_language_send_one_search(self):
+        server, base = self.serve(lambda record: _page([_record(5)]))
+        hi_request = {"alpha3": "eng", "hi": True, "forced": False}
+        candidates = self.search([(base, "key-a")], languages=[ENGLISH, hi_request])
+        self.assertEqual(len(candidates), 1)
+        (request,) = server.requests
+        self.assertEqual(request["query"]["language"], "en")
 
 
 class ManifestTests(UNIT3DTestCase):

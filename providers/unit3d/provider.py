@@ -15,6 +15,8 @@ reported as lacking it.
 
 import base64
 import concurrent.futures
+import datetime
+import email.utils
 import hashlib
 import http.client
 import json
@@ -22,6 +24,7 @@ import logging
 import math
 import re
 import ssl
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -38,8 +41,10 @@ DEFAULT_TIMEOUT_SECONDS = 30
 MAX_TIMEOUT_SECONDS = 60
 # A rate limit without a usable Retry-After header, and any other failed search
 # in which the endpoint attempted requests and none succeeded, cools its endpoint for this long.
+# The 60 second value is provisional.
 DEFAULT_COOLDOWN_SECONDS = 60
-MAX_COOLDOWN_SECONDS = 86400
+# A Retry-After longer than this counts as this long.
+MAX_RETRY_AFTER_SECONDS = 3600
 PER_PAGE = 50
 # The API matches at most this many language codes in one request.
 LANGUAGE_CHUNK = 50
@@ -322,8 +327,24 @@ def _imdb_number(value):
 
 
 def _retry_after_seconds(value):
-    seconds = _positive_int(value)
-    return min(seconds, MAX_COOLDOWN_SECONDS) if seconds else None
+    """Whole seconds to wait for a Retry-After value, or None when it is unusable.
+
+    The value is a count of seconds or an HTTP date (RFC 9110 section 10.2.3). A date that has
+    already passed asks for no wait, so it gives 0.
+    """
+    seconds = _as_int(value)
+    if seconds is None:
+        try:
+            when = email.utils.parsedate_to_datetime(value)
+        except (OverflowError, TypeError, ValueError):
+            return None
+        if when.tzinfo is None:
+            # A date with the -0000 zone has no offset. HTTP dates are always GMT, so read it as UTC.
+            when = when.replace(tzinfo=datetime.timezone.utc)
+        return max(0, math.ceil((when - datetime.datetime.now(datetime.timezone.utc)).total_seconds()))
+    if seconds < 0:
+        return None
+    return seconds
 
 
 def _file_name(video):
@@ -484,10 +505,10 @@ def _fetch(endpoint, path, params, timeout, max_bytes, deadline):
             error.close()
     except urllib.error.URLError as error:
         if isinstance(error.reason, ssl.SSLError):
-            raise ConfigurationError("the TLS handshake with the endpoint failed") from None
+            raise ServiceUnavailable("the TLS handshake with the endpoint failed") from None
         raise ServiceUnavailable("the endpoint is unreachable") from None
     except ssl.SSLError:
-        raise ConfigurationError("the TLS handshake with the endpoint failed") from None
+        raise ServiceUnavailable("the TLS handshake with the endpoint failed") from None
     except (OSError, http.client.HTTPException):
         raise ServiceUnavailable("the endpoint closed the connection or timed out") from None
     if len(body) > max_bytes:
@@ -527,7 +548,8 @@ def _matches(video, record, matched_by):
 
     Episode series identity uses the series keys, because a bare imdb_id or
     tvdb_id would also award season and episode equivalence. A missing value on
-    either side is never a match.
+    either side is never a match. An episode matched by series id also reports
+    the series match, which the host requires before it accepts an episode.
     """
     matches = []
     if video.get("kind") == "episode":
@@ -535,6 +557,8 @@ def _matches(video, record, matched_by):
             matches.append("series_imdb_id")
         if _same_id(video.get("series_tvdb_id"), record.get("tvdb_id")):
             matches.append("series_tvdb_id")
+        if "series_imdb_id" in matches or "series_tvdb_id" in matches:
+            matches.append("series")
         season = _as_int(record.get("season"))
         if season is not None and season == _as_int(video.get("season")):
             matches.append("season")
@@ -542,7 +566,9 @@ def _matches(video, record, matched_by):
         if episode is not None and episode == _as_int(video.get("episode")):
             matches.append("episode")
         if matched_by == "title":
-            matches.extend(("series", "year"))
+            if "series" not in matches:
+                matches.append("series")
+            matches.append("year")
     else:
         if _same_id(video.get("tmdb_id"), record.get("tmdb_id")):
             matches.append("tmdb_id")
@@ -592,8 +618,8 @@ def _candidate(video, endpoint, record, matched_by, requested):
     release = record.get("release") if isinstance(record.get("release"), str) else ""
     matches = _matches(video, record, matched_by)
     score_without_hash = _score(matches)
-    # The host validates a claimed hash against the release name, so the claim
-    # needs that name and the tracker's confirmation of the exact file.
+    # The tracker's flag for the exact file is the basis for the hash claim. The host
+    # verifies the claim against series, season, episode and source.
     hash_verifiable = bool(release) and _exact_file(record.get("release_match"))
     if hash_verifiable:
         matches.append("hash")
@@ -710,6 +736,8 @@ class UNIT3DProvider:
         # Cooldown key (see _cooldown_key) to (the monotonic time its cooldown ends, a copy of the error).
         # The worker keeps one provider instance, so cooldowns last across searches.
         self._cooldowns = {}
+        # Guards the cooldown writes, which the search threads and the download call both make.
+        self._cooldown_lock = threading.Lock()
 
     def search(self, video, languages, config):
         endpoints = _configured_endpoints(config)
@@ -762,7 +790,8 @@ class UNIT3DProvider:
                 _monotonic() + DOWNLOAD_TIMEOUT_SECONDS,
             )
         except _Refused as refusal:
-            if refusal.status == 429:
+            # A rejected key or a rate limit raises, as in a search. Other refusals skip the candidate.
+            if refusal.status in (401, 403, 429):
                 raise self._refuse(endpoint, refusal) from None
             return _skip_download(endpoint, subtitle_id, subtitle_format, f"HTTP {refusal.status}")
         except (ServiceUnavailable, ConfigurationError) as error:
@@ -772,22 +801,25 @@ class UNIT3DProvider:
         if _is_rar(body):
             return _skip_download(endpoint, subtitle_id, subtitle_format, "the tracker sent a RAR archive")
         if _is_archive(body):
-            # The host lists the archive and picks the member for this episode.
+            # The host lists the archive and picks the member for this season and episode. The
+            # provider offers no select_archive_member callback, so it does not set select_member.
             return {
                 "archive_b64": base64.b64encode(body).decode("ascii"),
                 "archive_sha256": hashlib.sha256(body).hexdigest(),
+                "season": _as_int(payload.get("season")),
                 "episode": _as_int(payload.get("episode")),
             }
         if _is_json(body, content_type):
             return _skip_download(endpoint, subtitle_id, subtitle_format, "the tracker answered with JSON")
         if _looks_like_html(body):
             return _skip_download(endpoint, subtitle_id, subtitle_format, "the tracker returned a web page")
-        # No encoding is declared: the host detects it when it normalizes the text.
+        # The encoding is None, so the host detects it when it normalizes the text.
         return {
             "content_b64": base64.b64encode(body).decode("ascii"),
             "content_sha256": hashlib.sha256(body).hexdigest(),
             "content_type": _content_type(subtitle_format),
             "format": subtitle_format,
+            "encoding": None,
             "empty": False,
         }
 
@@ -818,6 +850,7 @@ class UNIT3DProvider:
         successes = 0
         budget_spent = False
         rate_limited = False
+        access_refused = False
         for chunk in chunks:
             page = 1
             while True:
@@ -843,6 +876,8 @@ class UNIT3DProvider:
                     errors.append(self._refuse(endpoint, refusal))
                     # A rate limit ends the endpoint's search, so its remaining chunks are not requested.
                     rate_limited = refusal.status == 429
+                    # A rejected key or a missing API ends the search the same way.
+                    access_refused = refusal.status in (401, 403, 404)
                     break
                 except (ServiceUnavailable, ConfigurationError) as error:
                     errors.append(error)
@@ -859,24 +894,38 @@ class UNIT3DProvider:
                 if current >= last:
                     break
                 page += 1
-            if budget_spent or rate_limited:
+            if budget_spent or rate_limited or access_refused:
                 break
-        # A rate limit already set its own cooldown in _refuse, with its Retry-After interval.
+        # The error that ended a rate-limited or refused search is the one reported.
+        reported = (errors[-1] if rate_limited or access_refused else errors[0]) if errors else None
+        # A rate limit already put its cooldown in force in _refuse.
         if not successes and errors and not rate_limited:
-            self._cool_down(endpoint, errors[0])
+            self._cool_down(endpoint, reported)
         if not successes and not errors:
             errors.append(ServiceUnavailable("the search budget was spent before this endpoint was queried"))
-        for error in errors:
-            _log_failure(endpoint, error, partial=successes > 0)
+            reported = errors[0]
+        if errors:
+            _log_failure(endpoint, reported, partial=successes > 0)
         if successes:
             return _Outcome(candidates, None, False)
-        # A rate limit is the error the cooldown replays, so the first search raises the same class.
-        return _Outcome([], errors[-1] if rate_limited else errors[0], True)
+        # The reported error is the one a later cooldown replays, so the first search raises the same class.
+        return _Outcome([], reported, True)
 
     def _cool_down(self, endpoint, error, seconds=DEFAULT_COOLDOWN_SECONDS):
-        """Skip the endpoint in later searches for the given seconds, and keep a copy of the error."""
-        # The copy carries no traceback, so the stored error keeps no frames or response alive.
-        self._cooldowns[_cooldown_key(endpoint)] = (_monotonic() + seconds, type(error)(str(error)))
+        """Skip the endpoint in later searches for the given seconds, and keep a copy of the error.
+
+        A cooldown already in force that ends later than the new one is kept, so a shorter cooldown
+        never shortens it. It returns the expiry in force after the call, as a monotonic time.
+        """
+        key = _cooldown_key(endpoint)
+        until = _monotonic() + seconds
+        with self._cooldown_lock:
+            current = self._cooldowns.get(key)
+            if current is not None and current[0] > until:
+                return current[0]
+            # The copy carries no traceback, so the stored error keeps no frames or response alive.
+            self._cooldowns[key] = (until, type(error)(str(error)))
+            return until
 
     def _refuse(self, endpoint, refusal):
         """The exception one HTTP refusal raises as. A 429 also cools the endpoint down."""
@@ -892,9 +941,13 @@ class UNIT3DProvider:
             )
             return ConfigurationError(f"the tracker rejected the request as invalid (HTTP {status})")
         if status == 429:
-            interval = _retry_after_seconds(refusal.retry_after) or DEFAULT_COOLDOWN_SECONDS
+            interval = _retry_after_seconds(refusal.retry_after)
+            if interval is None:
+                interval = DEFAULT_COOLDOWN_SECONDS
+            interval = min(interval, MAX_RETRY_AFTER_SECONDS)
             error = APIThrottled(f"the tracker is rate limiting the API (HTTP {status})", retry_after=interval)
-            self._cool_down(endpoint, error, interval)
+            ends_at = self._cool_down(endpoint, error, interval)
+            error.retry_after = math.ceil(ends_at - _monotonic())
             return error
         if 300 <= status < 400:
             return ServiceUnavailable(f"redirects are refused (HTTP {status})")

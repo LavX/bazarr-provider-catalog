@@ -8300,7 +8300,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "b8ab1742ae8d1eebc7703762d9b060dc9a6de5fdce9b4c2ca3b269492350eec9",
+        "bundle_sha256": "76ef1808223b0f848ee1408691655431c99d1fa6646aa71d6a1b5787fb193452",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -8319,7 +8319,7 @@
             },
             "match_files": {
               "default": true,
-              "description": "Send the video file size and name so that a tracker can flag the exact release.",
+              "description": "Send the video file size and name with each search. The tracker decides how to use them.",
               "title": "Match files",
               "type": "boolean"
             },
@@ -8345,7 +8345,7 @@
         "entry_class": "UNIT3DProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "f839a4df14038379d4c248e005421884fd0aa7dc988381c045198fdd3e71a908"
+          "provider.py": "e92cfde7c24c1bf054cbd3508f00243f9a26a65adb1e6b92fa1547841e90d758"
         },
         "languages": [
           "ara",
@@ -8438,7 +8438,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.0"
+        "version": "0.1.4"
       }
     },
     {
