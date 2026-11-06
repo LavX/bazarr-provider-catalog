@@ -1060,15 +1060,15 @@ class CooldownTests(UNIT3DTestCase):
         self.assertEqual(len(self.search(pairs, provider=provider)), 1)
         self.assertEqual(len(throttled.requests), 2)
 
-    def test_retry_after_beyond_the_float_range_counts_as_no_header(self):
+    def test_retry_after_beyond_the_float_range_counts_as_one_hour(self):
         throttled, base = self.serve(lambda record: _json({}, status=429, headers={"Retry-After": "9" * 400}))
         pairs = [(base, "key-a")]
         provider = self.mod.UNIT3DProvider()
         with self.assertRaises(self.mod.APIThrottled) as caught:
             self.search(pairs, provider=provider)
-        self.assertEqual(caught.exception.retry_after, 60)
+        self.assertEqual(caught.exception.retry_after, 3600)
         self.assertEqual(len(throttled.requests), 1)
-        self.clock.now += 59
+        self.clock.now += 3599
         with self.assertRaises(self.mod.APIThrottled):
             self.search(pairs, provider=provider)
         self.assertEqual(len(throttled.requests), 1)
@@ -1086,7 +1086,7 @@ class CooldownTests(UNIT3DTestCase):
         self.assertLessEqual(caught.exception.retry_after, 3601)
 
     def test_retry_after_longer_than_one_hour_counts_as_one_hour(self):
-        # A count of 301 digits still fits in a float, so it is capped rather than treated as no header.
+        # A count too large for a float is still a valid count, so it is capped.
         for value in ("7200", "1" * 301):
             with self.subTest(length=len(value)):
                 throttled, base = self.serve(
@@ -1566,6 +1566,20 @@ class DownloadTests(UNIT3DTestCase):
         # No select_archive_member method exists, so the archive contract forbids asking for one.
         self.assertFalse(hasattr(self.mod.UNIT3DProvider, "select_archive_member"))
         self.assertNotIn("select_member", content)
+
+    def test_plain_movie_zip_is_returned_as_an_archive_without_season_or_episode(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("Movie.2020.srt", "1\n00:00:01,000 --> 00:00:02,000\nHi\n")
+        archive_bytes = buffer.getvalue()
+        _server, base = self.serve(lambda record: (200, {"Content-Type": "application/zip"}, archive_bytes))
+        content = self.download(base, extension="zip")
+        self.assertEqual(base64.b64decode(content["archive_b64"]), archive_bytes)
+        self.assertEqual(content["archive_sha256"], hashlib.sha256(archive_bytes).hexdigest())
+        self.assertIsNone(content["season"])
+        self.assertIsNone(content["episode"])
+        self.assertNotIn("select_member", content)
+        self.assertNotIn("content_b64", content)
 
     def test_season_pack_download_passes_the_sdk_smoke_contract(self):
         if str(ROOT) not in sys.path:

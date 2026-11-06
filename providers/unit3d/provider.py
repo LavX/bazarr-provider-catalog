@@ -344,11 +344,6 @@ def _retry_after_seconds(value):
         return max(0, math.ceil((when - datetime.datetime.now(datetime.timezone.utc)).total_seconds()))
     if seconds < 0:
         return None
-    try:
-        float(seconds)
-    except OverflowError:
-        # A count beyond the float range cannot time a cooldown, so it counts as no usable header.
-        return None
     return seconds
 
 
