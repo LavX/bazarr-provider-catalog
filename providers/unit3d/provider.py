@@ -42,6 +42,8 @@ MAX_TIMEOUT_SECONDS = 60
 # A rate limit without a usable Retry-After header, and any other failed search
 # in which the endpoint attempted requests and none succeeded, cools its endpoint for this long.
 DEFAULT_COOLDOWN_SECONDS = 60
+# A Retry-After longer than this counts as this long.
+MAX_RETRY_AFTER_SECONDS = 3600
 PER_PAGE = 50
 # The API matches at most this many language codes in one request.
 LANGUAGE_CHUNK = 50
@@ -946,6 +948,7 @@ class UNIT3DProvider:
             interval = _retry_after_seconds(refusal.retry_after)
             if interval is None:
                 interval = DEFAULT_COOLDOWN_SECONDS
+            interval = min(interval, MAX_RETRY_AFTER_SECONDS)
             error = APIThrottled(f"the tracker is rate limiting the API (HTTP {status})", retry_after=interval)
             ends_at = self._cool_down(endpoint, error, interval)
             error.retry_after = math.ceil(ends_at - _monotonic())

@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "ecce870c8cb10a9f96c0fc40a382b2d6b27bf14a52b84ad218043e4576bea8f0",
+  "bundle_sha256": "f1f3a654f87bc515d406a4790382d6456cd473b98ea3cbb6ca8facbed247188d",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -45,7 +45,7 @@
   "entry_class": "UNIT3DProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "66fb438e04aba30fad83af002a4b4312e06f58c8ad672555411c38aec1039982"
+    "provider.py": "f68167770ed85e5ada925bff54301f95ba37d827280a26ae2831f13673161808"
   },
   "languages": [
     "ara",

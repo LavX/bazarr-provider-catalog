@@ -1066,6 +1066,45 @@ class CooldownTests(UNIT3DTestCase):
         self.assertGreaterEqual(caught.exception.retry_after, 3500)
         self.assertLessEqual(caught.exception.retry_after, 3601)
 
+    def test_retry_after_longer_than_one_hour_counts_as_one_hour(self):
+        # A count of 301 digits still fits in a float, so it is capped rather than treated as no header.
+        for value in ("7200", "1" * 301):
+            with self.subTest(length=len(value)):
+                throttled, base = self.serve(
+                    lambda record, value=value: _json({}, status=429, headers={"Retry-After": value})
+                )
+                pairs = [(base, "key-a")]
+                provider = self.mod.UNIT3DProvider()
+                with self.assertRaises(self.mod.APIThrottled) as caught:
+                    self.search(pairs, provider=provider)
+                self.assertEqual(caught.exception.retry_after, 3600)
+                self.clock.now += 3599
+                with self.assertRaises(self.mod.APIThrottled):
+                    self.search(pairs, provider=provider)
+                self.assertEqual(len(throttled.requests), 1)
+                self.clock.now += 1
+                with self.assertRaises(self.mod.APIThrottled):
+                    self.search(pairs, provider=provider)
+                self.assertEqual(len(throttled.requests), 2)
+
+    def test_retry_after_of_one_hour_or_less_is_kept(self):
+        for value, expected in (("1800", 1800), ("3600", 3600)):
+            with self.subTest(value=value):
+                _throttled, base = self.serve(
+                    lambda record, value=value: _json({}, status=429, headers={"Retry-After": value})
+                )
+                with self.assertRaises(self.mod.APIThrottled) as caught:
+                    self.search([(base, "key-a")])
+                self.assertEqual(caught.exception.retry_after, expected)
+
+    def test_retry_after_http_date_a_year_away_counts_as_one_hour(self):
+        date = email.utils.formatdate(time.time() + 365 * 24 * 3600, usegmt=True)
+        _throttled, base = self.serve(lambda record: _json({}, status=429, headers={"Retry-After": date}))
+        with self.assertRaises(self.mod.APIThrottled) as caught:
+            self.search([(base, "key-a")])
+        self.assertGreaterEqual(caught.exception.retry_after, 3500)
+        self.assertLessEqual(caught.exception.retry_after, 3601)
+
     def test_retry_after_of_zero_or_a_past_date_waits_for_nothing(self):
         past = email.utils.formatdate(time.time() - 3600, usegmt=True)
         for value in ("0", past):
