@@ -41,6 +41,7 @@ DEFAULT_TIMEOUT_SECONDS = 30
 MAX_TIMEOUT_SECONDS = 60
 # A rate limit without a usable Retry-After header, and any other failed search
 # in which the endpoint attempted requests and none succeeded, cools its endpoint for this long.
+# The 60 second value is provisional.
 DEFAULT_COOLDOWN_SECONDS = 60
 # A Retry-After longer than this counts as this long.
 MAX_RETRY_AFTER_SECONDS = 3600

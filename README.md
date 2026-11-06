@@ -168,6 +168,7 @@ Browser-style providers generate a current desktop User-Agent once per provider 
 - `providers/titlovi/`: uses the Titlovi Kodi API for authenticated movie and episode subtitle search and downloads.
 - `providers/turkcealtyaziorg/`: scrapes TurkceAltyazi.org movie and episode subtitle listings by IMDb id.
 - `providers/tvsubtitles/`: scrapes tvsubtitles.net episode subtitle listings and ZIP downloads.
+- `providers/unit3d/`: searches the UNIT3D subtitle API of one or more trackers, each with its own API key, inside one shared time budget.
 - `providers/vladoon/`: searches the Vladoon JSON API for Bulgarian movie and episode subtitles, including season packs, with ZIP archive downloads.
 - `providers/wizdom/`: uses wizdom.xyz for Hebrew movie and episode subtitles, with TMDB lookup when an IMDb id is missing. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback for Cloudflare browser challenges.
 - `providers/whisperai/`: generates subtitles through a configured Whisper web service after extracting local audio with ffmpeg.
