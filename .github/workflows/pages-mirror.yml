@@ -1,0 +1,81 @@
+name: Pages mirror
+
+# Publishes a static, verifiable copy of the catalog to GitHub Pages for both channels.
+# It runs only on pushes to main and beta (and manual dispatch of those branches), never
+# on pull requests, so nothing from a fork can reach the deploy job.
+
+on:
+  push:
+    branches: [main, beta]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time. Later pushes queue instead of cancelling a running deploy, so a
+# half-finished publish never leaves the site in an in-between state.
+concurrency:
+  group: pages-mirror
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build site
+    if: >-
+      github.repository == 'LavX/bazarr-provider-catalog'
+      && github.event_name != 'pull_request'
+      && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      heads: ${{ steps.build.outputs.heads }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Mirror tests
+        run: python3 -B -m unittest discover -s tests -p 'test_build_mirror.py'
+      - name: Build site from git
+        id: build
+        run: python3 -B scripts/build_mirror.py --repo . --out "$RUNNER_TEMP/site" --outputs-file "$GITHUB_OUTPUT"
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: ${{ runner.temp }}/site
+
+  deploy:
+    name: deploy to Pages
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+  verify:
+    name: verify published mirror
+    needs: [build, deploy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Compare the published files with git
+        env:
+          PAGE_URL: ${{ needs.deploy.outputs.page_url }}
+          HEADS: ${{ needs.build.outputs.heads }}
+        run: python3 -B scripts/verify_mirror.py --repo . --base-url "$PAGE_URL" --heads "$HEADS"
