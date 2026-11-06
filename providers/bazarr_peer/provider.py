@@ -55,6 +55,8 @@ MAX_DOWNLOAD_BYTES = 32 * 1024 * 1024
 # A body is read in chunks of this size, and the deadline is checked between them.
 READ_CHUNK_BYTES = 64 * 1024
 MAX_ERROR_BYTES = 4096
+# A login token is sent back in a header, so it must be printable ASCII without spaces, and no longer than this.
+MAX_TOKEN_CHARS = 4096
 # The message text kept from a refusal, at most this many characters. It is never logged.
 DETAIL_MAX_CHARS = 256
 # A saved payload larger than this drops its recovery context and stable key, so it stays small.
@@ -688,6 +690,10 @@ def _parse_token(body):
     token = payload.get("token")
     if not isinstance(token, str) or not token:
         raise ServiceUnavailable("the login response carries no token")
+    # The token goes into the Authorization header. A malformed one would make the HTTP layer raise an
+    # error that quotes the header value, so it is refused here, with a message that never holds it.
+    if len(token) > MAX_TOKEN_CHARS or not all("!" <= char <= "~" for char in token):
+        raise ServiceUnavailable("the login response carries a token that cannot be used")
     return token
 
 

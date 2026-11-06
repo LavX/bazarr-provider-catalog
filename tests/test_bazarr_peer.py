@@ -1887,6 +1887,42 @@ class DownloadTests(PeerTestCase):
         self.assertEqual([request["path"] for request in server.requests].count("/api/v1/login"), 2)
         self.assertEqual(provider._cooldowns, {})
 
+    def test_malformed_login_token_is_refused_and_never_echoed(self):
+        secret = "SECRET-token-value"
+        malformed = (
+            f"{secret}\nInjected: header",
+            f"{secret}\r\n",
+            f"{secret} with space",
+            f"{secret}\x00",
+            f"{secret}\u00e9",
+            secret + "a" * self.mod.MAX_TOKEN_CHARS,
+        )
+        for token in malformed:
+            with self.subTest(token=token[:30]):
+                server, base = self.routes(
+                    login=lambda record, token=token: _json({"token": token, "status": 200}),
+                    download=_download_response,
+                )
+                provider = self.mod.BazarrPeerProvider()
+                with self.assertLogs("bazarr_peer", level="DEBUG") as logs:
+                    content = self.download(base, provider=provider)
+                self.assertTrue(content["empty"])
+                self.assertEqual([request["path"] for request in server.requests], ["/api/v1/login"])
+                self.assertEqual(provider._tokens, {})
+                text = "\n".join(logs.output)
+                self.assertIn("cannot be used", text)
+                self.assertNotIn("SECRET", text)
+                self.assertNotIn("Injected", text)
+                with self.assertRaises(self.mod.ServiceUnavailable) as caught:
+                    self.mod._parse_token(json.dumps({"token": token}).encode("utf-8"))
+                self.assertNotIn("SECRET", str(caught.exception))
+                self.assertNotIn("Injected", str(caught.exception))
+
+    def test_ordinary_login_tokens_are_accepted(self):
+        for token in ("tok-1", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln", "a" * self.mod.MAX_TOKEN_CHARS):
+            with self.subTest(length=len(token)):
+                self.assertEqual(self.mod._parse_token(json.dumps({"token": token}).encode("utf-8")), token)
+
     def test_forbidden_download_is_an_authentication_error_without_a_relogin(self):
         server, base = self.routes(
             login=_login_response,
