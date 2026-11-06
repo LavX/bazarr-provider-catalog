@@ -38,6 +38,7 @@
 - Redirects are refused on every authenticated request, so the key is never sent to another origin. A redirect counts as an endpoint failure in a search, and as a skipped candidate in a download.
 - A candidate claims its hash only when the tracker flags both the file size and the file name of the exact file. That exact-release flag is reported as a hash match, with `hash_verifiable` true, and the host verifies the claim against series, season, episode and source. Its `release_info` is the torrent's release name.
 - Hearing-impaired and forced flags are unknown for this API, so a candidate reports `hearing_impaired` as `null` rather than omitting it, and its language reports `hi` and `forced` as `null` rather than omitting them. `hearing_impaired_verifiable` is false.
+- A hearing-impaired request reaches the provider as its base language, so the provider never receives a hearing-impaired variant: it searches the plain language, and a request for both the plain and the hearing-impaired variant of one language sends one search. When hearing-impaired subtitles are required, the host keeps only candidates whose `hearing_impaired` flag is true. This provider reports that flag as unknown, so a required-HI search keeps nothing from it.
 - `page_link` is the configured base URL plus `/torrents/<torrent id>`. The response never supplies the link.
 - A download goes to the endpoint named by its candidate's tag, and its body gets a 30-second budget. A 401 or 403 response raises `AuthenticationError`, and a 429 response raises `APIThrottled` and cools that endpoint down for later searches with the same API key. A Retry-After longer than one hour counts as one hour. A download does not wait for a cooldown.
 - Any other download failure skips the candidate. The provider returns an empty result and logs one line with the endpoint tag, the subtitle id, and a fixed reason, never a URL, key, or response body. Skips cover every other HTTP status (for example 404, 422, and 500), redirects, an unreachable endpoint, a failed TLS handshake, a TLS error while the body is read, a body over the 32 MiB limit or past its budget, a body shorter than its Content-Length, an empty body, a RAR archive, a JSON body, a web page, and an endpoint that is not configured.
@@ -45,7 +46,6 @@
 
 ## Known Gaps
 
-- An HI-specific search does not reach the provider with its HI variant. The host intersects hearing-impaired requests with the manifest, and this manifest declares no hearing-impaired variants, so the limitation depends on host support that this catalog does not contain. The matching test is an expected failure, and it stays in place until that support lands.
 - A key that is valid but lacks the search or download permission is not diagnosed. A search reports it as an authentication failure, and a download raises an authentication error for 401 or 403. The status endpoint is not called.
 
 ## Live Checks

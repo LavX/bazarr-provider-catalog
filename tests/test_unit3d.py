@@ -1635,21 +1635,37 @@ class DownloadTests(UNIT3DTestCase):
 
 
 class HearingImpairedRoutingTests(UNIT3DTestCase):
-    @unittest.expectedFailure
-    def test_hi_specific_search_reaches_worker_with_hi_variant(self):
-        """The host drops hearing-impaired requests when the manifest declares no hearing-impaired variants.
+    """The host maps a hearing-impaired request to its base language before the worker call."""
 
-        The test fails until the host passes them through or the manifest declares them.
-        """
-        manifest = json.loads((PROVIDER_DIR / "provider.json").read_text(encoding="utf-8"))
-        requested = ("eng", True)
-        declared = {(alpha3, False) for alpha3 in manifest["languages"]}
-        self.assertIn(
-            requested,
-            declared,
-            "the host intersects hearing-impaired requests with the manifest, "
-            "and this manifest declares no hearing-impaired variants",
-        )
+    def test_base_language_search_reads_tracker_null_flags_as_unknown(self):
+        body = _fixture_bytes("unit3d_search_movie.json")
+        records = json.loads(body.decode("utf-8"))["data"]
+        self.assertTrue(all(r["hearing_impaired"] is None and r["forced"] is None for r in records))
+        server, base = self.serve(lambda request: (200, {"Content-Type": "application/json"}, body))
+        candidates = self.search([(base, "key-a")], video=SAMPLE_MOVIE_VIDEO)
+        self.assertEqual(len(candidates), 2)
+        self.assertEqual(server.requests[0]["query"]["language"], "en")
+        for candidate in candidates:
+            self.assertIsNone(candidate["hearing_impaired"])
+            self.assertFalse(candidate["hearing_impaired_verifiable"])
+            self.assertEqual(candidate["language"], {"alpha3": "eng", "alpha2": "en", "hi": None, "forced": None})
+
+    def test_hearing_impaired_request_is_searched_as_the_base_language(self):
+        server, base = self.serve(lambda record: _page([_record(5)]))
+        hi_request = {"alpha3": "eng", "hi": True, "forced": False}
+        (candidate,) = self.search([(base, "key-a")], languages=[hi_request])
+        (request,) = server.requests
+        self.assertEqual(request["query"]["language"], "en")
+        self.assertEqual(candidate["language"]["alpha3"], "eng")
+        self.assertIsNone(candidate["hearing_impaired"])
+
+    def test_plain_and_hearing_impaired_requests_for_one_language_send_one_search(self):
+        server, base = self.serve(lambda record: _page([_record(5)]))
+        hi_request = {"alpha3": "eng", "hi": True, "forced": False}
+        candidates = self.search([(base, "key-a")], languages=[ENGLISH, hi_request])
+        self.assertEqual(len(candidates), 1)
+        (request,) = server.requests
+        self.assertEqual(request["query"]["language"], "en")
 
 
 class ManifestTests(UNIT3DTestCase):

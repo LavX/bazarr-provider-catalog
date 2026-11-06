@@ -3,49 +3,64 @@
     {
       "id": 101,
       "language": "en",
+      "language_name": "English",
       "extension": "srt",
       "filename": "[English Subtitle]Sample.Feature.2020.1080p.WEB-DL.x264-EXAMPLE.srt",
+      "size": 48213,
+      "downloads": 12,
+      "uploader": "example-uploader",
+      "forced": null,
+      "hearing_impaired": null,
+      "torrent_id": 4321,
+      "release": "Sample.Feature.2020.1080p.WEB-DL.x264-EXAMPLE",
       "type": "movie",
-      "pack": null,
       "season": null,
       "episode": null,
-      "release": "Sample.Feature.2020.1080p.WEB-DL.x264-EXAMPLE",
+      "pack": null,
+      "tmdb_id": 123456,
+      "tvdb_id": null,
+      "imdb_id": "tt1234567",
       "release_match": {
         "file_size": true,
         "file_name": true
       },
-      "uploader": "example-uploader",
-      "downloads": 12,
-      "torrent_id": 4321,
-      "imdb_id": "tt1234567",
-      "tmdb_id": 123456,
-      "tvdb_id": null
+      "created_at": "2026-01-01T00:00:00+00:00",
+      "download_url": "/api/subtitles/101/download"
     },
     {
       "id": 102,
       "language": "en",
+      "language_name": "English",
       "extension": "srt",
       "filename": "Sample.Feature.2020.720p.HDTV.x264-EXAMPLE.srt",
+      "size": 39871,
+      "downloads": 3,
+      "uploader": "example-uploader-two",
+      "forced": null,
+      "hearing_impaired": null,
+      "torrent_id": 4322,
+      "release": "Sample.Feature.2020.720p.HDTV.x264-EXAMPLE",
       "type": "movie",
-      "pack": null,
       "season": null,
       "episode": null,
-      "release": "Sample.Feature.2020.720p.HDTV.x264-EXAMPLE",
+      "pack": null,
+      "tmdb_id": 123456,
+      "tvdb_id": null,
+      "imdb_id": "tt1234567",
       "release_match": {
         "file_size": true,
         "file_name": false
       },
-      "uploader": "example-uploader-two",
-      "downloads": 3,
-      "torrent_id": 4322,
-      "imdb_id": "tt1234567",
-      "tmdb_id": 123456,
-      "tvdb_id": null
+      "created_at": "2026-01-01T00:00:00+00:00",
+      "download_url": "/api/subtitles/102/download"
     }
   ],
+  "links": {},
   "meta": {
     "current_page": 1,
     "last_page": 1,
+    "per_page": 50,
+    "total": 2,
     "matched_by": "imdb"
   }
 }
