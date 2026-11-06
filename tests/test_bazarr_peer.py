@@ -501,6 +501,30 @@ class ConfigurationTests(PeerTestCase):
             self.mod.BazarrPeerProvider().search(video=dict(MOVIE_VIDEO), languages=[ENGLISH], config=config)
         self.assertNotIn("key-a", str(caught.exception))
 
+    def test_seventeen_endpoints_with_sixteen_keys_report_the_original_counts_and_send_nothing(self):
+        server, base = self.serve(lambda record: _envelope([]))
+        config = {
+            "endpoints": " ".join(f"{base}/t{number}" for number in range(17)),
+            "api_keys": " ".join(f"key-{number}" for number in range(16)),
+            "timeout_seconds": 45,
+        }
+        with self.assertRaisesRegex(self.mod.ConfigurationError, r"17 endpoint\(s\) but 16 API key\(s\)"):
+            self.mod.BazarrPeerProvider().search(video=dict(MOVIE_VIDEO), languages=[ENGLISH], config=config)
+        self.assertEqual(server.requests, [])
+        self.assertEqual(self.timeouts, [])
+
+    def test_sixteen_endpoints_with_seventeen_keys_report_the_original_counts_and_send_nothing(self):
+        server, base = self.serve(lambda record: _envelope([]))
+        config = {
+            "endpoints": " ".join(f"{base}/t{number}" for number in range(16)),
+            "api_keys": " ".join(f"key-{number}" for number in range(17)),
+            "timeout_seconds": 45,
+        }
+        with self.assertRaisesRegex(self.mod.ConfigurationError, r"16 endpoint\(s\) but 17 API key\(s\)"):
+            self.mod.BazarrPeerProvider().search(video=dict(MOVIE_VIDEO), languages=[ENGLISH], config=config)
+        self.assertEqual(server.requests, [])
+        self.assertEqual(self.timeouts, [])
+
     def test_invalid_endpoints_are_rejected(self):
         for url in (
             "ftp://peer.example",
