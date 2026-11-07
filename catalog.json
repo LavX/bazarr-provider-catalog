@@ -5871,7 +5871,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "b39f832db238ab604773da79f0cc4ab61de11b90c6abd489690d6705097f6691",
+        "bundle_sha256": "6c4881e83e7d1ed505d79625fcf9799ee33c5a778d7066a4a11232856495533f",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -5897,11 +5897,11 @@
             }
           ]
         },
-        "description": "Scrapes subs4free.info for Greek and English movie subtitles. Supports the legacy anti-block download flow plus ZIP and RAR archives.",
+        "description": "Scrapes subs4free.info for Greek and English movie subtitles, solving the site's Anubis proof-of-work challenge inline. Supports ZIP and RAR archives.",
         "entry_class": "Subs4FreeProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "24067d483670f4311e5ff89a32d71984d015ca9ba46ede6d64201e3c5dadd37b"
+          "provider.py": "9bc68ed87f7c7e4f8e927edce15db5227bf8b3129ae1a4cf2ad2290ad9f74419"
         },
         "languages": [
           "ell",
@@ -5923,7 +5923,7 @@
         "supported_media": [
           "movie"
         ],
-        "version": "0.1.5"
+        "version": "0.2.0"
       }
     },
     {

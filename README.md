@@ -58,7 +58,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`subclub`](providers/subclub/) | 0.1.5 | Scrapes [Subclub.eu](https://www.subclub.eu) for Estonian movie and episode subtitles. No login or API key. |
 | [`subdl`](providers/subdl/) | 0.2.5 | Uses the official [SubDL](https://subdl.com) API for movie and episode subtitles, including season packs and optional anime search fallbacks. With a SubDL Plus or Pro account it can also offer SubDL AI translations for missing languages, off by default. API key required. |
 | [`subf2m`](providers/subf2m/) | 0.1.7 | Scrapes [SubF2M](https://subf2m.co) for movie and episode subtitle ZIP files in 30+ languages. Configurable User-Agent and SSL verification. Resolves titles through their slug when the site's search endpoint is unavailable, and answers empty for titles the site carries without subtitles in the wanted languages. |
-| [`subs4free`](providers/subs4free/) | 0.1.5 | Scrapes [Subs4Free](https://www.subs4free.info) for Greek and English movie subtitles. No login or API key. |
+| [`subs4free`](providers/subs4free/) | 0.2.0 | Scrapes [Subs4Free](https://www.subs4free.info) for Greek and English movie subtitles. No login or API key. |
 | [`subs4series`](providers/subs4series/) | 0.1.9 | Scrapes [Subs4Series](https://www.subs4series.com) for Greek and English episode subtitles. Uses ai-cloudscraper with inline Anubis solving, optional FlareSolverr fallback, and optional captcha helper settings for download gates. |
 | [`subhd`](providers/subhd/) | 0.1.6 | Scrapes [SubHD.tv](https://subhd.tv) for Chinese-first movie and episode subtitles with multilingual releases. No login or API key. |
 | [`subsarr`](providers/subsarr/) | 0.1.2 | Connects to a self-hosted [Subsarr](https://github.com/slimcdk/subsarr) API for Subscene-style movie and episode subtitles. Requires a Base URL. |
@@ -146,7 +146,7 @@ Browser-style providers generate a current desktop User-Agent once per provider 
 - `providers/subclub/`: scrapes Subclub.eu movie and episode subtitle listings and downloads.
 - `providers/subdl/`: uses the official SubDL API for movie and episode subtitles with optional anime pack handling, and can offer SubDL AI translations for missing languages with a Plus or Pro account, off by default.
 - `providers/subf2m/`: scrapes SubF2M movie and episode subtitle pages and ZIP downloads.
-- `providers/subs4free/`: scrapes Subs4Free movie subtitle listings and anti-block downloads.
+- `providers/subs4free/`: scrapes Subs4Free movie subtitle listings and downloads, solving the site's Anubis challenge inline.
 - `providers/subs4series/`: scrapes Subs4Series episode subtitles with ai-cloudscraper, inline Anubis solving, optional FlareSolverr fallback, anti-block requests, optional captcha helper settings, and archive extraction.
 - `providers/subhd/`: scrapes SubHD.tv Chinese-first movie and episode subtitle pages.
 - `providers/subsarr/`: connects to a configured self-hosted Subsarr API.
