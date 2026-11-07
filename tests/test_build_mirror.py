@@ -192,6 +192,30 @@ class BuildRefusalTests(MirrorTestCase):
         with self.assertRaisesRegex(build_mirror.MirrorError, "unsafe path"):
             self.build()
 
+    def test_a_file_and_a_directory_sharing_a_path_is_a_clean_error(self):
+        for files in ({"a": b"1", "a/b": b"2"}, {"a/b": b"2", "a": b"1"}, {"catalog.json": b"x"}):
+            with self.subTest(files=sorted(files)):
+                catalog = catalog_for(files, source_path="")
+                with self.assertRaises(build_mirror.MirrorError):
+                    build_mirror.catalog_pins(catalog)
+
+    def test_a_colliding_pin_set_fails_the_build_without_a_traceback(self):
+        catalog = catalog_for({"a": b"1", "a/b": b"2"}, source_path="")
+        self.repo.commit(catalog=catalog)
+        with self.assertRaisesRegex(build_mirror.MirrorError, "file and also used as a directory"):
+            self.build()
+
+    def test_oversized_blob_is_refused_before_it_is_read(self):
+        self.repo.commit(b"x" * 64)
+        calls = []
+        real = build_mirror.git
+        build_mirror.git = lambda *args: calls.append(args) or real(*args)
+        self.addCleanup(setattr, build_mirror, "git", real)
+        self.assertIsNone(build_mirror.blob_or_none(self.repo.path, "HEAD", "missing"))
+        with self.assertRaisesRegex(build_mirror.MirrorError, "exceeds 16 bytes"):
+            build_mirror.blob_or_none(self.repo.path, "HEAD", "providers/demo/provider.py", max_bytes=16)
+        self.assertEqual(calls, [])
+
     def test_file_count_bound(self):
         self.repo.commit()
         with self.assertRaisesRegex(build_mirror.MirrorError, "files"):
@@ -236,8 +260,16 @@ class VerifyTests(MirrorTestCase):
 
     def verify(self, fetch=None, expected=None):
         return verify_mirror.verify_channel(
-            fetch or self.site_fetch(), self.repo.path, "main", expected, attempts=2, delay=0, workers=4
+            fetch or self.site_fetch(), self.repo.path, "main", expected, attempts=2, delay=0, workers=4,
+            ref="main",
         )
+
+    def rewrite_pointer(self, **changes):
+        path = self.out / "v1/main/current"
+        pointer = json.loads(path.read_text())
+        pointer.update(changes)
+        path.write_text(json.dumps(pointer))
+        return pointer
 
     def test_clean_site_verifies(self):
         self.assertEqual(self.verify(expected=self.head), [])
@@ -272,6 +304,36 @@ class VerifyTests(MirrorTestCase):
         pointer["catalog_sha256"] = "0" * 64
         path.write_text(json.dumps(pointer))
         self.assertTrue(any("catalog_sha256" in e for e in self.verify(expected=self.head)))
+
+    def test_history_with_a_commit_from_another_channel_is_rejected(self):
+        self.repo.git("checkout", "-q", "-b", "beta", "HEAD~1")
+        beta_only = self.repo.commit(b"beta only\n", message="beta")
+        self.repo.git("checkout", "-q", "main")
+        history = json.loads((self.out / "v1/main/current").read_text())["history"]
+        self.rewrite_pointer(history=[history[0], beta_only, history[1]])
+        errors = self.verify(expected=self.head)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("first-parent chain", errors[0])
+        self.assertIn(beta_only, errors[0])
+
+    def test_history_out_of_order_is_rejected(self):
+        history = json.loads((self.out / "v1/main/current").read_text())["history"]
+        self.assertGreater(len(history), 1)
+        self.rewrite_pointer(history=[history[1], history[0]], commit=history[1])
+        errors = self.verify(expected=history[1])
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("out of order", errors[0])
+
+    def test_history_that_skips_a_dropped_commit_is_accepted(self):
+        third = self.repo.commit(b"three\n", message="three")
+        out = self.tmp / "site3"
+        build_mirror.build_site(self.repo.path, out, channels={"main": "main"}, now=NOW, log=self.quiet)
+        history = json.loads((out / "v1/main/current").read_text())["history"]
+        path = out / "v1/main/current"
+        pointer = json.loads(path.read_text())
+        pointer["history"] = [history[0], history[2]]
+        path.write_text(json.dumps(pointer))
+        self.assertEqual(self.verify(self.site_fetch(out), expected=third), [])
 
     def test_a_pointer_that_lags_the_build_fails(self):
         errors = self.verify(expected="a" * 40)
@@ -317,7 +379,8 @@ class VerifyTests(MirrorTestCase):
         self.addCleanup(server.shutdown)
         url = f"http://127.0.0.1:{server.server_address[1]}/"
         args = ["--base-url", url, "--repo", str(self.repo.path),
-                "--heads", json.dumps({"main": self.head}), "--attempts", "1", "--delay", "0"]
+                "--heads", json.dumps({"main": self.head}), "--attempts", "1", "--delay", "0",
+                "--ref-template", "{channel}"]
         self.assertEqual(verify_mirror.main(args), 0)
         path = self.out / "v1/main" / self.head / "catalog.json"
         path.write_bytes(path.read_bytes() + b"\n")

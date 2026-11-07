@@ -9,6 +9,7 @@ every bundle file the catalog pins. The checks are:
   <commit>:catalog.json``;
 * the pointer's ``catalog_sha256`` matches its head catalog, and ``history[0]`` is ``commit``;
 * each bundle file matches the sha256 pinned by the git blob of the catalog;
+* ``history`` is an ordered subsequence of the first-parent chain of ``origin/<channel>``;
 * the pointer reached the commit this run built (or a newer one).
 
 Every request carries a unique cache-buster query and ``Cache-Control: no-cache`` so the CDN
@@ -37,6 +38,7 @@ from build_mirror import (
     MirrorError,
     blob_or_none,
     catalog_pins,
+    git,
 )
 
 _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -119,13 +121,43 @@ def fetch_pointer(fetch, channel: str, expected: str | None, attempts: int = 6, 
     raise MirrorError(problem)
 
 
+def check_history(repo: Path, channel: str, ref: str, pointer: dict) -> str | None:
+    """Check the published history against git; return a problem or None.
+
+    ``history`` must be an ordered (newest first) subsequence of the first-parent chain of
+    ``ref``, starting at ``commit``. A build may drop an older commit that failed its pins,
+    so entries need not be adjacent, but order and membership are exact. This also rules
+    out commits that are only reachable from another channel.
+    """
+    try:
+        chain = git(repo, "rev-list", "--first-parent", ref).decode().split()
+    except MirrorError as exc:
+        return f"{channel}: cannot read {ref}: {exc}"
+    position = {commit: index for index, commit in enumerate(chain)}
+    last = -1
+    for commit in pointer["history"]:
+        index = position.get(commit)
+        if index is None:
+            return f"{channel}: history entry {commit} is not on the first-parent chain of {ref}"
+        if index <= last:
+            return f"{channel}: history is out of order at {commit}"
+        last = index
+    if pointer["history"][0] != pointer["commit"]:
+        return f"{channel}: history does not start at the pointer commit"
+    return None
+
+
 def verify_channel(fetch, repo: Path, channel: str, expected: str | None = None,
-                   attempts: int = 6, delay: float = 10.0, workers: int = 16) -> list[str]:
+                   attempts: int = 6, delay: float = 10.0, workers: int = 16,
+                   ref: str | None = None) -> list[str]:
     """Return the list of problems found for one channel (empty means verified)."""
     try:
         pointer = fetch_pointer(fetch, channel, expected, attempts, delay)
     except MirrorError as exc:
         return [str(exc)]
+    problem = check_history(repo, channel, ref or f"origin/{channel}", pointer)
+    if problem:
+        return [problem]
 
     errors: list[str] = []
     jobs: list[tuple[str, str, str, bytes | None]] = []  # (label, url path, kind, git bytes / digest)
@@ -173,6 +205,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--base-url", required=True, help="Pages site URL, e.g. https://host/repo/")
     parser.add_argument("--repo", type=Path, default=Path("."))
     parser.add_argument("--heads", default="{}", help='JSON {"channel": "commit"} the build produced')
+    parser.add_argument("--ref-template", default="origin/{channel}",
+                        help="git ref that holds each channel's history")
     parser.add_argument("--attempts", type=int, default=6)
     parser.add_argument("--delay", type=float, default=10.0)
     args = parser.parse_args(argv)
@@ -187,7 +221,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     failed = False
     for channel, expected in sorted(heads.items()):
-        problems = verify_channel(fetch, args.repo, channel, expected, args.attempts, args.delay)
+        problems = verify_channel(fetch, args.repo, channel, expected, args.attempts, args.delay,
+                                  ref=args.ref_template.format(channel=channel))
         for problem in problems[:50]:
             print(f"MISMATCH {problem}", file=sys.stderr)
         if len(problems) > 50:

@@ -70,16 +70,25 @@ def retained_commits(repo: Path, ref: str, limit: int = RETENTION) -> list[str]:
     return out
 
 
-def blob_or_none(repo: Path, commit: str, path: str) -> bytes | None:
-    """Return the blob at ``commit:path`` or None when the path does not exist."""
+def blob_or_none(repo: Path, commit: str, path: str, max_bytes: int | None = None) -> bytes | None:
+    """Return the blob at ``commit:path``, or None when the path does not exist.
+
+    The object size is read first, so an oversized blob is refused before it is loaded.
+    """
+    limit = MAX_FILE_BYTES if max_bytes is None else max_bytes
     try:
-        subprocess.run(
-            ["git", "-C", str(repo), "cat-file", "-e", f"{commit}:{path}"],
+        size_text = subprocess.run(
+            ["git", "-C", str(repo), "cat-file", "-s", f"{commit}:{path}"],
             check=True,
             capture_output=True,
-        )
+            text=True,
+        ).stdout.strip()
     except subprocess.CalledProcessError:
         return None
+    if not size_text.isdigit():
+        raise MirrorError(f"{commit}: unexpected size for {path}: {size_text!r}")
+    if int(size_text) > limit:
+        raise MirrorError(f"{commit}: {path} exceeds {limit} bytes")
     return git(repo, "cat-file", "blob", f"{commit}:{path}")
 
 
@@ -121,6 +130,16 @@ def catalog_pins(catalog_bytes: bytes) -> dict[str, str]:
             full = safe_relative_path("/".join(part for part in (source_path, name) if part))
             if pins.setdefault(full, digest) != digest:
                 raise MirrorError(f"conflicting pins for {full}")
+    reserved = {"catalog.json", *OPAQUE_FILES}
+    taken = set(pins) | reserved
+    for path in pins:
+        if path in reserved:
+            raise MirrorError(f"pinned file collides with a mirror file: {path}")
+        parent = path.rsplit("/", 1)[0] if "/" in path else ""
+        while parent:
+            if parent in taken:
+                raise MirrorError(f"{parent} is pinned as a file and also used as a directory by {path}")
+            parent = parent.rsplit("/", 1)[0] if "/" in parent else ""
     return pins
 
 
