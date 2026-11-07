@@ -9,8 +9,13 @@ every bundle file the catalog pins. The checks are:
   <commit>:catalog.json``;
 * the pointer's ``catalog_sha256`` matches its head catalog, and ``history[0]`` is ``commit``;
 * each bundle file matches the sha256 pinned by the git blob of the catalog;
-* ``history`` is an ordered subsequence of the first-parent chain of ``origin/<channel>``;
+* ``history`` equals the retained history recomputed from git (see below);
 * the pointer reached the commit this run built (or a newer one).
+
+Retention contract: the expected history is the RETENTION newest first-parent commits ending
+at the pointer commit (which must lie on the first-parent chain of ``origin/<channel>``), minus
+exactly the commits that fail the build's validation, which is recomputed here with the same
+code. Omitting a healthy commit, listing an extra one, or reordering fails. See build_mirror.py.
 
 Every request carries a unique cache-buster query and ``Cache-Control: no-cache`` so the CDN
 cannot answer from an old copy. Any mismatch makes the exit status non-zero.
@@ -33,6 +38,8 @@ from pathlib import Path
 
 from build_mirror import (
     MAX_FILE_BYTES,
+    ValidationError,
+    commit_files,
     OPAQUE_FILES,
     RETENTION,
     MirrorError,
@@ -121,19 +128,15 @@ def fetch_pointer(fetch, channel: str, expected: str | None, attempts: int = 6, 
     raise MirrorError(problem)
 
 
-def check_history(repo: Path, channel: str, ref: str, pointer: dict) -> str | None:
-    """Check the published history against git; return a problem or None.
-
-    ``history`` must be an ordered (newest first) subsequence of the first-parent chain of
-    ``ref``, starting at ``commit``. A build may drop an older commit that failed its pins,
-    so entries need not be adjacent, but order and membership are exact. This also rules
-    out commits that are only reachable from another channel.
-    """
+def check_history(repo: Path, channel: str, ref: str, pointer: dict, retention: int = RETENTION) -> str | None:
+    """Recompute the retained history from git and require an exact match; return a problem or None."""
     try:
         chain = git(repo, "rev-list", "--first-parent", ref).decode().split()
     except MirrorError as exc:
         return f"{channel}: cannot read {ref}: {exc}"
     position = {commit: index for index, commit in enumerate(chain)}
+    if pointer["commit"] not in position:
+        return f"{channel}: commit {pointer['commit']} is not on the first-parent chain of {ref}"
     last = -1
     for commit in pointer["history"]:
         index = position.get(commit)
@@ -142,8 +145,23 @@ def check_history(repo: Path, channel: str, ref: str, pointer: dict) -> str | No
         if index <= last:
             return f"{channel}: history is out of order at {commit}"
         last = index
-    if pointer["history"][0] != pointer["commit"]:
-        return f"{channel}: history does not start at the pointer commit"
+    try:
+        window = git(repo, "rev-list", "--first-parent", "-n", str(retention), pointer["commit"]).decode().split()
+        expected = []
+        for index, commit in enumerate(window):
+            try:
+                commit_files(repo, commit)
+            except ValidationError as exc:
+                if index == 0:
+                    return f"{channel}: pointer commit fails validation: {exc}"
+                continue
+            expected.append(commit)
+    except MirrorError as exc:
+        return f"{channel}: cannot recompute the retained history: {exc}"
+    if pointer["history"] != expected:
+        missing = [c for c in expected if c not in pointer["history"]]
+        extra = [c for c in pointer["history"] if c not in expected]
+        return f"{channel}: history differs from the retained history in git (missing {missing}, unexpected {extra})"
     return None
 
 

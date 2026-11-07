@@ -16,6 +16,15 @@ published under ``v1/<channel>/<commit>/``:
 ``commit``. Clients can use it to prove that a pointer is strictly ahead of a
 commit they already hold.
 
+Retention contract (``verify_mirror.py`` recomputes it from git independently): the published
+history of a channel is the RETENTION newest first-parent commits ending at the pointer
+commit, minus exactly those commits that fail validation. Validation failures are
+deterministic properties of the commit: no or malformed catalog.json, an unsafe or clashing
+pinned path, a pinned file that is missing, not a blob or does not match its pin, and the
+per-file, per-commit and pin-count bounds. An older commit failing validation is dropped
+(never replaced by an even older one); the newest commit failing it fails the build. Any other
+error (git failure, I/O, bad output) fails the build, so a healthy commit is never omitted.
+
 The site is rebuilt from git on every run. Nothing here signs or parses
 signatures: ``catalog.json.sig`` is only copied when it exists.
 """
@@ -38,6 +47,8 @@ OPAQUE_FILES = ("catalog.json.sig",)
 MAX_FILES = 50_000
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_SITE_BYTES = 600 * 1024 * 1024
+MAX_PINS = 5_000
+MAX_COMMIT_BYTES = 64 * 1024 * 1024
 
 _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 _SEGMENT_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]*$")
@@ -45,7 +56,11 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class MirrorError(Exception):
-    pass
+    """Any failure that must stop the build or the verification."""
+
+
+class ValidationError(MirrorError):
+    """A commit's content fails validation. Deterministic from git, so verify recomputes it."""
 
 
 def git(repo: Path, *args: str) -> bytes:
@@ -70,35 +85,60 @@ def retained_commits(repo: Path, ref: str, limit: int = RETENTION) -> list[str]:
     return out
 
 
+def object_info(repo: Path, commit: str, paths: list[str]) -> dict[str, tuple[str, int] | None]:
+    """Return ``{path: (type, size)}`` (None when missing) without reading any content."""
+    if not paths:
+        return {}
+    query = "".join(f"{commit}:{path}\n" for path in paths)
+    try:
+        result = subprocess.run(
+            ["git", "--no-pager", "-C", str(repo), "cat-file", "--batch-check"],
+            input=query.encode(),
+            check=True,
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise MirrorError(f"git cat-file --batch-check failed: {exc.stderr.decode('utf-8', 'replace').strip()}") from exc
+    lines = result.stdout.decode().splitlines()
+    if len(lines) != len(paths):
+        raise MirrorError(f"{commit}: unexpected cat-file --batch-check output")
+    info: dict[str, tuple[str, int] | None] = {}
+    for path, line in zip(paths, lines):
+        parts = line.split()
+        if len(parts) == 2 and parts[1] == "missing":
+            info[path] = None
+        elif len(parts) == 3 and parts[2].isdigit():
+            info[path] = (parts[1], int(parts[2]))
+        else:
+            raise MirrorError(f"{commit}: unexpected cat-file output for {path}: {line!r}")
+    return info
+
+
 def blob_or_none(repo: Path, commit: str, path: str, max_bytes: int | None = None) -> bytes | None:
     """Return the blob at ``commit:path``, or None when the path does not exist.
 
-    The object size is read first, so an oversized blob is refused before it is loaded.
+    Type and size are read first, so an oversized or non-blob object is refused before any
+    content is loaded.
     """
     limit = MAX_FILE_BYTES if max_bytes is None else max_bytes
-    try:
-        size_text = subprocess.run(
-            ["git", "-C", str(repo), "cat-file", "-s", f"{commit}:{path}"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-    except subprocess.CalledProcessError:
+    entry = object_info(repo, commit, [path])[path]
+    if entry is None:
         return None
-    if not size_text.isdigit():
-        raise MirrorError(f"{commit}: unexpected size for {path}: {size_text!r}")
-    if int(size_text) > limit:
-        raise MirrorError(f"{commit}: {path} exceeds {limit} bytes")
+    kind, size = entry
+    if kind != "blob":
+        raise ValidationError(f"{commit}: {path} is a {kind}, not a file")
+    if size > limit:
+        raise ValidationError(f"{commit}: {path} exceeds {limit} bytes")
     return git(repo, "cat-file", "blob", f"{commit}:{path}")
 
 
 def safe_relative_path(path: str) -> str:
     """Accept only plain forward-slash relative paths (no empty, ``.`` or ``..`` segments)."""
     if not isinstance(path, str) or not path:
-        raise MirrorError(f"unsafe path: {path!r}")
+        raise ValidationError(f"unsafe path: {path!r}")
     for segment in path.split("/"):
         if not _SEGMENT_RE.match(segment) or segment in {".", ".."} or ".." in segment:
-            raise MirrorError(f"unsafe path: {path!r}")
+            raise ValidationError(f"unsafe path: {path!r}")
     return path
 
 
@@ -110,59 +150,77 @@ def catalog_pins(catalog_bytes: bytes) -> dict[str, str]:
     try:
         catalog = json.loads(catalog_bytes)
         providers = catalog["providers"]
-    except (ValueError, KeyError, TypeError) as exc:
-        raise MirrorError(f"catalog.json is not a catalog: {exc}") from exc
+    except (ValueError, KeyError, TypeError, RecursionError) as exc:
+        raise ValidationError(f"catalog.json is not a catalog: {exc}") from exc
     if not isinstance(providers, list):
-        raise MirrorError("catalog.json providers is not a list")
+        raise ValidationError("catalog.json providers is not a list")
     pins: dict[str, str] = {}
+    count = 0
     for entry in providers:
         try:
             manifest = entry["manifest"]
             source_path = manifest["source"].get("path", "")
             files = manifest["files"]
         except (KeyError, TypeError, AttributeError) as exc:
-            raise MirrorError(f"malformed provider entry: {exc}") from exc
-        if not isinstance(files, dict):
-            raise MirrorError("provider files is not an object")
+            raise ValidationError(f"malformed provider entry: {exc}") from exc
+        if not isinstance(files, dict) or not isinstance(source_path, str):
+            raise ValidationError("provider files or source path has the wrong type")
+        count += len(files)
+        if count > MAX_PINS:
+            raise ValidationError(f"catalog pins more than {MAX_PINS} files")
         for name, digest in files.items():
             if not isinstance(digest, str) or not _SHA256_RE.match(digest):
-                raise MirrorError(f"bad sha256 pin for {name!r}")
+                raise ValidationError(f"bad sha256 pin for {name!r}")
             full = safe_relative_path("/".join(part for part in (source_path, name) if part))
             if pins.setdefault(full, digest) != digest:
-                raise MirrorError(f"conflicting pins for {full}")
+                raise ValidationError(f"conflicting pins for {full}")
     reserved = {"catalog.json", *OPAQUE_FILES}
     taken = set(pins) | reserved
     for path in pins:
         if path in reserved:
-            raise MirrorError(f"pinned file collides with a mirror file: {path}")
+            raise ValidationError(f"pinned file collides with a mirror file: {path}")
         parent = path.rsplit("/", 1)[0] if "/" in path else ""
         while parent:
             if parent in taken:
-                raise MirrorError(f"{parent} is pinned as a file and also used as a directory by {path}")
+                raise ValidationError(f"{parent} is pinned as a file and also used as a directory by {path}")
             parent = parent.rsplit("/", 1)[0] if "/" in parent else ""
     return pins
 
 
 def commit_files(repo: Path, commit: str) -> dict[str, bytes]:
-    """Collect every file published for one commit, verifying each bundle file against its pin."""
+    """Collect every file published for one commit, verifying each bundle file against its pin.
+
+    Raises ValidationError for content problems and MirrorError for everything else.
+    """
     catalog = blob_or_none(repo, commit, "catalog.json")
     if catalog is None:
-        raise MirrorError(f"{commit}: no catalog.json")
+        raise ValidationError(f"{commit}: no catalog.json")
+    pins = catalog_pins(catalog)
+    paths = [name for name in OPAQUE_FILES] + sorted(pins)
+    info = object_info(repo, commit, paths)
+    total = len(catalog)
+    for path in paths:
+        entry = info[path]
+        if entry is None:
+            if path in pins:
+                raise ValidationError(f"{commit}: pinned file missing: {path}")
+            continue
+        kind, size = entry
+        if kind != "blob":
+            raise ValidationError(f"{commit}: {path} is a {kind}, not a file")
+        if size > MAX_FILE_BYTES:
+            raise ValidationError(f"{commit}: {path} exceeds {MAX_FILE_BYTES} bytes")
+        total += size
+        if total > MAX_COMMIT_BYTES:
+            raise ValidationError(f"{commit}: files exceed {MAX_COMMIT_BYTES} bytes in total")
     files: dict[str, bytes] = {"catalog.json": catalog}
-    for name in OPAQUE_FILES:
-        data = blob_or_none(repo, commit, name)
-        if data is not None:
-            files[name] = data
-    for path, digest in sorted(catalog_pins(catalog).items()):
-        data = blob_or_none(repo, commit, path)
-        if data is None:
-            raise MirrorError(f"{commit}: pinned file missing: {path}")
-        if hashlib.sha256(data).hexdigest() != digest:
-            raise MirrorError(f"{commit}: {path} does not match its pin")
+    for path in paths:
+        if info[path] is None:
+            continue
+        data = git(repo, "cat-file", "blob", f"{commit}:{path}")
+        if path in pins and hashlib.sha256(data).hexdigest() != pins[path]:
+            raise ValidationError(f"{commit}: {path} does not match its pin")
         files[path] = data
-    for path, data in files.items():
-        if len(data) > MAX_FILE_BYTES:
-            raise MirrorError(f"{commit}: {path} exceeds {MAX_FILE_BYTES} bytes")
     return files
 
 
@@ -191,7 +249,7 @@ def build_site(
         for index, commit in enumerate(retained_commits(repo, ref, retention)):
             try:
                 files = commit_files(repo, commit)
-            except MirrorError as exc:
+            except ValidationError as exc:
                 # The head must be publishable. An older commit that is not is dropped
                 # from the window, which only makes the history shorter.
                 if index == 0:

@@ -216,6 +216,67 @@ class BuildRefusalTests(MirrorTestCase):
             build_mirror.blob_or_none(self.repo.path, "HEAD", "providers/demo/provider.py", max_bytes=16)
         self.assertEqual(calls, [])
 
+    def test_a_non_validation_error_on_an_older_commit_fails_the_build(self):
+        self.repo.commit(b"one\n")
+        self.repo.commit(b"two\n")
+        real = build_mirror.commit_files
+        calls = []
+
+        def flaky(repo, commit):
+            calls.append(commit)
+            if len(calls) == 2:
+                raise build_mirror.MirrorError("git exploded")
+            return real(repo, commit)
+
+        build_mirror.commit_files = flaky
+        self.addCleanup(setattr, build_mirror, "commit_files", real)
+        with self.assertRaisesRegex(build_mirror.MirrorError, "git exploded"):
+            self.build()
+
+    def test_a_validation_error_on_an_older_commit_is_skipped(self):
+        self.repo.commit(b"broken\n", catalog=catalog_for({"provider.py": b"expected\n"}))
+        self.repo.commit(b"two\n")
+        self.assertEqual(len(self.build()["main"]["history"]), 1)
+
+    def test_a_pinned_directory_is_a_validation_error(self):
+        catalog = catalog_for({"sub": b"x"}, source_path="providers/demo")
+        self.repo.commit(catalog=catalog)
+        (self.repo.path / "providers/demo/provider.py").unlink()
+        sub = self.repo.path / "providers/demo/sub"
+        sub.mkdir()
+        (sub / "inner").write_text("x")
+        self.repo.git("add", "-A")
+        self.repo.git("commit", "-q", "-m", "dir")
+        with self.assertRaisesRegex(build_mirror.ValidationError, "not a file"):
+            build_mirror.commit_files(self.repo.path, "HEAD")
+
+    def test_excessive_pin_counts_are_refused_before_any_blob_is_read(self):
+        original = build_mirror.MAX_PINS
+        build_mirror.MAX_PINS = 3
+        self.addCleanup(setattr, build_mirror, "MAX_PINS", original)
+        catalog = catalog_for({f"f{i}.py": b"x" for i in range(4)})
+        with self.assertRaisesRegex(build_mirror.ValidationError, "more than 3"):
+            build_mirror.catalog_pins(catalog)
+
+    def test_cumulative_commit_size_is_bounded_from_object_sizes(self):
+        files = {f"f{i}.py": b"x" * 100 for i in range(4)}
+        catalog = catalog_for(files)
+        self.repo.commit(catalog=catalog)
+        for name, data in files.items():
+            (self.repo.path / "providers/demo" / name).write_bytes(data)
+        self.repo.git("add", "-A")
+        self.repo.git("commit", "-q", "-m", "files")
+        original = build_mirror.MAX_COMMIT_BYTES
+        build_mirror.MAX_COMMIT_BYTES = 350
+        self.addCleanup(setattr, build_mirror, "MAX_COMMIT_BYTES", original)
+        calls = []
+        real = build_mirror.git
+        build_mirror.git = lambda *args: calls.append(args) or real(*args)
+        self.addCleanup(setattr, build_mirror, "git", real)
+        with self.assertRaisesRegex(build_mirror.ValidationError, "in total"):
+            build_mirror.commit_files(self.repo.path, "HEAD")
+        self.assertEqual([c for c in calls if c[:2] == ("cat-file", "blob") and "f" in c[2]], [])
+
     def test_file_count_bound(self):
         self.repo.commit()
         with self.assertRaisesRegex(build_mirror.MirrorError, "files"):
@@ -324,16 +385,50 @@ class VerifyTests(MirrorTestCase):
         self.assertEqual(len(errors), 1, errors)
         self.assertIn("out of order", errors[0])
 
-    def test_history_that_skips_a_dropped_commit_is_accepted(self):
+    def test_omitting_a_healthy_commit_is_rejected(self):
         third = self.repo.commit(b"three\n", message="three")
         out = self.tmp / "site3"
         build_mirror.build_site(self.repo.path, out, channels={"main": "main"}, now=NOW, log=self.quiet)
-        history = json.loads((out / "v1/main/current").read_text())["history"]
         path = out / "v1/main/current"
         pointer = json.loads(path.read_text())
-        pointer["history"] = [history[0], history[2]]
+        self.assertEqual(len(pointer["history"]), 3)
+        pointer["history"] = [pointer["history"][0], pointer["history"][2]]
         path.write_text(json.dumps(pointer))
-        self.assertEqual(self.verify(self.site_fetch(out), expected=third), [])
+        errors = self.verify(self.site_fetch(out), expected=third)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("differs from the retained history", errors[0])
+
+    def test_a_pointer_reduced_to_the_head_is_rejected(self):
+        self.rewrite_pointer(history=[self.head])
+        errors = self.verify(expected=self.head)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("missing", errors[0])
+
+    def test_an_extra_entry_beyond_the_window_is_rejected(self):
+        history = json.loads((self.out / "v1/main/current").read_text())["history"]
+        self.rewrite_pointer(history=history + [history[-1]])
+        self.assertEqual(len(self.verify(expected=self.head)), 1)
+
+    def test_a_commit_that_failed_validation_is_legitimately_absent(self):
+        bad = self.repo.commit(b"broken\n", catalog=catalog_for({"provider.py": b"expected\n"}), message="bad")
+        newest = self.repo.commit(b"fine\n", message="fine")
+        out = self.tmp / "site4"
+        pointer = build_mirror.build_site(
+            self.repo.path, out, channels={"main": "main"}, now=NOW, log=self.quiet
+        )["main"]
+        self.assertNotIn(bad, pointer["history"])
+        self.assertEqual(self.verify(self.site_fetch(out), expected=newest), [])
+
+    def test_a_dropped_commit_that_is_healthy_in_git_is_rejected_even_if_published_consistently(self):
+        newest = self.repo.commit(b"fine\n", message="fine")
+        out = self.tmp / "site5"
+        build_mirror.build_site(self.repo.path, out, channels={"main": "main"}, now=NOW, log=self.quiet)
+        path = out / "v1/main/current"
+        pointer = json.loads(path.read_text())
+        dropped = pointer["history"].pop(1)
+        path.write_text(json.dumps(pointer))
+        (out / "v1/main" / dropped / "catalog.json").unlink()
+        self.assertTrue(self.verify(self.site_fetch(out), expected=newest))
 
     def test_a_pointer_that_lags_the_build_fails(self):
         errors = self.verify(expected="a" * 40)
