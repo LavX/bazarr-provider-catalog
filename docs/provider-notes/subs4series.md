@@ -11,7 +11,9 @@
 ## Preserved Behavior
 
 - Searches the legacy `search_report.php?search=<title>&searchType=1` flow.
-- Uses `select[name="Mov_sel"]` suggestions and accepts exact show title or show title plus year.
+- Uses `select[name="Mov_sel"]` suggestions and accepts exact show title or show title plus year. Without an exact match, a title that differs only by a trailing `(US)`-style country or `(2005)`-style year qualifier on either side counts: Subs4Series names `Shameless (US)` where Sonarr may not, and Sonarr names `The Office (US)` where Subs4Series does not. Different countries never match, and a dated site title needs the video's year.
+- Subs4Series lists no IMDb/TVDB ids. When several shows share the title ("The Office" 2005 and 2024), keeps only those whose page-header year is the video's year, or failing that one year off; with no video year, or no show within a year, keeps them all.
+- An episode page that answers 404 means that show lacks the episode; the search continues with the next show of the same title.
 - Builds episode URLs as `/tv-series/<show>/season-<season>/episode-<episode>`.
 - Parses `seeDark` and `seeMedium` subtitle rows.
 - Maps `el.gif` to Greek and `en.gif` to English.

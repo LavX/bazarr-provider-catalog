@@ -343,14 +343,21 @@ class Subs4SeriesProvider:
         if not requested:
             return []
         show_paths = self._find_show_paths(video, config or {})
-        results = []
-        seen = set()
+        pages = []
         for show_path in show_paths:
             episode_url = _episode_url(show_path, video)
             if not episode_url:
                 continue
             _sleep(config)
-            for item in parse_episode_page(self._http_get(episode_url, referer=BASE_URL, config=config)):
+            body = self._episode_page(episode_url, config)
+            if body is None:
+                continue
+            text = _decode(body)
+            pages.append((episode_url, _series_year_from_page(text), parse_episode_page(text)))
+        results = []
+        seen = set()
+        for episode_url, _year, items in _pages_for_year(pages, video.get("year")):
+            for item in items:
                 if item["language"] not in requested:
                     continue
                 key = (item["detail_url"], item["language"])
@@ -359,6 +366,16 @@ class Subs4SeriesProvider:
                 seen.add(key)
                 results.append(self._result(video, item, episode_url))
         return sorted(results, key=lambda result: result["score"], reverse=True)
+
+    def _episode_page(self, episode_url, config):
+        # Shows that share a title ("The Office" 2005 and 2024) need not share seasons: a 404
+        # means this one lacks the episode, and the next show path may still have it.
+        try:
+            return self._http_get(episode_url, referer=BASE_URL, config=config)
+        except Exception as error:
+            if _http_status(error) == 404:
+                return None
+            raise
 
     def download(self, provider_payload, language, config):
         del language
@@ -408,22 +425,23 @@ class Subs4SeriesProvider:
         return extract_download(download_body, provider_payload)
 
     def _find_show_paths(self, video, config):
-        paths = []
-        seen = set()
         for title in _video_titles(video):
             query = urllib.parse.urlencode({"search": title, "searchType": "1"})
             url = f"{SEARCH_URL}?{query}"
             _sleep(config)
-            for suggestion in parse_suggestions(self._http_get(url, referer=BASE_URL, config=config)):
-                if not _title_matches(suggestion["title"], title, video.get("year")):
-                    continue
-                if suggestion["show_path"] in seen:
-                    continue
-                seen.add(suggestion["show_path"])
-                paths.append(suggestion["show_path"])
+            suggestions = parse_suggestions(self._http_get(url, referer=BASE_URL, config=config))
+            # An exact title wins. Only without one does a title differing by a trailing
+            # "(US)" or "(2005)" qualifier count: the site and Sonarr each add one where
+            # the other may not ("Shameless (US)" here, "The Office (US)" in Sonarr).
+            exact = [s for s in suggestions if _title_matches(s["title"], title, video.get("year"))]
+            loose = [
+                s for s in suggestions
+                if _title_matches_without_qualifier(s["title"], title, video.get("year"))
+            ]
+            paths = list(dict.fromkeys(s["show_path"] for s in (exact or loose)))
             if paths:
-                break
-        return paths
+                return paths
+        return []
 
     def _result(self, video, item, episode_url):
         matches = derive_matches(video, item)
@@ -879,6 +897,61 @@ def _episode_url(show_path, video):
     if not path.startswith("tv-series/"):
         path = f"tv-series/{path}"
     return f"{BASE_URL}/{path}/season-{season}/episode-{episode}"
+
+
+def _pages_for_year(pages, video_year):
+    """The shows whose first-air year is the video's, when the title names several.
+
+    Subs4Series lists no IMDb/TVDB ids, so shows sharing a title are told apart by the year in
+    each page's header, the same first-air year Bazarr+ sends for an episode. With no show of
+    that year, those one year off are kept, for a premiere the two sources date differently.
+    With one show, no video year, or no show within a year, every page is kept as before.
+    """
+    year = _safe_int(video_year)
+    if len(pages) < 2 or year is None:
+        return pages
+    same_year = [page for page in pages if page[1] == year]
+    if same_year:
+        return same_year
+    year_off = [page for page in pages if page[1] is not None and abs(page[1] - year) == 1]
+    return year_off or pages
+
+
+_TITLE_QUALIFIER_RE = re.compile(
+    r"^(?P<title>.*?)\s*\(\s*(?:(?P<year>\d{4})|(?P<country>[A-Za-z]{2}))\s*\)\s*$"
+)
+
+
+def _split_title_qualifier(value):
+    """("Shameless", "us", None) for "Shameless (US)", ("Doctor Who", None, 2005) for "Doctor Who (2005)"."""
+    text = _coerce_text(value)
+    match = _TITLE_QUALIFIER_RE.match(text)
+    if not match:
+        return text, None, None
+    country = (match.group("country") or "").lower() or None
+    return match.group("title").strip(), country, _safe_int(match.group("year"))
+
+
+def _title_matches_without_qualifier(candidate, title, year=None):
+    candidate_title, candidate_country, candidate_year = _split_title_qualifier(candidate)
+    video_title, video_country, video_year = _split_title_qualifier(title)
+    candidate_norm = _normalize_title(candidate_title)
+    if not candidate_norm or candidate_norm != _normalize_title(video_title):
+        return False
+    if candidate_country and video_country and candidate_country != video_country:
+        return False
+    if candidate_year is not None:
+        # A site title dated "(2005)" sits beside others of that name: as in _title_matches,
+        # take it only for a video of that very year, never by default.
+        return candidate_year == (video_year or _safe_int(year))
+    return True
+
+
+def _http_status(error):
+    status = getattr(error, "code", None)
+    if status is None:
+        status = getattr(getattr(error, "response", None), "status_code", None)
+    return _safe_int(status)
 
 
 def _title_matches(candidate, title, year=None):
