@@ -78,7 +78,6 @@ _ANCHOR_RE = re.compile(r"<a\b[^>]*>", re.I | re.S)
 _FORM_RE = re.compile(r"<form\b[^>]*>", re.I | re.S)
 _WS_RE = re.compile(r"\s+")
 _NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
-_YEAR_RE = re.compile(r"(?<!\d)((?:19|20)\d{2})(?!\d)")
 # These run on _normalize()d text, where punctuation is a space: "S02-Ep01" reads "s02 ep01".
 _SXXEXX_RE = re.compile(r"\bs0*(?P<season>\d{1,2}) ?ep? ?0*(?P<episode>\d{1,3})\b", re.I)
 _X_EPISODE_RE = re.compile(r"\b0*(?P<season>\d{1,2})x0*(?P<episode>\d{1,3})\b", re.I)
@@ -371,19 +370,6 @@ def parse_episode_page(body):
     return rows
 
 
-def parse_download_target(body):
-    text = _decode(body)
-    target = _direct_download_target(text) or _form_download_target(text)
-    if not target:
-        raise ValueError("subs4series download target was not found")
-    site_key = _captcha_site_key(text)
-    return {
-        "url": _absolute_url(target),
-        "captcha_required": bool(site_key or "g-recaptcha" in text or "grecaptcha" in text),
-        "site_key": site_key,
-    }
-
-
 def extract_download(body, payload=None):
     payload = payload or {}
     # Reject broken responses up front: the download endpoint can answer with an empty
@@ -528,8 +514,8 @@ def derive_matches(video, item, show_matched=False):
     "The Office", or when it was found through an alternative title.
     """
     video = video or {}
-    release = item.get("release_info") if isinstance(item, dict) else item
-    series_title = item.get("series_title", "") if isinstance(item, dict) else ""
+    release = item.get("release_info")
+    series_title = item.get("series_title", "")
     text = f"{series_title} {release}"
     normalized = _normalize(text)
     matches = []
@@ -677,9 +663,6 @@ class Subs4SeriesProvider:
             raise
         return extract_download(download_body, provider_payload)
 
-    def _find_show_paths(self, video, config):
-        return [path for path, _exact in self._find_shows(video, config)]
-
     def _find_shows(self, video, config):
         """(show_path, exact_title) for each show matching the video's title."""
         for title in _video_titles(video):
@@ -818,7 +801,7 @@ class Subs4SeriesProvider:
             if body is None:
                 body = str(getattr(response, "text", "")).encode("utf-8")
             if is_anubis_challenge(getattr(response, "url", ""), getattr(response, "status_code", 0)) or _has_anubis_challenge_body(body):
-                solved = solve_anubis_challenge(scraper, response.url, url, timeout=timeout, deadline=deadline)
+                solved = solve_anubis_challenge(scraper, response.url, timeout=timeout, deadline=deadline)
                 if not solved:
                     raise CloudflareBlockedError("subs4series Anubis challenge could not be solved")
                 response = scraper.get(url, headers=headers, timeout=_request_timeout(timeout, deadline, "resource_refetch"))
@@ -866,7 +849,7 @@ class Subs4SeriesProvider:
             raise CloudflareBlockedError(
                 "subs4series hit a Cloudflare block and no FlareSolverr URL is configured"
             )
-        timeout_ms = _flaresolverr_timeout_ms(config, timeout)
+        timeout_ms = _flaresolverr_timeout_ms(config)
         payload = {
             "cmd": "request.get",
             "url": url,
@@ -1080,8 +1063,7 @@ def _budget_sleep(seconds, deadline, stage):
     time.sleep(seconds)
 
 
-def solve_anubis_challenge(session, challenge_url, original_url, timeout=HTTP_TIMEOUT_SECONDS, deadline=None):
-    del original_url
+def solve_anubis_challenge(session, challenge_url, timeout=HTTP_TIMEOUT_SECONDS, deadline=None):
     if deadline is None:
         deadline = time.monotonic() + SITE_CALL_BUDGET_SECONDS
     parsed = urllib.parse.urlparse(challenge_url)
@@ -1172,8 +1154,7 @@ def _flaresolverr_url(config):
     return str((config or {}).get("flaresolverr_url") or "").strip()
 
 
-def _flaresolverr_timeout_ms(config, request_timeout=None):
-    del request_timeout
+def _flaresolverr_timeout_ms(config):
     try:
         timeout = int((config or {}).get("flaresolverr_timeout_ms") or DEFAULT_FLARESOLVERR_TIMEOUT_MS)
     except (TypeError, ValueError):
@@ -1219,7 +1200,7 @@ def _video_titles(video):
     seen = set()
     unique = []
     for title in titles:
-        normalized = _normalize_title(title)
+        normalized = _normalize(title)
         if normalized and normalized not in seen:
             seen.add(normalized)
             unique.append(title)
@@ -1301,8 +1282,8 @@ def _split_title_qualifier(value):
 def _title_matches_without_qualifier(candidate, title, year=None):
     candidate_title, candidate_country, candidate_year = _split_title_qualifier(candidate)
     video_title, video_country, video_year = _split_title_qualifier(title)
-    candidate_norm = _normalize_title(candidate_title)
-    if not candidate_norm or candidate_norm != _normalize_title(video_title):
+    candidate_norm = _normalize(candidate_title)
+    if not candidate_norm or candidate_norm != _normalize(video_title):
         return False
     if candidate_country and video_country and candidate_country != video_country:
         return False
@@ -1339,9 +1320,9 @@ def _title_aliases(value):
 
 
 def _title_matches(candidate, title, year=None):
-    title_norm = _normalize_title(title)
+    title_norm = _normalize(title)
     for alias in _title_aliases(candidate):
-        candidate_norm = _normalize_title(alias)
+        candidate_norm = _normalize(alias)
         if candidate_norm == title_norm or (year and candidate_norm == f"{title_norm} {year}"):
             return True
     return False
@@ -1535,10 +1516,6 @@ def _coerce_text(value):
 def _normalize(value):
     value = unicodedata.normalize("NFKD", _coerce_text(value)).encode("ascii", "ignore").decode("ascii")
     return _NON_ALNUM_RE.sub(" ", value.lower()).strip()
-
-
-def _normalize_title(value):
-    return _normalize(value)
 
 
 def _tokens(value):

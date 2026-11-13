@@ -873,7 +873,7 @@ class Subs4SeriesProviderTests(unittest.TestCase):
             return suggestions_html
 
         provider._http_get = stub
-        return provider._find_show_paths({"kind": "episode", **video}, {}), calls
+        return [path for path, _exact in provider._find_shows({"kind": "episode", **video}, {})], calls
 
     def test_find_show_paths_takes_a_site_title_with_a_country_qualifier(self):
         html = b'<select name="Mov_sel"><option value="/tv-series/shameless-us/s8a71806125">Shameless (US)</option></select>'
@@ -1332,8 +1332,8 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         )
         solved_calls = []
 
-        def fake_solve(active_scraper, challenge_url, original_url, timeout, deadline=None):
-            solved_calls.append((active_scraper, challenge_url, original_url, timeout, deadline - time.monotonic()))
+        def fake_solve(active_scraper, challenge_url, timeout, deadline=None):
+            solved_calls.append((active_scraper, challenge_url, timeout, deadline - time.monotonic()))
             return {"techaro.lol-anubis-auth": "ok"}
 
         with patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), patch.object(
@@ -1359,11 +1359,7 @@ class Subs4SeriesProviderTests(unittest.TestCase):
             "https://www.subs4series.com/.within.website/?redir=/search_report.php",
         )
         # The solve gets the call's 60 s budget, not a fresh one.
-        self.assertTrue(55 < solved_calls[0][4] <= self.mod.SITE_CALL_BUDGET_SECONDS)
-        self.assertEqual(
-            solved_calls[0][2],
-            "https://www.subs4series.com/search_report.php?search=Game+of+Thrones&searchType=1",
-        )
+        self.assertTrue(55 < solved_calls[0][3] <= self.mod.SITE_CALL_BUDGET_SECONDS)
 
     def test_http_get_solves_anubis_body_before_retrying_original_url(self):
         provider = self.mod.Subs4SeriesProvider()
@@ -1384,8 +1380,8 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         )
         solved_calls = []
 
-        def fake_solve(active_scraper, challenge_url, original_url, timeout, deadline=None):
-            solved_calls.append((active_scraper, challenge_url, original_url, timeout, deadline - time.monotonic()))
+        def fake_solve(active_scraper, challenge_url, timeout, deadline=None):
+            solved_calls.append((active_scraper, challenge_url, timeout, deadline - time.monotonic()))
             return {"techaro.lol-anubis-auth": "ok"}
 
         with patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), patch.object(
@@ -1402,10 +1398,6 @@ class Subs4SeriesProviderTests(unittest.TestCase):
             solved_calls[0][1],
             "https://www.subs4series.com/search_report.php?search=Game+of+Thrones&searchType=1",
         )
-        self.assertEqual(
-            solved_calls[0][2],
-            "https://www.subs4series.com/search_report.php?search=Game+of+Thrones&searchType=1",
-        )
 
     def test_anubis_proof_of_work_stops_at_the_call_budget(self):
         page = FakeScraperResponse(
@@ -1416,7 +1408,7 @@ class Subs4SeriesProviderTests(unittest.TestCase):
 
         with self.assertRaisesRegex(self.mod.ServiceUnavailable, "proof_of_work"):
             self.mod.solve_anubis_challenge(
-                session, "https://www.subs4series.com/.within.website/?redir=/", "https://www.subs4series.com/", deadline=started + 0.2
+                session, "https://www.subs4series.com/.within.website/?redir=/", deadline=started + 0.2
             )
 
         self.assertLess(time.monotonic() - started, 5)
@@ -1430,7 +1422,7 @@ class Subs4SeriesProviderTests(unittest.TestCase):
 
         with patch.object(self.mod.time, "sleep", side_effect=sleeps.append):
             with self.assertRaisesRegex(self.mod.ServiceUnavailable, "pass_submit"):
-                self.mod.solve_anubis_challenge(session, "https://www.subs4series.com/.within.website/?redir=/", "https://www.subs4series.com/")
+                self.mod.solve_anubis_challenge(session, "https://www.subs4series.com/.within.website/?redir=/")
 
         self.assertEqual(sleeps, [])
         self.assertEqual(len(session.calls), 1)
@@ -1442,7 +1434,7 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         session = _AnubisSession([page, FakeScraperResponse(200, {}, b"ok")])
 
         self.mod.solve_anubis_challenge(
-            session, "https://www.subs4series.com/.within.website/?redir=/", "https://www.subs4series.com/", deadline=time.monotonic() + 3
+            session, "https://www.subs4series.com/.within.website/?redir=/", deadline=time.monotonic() + 3
         )
 
         self.assertEqual(len(session.calls), 2)
