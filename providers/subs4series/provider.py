@@ -82,8 +82,14 @@ _YEAR_RE = re.compile(r"(?<!\d)((?:19|20)\d{2})(?!\d)")
 # These run on _normalize()d text, where punctuation is a space: "S02-Ep01" reads "s02 ep01".
 _SXXEXX_RE = re.compile(r"\bs0*(?P<season>\d{1,2}) ?ep? ?0*(?P<episode>\d{1,3})\b", re.I)
 _X_EPISODE_RE = re.compile(r"\b0*(?P<season>\d{1,2})x0*(?P<episode>\d{1,3})\b", re.I)
+# "Season 1 Episode 01", and "Season1-Episode12" as the site's older uploads write it.
 _SEASON_EPISODE_WORDS_RE = re.compile(
-    r"\bseason 0*(?P<season>\d{1,2}) (?:episode|ep) 0*(?P<episode>\d{1,3})\b", re.I
+    r"\bseason ?0*(?P<season>\d{1,2}) (?:episode|ep) ?0*(?P<episode>\d{1,3})\b", re.I
+)
+# The second episode of a double episode, "S01E24-25" or "Episode24,25". This one runs on the
+# raw lowercased name: normalized, "S01E05 720p" would read like a double episode too.
+_DOUBLE_EPISODE_RE = re.compile(
+    r"(?:e|ep|episode|x)[\s._]*0*(?P<first>\d{1,3})\s*[-,&]\s*(?:e|ep|episode)?[\s._]*0*(?P<last>\d{1,3})(?!\d)"
 )
 _META_REFRESH_RE = re.compile(
     r"""<meta\s+http-equiv=["']refresh["']\s+content=["'](?P<delay>\d+);\s*url=(?P<url>[^"']+)["']""",
@@ -484,10 +490,14 @@ def _member_matches_episode(name, season, episode):
     # stops the "s" of a title word (e.g. "Originals1E02") from being read as the season
     # marker -- without it a placeholder member is pinned and the host hard-fails or
     # delivers the wrong subtitle.
+    # "S01 EP01" is how one season pack's members are named.
     text = (name or "").lower()
-    if re.search(rf"(?<![a-z0-9])s0*{season}[\s._-]*e0*{episode}(?!\d)", text):
+    if re.search(rf"(?<![a-z0-9])s0*{season}[\s._-]*e(?:p[\s._-]*)?0*{episode}(?!\d)", text):
         return True
     if re.search(rf"(?<![a-z0-9]){season}x0*{episode}(?!\d)", text):
+        return True
+    # The second episode of a double episode, "S01E24-25".
+    if _season_episodes(name) == (season, (episode - 1, episode)):
         return True
     # Whole-token NNN form (e.g. S07E20 written as "720"): compare against delimited tokens
     # so "720" never matches inside "720p" and "264" never matches "x264".
@@ -497,7 +507,7 @@ def _member_matches_episode(name, season, episode):
 
 def _member_has_episode_marker(name):
     text = (name or "").lower()
-    if re.search(r"s\d{1,2}[\s._-]*e\d{1,3}", text) or re.search(r"(?<!\d)\d{1,2}x\d{1,3}", text):
+    if re.search(r"s\d{1,2}[\s._-]*e(?:p[\s._-]*)?\d{1,3}", text) or re.search(r"(?<!\d)\d{1,2}x\d{1,3}", text):
         return True
     return any(token.isdigit() and len(token) == 3 for token in _tokens(name))
 
@@ -526,7 +536,7 @@ def derive_matches(video, item, show_matched=False):
     series_tokens = _tokens(video.get("series"))
     if show_matched or (series_tokens and all(token in normalized.split() for token in series_tokens)):
         matches.append("series")
-    season, episode = _episode_markers(normalized)
+    season, episodes = _season_episodes(text)
     try:
         video_season = int(video.get("season"))
         video_episode = int(video.get("episode"))
@@ -534,7 +544,8 @@ def derive_matches(video, item, show_matched=False):
         video_season = video_episode = None
     if video_season is not None and season == video_season:
         matches.append("season")
-    if video_episode is not None and episode == video_episode:
+    # A double episode, "S01E24-25", is a subtitle of both.
+    if video_episode is not None and video_episode in episodes:
         matches.append("episode")
     title_tokens = _tokens(video.get("title"))
     if title_tokens and all(token in normalized.split() for token in title_tokens):
@@ -1543,12 +1554,21 @@ def _normalize_release_group(value):
     return re.sub(r"[^a-z0-9]+", "", (_coerce_text(value) or "").lower())
 
 
-def _episode_markers(normalized):
+def _season_episodes(name):
+    """(season, episodes) of a release or file name, or (None, ()) without an episode marker.
+
+    A double episode gives both: "S01E24-25" is (1, (24, 25)).
+    """
+    normalized = _normalize(name)
     for pattern in (_SXXEXX_RE, _X_EPISODE_RE, _SEASON_EPISODE_WORDS_RE):
-        match = pattern.search(normalized or "")
+        match = pattern.search(normalized)
         if match:
-            return int(match.group("season")), int(match.group("episode"))
-    return None, None
+            season, episode = int(match.group("season")), int(match.group("episode"))
+            for double in _DOUBLE_EPISODE_RE.finditer((_coerce_text(name) or "").lower()):
+                if int(double.group("first")) == episode and int(double.group("last")) == episode + 1:
+                    return season, (episode, episode + 1)
+            return season, (episode,)
+    return None, ()
 
 
 def _matches_token(value, normalized_text):
