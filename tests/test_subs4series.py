@@ -306,25 +306,58 @@ class Subs4SeriesParserTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
 
-    def test_episode_markers_read_the_release_name_forms_the_site_uses(self):
+    def test_season_episodes_read_the_release_name_forms_the_site_uses(self):
         cases = {
-            "Breaking Bad S01E02 720p": (1, 2),
-            "The Office 2x01 - Pilot": (2, 1),
+            "Showname S01E02 720p": (1, (2,)),
+            "Showname 2x01 - Pilot": (2, (1,)),
             # Both seen live, where they used to score 75 instead of 100.
-            "The office(BBC) S02-Ep01": (2, 1),
-            "Breaking Bad Season 1 Episode 01 - Pilot-gre": (1, 1),
-            "Lost S03 E10 HDTV": (3, 10),
-            "Lost S3.Ep.10": (3, 10),
-            "Lost season 3 ep 10": (3, 10),
+            "Showname(BBC) S02-Ep01": (2, (1,)),
+            "Showname Season 1 Episode 01 - Pilot-gre": (1, (1,)),
+            "Showname S03 E10 HDTV": (3, (10,)),
+            "Showname S3.Ep.10": (3, (10,)),
+            "Showname season 3 ep 10": (3, (10,)),
+            # Seen live on a season 1 listing.
+            "Showname Season1-Episode12": (1, (12,)),
+            "Showname S01E24-25 - Finale (2) - HDTV": (1, (24, 25)),
+            "Showname Season1-Episode24,25-part2,3": (1, (24, 25)),
+            "Showname 3x17-18": (3, (17, 18)),
+            "Showname S01E0 -  - 1080p-GRP": (1, (0,)),
         }
         for release, expected in cases.items():
             with self.subTest(release=release):
-                self.assertEqual(self.mod._episode_markers(self.mod._normalize(release)), expected)
+                self.assertEqual(self.mod._season_episodes(release), expected)
 
-    def test_episode_markers_ignore_numbers_that_are_not_an_episode(self):
-        for release in ("Breaking Bad 1080p x264 DDP5 1", "Breaking Bad Season 1 Complete", "Seasons 1080p", "Sons 2 Ep"):
+    def test_season_episodes_ignore_numbers_that_are_not_an_episode(self):
+        for release in ("Showname 1080p x264 DDP5 1", "Showname Season 1 Complete", "Seasons 1080p", "Sons 2 Ep"):
             with self.subTest(release=release):
-                self.assertEqual(self.mod._episode_markers(self.mod._normalize(release)), (None, None))
+                self.assertEqual(self.mod._season_episodes(release), (None, ()))
+
+    def test_season_episodes_take_no_second_episode_from_other_numbers(self):
+        cases = {
+            "Showname S01E05-720p": (1, (5,)),
+            "Showname S01E05 - 1080p": (1, (5,)),
+            "Showname S01E05 - 2 Parts": (1, (5,)),
+            "Showname S01E05 DDP5.1": (1, (5,)),
+            "Showname S01E05-07": (1, (5,)),
+        }
+        for release, expected in cases.items():
+            with self.subTest(release=release):
+                self.assertEqual(self.mod._season_episodes(release), expected)
+
+    def test_derive_matches_counts_a_double_episode_for_both_episodes(self):
+        video = {"series": "Showname", "season": 1}
+        release = {"release_info": "Showname S01E24-25 - Finale (2) - HDTV"}
+        for episode in (24, 25):
+            with self.subTest(episode=episode):
+                self.assertTrue({"series", "season", "episode"}.issubset(self.mod.derive_matches({**video, "episode": episode}, release)))
+        self.assertNotIn("episode", self.mod.derive_matches({**video, "episode": 26}, release))
+        self.assertNotIn("season", self.mod.derive_matches({**video, "season": 2, "episode": 25}, release))
+
+    def test_derive_matches_reads_the_season_and_episode_words_without_spaces(self):
+        matches = self.mod.derive_matches(
+            {"series": "Showname", "season": 1, "episode": 12}, {"release_info": "Showname Season1-Episode12"}
+        )
+        self.assertTrue({"series", "season", "episode"}.issubset(matches))
 
     def test_parse_suggestions_extracts_show_paths(self):
         rows = self.mod.parse_suggestions(SUGGESTIONS_HTML)
@@ -530,6 +563,39 @@ class Subs4SeriesParserTests(unittest.TestCase):
         self.assertNotEqual(payload.get("member"), "The.Originals1E02.placeholder.srt")
         self.assertNotIn("member", payload)
         self.assertEqual(payload["episode"], 2)
+
+    def test_extract_download_reads_the_ep_form_of_a_season_pack(self):
+        # The members of a live "S01E0" pack, named "S01 EP01" to "S01 EP25".
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            for number in range(1, 26):
+                archive.writestr(f"Showname S01 EP{number:02d} 1080p BluRay DTS x264-GRP.srt", f"1\r\nepisode {number}\r\n")
+        payload = {"season": 1, "episode": 1, "release_info": "Showname S01E0 - - 1080p-GRP"}
+
+        self.assertEqual(
+            self.mod.extract_download(stream.getvalue(), payload)["member"],
+            "Showname S01 EP01 1080p BluRay DTS x264-GRP.srt",
+        )
+        payload["episode"] = 12
+        self.assertEqual(
+            self.mod.extract_download(stream.getvalue(), payload)["member"],
+            "Showname S01 EP12 1080p BluRay DTS x264-GRP.srt",
+        )
+        # Episode 26 is not in the pack: defer, and the host fails the download.
+        payload["episode"] = 26
+        self.assertNotIn("member", self.mod.extract_download(stream.getvalue(), payload))
+
+    def test_extract_download_pins_a_double_episode_member_for_either_episode(self):
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("Showname.S01E23.HDTV.srt", "1\nsub\n")
+            archive.writestr("Showname.S01E24-25.HDTV.srt", "1\nsub\n")
+            archive.writestr("Showname.S02E25.HDTV.srt", "1\nsub\n")
+        payload = {"season": 1, "release_info": "Showname S01 HDTV"}
+        for episode in (24, 25):
+            with self.subTest(episode=episode):
+                member = self.mod.extract_download(stream.getvalue(), {**payload, "episode": episode})["member"]
+                self.assertEqual(member, "Showname.S01E24-25.HDTV.srt")
 
     def test_extract_download_rar_defers_to_host_episode_path(self):
         # RAR is not stdlib-listable: always fall back to the host episode path.

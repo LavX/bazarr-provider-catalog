@@ -21,6 +21,7 @@
 - An episode page that answers 404 means that show lacks the episode; the search continues with the next show of the same title.
 - Builds episode URLs as `/tv-series/<show>/season-<season>/episode-<episode>`.
 - Parses `seeDark` and `seeMedium` subtitle rows.
+- Reads the season and episode from release and zip member names in every form seen on the site: `S01E01`, `S02-Ep01`, `S01 EP01` (zip members of a season pack), `3x17`, `Season 1 Episode 01` and `Season1-Episode12` (older uploads). A double episode such as `S01E24-25` or `Episode24,25` counts for both episodes.
 - Maps `el.gif` to Greek and `en.gif` to English.
 - Preserves uploader, download count, year, release info, and episode scoring signals.
 - Runs the same anti-block endpoints before posting the download request.
