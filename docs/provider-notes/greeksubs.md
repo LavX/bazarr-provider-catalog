@@ -6,6 +6,7 @@ GreekSubs.net is a Greek-only movie and episode subtitle source. It is not the s
 
 - Looks up movie pages by movie IMDb id at `/en/view/<ttid>`.
 - Looks up episode pages through the series IMDb page and the matching Season/Episode link.
+- Every result therefore matches the video's title or series, whatever the page calls it. The site can title a page in another language, such as French `Derrière les barreaux` for `Vis a vis`, which Sonarr calls `Locked Up`.
 - GreekSubs.net answers `404` for a title or episode it does not carry. The search returns no results for it rather than failing, since the SDK counts a valid empty response as a success. Any other HTTP error still fails the search.
 - Extracts `secCode` and one-use subtitle ids from the page before building `/dll/<subtitle_id>/0/<secCode>` download URLs.
 - A `secCode` is single-use and bound to the `PHPSESSID` session that loaded the page. A valid one makes the `/dll/` GET serve the subtitle file itself (`Content-Disposition: attachment`); a used or foreign-session one gets a 302 to the home page. The gate GET does not follow redirects, so that refusal is recognized.

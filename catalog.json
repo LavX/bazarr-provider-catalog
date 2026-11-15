@@ -1553,7 +1553,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "ba68d900d0414d056a8f3e876a03fac0035cbb9f5c3ca5768b97a3d0730941b1",
+        "bundle_sha256": "780702e48c74223522c6484741b66c63d960e8b40643a81ee98d06baae8281a2",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1583,7 +1583,7 @@
         "entry_class": "GreekSubsProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "1856ce48cad11b1221002ebac186c856fbfe88a7da06797defbd3eba429f4698"
+          "provider.py": "851e9f9f56f7a0bf9c7b5e9c03d0052b12aa9a20b5681a6c0c724ea96ee6e058"
         },
         "languages": [
           "ell"

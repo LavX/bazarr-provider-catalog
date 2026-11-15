@@ -156,6 +156,26 @@ class GreekSubsProviderTests(unittest.TestCase):
         self.assertIn("season", results[0]["matches"])
         self.assertIn("episode", results[0]["matches"])
 
+    def test_episode_matches_the_series_by_imdb_id_whatever_its_title(self):
+        # Sonarr sends "Locked Up"; the site titles the page in French and the release "Vis.a.vis".
+        matches = self.mod._derive_matches(
+            {"kind": "episode", "series": "Locked Up", "series_imdb_id": "tt4524056", "season": 4, "episode": 1},
+            "Derrière les barreaux: La Barbie | Season 4 | Episode 1",
+            "Vis.a.vis.4x01.(Spa).HDTV.720.x265-10bit",
+        )
+
+        self.assertEqual(matches[:3], ["series", "season", "episode"])
+
+    def test_movie_matches_the_title_by_imdb_id_whatever_its_title(self):
+        matches = self.mod._derive_matches(
+            {"kind": "movie", "title": "The Motorcycle Diaries", "imdb_id": "tt0318462", "year": 2004},
+            "Diarios de motocicleta (2004)",
+            "Diarios.de.motocicleta.2004.DVDRip.XviD",
+        )
+
+        self.assertIn("title", matches)
+        self.assertIn("year", matches)
+
     def test_search_requires_greek_language_and_imdb_id(self):
         provider = self.mod.GreekSubsProvider()
         provider._http_request = lambda *args, **kwargs: (_ for _ in ()).throw(

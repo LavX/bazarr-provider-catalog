@@ -475,19 +475,18 @@ def _derive_matches(video, page_title, release):
     video = video or {}
     haystack = f"{page_title} {release}"
     tokens = set(_tokens(haystack))
+    # Every page comes from the video's IMDb id, so it is the video's movie or series even
+    # when its title is not the one Bazarr+ sends: the site titles "Vis a vis" (Sonarr's
+    # "Locked Up") in French, "Derrière les barreaux", and its releases "Vis.a.vis".
     matches = []
     if video.get("kind") == "movie":
-        title_tokens = _tokens(video.get("title"))
-        if title_tokens and all(token in tokens for token in title_tokens):
-            matches.append("title")
+        matches.append("title")
         year = video.get("year")
         if year and str(year) in tokens:
             matches.append("year")
         _append_release_match(matches, video, release)
     elif video.get("kind") == "episode":
-        series_tokens = _tokens(video.get("series"))
-        if series_tokens and all(token in tokens for token in series_tokens):
-            matches.append("series")
+        matches.append("series")
         season_episode = _season_episode_markers(haystack)
         try:
             expected = (int(video.get("season")), int(video.get("episode")))
