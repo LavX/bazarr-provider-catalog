@@ -1,13 +1,24 @@
 """Subs4Free provider for the Bazarr+ Provider Hub catalog."""
 
 import base64
+import contextlib
+import contextvars
+import datetime
+import email.utils
 import hashlib
 import html
+import http.client
 import io
+import json
+import logging
+import math
 import random
 import re
+import socket
+import threading
 import time
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -16,17 +27,34 @@ from http.cookiejar import CookieJar
 import ua_generator
 from ua_generator.options import Options
 
+logger = logging.getLogger(__name__)
+
 PROVIDER_ID = "subs4free"
 BASE_URL = "https://www.subs4free.info"
+# The host whose Anubis clearance cookie the search, detail and getSub.php calls need.
+# Only a failed gate here renews the identity; other subs4free.info hosts do not.
+_SITE_HOST = urllib.parse.urlparse(BASE_URL).hostname
 SEARCH_URL = f"{BASE_URL}/search_report.php"
 DOWNLOAD_URL = f"{BASE_URL}/getSub.php"
-ANTI_BLOCK_URLS = (
-    "https://images.subs4free.info/favicon.ico",
-    "https://www.subs4series.com/includes/anti-block-layover.php?launch=1",
-    "https://www.subs4series.com/includes/anti-block.php",
-)
 HTTP_TIMEOUT_SECONDS = 15
-MAX_CANDIDATES_PER_QUERY = 20
+# subs4free.info sits behind Anubis (itself behind Cloudflare). Every page answers 200 with
+# a proof-of-work challenge until the session holds a *-anubis-auth cookie. Solve inline,
+# and on a failed solve renew the browser identity (UA + cookies) before trying again.
+CHALLENGE_RETRY_ATTEMPTS = 3
+# One site call, all attempts, solves and backoff included. Running out aborts the call;
+# it is never retried.
+SITE_CALL_BUDGET_SECONDS = 60
+# One search or download, every site call and request delay included, gets the
+# operation_timeout_seconds config value. The host reads every *_timeout_seconds key and
+# gives the worker that much plus 30 s (and never less than its own worker timeout), so
+# the provider stops first and reports ServiceUnavailable, instead of the host killing the
+# worker and backing the provider off for an hour. A search that runs out after finding
+# results returns them.
+DEFAULT_OPERATION_TIMEOUT_SECONDS = 90
+MIN_OPERATION_TIMEOUT_SECONDS = 30
+MAX_OPERATION_TIMEOUT_SECONDS = 600
+RETRY_BACKOFF_SECONDS = 0.5
+ANUBIS_PASS_PATH = "/.within.website/x/cmd/anubis/api/pass-challenge"
 SUPPORTED_LANGUAGES = {
     "ell": "el",
     "eng": "en",
@@ -59,6 +87,21 @@ _IMAGE_INPUT_RE = re.compile(
     r"<input\b(?=[^>]*\btype=[\"']image[\"'])[^>]*>",
     re.I | re.S,
 )
+_META_REFRESH_RE = re.compile(
+    r"""<meta\s+http-equiv=["']refresh["']\s+content=["'](?P<delay>\d+);\s*url=(?P<url>[^"']+)["']""",
+    re.I,
+)
+_ANUBIS_CHALLENGE_MARKER_RE = re.compile(
+    r"""<script\b[^>]*\bid\s*=\s*["']anubis_challenge["']""", re.I
+)
+_ANUBIS_CHALLENGE_RE = re.compile(
+    r"""<script\s+id=["']anubis_challenge["'][^>]*>\s*(?P<json>.*?)\s*</script>""",
+    re.I | re.S,
+)
+# getSub.php answers a flagged client with "Refresh timorias [1]" or "Polla alla isxiei
+# timoria..." (Greeklish for "punishment"): an anti-flood penalty on the client IP.
+_PENALTY_RE = re.compile(rb"^(?:Refresh\s+timorias\b|Polla\s+alla\s+isxiei\s+timoria\b)", re.I)
+_PENALTY_BODY_MAX_BYTES = 512
 _YEAR_RE = re.compile(r"(?<!\d)((?:19|20)\d{2})(?!\d)")
 _NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
 
@@ -141,12 +184,26 @@ def parse_download_form(body):
     }
 
 
+class APIThrottled(Exception):
+    """subs4free refused the download because of its anti-flood penalty.
+
+    The penalty is short (it cleared within minutes in live checks), so this is a rate
+    limit rather than a quota. The worker maps this class name onto the host's counted
+    APIThrottled: the provider sits out the current run, and repeated refusals pause it
+    for 10 minutes by default.
+    """
+
+
 def extract_download(body, payload=None):
     payload = payload or {}
     # Reject broken responses: getSub.php can answer with an empty stream or an HTML/error
     # page that otherwise looks like a successful download.
     if not body or not body.strip():
         raise ValueError("subs4free returned an empty download")
+    if _is_refused_download(body):
+        raise APIThrottled(
+            "subs4free refused the download: the site's anti-flood penalty is active for this IP"
+        )
     if _is_html_body(body):
         raise ValueError("subs4free returned an HTML/error page instead of a subtitle")
     if _is_archive_body(body):
@@ -222,6 +279,21 @@ def _is_archive_body(body):
     return _is_rar_archive(body) or zipfile.is_zipfile(io.BytesIO(body or b""))
 
 
+def _is_refused_download(body):
+    # A refused download is a 302 from getSub.php back to the subtitle's detail page. Its
+    # short body names the penalty; once the redirect is followed the response is that
+    # detail page, which still carries the getSub.php form. Archives are never refusals,
+    # and only the site's short refusal messages count, so subtitle dialogue is safe.
+    if _is_archive_body(body):
+        return False
+    if len(body) <= _PENALTY_BODY_MAX_BYTES and _PENALTY_RE.search(body.lstrip()):
+        return True
+    if not _is_html_body(body):
+        return False
+    text = _decode(body)
+    return "getSub.php" in text and _ID_INPUT_RE.search(text) is not None
+
+
 def _is_html_body(body):
     if not body:
         return False
@@ -271,16 +343,306 @@ def compute_score(video, item):
     return 60
 
 
+class Subs4FreeError(RuntimeError):
+    """Base class for Subs4Free failures."""
+
+
+class RateLimited(Subs4FreeError):
+    """The upstream service asked the caller to slow down.
+
+    retry_after is the site's Retry-After in seconds, when it sent a usable one. The
+    worker passes it to the host, which keeps the provider out at least that long.
+    """
+
+    def __init__(self, message, retry_after=None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+def _retry_after_seconds(value):
+    # Retry-After is either delta-seconds or an HTTP-date (RFC 9110, section 10.2.3).
+    # Anything unparseable, non-finite, or already past is ignored.
+    value = (value or "").strip()
+    if not value:
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            when = email.utils.parsedate_to_datetime(value)
+        except (TypeError, ValueError, IndexError):
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=datetime.timezone.utc)
+        seconds = (when - datetime.datetime.now(datetime.timezone.utc)).total_seconds()
+    if not math.isfinite(seconds) or seconds <= 0:
+        return None
+    return seconds
+
+
+class ServiceUnavailable(Subs4FreeError):
+    """The upstream service is not currently usable."""
+
+    # Set when the provider's own time budget ran out. The host only sees the class name,
+    # so this never crosses the worker boundary; search uses it to keep partial results.
+    budget_exhausted = False
+
+
+def _budget_exhausted(stage):
+    error = ServiceUnavailable(f"subs4free stage={stage} budget_exhausted")
+    error.budget_exhausted = True
+    return error
+
+
+def is_anubis_challenge(url, status_code=0):
+    return "/.within.website/" in (url or "") or (
+        status_code in (307, 401, 403) and ".within.website" in (url or "")
+    )
+
+
+def _extract_anubis_challenge(html_text):
+    meta_match = _META_REFRESH_RE.search(html_text or "")
+    if meta_match and "/.within.website/" in meta_match.group("url"):
+        return {
+            "method": "metarefresh",
+            "redirect_url": html.unescape(meta_match.group("url")),
+            "delay": int(meta_match.group("delay")),
+            "difficulty": 0,
+        }
+    match = _ANUBIS_CHALLENGE_RE.search(html_text or "")
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group("json"))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    challenge = data.get("challenge")
+    if isinstance(challenge, str):
+        # Older Anubis builds publish the random data as a bare string, with the id (if
+        # any) at the top level and the policy only under "rules".
+        challenge = {"id": data.get("id") or challenge, "randomData": challenge}
+    if not isinstance(challenge, dict) or "randomData" not in challenge or "id" not in challenge:
+        return None
+    if any(not isinstance(challenge[key], str) or not challenge[key] for key in ("id", "randomData")):
+        return None
+    # Anubis >= 1.2x also publishes the policy under "rules"; older builds only carry the
+    # values on the challenge itself.
+    rules = data.get("rules") if isinstance(data.get("rules"), dict) else {}
+    try:
+        difficulty = int(challenge.get("difficulty", rules.get("difficulty", 4)))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if difficulty < 0:
+        return None
+    method = (
+        challenge.get("method")
+        or challenge.get("algorithm")
+        or rules.get("method")
+        or rules.get("algorithm")
+        or "fast"
+    )
+    return {
+        "id": challenge["id"],
+        "randomData": challenge["randomData"],
+        "difficulty": difficulty,
+        "method": method,
+    }
+
+
+def _solve_pow(random_data, difficulty, deadline=None):
+    prefix = "0" * difficulty
+    nonce = 0
+    while True:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise _budget_exhausted("proof_of_work")
+        digest = hashlib.sha256(f"{random_data}{nonce}".encode("utf-8")).hexdigest()
+        if digest.startswith(prefix):
+            return nonce, digest
+        nonce += 1
+
+
+def _solve_preact(random_data, difficulty):
+    return hashlib.sha256(random_data.encode("utf-8")).hexdigest(), difficulty * 0.125
+
+
+def _is_anubis_response(url, status_code, body):
+    text = _decode(body[:65536] if isinstance(body, bytes) else body)
+    return bool(
+        is_anubis_challenge(url, status_code)
+        or _ANUBIS_CHALLENGE_MARKER_RE.search(text)
+        or _extract_anubis_challenge(text)
+    )
+
+
+def _renews_identity(url):
+    return (urllib.parse.urlparse(url or "").hostname or "").lower() == _SITE_HOST
+
+
+def _remaining(deadline, stage):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise _budget_exhausted(stage)
+    return remaining
+
+
+def _request_timeout(timeout, deadline, stage):
+    return min(timeout, _remaining(deadline, stage))
+
+
+def _budget_sleep(seconds, deadline, stage):
+    if seconds >= _remaining(deadline, stage):
+        raise _budget_exhausted(stage)
+    time.sleep(seconds)
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    # The pass endpoint answers 302 with the auth cookie. Keep that response (the cookie
+    # processor has already stored the cookie) instead of following it to the resource.
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+class _DeadlineWatch:
+    """Cut every socket of a site call at its deadline, including after TLS wraps it.
+
+    A socket timeout only limits inactivity. Duplicates keep the same underlying
+    connection reachable while urllib reads trickling headers, bodies or redirects.
+    DNS lookup itself is not interruptible; connect checks the deadline when it returns.
+    """
+
+    def __init__(self, deadline):
+        self.deadline = deadline
+        self.fired = False
+        self._done = False
+        self._cutters = []
+        self._lock = threading.Lock()
+        self._timer = threading.Timer(_remaining(deadline, "request"), self.cut)
+        self._timer.name = "subs4free-deadline"
+        self._timer.daemon = True
+        self._timer.start()
+
+    def add(self, sock):
+        cutter = sock.dup()
+        with self._lock:
+            if not self.fired:
+                self._cutters.append(cutter)
+                return
+        cutter.close()
+        raise _budget_exhausted("connect")
+
+    def cut(self):
+        with self._lock:
+            if self._done:
+                return
+            self.fired = True
+            for cutter in self._cutters:
+                try:
+                    cutter.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+    def finish(self):
+        self._timer.cancel()
+        with self._lock:
+            self._done = True
+            expired = self.fired or time.monotonic() >= self.deadline
+            cutters, self._cutters = self._cutters, []
+        for cutter in cutters:
+            cutter.close()
+        self._timer.join()
+        return expired
+
+    def connect(self, address, timeout, source_address=None):
+        host, port = address
+        limit = timeout if isinstance(timeout, (int, float)) else None
+        failure = None
+        for family, kind, proto, _name, target in socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM):
+            remaining = _remaining(self.deadline, "connect")
+            sock = socket.socket(family, kind, proto)
+            try:
+                self.add(sock)
+                sock.settimeout(remaining if limit is None else min(limit, remaining))
+                if source_address:
+                    sock.bind(source_address)
+                sock.connect(target)
+                _remaining(self.deadline, "connect")
+                return sock
+            except OSError as error:
+                sock.close()
+                failure = error
+            except BaseException:
+                sock.close()
+                raise
+        _remaining(self.deadline, "connect")
+        raise failure or OSError("name resolution returned no address")
+
+
+_ACTIVE_WATCH = contextvars.ContextVar("subs4free_request_watch", default=None)
+
+
+class _WatchedConnection:
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        watch = _ACTIVE_WATCH.get()
+        if watch is not None:
+            self._create_connection = watch.connect
+
+
+class _WatchedHTTPConnection(_WatchedConnection, http.client.HTTPConnection):
+    pass
+
+
+class _WatchedHTTPSConnection(_WatchedConnection, http.client.HTTPSConnection):
+    pass
+
+
+class _WatchedHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_WatchedHTTPConnection, req)
+
+
+class _WatchedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_WatchedHTTPSConnection, req, context=self._context)
+
+
 class Subs4FreeProvider:
     def __init__(self):
-        self._user_agent = ua_generator.generate(
-            device="desktop",
-            platform=("linux", "windows"),
-            browser=("firefox", "chrome"),
-            options=Options(latest_versions=True),
-        ).text
+        self._user_agent = None
+        self._operation_deadline = None
+        self._new_identity()
+
+    def _new_identity(self):
+        # A rejected identity includes its browser header and cookies. Keep the next
+        # attempt isolated instead of replaying either half of that pair.
+        previous = self._user_agent
+        user_agent = previous
+        for _ in range(3):
+            user_agent = ua_generator.generate(
+                device="desktop",
+                platform=("linux", "windows"),
+                browser=("firefox", "chrome"),
+                options=Options(latest_versions=True),
+            ).text
+            if user_agent != previous:
+                break
+        self._user_agent = user_agent
         self._cookie_jar = CookieJar()
-        self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cookie_jar))
+        cookies = urllib.request.HTTPCookieProcessor(self._cookie_jar)
+        self._opener = urllib.request.build_opener(cookies, _WatchedHTTPHandler, _WatchedHTTPSHandler)
+        self._pass_opener = urllib.request.build_opener(
+            cookies, _NoRedirect(), _WatchedHTTPHandler, _WatchedHTTPSHandler
+        )
+
+    @contextlib.contextmanager
+    def _operation_budget(self, config):
+        self._operation_deadline = time.monotonic() + _operation_timeout_seconds(config)
+        try:
+            yield
+        finally:
+            self._operation_deadline = None
 
     def search(self, video, languages, config):
         if (video or {}).get("kind") != "movie":
@@ -289,21 +651,44 @@ class Subs4FreeProvider:
         requested = {language for language in requested if language in SUPPORTED_LANGUAGES}
         if not requested:
             return []
+        with self._operation_budget(config):
+            return self._search(video, requested, config)
+
+    def _search(self, video, requested, config):
         results = []
         seen = set()
         covered_languages = set()
+        exhausted = None
         for query in build_queries(video):
-            _sleep(config)
-            search_url = _search_url(query)
-            body = self._http_get(search_url, referer=BASE_URL)
-            candidates = parse_search_results(body)
-            candidates.extend(self._candidates_from_suggestions(video, body, config, search_url))
+            candidates = []
+            try:
+                self._collect_candidates(video, query, config, candidates)
+            except ServiceUnavailable as error:
+                if not error.budget_exhausted:
+                    raise
+                exhausted = error
             accepted = _accepted_candidates(video, candidates, requested, seen)
             covered_languages.update(item["language"] for item in accepted)
             results.extend(self._result(video, item) for item in accepted)
-            if requested.issubset(covered_languages):
+            if exhausted or requested.issubset(covered_languages):
                 break
+        if exhausted:
+            if not results:
+                raise exhausted
+            logger.warning("subs4free search ran out of its time budget; returning the %s results found", len(results))
         return sorted(results, key=lambda item: item["score"], reverse=True)
+
+    def _collect_candidates(self, video, query, config, candidates):
+        # Appends as it goes, so rows already parsed survive a budget that runs out later.
+        _sleep(config, self._operation_deadline)
+        search_url = _search_url(query)
+        body = self._http_get(search_url, referer=BASE_URL)
+        candidates.extend(parse_search_results(body))
+        for suggestion in parse_suggestions(body):
+            if not _suggestion_matches(video, suggestion):
+                continue
+            _sleep(config, self._operation_deadline)
+            candidates.extend(parse_search_results(self._http_get(suggestion["url"], referer=search_url)))
 
     def download(self, provider_payload, language, config):
         del language
@@ -311,27 +696,24 @@ class Subs4FreeProvider:
         detail_url = payload.get("detail_url")
         if not detail_url:
             raise ValueError("subs4free download requires detail_url")
-        _sleep(config)
+        with self._operation_budget(config):
+            return self._download(payload, detail_url, config)
+
+    def _download(self, payload, detail_url, config):
+        _sleep(config, self._operation_deadline)
         page = self._http_get(detail_url, referer=BASE_URL)
         form = parse_download_form(page)
-        self._apply_anti_block(detail_url, config)
+        # The legacy "anti-block" calls (images.subs4free.info and two subs4series.com
+        # pages) only detected ISP blocking for visitors in Greece; getSub.php does not
+        # depend on them, so the POST follows the detail page directly.
         post_data = {
             "id": form["id"],
             "x": str(random.randint(0, max(form["width"], 1))),
             "y": str(random.randint(0, max(form["height"], 1))),
         }
-        _sleep(config)
+        _sleep(config, self._operation_deadline)
         body = self._http_post(DOWNLOAD_URL, post_data, referer=detail_url)
         return extract_download(body, payload)
-
-    def _candidates_from_suggestions(self, video, body, config, referer):
-        candidates = []
-        for suggestion in parse_suggestions(body):
-            if not _suggestion_matches(video, suggestion):
-                continue
-            _sleep(config)
-            candidates.extend(parse_search_results(self._http_get(suggestion["url"], referer=referer)))
-        return candidates
 
     def _result(self, video, item):
         alpha3 = item["language"]
@@ -377,26 +759,180 @@ class Subs4FreeProvider:
             },
         }
 
-    def _apply_anti_block(self, detail_url, config):
-        for url in ANTI_BLOCK_URLS:
-            _sleep(config)
-            try:
-                self._http_get(url, referer=detail_url)
-            except Exception:
-                continue
-
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
-        request = urllib.request.Request(url, headers=_headers(self._user_agent, referer))
-        with self._opener.open(request, timeout=timeout) as response:
-            return response.read()
+        def build():
+            return urllib.request.Request(url, headers=_headers(self._user_agent, referer))
+
+        return self._open_with_anubis(build, url, timeout)
 
     def _http_post(self, url, data, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         encoded = urllib.parse.urlencode(data).encode("utf-8")
-        headers = _headers(self._user_agent, referer)
-        headers["Content-Type"] = "application/x-www-form-urlencoded"
-        request = urllib.request.Request(url, data=encoded, headers=headers, method="POST")
-        with self._opener.open(request, timeout=timeout) as response:
-            return response.read()
+
+        def build():
+            headers = _headers(self._user_agent, referer)
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+            return urllib.request.Request(url, data=encoded, headers=headers, method="POST")
+
+        # A POST interrupted by a challenge is re-sent once the gate clears; the pass
+        # endpoint redirects back to the page the form lives on. A failed gate here never
+        # renews the identity: getSub.php only serves a session that has opened the
+        # subtitle's page, so a POST from a new session bounces to that page and would be
+        # misread as the anti-flood penalty.
+        return self._open_with_anubis(build, url, timeout, redir_url=referer, renew_identity=False)
+
+    def _fetch(self, request, timeout, opener=None):
+        # Return error bodies too: a gate can ride on a 401/403 and must still be read.
+        try:
+            with (opener or self._opener).open(request, timeout=timeout) as response:
+                return response.getcode(), response.geturl(), response.read()
+        except urllib.error.HTTPError as error:
+            try:
+                if error.code == 429:
+                    # Raised here, where the headers are still at hand, so the site's
+                    # Retry-After reaches the host on every request (page, challenge, pass).
+                    raise RateLimited(
+                        "subs4free rate limited the request",
+                        retry_after=_retry_after_seconds((error.headers or {}).get("Retry-After")),
+                    ) from None
+                try:
+                    body = error.read()
+                except Exception:
+                    body = b""
+                return error.code, error.geturl() or request.full_url, body
+            finally:
+                error.close()
+
+    def _open_with_anubis(self, build_request, url, timeout, redir_url=None, renew_identity=True):
+        # Only a failed gate on www.subs4free.info renews the identity and retries. Every
+        # request targets that host today; a gate on any other host (one a redirect lands
+        # on) gets one attempt, so it can never wipe the clearance cookie the getSub.php
+        # POST needs. Running out of the call budget raises ServiceUnavailable from
+        # wherever it happens and is not retried: a new identity cannot make the proof of
+        # work cheaper.
+        deadline = time.monotonic() + SITE_CALL_BUDGET_SECONDS
+        if self._operation_deadline is not None:
+            deadline = min(deadline, self._operation_deadline)
+        watch = _DeadlineWatch(deadline)
+        token = _ACTIVE_WATCH.set(watch)
+        try:
+            try:
+                body = self._open_attempts(build_request, url, timeout, redir_url, deadline, renew_identity)
+            except (OSError, http.client.HTTPException) as error:
+                if watch.finish():
+                    if isinstance(error, urllib.error.HTTPError):
+                        error.close()
+                    raise _budget_exhausted("request") from error
+                raise
+            if watch.finish():
+                raise _budget_exhausted("request")
+            return body
+        finally:
+            _ACTIVE_WATCH.reset(token)
+            watch.finish()
+
+    def _open_attempts(self, build_request, url, timeout, redir_url, deadline, renew_identity):
+        attempts = CHALLENGE_RETRY_ATTEMPTS if renew_identity and _renews_identity(url) else 1
+        for attempt in range(1, attempts + 1):
+            status, landed, body = self._fetch(build_request(), _request_timeout(timeout, deadline, "resource_fetch"))
+            if status == 429:
+                raise RateLimited("subs4free rate limited the request")
+            if _is_anubis_response(landed, status, body):
+                if self._solve_anubis(landed or url, redir_url or url, body, timeout, deadline):
+                    status, landed, body = self._fetch(
+                        build_request(), _request_timeout(timeout, deadline, "resource_refetch")
+                    )
+                    if status == 429:
+                        raise RateLimited("subs4free rate limited the request")
+            if not _is_anubis_response(landed, status, body):
+                if status >= 400:
+                    # Same failure as before the gate: an ordinary HTTP error, not a
+                    # provider-wide throttle.
+                    raise urllib.error.HTTPError(landed or url, status, f"subs4free HTTP {status}", None, None)
+                return body
+            if not _renews_identity(landed or url):
+                attempts = attempt
+            logger.warning("subs4free Anubis stage=recovery attempt=%s/%s status=%s", attempt, attempts, status)
+            if attempt >= attempts:
+                break
+            if attempt < attempts:
+                _budget_sleep(RETRY_BACKOFF_SECONDS * attempt, deadline, "recovery_backoff")
+                self._new_identity()
+        raise ServiceUnavailable(f"subs4free Anubis challenge could not be solved after {attempts} attempts")
+
+    def _solve_anubis(self, challenge_url, original_url, body, timeout, deadline):
+        # Returns False when the site rejects the solve (the caller may retry with a new
+        # identity). Budget exhaustion raises instead and ends the whole call.
+        started = time.monotonic()
+        parsed = urllib.parse.urlparse(challenge_url)
+        base = f"{parsed.scheme}://{parsed.netloc}"
+        original = urllib.parse.urlparse(original_url)
+        original_target = urllib.parse.urlunparse(("", "", original.path or "/", original.params, original.query, ""))
+        redir = urllib.parse.parse_qs(parsed.query).get("redir", [original_target])[0]
+        challenge = _extract_anubis_challenge(_decode(body))
+        if not challenge and "/.within.website/" in challenge_url:
+            # Redirected to a challenge page without the inline payload: fetch it once.
+            _, _, page = self._fetch(
+                self._anubis_request(challenge_url, original_url),
+                _request_timeout(timeout, deadline, "challenge_fetch"),
+            )
+            challenge = _extract_anubis_challenge(_decode(page))
+        if not challenge:
+            logger.warning("subs4free Anubis stage=challenge_parse")
+            return False
+
+        method = challenge["method"]
+        if method == "metarefresh":
+            pass_url = urllib.parse.urljoin(base + "/", challenge["redirect_url"])
+            _budget_sleep(challenge.get("delay", 1), deadline, "pass_submit")
+        elif method == "preact":
+            result, delay = _solve_preact(challenge["randomData"], challenge["difficulty"])
+            if delay > 0:
+                _budget_sleep(delay, deadline, "pass_submit")
+            params = {
+                "id": challenge["id"],
+                "result": result,
+                "redir": redir,
+                "elapsedTime": str(int((time.monotonic() - started) * 1000)),
+            }
+            pass_url = f"{base}{ANUBIS_PASS_PATH}?{urllib.parse.urlencode(params)}"
+        else:
+            nonce, digest = _solve_pow(challenge["randomData"], challenge["difficulty"], deadline=deadline)
+            params = {
+                "id": challenge["id"],
+                "response": digest,
+                "nonce": str(nonce),
+                "redir": redir,
+                "elapsedTime": str(int((time.monotonic() - started) * 1000)),
+            }
+            pass_url = f"{base}{ANUBIS_PASS_PATH}?{urllib.parse.urlencode(params)}"
+
+        status, _, _ = self._fetch(
+            self._anubis_request(pass_url, original_url),
+            _request_timeout(timeout, deadline, "pass_submit"),
+            opener=self._pass_opener,
+        )
+        if status == 429:
+            raise RateLimited("subs4free rate limited the Anubis request")
+        if not 200 <= status < 400:
+            logger.warning("subs4free Anubis stage=pass_status status=%s", status)
+            return False
+        if not self._has_anubis_auth(parsed.hostname):
+            logger.warning("subs4free Anubis stage=auth_cookie status=%s", status)
+            return False
+        return True
+
+    def _anubis_request(self, url, referer):
+        return urllib.request.Request(url, headers=_headers(self._user_agent, referer))
+
+    def _has_anubis_auth(self, host):
+        host = (host or "").lower()
+        for cookie in self._cookie_jar:
+            if not cookie.name.endswith("-anubis-auth") or not cookie.value or cookie.is_expired():
+                continue
+            domain = (cookie.domain or "").lstrip(".").lower()
+            if not domain or host == domain or host.endswith(f".{domain}"):
+                return True
+        return False
 
 
 def _search_url(query):
@@ -414,13 +950,26 @@ def _headers(user_agent, referer=None):
     return headers
 
 
-def _sleep(config):
+def _operation_timeout_seconds(config):
+    try:
+        seconds = int((config or {}).get("operation_timeout_seconds") or DEFAULT_OPERATION_TIMEOUT_SECONDS)
+    except (TypeError, ValueError):
+        seconds = DEFAULT_OPERATION_TIMEOUT_SECONDS
+    return min(max(seconds, MIN_OPERATION_TIMEOUT_SECONDS), MAX_OPERATION_TIMEOUT_SECONDS)
+
+
+def _sleep(config, deadline=None):
     try:
         delay_ms = int((config or {}).get("request_delay_ms") or 0)
     except (TypeError, ValueError):
         delay_ms = 0
-    if delay_ms > 0:
-        time.sleep(min(delay_ms, 5000) / 1000.0)
+    if delay_ms <= 0:
+        return
+    seconds = min(delay_ms, 5000) / 1000.0
+    if deadline is None:
+        time.sleep(seconds)
+    else:
+        _budget_sleep(seconds, deadline, "request_delay")
 
 
 def _release_from_row(row, heading_tag):
@@ -496,8 +1045,6 @@ def _accepted_candidates(video, candidates, requested, seen):
             continue
         seen.add(key)
         accepted.append(item)
-        if len(accepted) >= MAX_CANDIDATES_PER_QUERY:
-            break
     return accepted
 
 
