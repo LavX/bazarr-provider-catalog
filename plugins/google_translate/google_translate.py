@@ -19,13 +19,16 @@ plugin.
 
 The plugin runs on the SDK's blocking-library support: one asyncio task per job, with
 the requests themselves on one thread pool that every job of the worker shares, so the
-worker never has more than ``CONCURRENCY`` requests in flight.
+worker never has more than ``CONCURRENCY`` requests in flight. A request that is abandoned at
+its deadline keeps its slot until its own thread ends.
 
 Checkpoints and resume
 ----------------------
-Every checkpoint the plugin stores is cumulative: ``{"v": 2, "cues_z": <text>}``, where
-``cues_z`` is a base64 string of the zlib-compressed JSON object that maps a cue's index
-in the request's ``lines`` (as a string) to its final text, for every cue that is fully
+Every checkpoint the plugin stores is cumulative: ``{"v": 2, "target": <code>, "digest":
+<hash>, "cues_z": <text>}``. ``target`` is the library code the job translates into and
+``digest`` is a SHA-256 of the request's source texts, so a checkpoint made for another
+target or another version of the file is ignored. ``cues_z`` is a base64 string of the
+zlib-compressed JSON object that maps a cue's index in the request's ``lines`` (as a string) to its final text, for every cue that is fully
 translated so far, including those a checkpoint of an earlier attempt already held. One
 is stored for every ``CHECKPOINT_EVERY`` newly completed cues, and one more when a job
 fails. A cue that came back only in part, or with no answer, is never stored, so a retry
@@ -45,6 +48,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import collections
+import hashlib
 import json
 import random
 import re
@@ -83,6 +87,8 @@ CHECKPOINT_EVERY = 100
 CHECKPOINT_VERSION = 2
 # What a throttled job tells Bazarr+ to wait, in seconds, before it tries Google again.
 THROTTLE_RETRY_AFTER = 900.0
+# Requests abandoned at the deadline that may still be alive at once. Past this, new requests are refused.
+MAX_ABANDONED = 5
 # A page larger than this is not a translation answer.
 MAX_PAGE_BYTES = 2 * 1024 * 1024
 
@@ -159,6 +165,7 @@ def supported_targets() -> list[str]:
 # A subtitle tag Bazarr+ passes, or an ASS override block such as {\an8}.
 _MARKUP = r"</?[ibus]>|\{\\[^{}]*\}"
 _MARKUP_RE = re.compile(_MARKUP, re.IGNORECASE)
+_OVERRIDE_RE = re.compile(r"\{\\[^{}]*\}")
 _PEEL_RE = re.compile(rf"\A(?P<pre>(?:{_MARKUP})*)(?P<body>.*?)(?P<suf>(?:{_MARKUP})*)\Z", re.IGNORECASE | re.DOTALL)
 
 _Part = tuple[str, str, str]  # (markup before, text, markup after)
@@ -182,7 +189,9 @@ def _plan(text: str) -> tuple[list[_Part], str, bool]:
     lines = [_peel(line) for line in text.split("\n")]
     if not any(_MARKUP_RE.search(body) for _pre, body, _suf in lines):
         return lines, "\n", False
-    return [("", _MARKUP_RE.sub("", text), "")], "", True
+    # The override blocks in front (positioning, such as {\an8}) still apply to the translation.
+    leading = "".join(_OVERRIDE_RE.findall(pre))
+    return [(leading, _MARKUP_RE.sub("", text), "")], "", True
 
 
 def _translatable(text: str) -> bool:
@@ -225,12 +234,13 @@ class _Page(GoogleTranslator):
         super().__init__(source="auto", target=target)
         self._base_url = PAGE_URL
 
-    def translate_bounded(self, text: str) -> str | None:
+    def translate_bounded(self, text: str, stop: Callable[[], bool]) -> str | None:
         """What ``GoogleTranslator.translate`` returns, from one request that cannot outlast the ceiling.
 
         None when Google echoes text that has no letters or digits in it, as the library returns.
-        Raises ``TranslationNotFound`` when the page holds no answer, ``_Throttled`` or
-        ``_Unreachable`` when the request fails.
+        Raises ``TranslationNotFound`` when the page holds no answer, ``_NoAnswer`` when Google
+        refuses the text, ``_Throttled`` or ``_Unreachable`` when the request fails, and
+        ``_Stopped`` when ``stop`` says so.
         """
         text = text.strip()
         if not text:
@@ -238,7 +248,7 @@ class _Page(GoogleTranslator):
         if len(text) >= 5000:  # the library's own limit
             raise NotValidLength(text, 0, 5000)
         params = {"tl": self._target, "sl": self._source, self.payload_key: text}
-        page = _fetch(self._base_url, params)
+        page = _fetch(self._base_url, params, stop)
         soup = BeautifulSoup(page, "html.parser")
         element = soup.find(self._element_tag, self._element_query) or soup.find(self._element_tag, self._alt_element_query)
         if not element:
@@ -281,30 +291,66 @@ def _abort_at(response: requests.Response, seconds: float) -> threading.Timer:
     return timer
 
 
-def _fetch(url: str, params: dict[str, str]) -> str:
+# Requests in flight, abandoned ones included: a slot is held until the request's own thread ends.
+_slots = threading.BoundedSemaphore(CONCURRENCY)
+_abandon_lock = threading.Lock()
+_abandoned_alive = 0
+
+
+def _fetch(url: str, params: dict[str, str], stop: Callable[[], bool]) -> str:
     """One GET under a single deadline, ``REQUEST_TIMEOUT``, for the lookup, connect, headers and body.
 
-    The request runs on a thread of its own and is abandoned when the deadline passes, so a slow
-    name lookup, a server that trickles its headers or one that goes quiet cannot hold the caller
-    past it. An abandoned request closes itself as soon as it returns, and the per-read timeouts
-    inside it end it when the server stalls.
+    The request runs on a thread of its own, which holds one of ``CONCURRENCY`` slots until it
+    really ends. The caller waits for the request to finish, for ``stop`` or for the deadline,
+    whichever comes first, and abandons the request on the last two: a slow name lookup, a server
+    that trickles its headers or one that goes quiet cannot hold the caller past the deadline.
+    An abandoned request closes itself as soon as it returns, and the per-read timeouts inside it
+    end it when the server stalls. At most ``MAX_ABANDONED`` of them live at once; beyond that
+    new requests are refused as unreachable instead of starting more threads.
     """
+    global _abandoned_alive
+    with _abandon_lock:
+        if _abandoned_alive >= MAX_ABANDONED:
+            raise _Unreachable()
+    slots = _slots
+    deadline = time.monotonic() + REQUEST_TIMEOUT
+    while not slots.acquire(timeout=0.1):
+        if stop():
+            raise _Stopped()
+        if time.monotonic() >= deadline:
+            raise _Unreachable()
     outcome: dict[str, Any] = {}
     finished = threading.Event()
     abandoned = threading.Event()
 
     def run() -> None:
+        global _abandoned_alive
         try:
             outcome["page"] = _fetch_page(url, params, abandoned)
         except BaseException as error:  # handed to the caller below
             outcome["error"] = error
         finally:
-            finished.set()
+            with _abandon_lock:
+                finished.set()
+                if abandoned.is_set():
+                    _abandoned_alive -= 1
+            slots.release()
 
-    threading.Thread(target=run, name="google-translate-request", daemon=True).start()
-    if not finished.wait(REQUEST_TIMEOUT):
-        abandoned.set()
-        raise _Unreachable()
+    try:
+        threading.Thread(target=run, name="google-translate-request", daemon=True).start()
+    except BaseException:
+        slots.release()
+        raise _Unreachable() from None
+    deadline = time.monotonic() + REQUEST_TIMEOUT
+    while not finished.wait(0.1):
+        cancelled = stop()
+        if cancelled or time.monotonic() >= deadline:
+            with _abandon_lock:
+                if not finished.is_set():
+                    abandoned.set()
+                    _abandoned_alive += 1
+                    raise _Stopped() if cancelled else _Unreachable()
+            break  # it finished while the lock was being taken
     if "error" in outcome:
         raise outcome["error"]
     return outcome["page"]
@@ -371,8 +417,9 @@ def _wait(seconds: float, stop: Callable[[], bool]) -> None:
 def _translate_text(text: str, target: str, stop: Callable[[], bool], tries: int | None = None) -> str | None:
     """Translate one piece of text, retrying a throttle or a failed request with backoff.
 
-    Cancel is checked before every request and during every wait. Returns None when Google
-    has no answer for the text. Raises ``_Throttled`` or ``_Unreachable`` once the tries run out.
+    Cancel is checked before every request, during every request and during every wait. Returns
+    None when Google has no answer for the text. Raises ``_NoAnswer`` when Google refuses it,
+    and ``_Throttled`` or ``_Unreachable`` once the tries run out.
     """
     tries = MAX_TRIES if tries is None else tries
     delay = BACKOFF_START
@@ -382,14 +429,16 @@ def _translate_text(text: str, target: str, stop: Callable[[], bool], tries: int
         if stop():
             raise _Stopped()
         try:
-            return _Page(target).translate_bounded(text)
+            return _Page(target).translate_bounded(text, stop)
         except (_Throttled, _Unreachable):
             if attempt >= tries:
                 raise
             _wait(delay + random.uniform(0, BACKOFF_JITTER), stop)
             delay *= BACKOFF_FACTOR
-        except (NotValidLength, NotValidPayload, TranslationNotFound, _NoAnswer):
+        except (NotValidLength, NotValidPayload, TranslationNotFound):
             return None
+        except (_NoAnswer, _Stopped):
+            raise
         except Exception as error:
             raise _Unexpected(error.__class__.__name__) from None
 
@@ -397,7 +446,7 @@ def _translate_text(text: str, target: str, stop: Callable[[], bool], tries: int
 class _Cue:
     """What one cue came to: its text and how it went."""
 
-    __slots__ = ("text", "translated", "empty", "partial", "tags_lost")
+    __slots__ = ("text", "translated", "empty", "refused", "partial", "tags_lost")
 
     def __init__(
         self,
@@ -405,12 +454,14 @@ class _Cue:
         *,
         translated: bool = False,
         empty: bool = False,
+        refused: bool = False,
         partial: bool = False,
         tags_lost: bool = False,
     ):
         self.text = text
         self.translated = translated  # some Google text is in `text`
         self.empty = empty  # the cue had text to translate and Google gave none
+        self.refused = refused  # ... and every answer it got was an HTTP 4xx
         self.partial = partial  # some of its parts have Google text and some kept the source
         self.tags_lost = tags_lost
 
@@ -418,7 +469,7 @@ class _Cue:
 def _translate_cue(text: str, target: str, stop: Callable[[], bool]) -> _Cue:
     parts, joiner, lost = _plan(text)
     out = []
-    got = missing = 0
+    got = missing = refusals = 0
     for pre, body, suf in parts:
         inner = body.strip()
         if not _translatable(inner):
@@ -426,7 +477,11 @@ def _translate_cue(text: str, target: str, stop: Callable[[], bool]) -> _Cue:
             continue
         # Whitespace around the text, a trailing newline for one, stays where it was.
         lead, trail = body[: len(body) - len(body.lstrip())], body[len(body.rstrip()) :]
-        answer = _translate_text(inner, target, stop)
+        try:
+            answer = _translate_text(inner, target, stop)
+        except _NoAnswer:
+            answer = None
+            refusals += 1
         if answer is None or not answer.strip():
             out.append(pre + body + suf)
             missing += 1
@@ -440,6 +495,7 @@ def _translate_cue(text: str, target: str, stop: Callable[[], bool]) -> _Cue:
         result,
         translated=bool(got),
         empty=bool(missing and not got),
+        refused=bool(refusals and not got),
         partial=bool(missing and got),
         tags_lost=lost and bool(got),
     )
@@ -493,14 +549,25 @@ def _with_text(line: Any, text: str) -> Any:
     return {**line, "text": text} if isinstance(line, dict) else text
 
 
-def pack_cues(cues: dict[int, str]) -> dict[str, Any]:
+def source_digest(texts: list[str]) -> str:
+    """A hash of the request's source texts, which ties a checkpoint to the file it was made from."""
+    return hashlib.sha256(json.dumps(texts, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def pack_cues(cues: dict[int, str], target: str, digest: str) -> dict[str, Any]:
     """The checkpoint data for the cues finished so far (see the module docstring)."""
     blob = zlib.compress(json.dumps({str(index): text for index, text in cues.items()}).encode("utf-8"))
-    return {"v": CHECKPOINT_VERSION, "cues_z": base64.b64encode(blob).decode("ascii")}
+    return {"v": CHECKPOINT_VERSION, "target": target, "digest": digest, "cues_z": base64.b64encode(blob).decode("ascii")}
 
 
-def _unpack_cues(data: Any) -> dict[str, str]:
-    if not isinstance(data, dict) or data.get("v") != CHECKPOINT_VERSION or not isinstance(data.get("cues_z"), str):
+def _unpack_cues(data: Any, target: str, digest: str) -> dict[str, str]:
+    if (
+        not isinstance(data, dict)
+        or data.get("v") != CHECKPOINT_VERSION
+        or data.get("target") != target
+        or data.get("digest") != digest
+        or not isinstance(data.get("cues_z"), str)
+    ):
         return {}
     try:
         cues = json.loads(zlib.decompress(base64.b64decode(data["cues_z"], validate=True)).decode("utf-8"))
@@ -509,7 +576,7 @@ def _unpack_cues(data: Any) -> dict[str, str]:
     return cues if isinstance(cues, dict) else {}
 
 
-def _resumed(request: dict[str, Any], count: int) -> dict[int, str]:
+def _resumed(request: dict[str, Any], count: int, target: str, digest: str) -> dict[int, str]:
     """The cues an earlier attempt finished, from the request's checkpoints, oldest first, a later one winning."""
     found: dict[int, str] = {}
     saved = request.get("checkpoints")
@@ -517,7 +584,7 @@ def _resumed(request: dict[str, Any], count: int) -> dict[int, str]:
         saved = [request["checkpoint"]]
     for item in saved if isinstance(saved, list) else []:
         data = item.get("data", item) if isinstance(item, dict) else None
-        for key, text in _unpack_cues(data).items():
+        for key, text in _unpack_cues(data, target, digest).items():
             try:
                 index = int(key)
             except (TypeError, ValueError):
@@ -578,6 +645,8 @@ class GoogleTranslatePlugin(TranslatorPlugin):
             answer = await loop.run_in_executor(_pool(), _translate_text, TEST_PHRASE, TEST_TARGET, stop, 1)
         except _Stopped:
             raise PluginError("cancelled", "The test was cancelled.") from None
+        except _NoAnswer:
+            raise PluginError("dependency_unavailable", "Google Translate refused the test request.") from None
         except (_Throttled, _Unreachable, _Unexpected) as error:
             failure = _failure(error)
             if failure.code == "declined":
@@ -600,25 +669,29 @@ class GoogleTranslatePlugin(TranslatorPlugin):
         total = len(lines)
         texts = [_line_text(line) for line in lines]
         outputs = list(texts)
-        done = _resumed(request, total)
+        digest = source_digest(texts)
+        done = _resumed(request, total, target, digest)
         for index, text in done.items():
             outputs[index] = text
         pending = collections.deque(index for index in range(total) if index not in done and _translatable(texts[index]))
         # Cues with nothing to translate (blank, notes, digits only) go back as they came.
         finished = total - len(pending)
-        usable = len(done)
-        empty = partial = tags_lost = 0
+        asked = len(pending)  # the cues this attempt has to get text for
+        produced = 0  # ... and how many of them got some
+        empty = refused = partial = tags_lost = 0
         saved = dict(done)  # every fully translated cue so far: what each checkpoint holds
         fresh = 0  # cues added to `saved` since the last checkpoint
 
         async def store() -> None:
             nonlocal fresh
             try:
-                await ctx.checkpoint(pack_cues(saved))
+                await ctx.checkpoint(pack_cues(saved, target, digest))
             except PluginError as error:
                 if error.code == "cancelled":
                     raise
-                # A checkpoint that could not be stored costs a resume point, not the job.
+                # A checkpoint the host refused costs a resume point, not the job.
+            except Exception:
+                pass  # likewise one that could not be sent, such as a frame over the size cap
             fresh = 0
 
         stop_flag = threading.Event()
@@ -652,10 +725,10 @@ class GoogleTranslatePlugin(TranslatorPlugin):
                     outputs[index] = cue.text
                     finished += 1
                     empty += cue.empty
+                    refused += cue.refused
                     partial += cue.partial
                     tags_lost += cue.tags_lost
-                    if cue.translated:
-                        usable += 1
+                    produced += cue.translated
                     if cue.translated and not cue.partial:
                         saved[index] = cue.text
                         fresh += 1
@@ -675,7 +748,10 @@ class GoogleTranslatePlugin(TranslatorPlugin):
                     pass
             raise _failure(failure)
         ctx.raise_if_cancelled()
-        if usable == 0 and any(_translatable(text) for text in texts):
+        if asked and produced == 0:
+            if refused == empty:
+                # Every cue was refused with an HTTP 4xx: the page route itself is gone or closed to us.
+                raise _declined("Google Translate refused every request.", "server_unreachable")
             raise PluginError("internal", "Google returned no usable text.")
 
         notes = [f"Translated {total} cues with Google Translate."]

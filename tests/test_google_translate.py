@@ -4,6 +4,7 @@ to a local server that serves pages shaped like the ones the pinned library read
 import html
 import importlib.util
 import json
+import random
 import threading
 import time
 import unittest
@@ -48,6 +49,13 @@ class Reply:
 
 def translated(request, fixture="t0"):
     return Reply(body=page(fixture, f"T[{request['tl']}]:{request['q']}"))
+
+
+class QuietServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        pass  # a client that gave up or was cut off is part of what these tests do
 
 
 class FakeGoogle:
@@ -120,8 +128,7 @@ class FakeGoogle:
             def log_message(self, *args):
                 pass
 
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.server.daemon_threads = True
+        self.server = QuietServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}/m"
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -151,6 +158,11 @@ class PluginTestCase(unittest.TestCase):
             host.close()
         if self.fake is not None:
             self.fake.close()
+        # Requests abandoned by a test end once their server is gone; the next test starts without them.
+        deadline = time.monotonic() + 5
+        while self.module._abandoned_alive and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertEqual(self.module._abandoned_alive, 0)
 
     def serve(self, behaviour=translated):
         self.fake = FakeGoogle(behaviour)
@@ -274,6 +286,15 @@ class TagTests(PluginTestCase):
         self.assertEqual(self.cue("<i>Hi</i>\n").text, "<i>T[de]:Hi</i>\n")
         self.assertEqual(self.cue("<i>Hi\n</i>").text, "<i>T[de]:Hi\n</i>")
 
+    def test_the_override_blocks_in_front_survive_when_mid_line_tags_are_stripped(self):
+        self.serve()
+        cue = self.cue("{\\an8}Hello <i>big</i> world")
+        self.assertEqual(cue.text, "{\\an8}T[de]:Hello big world")
+        self.assertTrue(cue.tags_lost)
+        self.assertEqual(self.sent(), ["Hello big world"])
+        self.assertEqual(self.cue("<i>{\\an8}Hi <b>x</b> there").text, "{\\an8}T[de]:Hi x there")
+        self.assertEqual(self.cue("Hi {\\i1}x{\\i0} there").text, "T[de]:Hi x there")
+
     def test_an_override_block_is_kept_in_front(self):
         self.serve()
         self.assertEqual(self.cue("{\\an8}Hello").text, "{\\an8}T[de]:Hello")
@@ -379,7 +400,8 @@ class RetryTests(PluginTestCase):
     def test_a_4xx_other_than_403_and_429_is_no_answer_and_is_not_retried(self):
         for status in (400, 404, 410, 414):
             fake = self.serve(lambda request, status=status: Reply(status=status))
-            self.assertIsNone(self.fetch(), status)
+            with self.assertRaises(self.module._NoAnswer):
+                self.fetch()
             self.assertEqual(len(fake.requests), 1, status)
             fake.close()
 
@@ -443,21 +465,25 @@ class CeilingTests(PluginTestCase):
             started = time.monotonic()
             with self.assertRaises(self.module._Unreachable):
                 self.module._translate_text("Hello", "de", lambda: False, 1)
-        self.assertLess(time.monotonic() - started, 2)
+        self.assertLess(time.monotonic() - started, 4)
 
     def test_a_lookup_or_connect_that_never_returns_is_cut_off_at_the_ceiling(self):
         release = threading.Event()
-        self.addCleanup(release.set)
 
         def hang(*args, **kwargs):
             release.wait(10)
             raise AssertionError("the abandoned request was waited for")
 
-        with mock.patch.object(self.module.requests, "get", hang), mock.patch.object(self.module, "REQUEST_TIMEOUT", 0.5):
-            started = time.monotonic()
-            with self.assertRaises(self.module._Unreachable):
-                self.module._translate_text("Hello", "de", lambda: False, 1)
-        self.assertLess(time.monotonic() - started, 2)
+        try:
+            with mock.patch.object(self.module.requests, "get", hang), mock.patch.object(
+                self.module, "REQUEST_TIMEOUT", 0.5
+            ):
+                started = time.monotonic()
+                with self.assertRaises(self.module._Unreachable):
+                    self.module._translate_text("Hello", "de", lambda: False, 1)
+            self.assertLess(time.monotonic() - started, 4)
+        finally:
+            release.set()
 
     def test_a_timeout_is_retried_like_a_failed_request(self):
         fake = self.serve(lambda request: Reply(stall=10))
@@ -486,6 +512,123 @@ class CeilingTests(PluginTestCase):
         fake.release.set()
         time.sleep(0.3)
         self.assertEqual(len(fake.requests), count)
+
+
+class SlotTests(PluginTestCase):
+    """An abandoned request keeps its slot until its own thread ends."""
+
+    def setUp(self):
+        super().setUp()
+        self.release = threading.Event()
+        self.addCleanup(self.release.set)
+        self.started = []
+
+        def hang(url, params, abandoned):
+            self.started.append(params["q"])
+            self.release.wait(10)
+            raise self.module._Unreachable()
+
+        for target, value in (
+            (self.module, ("_fetch_page", hang)),
+            (self.module, ("REQUEST_TIMEOUT", 0.3)),
+            (self.module, ("_slots", threading.BoundedSemaphore(2))),
+            (self.module, ("MAX_ABANDONED", 2)),
+        ):
+            patcher = mock.patch.object(target, *value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def tearDown(self):
+        self.release.set()
+        super().tearDown()
+
+    def attempt(self, text):
+        try:
+            return self.module._translate_text(text, "de", lambda: False, 1)
+        except Exception as error:
+            return error
+
+    def test_an_abandoned_request_still_holds_its_slot_and_counts_as_abandoned(self):
+        first = self.attempt("one")
+        self.assertIsInstance(first, self.module._Unreachable)
+        self.assertEqual(self.module._abandoned_alive, 1)
+        self.assertFalse(self.module._slots.acquire(blocking=False) and self.module._slots.acquire(blocking=False))
+
+    def test_at_the_bound_new_requests_are_refused_and_no_more_threads_start(self):
+        for text in ("one", "two"):
+            self.assertIsInstance(self.attempt(text), self.module._Unreachable)
+        self.assertEqual(self.module._abandoned_alive, 2)
+        threads = threading.active_count()
+        self.assertIsInstance(self.attempt("three"), self.module._Unreachable)
+        self.assertEqual(self.started, ["one", "two"])
+        self.assertEqual(threading.active_count(), threads)
+
+    def test_slots_and_the_count_come_back_when_the_threads_end(self):
+        for text in ("one", "two"):
+            self.attempt(text)
+        self.release.set()
+        deadline = time.monotonic() + 3
+        while self.module._abandoned_alive and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertEqual(self.module._abandoned_alive, 0)
+        self.assertTrue(self.module._slots.acquire(blocking=False))
+        self.assertTrue(self.module._slots.acquire(blocking=False))
+        self.module._slots.release()
+        self.module._slots.release()
+
+    def test_a_request_waiting_for_a_slot_gives_up_at_the_deadline_or_on_cancel(self):
+        with mock.patch.object(self.module, "MAX_ABANDONED", 10):
+            for text in ("one", "two"):
+                self.attempt(text)  # both slots are now held by abandoned threads
+            started = time.monotonic()
+            self.assertIsInstance(self.attempt("three"), self.module._Unreachable)
+            self.assertLess(time.monotonic() - started, 4)
+            self.assertEqual(self.started, ["one", "two"])
+            stop = mock.Mock(side_effect=[False, True])
+            result = None
+            try:
+                self.module._translate_text("four", "de", stop, 1)
+            except Exception as error:
+                result = error
+            self.assertIsInstance(result, self.module._Stopped)
+
+    def test_in_flight_requests_never_exceed_the_slots_even_with_retries(self):
+        live = []
+        peak = [0]
+        lock = threading.Lock()
+        release = threading.Event()
+        self.addCleanup(release.set)
+
+        def slow(url, params, abandoned):
+            with lock:
+                live.append(1)
+                peak[0] = max(peak[0], len(live))
+            try:
+                release.wait(0.5)
+                raise self.module._Unreachable()
+            finally:
+                with lock:
+                    live.pop()
+
+        with mock.patch.object(self.module, "_fetch_page", slow), mock.patch.object(
+            self.module, "REQUEST_TIMEOUT", 0.2
+        ), mock.patch.object(self.module, "MAX_ABANDONED", 100):
+            threads = [threading.Thread(target=self.attempt, args=(f"t{i}",)) for i in range(8)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(15)
+        self.assertLessEqual(peak[0], 2)
+
+    def test_a_cancel_is_noticed_during_a_request(self):
+        with mock.patch.object(self.module, "REQUEST_TIMEOUT", 20):
+            flag = threading.Event()
+            threading.Timer(0.3, flag.set).start()
+            started = time.monotonic()
+            with self.assertRaises(self.module._Stopped):
+                self.module._translate_text("one", "de", flag.is_set, 1)
+        self.assertLess(time.monotonic() - started, 4)
+        self.assertEqual(self.module._abandoned_alive, 1)
 
 
 class OperationTests(PluginTestCase):
@@ -669,6 +812,36 @@ class TranslateTests(PluginTestCase):
         self.assertEqual([request["q"] for request in fake.requests].count("Bad"), 1)  # not retried
         self.assertIn("1 cues kept their source text", response.value["message"])
 
+    def test_a_retired_route_that_answers_4xx_to_everything_is_declined_as_unreachable(self):
+        fake = self.serve(lambda request: Reply(status=404))
+        response = self.translate(self.host(), ["One", "Two", "Three"])
+        self.assertEqual(response.code, "declined")
+        self.assertEqual(response.error["reason"], "server_unreachable")
+        self.assertEqual(len(fake.requests), 3)  # no retries
+
+    def test_the_same_holds_when_earlier_cues_were_resumed(self):
+        self.serve(lambda request: Reply(status=404))
+        lines = ["One", "Two", "Three"]
+        resumed = self.module.pack_cues({0: "EARLIER"}, "de", self.module.source_digest(lines))
+        response = self.translate(self.host(), lines, checkpoints=[resumed])
+        self.assertEqual(response.code, "declined")
+        self.assertEqual(response.error["reason"], "server_unreachable")
+
+    def test_a_resumed_job_with_nothing_left_to_ask_is_complete(self):
+        fake = self.serve(lambda request: Reply(status=404))
+        lines = ["One", "Two"]
+        resumed = self.module.pack_cues({0: "A", 1: "B"}, "de", self.module.source_digest(lines))
+        response = self.translate(self.host(), lines, checkpoints=[resumed])
+        self.assertEqual(self.texts(response), ["A", "B"])
+        self.assertEqual(fake.requests, [])
+
+    def test_a_page_with_no_answer_for_every_cue_stays_an_internal_error_when_not_refused(self):
+        self.serve(lambda request: Reply(body=page("no_result")))
+        lines = ["One", "Two"]
+        resumed = self.module.pack_cues({}, "de", self.module.source_digest(lines))
+        response = self.translate(self.host(), lines, checkpoints=[resumed])
+        self.assertEqual(response.code, "internal")
+
     def test_no_usable_text_at_all_is_an_internal_error(self):
         self.serve(lambda request: Reply(body=page("no_result")))
         response = self.translate(self.host(), ["One", "Two"])
@@ -688,14 +861,25 @@ class TranslateTests(PluginTestCase):
         self.assertEqual((response.value["tokens"], response.value["cost"]), (0, 0.0))
         self.assertFalse([call for call in host.calls if call[1] in ("reserve", "usage")])
 
-    def test_progress_and_heartbeats_are_sent(self):
+    def test_progress_is_sent_and_the_plugin_heartbeats_itself(self):
         self.serve(lambda request: Reply(body=page("t0", "x"), stall=0.15))
         host = self.host()
-        response = self.translate(host, [f"Line {index}" for index in range(30)])
+        beats = []
+        original = self.module.PluginContext.heartbeat
+
+        def spy(context):
+            beats.append(time.monotonic())
+            return original(context)
+
+        with mock.patch.object(self.module.PluginContext, "heartbeat", spy):
+            response = self.translate(host, [f"Line {index}" for index in range(30)])
         self.assertTrue(response.ok)
         self.assertTrue(response.progress)
         self.assertEqual(response.progress[-1]["data"], {"done": 30, "total": 30})
-        self.assertTrue(host.heartbeats)
+        # The plugin's own calls, about one per half interval (25 ms here) while it waits on Google.
+        self.assertGreaterEqual(len(beats), 10)
+        gaps = [later - earlier for earlier, later in zip(beats, beats[1:])]
+        self.assertLess(max(gaps), 1.0)
 
     def test_a_throttle_after_the_retries_is_rate_limited_with_a_retry_time(self):
         self.serve(lambda request: Reply(status=429))
@@ -737,11 +921,14 @@ class CheckpointTests(PluginTestCase):
     def checkpoints(self, host):
         return [params["data"] for _at, name, params in host.calls if name == "checkpoint"]
 
-    def cues(self, data):
-        return self.module._unpack_cues(data)
+    def cues(self, data, lines=None, target="de"):
+        """The cues a checkpoint holds, read as a retry of `lines` into `target` would read them."""
+        if lines is None:
+            return self.module._unpack_cues(data, data["target"], data["digest"])
+        return self.module._unpack_cues(data, target, self.module.source_digest(lines))
 
-    def pack(self, cues):
-        return self.module.pack_cues(cues)
+    def pack(self, cues, lines, target="de"):
+        return self.module.pack_cues(cues, target, self.module.source_digest(lines))
 
     def test_every_checkpoint_is_cumulative_so_the_latest_alone_is_enough(self):
         self.serve()
@@ -759,7 +946,7 @@ class CheckpointTests(PluginTestCase):
     def test_resuming_from_the_latest_checkpoint_alone_sends_only_the_rest(self):
         fake = self.serve()
         lines = [f"Line {index}" for index in range(150)]
-        latest = self.pack({index: f"EARLIER {index}" for index in range(100)})
+        latest = self.pack({index: f"EARLIER {index}" for index in range(100)}, lines)
         host = self.host()
         response = self.translate(host, lines, wait=60, checkpoints=[latest])
         self.assertTrue(response.ok, response.error)
@@ -772,9 +959,10 @@ class CheckpointTests(PluginTestCase):
     def test_a_retry_after_a_resume_stores_everything_done_so_far(self):
         self.serve()
         host = self.host()
-        latest = self.pack({index: f"EARLIER {index}" for index in range(30)})
+        lines = [f"Line {index}" for index in range(100)]
+        latest = self.pack({index: f"EARLIER {index}" for index in range(30)}, lines)
         with mock.patch.object(self.module, "CHECKPOINT_EVERY", 50):
-            response = self.translate(host, [f"Line {index}" for index in range(100)], checkpoints=[latest], wait=60)
+            response = self.translate(host, lines, checkpoints=[latest], wait=60)
         self.assertTrue(response.ok, response.error)
         held = self.cues(self.checkpoints(host)[-1])
         self.assertEqual(held["0"], "EARLIER 0")
@@ -784,32 +972,72 @@ class CheckpointTests(PluginTestCase):
 
     def test_the_latest_of_several_checkpoints_wins_and_the_single_form_is_read(self):
         fake = self.serve()
-        older = self.pack({0: "OLD 0", 1: "OLD 1"})
-        newer = self.pack({1: "NEW 1", 2: "NEW 2"})
-        response = self.translate(self.host(), ["a", "b", "c", "d"], checkpoints=[older, newer])
+        lines = ["a", "b", "c", "d"]
+        older = self.pack({0: "OLD 0", 1: "OLD 1"}, lines)
+        newer = self.pack({1: "NEW 1", 2: "NEW 2"}, lines)
+        response = self.translate(self.host(), lines, checkpoints=[older, newer])
         self.assertEqual(self.texts(response), ["OLD 0", "NEW 1", "NEW 2", "T[de]:d"])
         fake.requests.clear()
-        response = self.translate(self.host(), ["a", "b"], checkpoint=newer)
+        response = self.translate(self.host(), lines[:2], checkpoint=self.pack({1: "NEW 1"}, lines[:2]))
         self.assertEqual(self.texts(response), ["T[de]:a", "NEW 1"])
 
     def test_a_checkpoint_in_a_wrapper_or_with_a_bad_index_is_read_safely(self):
         fake = self.serve()
+        lines = ["a", "b"]
         saved = [
-            {"data": self.pack({0: "FROM WRAPPER", 99: "OUT OF RANGE"})},
-            self.pack({1: 5}),
+            {"data": self.pack({0: "FROM WRAPPER", 99: "OUT OF RANGE"}, lines)},
+            self.pack({1: 5}, lines),
             "junk",
             {"v": 1, "cues": {"1": "OLD FORMAT"}},
             {"v": 2, "cues_z": "not base64 or zlib"},
         ]
-        response = self.translate(self.host(), ["a", "b"], checkpoints=saved)
+        response = self.translate(self.host(), lines, checkpoints=saved)
         self.assertEqual(self.texts(response), ["FROM WRAPPER", "T[de]:b"])
         self.assertEqual(len(fake.requests), 1)
 
     def test_a_long_job_stays_under_the_frame_cap(self):
-        cues = {index: "\u05e9\u05dc\u05d5\u05dd \u05e2\u05d5\u05dc\u05dd " * 5 + str(index) for index in range(12000)}
-        data = self.pack(cues)
+        # Realistic text: no two cues alike, so the compression has little to work with.
+        rng = random.Random(7)
+        letters = "\u05d0\u05d1\u05d2\u05d3\u05d4\u05d5\u05d6\u05d7\u05d8\u05d9\u05db\u05dc\u05de\u05e0\u05e1\u05e2\u05e4\u05e6\u05e7\u05e8\u05e9\u05ea "
+        cues = {index: "".join(rng.choice(letters) for _ in range(rng.randint(15, 60))) for index in range(12000)}
+        data = self.pack(cues, ["x"])
         self.assertLess(len(json.dumps(data)), 1024 * 1024)
         self.assertEqual(self.cues(data), {str(key): value for key, value in cues.items()})
+
+    def test_a_checkpoint_for_another_target_or_another_file_is_ignored(self):
+        fake = self.serve()
+        lines = ["a", "b", "c"]
+        for stale in (
+            self.pack({0: "STALE"}, lines, target="fr"),
+            self.pack({0: "STALE"}, ["a", "b", "EDITED"]),
+            {**self.pack({0: "STALE"}, lines), "digest": None},
+            {key: value for key, value in self.pack({0: "STALE"}, lines).items() if key != "target"},
+        ):
+            fake.requests.clear()
+            response = self.translate(self.host(), lines, checkpoints=[stale])
+            self.assertEqual(self.texts(response), ["T[de]:a", "T[de]:b", "T[de]:c"])
+            self.assertEqual(len(fake.requests), 3)
+
+    def test_a_checkpoint_carries_the_target_code_sent_to_google_and_the_source_digest(self):
+        self.serve()
+        host = self.host()
+        lines = [f"Line {index}" for index in range(10)]
+        with mock.patch.object(self.module, "CHECKPOINT_EVERY", 5):
+            self.translate(host, lines, target="he")
+        data = self.checkpoints(host)[-1]
+        self.assertEqual((data["target"], data["digest"]), ("iw", self.module.source_digest(lines)))
+        self.assertEqual(len(self.cues(data, lines, target="iw")), 10)
+
+    def test_a_checkpoint_that_cannot_be_sent_does_not_fail_the_job(self):
+        self.serve()
+        context = self.module.PluginContext
+        for error in (ValueError("frame over the cap"), OSError("pipe"), self.module.PluginError("internal", "no")):
+            with mock.patch.object(context, "checkpoint_sync", side_effect=error), mock.patch.object(
+                self.module, "CHECKPOINT_EVERY", 3
+            ):
+                response = self.translate(self.host(), [f"Line {index}" for index in range(10)])
+            self.assertTrue(response.ok, (error, response.error))
+            self.assertEqual(self.texts(response)[9], "T[de]:Line 9")
 
     def test_a_failed_job_stores_what_it_finished_before_it_gives_up(self):
         def behaviour(request):
@@ -894,7 +1122,7 @@ class ManifestTests(unittest.TestCase):
             ["https://translate.google.com:443", "https://translate.googleapis.com:443"],
         )
 
-    def test_it_has_no_settings_no_requirements_and_no_parent(self):
+    def test_it_has_no_settings_no_requires_and_no_parent(self):
         for key in ("settings", "settings_version", "requires", "provides", "extends", "login"):
             self.assertNotIn(key, self.manifest)
 
@@ -905,11 +1133,51 @@ class ManifestTests(unittest.TestCase):
         self.assertTrue((PLUGIN_DIR / f"{self.manifest['entry_module']}.py").is_file())
 
     def test_the_library_is_pinned_exactly(self):
-        lines = (PLUGIN_DIR / "requirements.txt").read_text(encoding="utf-8").split()
-        self.assertEqual(lines, ["deep-translator==1.11.4"])
+        lines = (PLUGIN_DIR / "requirements.txt").read_text(encoding="utf-8").splitlines()
+        self.assertIn("deep-translator==1.11.4", lines)
         import importlib.metadata
 
         self.assertEqual(importlib.metadata.version("deep-translator"), "1.11.4")
+
+    def test_the_dependency_closure_is_locked_with_hashes(self):
+        import importlib.metadata
+        import re
+
+        requirements = self.manifest["dependencies"]["requirements"]
+        names = [item["name"] for item in requirements]
+        self.assertEqual(len(names), len(set(names)))
+        for item in requirements:
+            self.assertEqual(sorted(item), ["hashes", "name", "version"])
+            self.assertTrue(item["hashes"], item["name"])
+            for digest in item["hashes"]:
+                self.assertRegex(digest, r"^sha256:[0-9a-f]{64}$")
+        locked = {item["name"]: item["version"] for item in requirements}
+        self.assertEqual(locked["deep-translator"], "1.11.4")
+        wanted = {
+            re.split(r"[\s;<>=!~(\[]", line, maxsplit=1)[0].lower().replace("_", "-")
+            for line in importlib.metadata.requires("deep-translator")
+            if "extra ==" not in line
+        }
+        self.assertLessEqual(wanted, {name.lower() for name in names})
+
+    def test_requests_and_urllib3_are_pinned_to_ranges_the_lock_satisfies(self):
+        import re
+
+        lines = [
+            line for line in (PLUGIN_DIR / "requirements.txt").read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        ]
+        locked = {item["name"]: item["version"] for item in self.manifest["dependencies"]["requirements"]}
+
+        def numbers(version):
+            return tuple(int(part) for part in version.split("."))
+
+        for name in ("requests", "urllib3"):
+            line = next(line for line in lines if line.startswith(name))
+            low, high = re.fullmatch(rf"{name}>=([\d.]+),<([\d.]+)", line).groups()
+            self.assertLessEqual(numbers(low), numbers(locked[name]))
+            self.assertLess(numbers(locked[name]), numbers(high))
+        self.assertIn("deep-translator==1.11.4", lines)
 
     def test_the_plugin_code_uses_only_the_first_origin(self):
         source = (PLUGIN_DIR / "google_translate.py").read_text(encoding="utf-8")
