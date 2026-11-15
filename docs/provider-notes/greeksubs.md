@@ -6,6 +6,7 @@ GreekSubs.net is a Greek-only movie and episode subtitle source. It is not the s
 
 - Looks up movie pages by movie IMDb id at `/en/view/<ttid>`.
 - Looks up episode pages through the series IMDb page and the matching Season/Episode link.
+- Episode links carry the episode title in their slug, often non-ASCII and served garbled (`un-mal-dÃ­a`, `Ã‰pisode-1.1`). They are requested percent-encoded as UTF-8, as a browser does; urllib refuses a non-ASCII URL, which crashed the search for Vis a vis season 1, Élite and Babylon Berlin.
 - Every result therefore matches the video's title or series, whatever the page calls it. The site can title a page in another language, such as French `Derrière les barreaux` for `Vis a vis`, which Sonarr calls `Locked Up`.
 - GreekSubs.net answers `404` for a title or episode it does not carry. The search returns no results for it rather than failing, since the SDK counts a valid empty response as a success. Any other HTTP error still fails the search.
 - Extracts `secCode` and one-use subtitle ids from the page before building `/dll/<subtitle_id>/0/<secCode>` download URLs.

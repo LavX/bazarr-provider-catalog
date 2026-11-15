@@ -1,6 +1,6 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "780702e48c74223522c6484741b66c63d960e8b40643a81ee98d06baae8281a2",
+  "bundle_sha256": "41c6a86d4a19447e3eed1d93c946585d44dbd1085f31e137ed0c44c6485ed590",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
@@ -30,7 +30,7 @@
   "entry_class": "GreekSubsProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "851e9f9f56f7a0bf9c7b5e9c03d0052b12aa9a20b5681a6c0c724ea96ee6e058"
+    "provider.py": "ef3c0dd9172d2d72ae4c34e9a189244d14a1f4d165386687630a95888e4e24ea"
   },
   "languages": [
     "ell"

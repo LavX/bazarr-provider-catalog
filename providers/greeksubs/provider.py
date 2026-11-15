@@ -190,7 +190,7 @@ def parse_episode_links(body):
             continue
         href = html.unescape(match.group("href"))
         imdb_match = _IMDB_RE.search(href)
-        url = urllib.parse.urljoin(BASE_URL + "/", href)
+        url = _ascii_url(urllib.parse.urljoin(BASE_URL + "/", href))
         episodes[(int(season_episode.group(1)), int(season_episode.group(2)))] = {
             "url": url,
             "label": label,
@@ -257,10 +257,10 @@ class GreekSubsProvider:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         }
         if referer:
-            headers["Referer"] = referer
+            headers["Referer"] = _ascii_url(referer)
         if data is not None:
             headers["Content-Type"] = "application/x-www-form-urlencoded"
-        request = urllib.request.Request(url, data=data, headers=headers)
+        request = urllib.request.Request(_ascii_url(url), data=data, headers=headers)
         opener = self._opener if allow_redirects else self._no_redirect_opener
         for attempt in range(1, HTTP_MAX_ATTEMPTS + 1):
             try:
@@ -460,6 +460,16 @@ def _normalize_imdb_id(value):
     if text.isdigit():
         return f"tt{text}"
     return ""
+
+
+def _ascii_url(url):
+    """url with its non-ASCII characters percent-encoded as UTF-8, as a browser sends it.
+
+    GreekSubs.net slugs carry episode titles, "un-mal-día" or a garbled "Ã‰pisode-1.1", and
+    urllib refuses a request line or header that is not ASCII. Encoding is idempotent: "%"
+    and the reserved characters are kept as they are.
+    """
+    return urllib.parse.quote(str(url), safe=":/?#[]@!$&'()*+,;=%~")
 
 
 def _episode_page_url(body, video):
