@@ -9,7 +9,7 @@ directly:
   failed request that is retried;
 * target languages are mapped to the library's codes, and a language Google lacks is
   declined, so Bazarr+ can hand the job to another engine;
-* the subtitle tags ``<i>``, ``<b>``, ``<u>`` and ``<s>`` are taken off before a cue is
+* the subtitle tags (``<i>``, ``<b>``, ``<u>``, ``<s>``, and any other such as ``<font ...>``) are taken off before a cue is
   sent and put back after.
 
 Failures use the shared vocabulary: a language Google lacks or no route to Google is
@@ -85,6 +85,8 @@ BACKOFF_JITTER = 1.0
 # A checkpoint is stored for every this many completed cues.
 CHECKPOINT_EVERY = 100
 CHECKPOINT_VERSION = 2
+# Once this many cues are done and every one was refused with an HTTP 4xx and none got text, the job is declined.
+REFUSAL_PROBE = 20
 # What a throttled job tells Bazarr+ to wait, in seconds, before it tries Google again.
 THROTTLE_RETRY_AFTER = 900.0
 # Requests abandoned at the deadline that may still be alive at once. Past this, new requests are refused.
@@ -162,8 +164,8 @@ def supported_targets() -> list[str]:
 
 # --------------------------------------------------------------------------- tags
 
-# A subtitle tag Bazarr+ passes, or an ASS override block such as {\an8}.
-_MARKUP = r"</?[ibus]>|\{\\[^{}]*\}"
+# A tag (<i>, <b>, <u>, <s> and anything like <font color="#fff">) or an ASS override block such as {\an8}.
+_MARKUP = r"</?[A-Za-z][^<>]*>|\{\\[^{}]*\}"
 _MARKUP_RE = re.compile(_MARKUP, re.IGNORECASE)
 _OVERRIDE_RE = re.compile(r"\{\\[^{}]*\}")
 _PEEL_RE = re.compile(rf"\A(?P<pre>(?:{_MARKUP})*)(?P<body>.*?)(?P<suf>(?:{_MARKUP})*)\Z", re.IGNORECASE | re.DOTALL)
@@ -208,6 +210,10 @@ class _Throttled(Exception):
 
 class _Unreachable(Exception):
     """No usable answer from Google: a timeout, a refused or failed connection, or an HTTP error."""
+
+
+class _Refused(Exception):
+    """Google refused cue after cue with an HTTP 4xx and gave no text for any."""
 
 
 class _NoAnswer(Exception):
@@ -306,7 +312,8 @@ def _fetch(url: str, params: dict[str, str], stop: Callable[[], bool]) -> str:
     that trickles its headers or one that goes quiet cannot hold the caller past the deadline.
     An abandoned request closes itself as soon as it returns, and the per-read timeouts inside it
     end it when the server stalls. At most ``MAX_ABANDONED`` of them live at once; beyond that
-    new requests are refused as unreachable instead of starting more threads.
+    new requests are refused as unreachable instead of starting more threads. A request the caller
+    gave up on because of a cancel is not counted.
     """
     global _abandoned_alive
     with _abandon_lock:
@@ -322,6 +329,7 @@ def _fetch(url: str, params: dict[str, str], stop: Callable[[], bool]) -> str:
     outcome: dict[str, Any] = {}
     finished = threading.Event()
     abandoned = threading.Event()
+    counted = []  # holds one item once the request counts against MAX_ABANDONED
 
     def run() -> None:
         global _abandoned_alive
@@ -332,7 +340,7 @@ def _fetch(url: str, params: dict[str, str], stop: Callable[[], bool]) -> str:
         finally:
             with _abandon_lock:
                 finished.set()
-                if abandoned.is_set():
+                if counted:
                     _abandoned_alive -= 1
             slots.release()
 
@@ -345,11 +353,17 @@ def _fetch(url: str, params: dict[str, str], stop: Callable[[], bool]) -> str:
     while not finished.wait(0.1):
         cancelled = stop()
         if cancelled or time.monotonic() >= deadline:
+            # One lock covers the abandon, its count and the cap check of every new request, so the
+            # count a request sees is never one a concurrent abandon is about to change. A cancel
+            # leaves the request to close itself but is the user's doing, so it is not counted.
             with _abandon_lock:
                 if not finished.is_set():
                     abandoned.set()
+                    if cancelled:
+                        raise _Stopped()
+                    counted.append(True)
                     _abandoned_alive += 1
-                    raise _Stopped() if cancelled else _Unreachable()
+                    raise _Unreachable()
             break  # it finished while the lock was being taken
     if "error" in outcome:
         raise outcome["error"]
@@ -461,7 +475,7 @@ class _Cue:
         self.text = text
         self.translated = translated  # some Google text is in `text`
         self.empty = empty  # the cue had text to translate and Google gave none
-        self.refused = refused  # ... and every answer it got was an HTTP 4xx
+        self.refused = refused  # ... and every part of it that got none was refused with an HTTP 4xx
         self.partial = partial  # some of its parts have Google text and some kept the source
         self.tags_lost = tags_lost
 
@@ -495,7 +509,7 @@ def _translate_cue(text: str, target: str, stop: Callable[[], bool]) -> _Cue:
         result,
         translated=bool(got),
         empty=bool(missing and not got),
-        refused=bool(refusals and not got),
+        refused=bool(missing and refusals == missing and not got),
         partial=bool(missing and got),
         tags_lost=lost and bool(got),
     )
@@ -530,6 +544,8 @@ def _failure(error: Exception) -> PluginError:
         )
     if isinstance(error, _Unreachable):
         return _declined("Google Translate could not be reached.", "server_unreachable")
+    if isinstance(error, _Refused):
+        return _declined("Google Translate refused every request.", "server_unreachable")
     name = str(error) if isinstance(error, _Unexpected) else error.__class__.__name__
     return PluginError("internal", f"Google Translate failed unexpectedly ({name}).")
 
@@ -677,21 +693,31 @@ class GoogleTranslatePlugin(TranslatorPlugin):
         # Cues with nothing to translate (blank, notes, digits only) go back as they came.
         finished = total - len(pending)
         asked = len(pending)  # the cues this attempt has to get text for
+        answered = 0  # ... how many of them are done
         produced = 0  # ... and how many of them got some
         empty = refused = partial = tags_lost = 0
         saved = dict(done)  # every fully translated cue so far: what each checkpoint holds
         fresh = 0  # cues added to `saved` since the last checkpoint
 
+        beat = max(0.05, min(1.0, float(ctx.heartbeat_interval or 1.0) / 2))
+
         async def store() -> None:
             nonlocal fresh
+            # The host acknowledges a checkpoint when it has stored it, which can take a while, so
+            # the job keeps its heartbeat going while it waits.
+            ack = asyncio.ensure_future(ctx.checkpoint(pack_cues(saved, target, digest)))
             try:
-                await ctx.checkpoint(pack_cues(saved, target, digest))
+                while not (await asyncio.wait({ack}, timeout=beat))[0]:
+                    ctx.heartbeat()
+                ack.result()
             except PluginError as error:
                 if error.code == "cancelled":
                     raise
                 # A checkpoint the host refused costs a resume point, not the job.
             except Exception:
                 pass  # likewise one that could not be sent, such as a frame over the size cap
+            finally:
+                ack.cancel()
             fresh = 0
 
         stop_flag = threading.Event()
@@ -699,7 +725,6 @@ class GoogleTranslatePlugin(TranslatorPlugin):
         def stop() -> bool:
             return stop_flag.is_set() or ctx.is_cancelled
 
-        beat = max(0.05, min(1.0, float(ctx.heartbeat_interval or 1.0) / 2))
         loop = asyncio.get_running_loop()
         running: dict[asyncio.Future, int] = {}
         failure: Exception | None = None
@@ -724,6 +749,7 @@ class GoogleTranslatePlugin(TranslatorPlugin):
                         continue
                     outputs[index] = cue.text
                     finished += 1
+                    answered += 1
                     empty += cue.empty
                     refused += cue.refused
                     partial += cue.partial
@@ -734,6 +760,10 @@ class GoogleTranslatePlugin(TranslatorPlugin):
                         fresh += 1
                     if fresh >= CHECKPOINT_EVERY:
                         await store()
+                if failure is None and answered >= REFUSAL_PROBE and produced == 0 and refused == answered:
+                    # The first cues were all refused with an HTTP 4xx and none got text: the route is
+                    # gone or closed to us, so there is no use asking for the rest.
+                    failure = _Refused()
                 ctx.progress(finished, total, f"translated {finished} of {total} cues")
         finally:
             stop_flag.set()
@@ -751,7 +781,7 @@ class GoogleTranslatePlugin(TranslatorPlugin):
         if asked and produced == 0:
             if refused == empty:
                 # Every cue was refused with an HTTP 4xx: the page route itself is gone or closed to us.
-                raise _declined("Google Translate refused every request.", "server_unreachable")
+                raise _failure(_Refused())
             raise PluginError("internal", "Google returned no usable text.")
 
         notes = [f"Translated {total} cues with Google Translate."]
