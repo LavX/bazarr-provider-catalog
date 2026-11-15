@@ -38,6 +38,11 @@ jobs:
         # The signing tests check the committed key file and any committed signed pair with the host's verifier.
         run: |
           python3 -m pip install --quiet --require-hashes --only-binary=:all: -r sdk/requirements-signing.txt
+      - name: Install plugin test dependencies
+        # The translator plugin's tests import the plugin SDK (a tagged release of
+        # LavX/bazarr-plugin-sdk, which is not on PyPI) and the exact library the
+        # plugin ships with.
+        run: python3 -m pip install --quiet -r plugins/google_translate/requirements-test.txt
       - name: Run test suite
         run: python3 -B -m unittest discover -s tests
 

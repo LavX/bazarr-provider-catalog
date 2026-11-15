@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "id": "google_translate",
+  "kind": "translator",
+  "kind_api": "bazarr.translator.v1",
+  "name": "Google Translate",
+  "version": "0.1.0",
+  "description": "Free translation through Google's public translation page. No key and no settings. Subtitle text is sent to Google, which may limit requests from a busy address.",
+  "min_host_version": "2.8.0",
+  "runtime": {
+    "artifact": "python",
+    "process": "worker"
+  },
+  "entry_module": "google_translate",
+  "entry_class": "GoogleTranslatePlugin",
+  "permissions": [
+    "network"
+  ],
+  "endpoints": [
+    "https://translate.google.com:443",
+    "https://translate.googleapis.com:443"
+  ]
+}
