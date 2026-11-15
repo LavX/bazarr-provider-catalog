@@ -12,6 +12,7 @@
 
 - Searches the legacy `search_report.php?search=<title>&searchType=1` flow.
 - Uses `select[name="Mov_sel"]` suggestions and accepts exact show title or show title plus year. A title that differs only by a trailing `(US)`-style country or `(2005)`-style year qualifier on either side counts too: Subs4Series names `Shameless (US)` where Sonarr may not, and Sonarr names `The Office (US)` where Subs4Series does not. Different countries never match, and a dated site title needs the video's year.
+- A foreign show's site title carries its English title in brackets, `Vis a Vis (Locked Up)`, and matches either name exactly, since Sonarr may send `Locked Up` or `Vis a vis`.
 - Subs4Series lists no IMDb/TVDB ids, so shows are told apart by the year in each episode page's header. With a video year:
   - A show matched only by ignoring a qualifier counts only within one year of the video's, even when it is the only one. Sonarr's `The Office (UK)` (2001) finds only the site's US (2005) and 2024 shows, so it gets no results rather than another country's subtitles.
   - Exact and qualified titles then compete on the year: the same year wins, then one year off. A site with both `Shameless` (2004) and `Shameless (US)` (2011) gives a 2011 video the US show.

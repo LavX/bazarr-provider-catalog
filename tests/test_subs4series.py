@@ -540,6 +540,31 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         self.assertFalse(match("Shameless (US)", "Shame", 2011))
         self.assertFalse(match("Mr Bates vs. The Post Office", "The Office (US)", 2005))
 
+    def test_title_matches_either_name_of_a_bracketed_site_title(self):
+        match = self.mod._title_matches
+
+        # The site files "Vis a vis" as "Vis a Vis (Locked Up)"; Sonarr may send either name.
+        self.assertTrue(match("Vis a Vis (Locked Up)", "Locked Up", 2015))
+        self.assertTrue(match("Vis a Vis (Locked Up)", "Vis a vis", 2015))
+        self.assertTrue(match("Vis a Vis (Locked Up)", "Vis a Vis (Locked Up)", None))
+        self.assertFalse(match("Girls Incarcerated: Young and Locked Up", "Locked Up", 2017))
+        self.assertFalse(match("Vis a vis: El oasis", "Vis a vis", 2020))
+        # A "(US)" or "(2005)" qualifier is no alternative title.
+        self.assertFalse(match("Shameless (US)", "US", 2011))
+        self.assertFalse(match("Doctor Who (2005)", "2005", 2005))
+
+    def test_find_show_paths_takes_a_show_by_its_bracketed_english_title(self):
+        html = (
+            b'<select name="Mov_sel">'
+            b'<option value="/tv-series/girls-incarcerated-young-and-locked-up/sea3eb5e822">'
+            b"Girls Incarcerated: Young and Locked Up</option>"
+            b'<option value="/tv-series/vis-a-vis-locked-up/s062203e450">Vis a Vis (Locked Up)</option>'
+            b"</select>"
+        )
+
+        paths, _calls = self._find_show_paths({"series": "Locked Up", "year": 2015}, html)
+        self.assertEqual(paths, ["tv-series/vis-a-vis-locked-up/s062203e450"])
+
     def _find_show_paths(self, video, suggestions_html):
         provider = self.mod.Subs4SeriesProvider()
         calls = []

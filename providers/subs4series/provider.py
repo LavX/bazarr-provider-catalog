@@ -1070,12 +1070,31 @@ def _http_status(error):
     return _safe_int(status)
 
 
+_TITLE_ALIAS_RE = re.compile(r"^(?P<title>.+?)\s*\(\s*(?P<alias>[^()]+?)\s*\)\s*$")
+
+
+def _title_aliases(value):
+    """The names a site title goes by: "Vis a Vis (Locked Up)" is both "Vis a Vis" and "Locked Up".
+
+    The site puts a foreign show's English title in brackets after its original one, while
+    Sonarr may send either. A "(US)" or "(2005)" qualifier is no alias; _split_title_qualifier
+    handles those.
+    """
+    text = _coerce_text(value)
+    aliases = [text]
+    match = _TITLE_ALIAS_RE.match(text)
+    if match and not _TITLE_QUALIFIER_RE.match(text):
+        aliases.extend([match.group("title"), match.group("alias")])
+    return aliases
+
+
 def _title_matches(candidate, title, year=None):
-    candidate_norm = _normalize_title(candidate)
     title_norm = _normalize_title(title)
-    if candidate_norm == title_norm:
-        return True
-    return bool(year and candidate_norm == f"{title_norm} {year}")
+    for alias in _title_aliases(candidate):
+        candidate_norm = _normalize_title(alias)
+        if candidate_norm == title_norm or (year and candidate_norm == f"{title_norm} {year}"):
+            return True
+    return False
 
 
 def _series_title_from_page(text):
