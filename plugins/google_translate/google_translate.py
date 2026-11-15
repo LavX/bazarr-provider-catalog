@@ -20,17 +20,38 @@ plugin.
 The plugin runs on the SDK's blocking-library support: one asyncio task per job, with
 the requests themselves on one thread pool that every job of the worker shares, so the
 worker never has more than ``CONCURRENCY`` requests in flight.
+
+Checkpoints and resume
+----------------------
+Every checkpoint the plugin stores is cumulative: ``{"v": 2, "cues_z": <text>}``, where
+``cues_z`` is a base64 string of the zlib-compressed JSON object that maps a cue's index
+in the request's ``lines`` (as a string) to its final text, for every cue that is fully
+translated so far, including those a checkpoint of an earlier attempt already held. One
+is stored for every ``CHECKPOINT_EVERY`` newly completed cues, and one more when a job
+fails. A cue that came back only in part, or with no answer, is never stored, so a retry
+tries it again.
+
+On a retry the plugin expects the host to hand back what it stored in the request: either
+``request["checkpoints"]``, a list of the ``data`` objects stored, oldest first, or
+``request["checkpoint"]``, the latest one. Each item may also be wrapped as ``{"data":
+...}``. Because every checkpoint holds everything before it, the latest alone is enough
+and older ones are harmless: the plugin merges what it is given and a later checkpoint
+wins. Cues it is given are returned as stored and are not sent to Google again. A
+checkpoint of another version, or one it cannot read, is ignored.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import collections
+import json
 import random
 import re
 import socket
 import threading
 import time
+import zlib
 
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
@@ -59,6 +80,7 @@ BACKOFF_FACTOR = 2.0
 BACKOFF_JITTER = 1.0
 # A checkpoint is stored for every this many completed cues.
 CHECKPOINT_EVERY = 100
+CHECKPOINT_VERSION = 2
 # What a throttled job tells Bazarr+ to wait, in seconds, before it tries Google again.
 THROTTLE_RETRY_AFTER = 900.0
 # A page larger than this is not a translation answer.
@@ -119,9 +141,14 @@ def library_code(tag: Any) -> str | None:
 
 
 def supported_targets() -> list[str]:
-    """The BCP-47 target tags this plugin accepts, for ``describe``."""
-    spelled = {code: tag for tag, code in _LANGUAGE_ALIASES.items()}
-    tags = {spelled.get(code, code) for code in LIBRARY_CODES}
+    """The BCP-47 target tags this plugin accepts, for ``describe``.
+
+    A host that filters on this list must not lose a language the plugin takes: Hebrew is listed
+    as he (not the library's iw), Javanese as jv (not jw), and Norwegian as both no and nb.
+    """
+    retired = {code for code in _LANGUAGE_ALIASES.values() if code in ("iw", "jw")}
+    tags = {code for code in LIBRARY_CODES if code not in retired}
+    tags.update(alias for alias, code in _LANGUAGE_ALIASES.items() if code in LIBRARY_CODES)
     if {"zh-CN", "zh-TW"} <= LIBRARY_CODES:
         tags.update({"zh", "zh-Hans", "zh-Hant"})
     return sorted(tags, key=str.lower)
@@ -132,7 +159,7 @@ def supported_targets() -> list[str]:
 # A subtitle tag Bazarr+ passes, or an ASS override block such as {\an8}.
 _MARKUP = r"</?[ibus]>|\{\\[^{}]*\}"
 _MARKUP_RE = re.compile(_MARKUP, re.IGNORECASE)
-_PEEL_RE = re.compile(rf"^(?P<pre>(?:{_MARKUP})*)(?P<body>.*?)(?P<suf>(?:{_MARKUP})*)$", re.IGNORECASE | re.DOTALL)
+_PEEL_RE = re.compile(rf"\A(?P<pre>(?:{_MARKUP})*)(?P<body>.*?)(?P<suf>(?:{_MARKUP})*)\Z", re.IGNORECASE | re.DOTALL)
 
 _Part = tuple[str, str, str]  # (markup before, text, markup after)
 
@@ -172,6 +199,10 @@ class _Throttled(Exception):
 
 class _Unreachable(Exception):
     """No usable answer from Google: a timeout, a refused or failed connection, or an HTTP error."""
+
+
+class _NoAnswer(Exception):
+    """Google refused this one text (an HTTP 4xx other than 403 or 429): the cue is skipped."""
 
 
 class _Stopped(Exception):
@@ -251,11 +282,39 @@ def _abort_at(response: requests.Response, seconds: float) -> threading.Timer:
 
 
 def _fetch(url: str, params: dict[str, str]) -> str:
-    """One GET, bounded as a whole by ``REQUEST_TIMEOUT``. Returns the page text or raises."""
+    """One GET under a single deadline, ``REQUEST_TIMEOUT``, for the lookup, connect, headers and body.
+
+    The request runs on a thread of its own and is abandoned when the deadline passes, so a slow
+    name lookup, a server that trickles its headers or one that goes quiet cannot hold the caller
+    past it. An abandoned request closes itself as soon as it returns, and the per-read timeouts
+    inside it end it when the server stalls.
+    """
+    outcome: dict[str, Any] = {}
+    finished = threading.Event()
+    abandoned = threading.Event()
+
+    def run() -> None:
+        try:
+            outcome["page"] = _fetch_page(url, params, abandoned)
+        except BaseException as error:  # handed to the caller below
+            outcome["error"] = error
+        finally:
+            finished.set()
+
+    threading.Thread(target=run, name="google-translate-request", daemon=True).start()
+    if not finished.wait(REQUEST_TIMEOUT):
+        abandoned.set()
+        raise _Unreachable()
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["page"]
+
+
+def _fetch_page(url: str, params: dict[str, str], abandoned: threading.Event) -> str:
     limit = REQUEST_TIMEOUT
     started = time.monotonic()
     try:
-        # The connect and the wait for the first answer together take at most the ceiling.
+        # The connect and the wait for the first answer are bounded per read as well.
         response = requests.get(
             url, params=params, timeout=(limit / 3, limit - limit / 3), allow_redirects=False, stream=True
         )
@@ -263,6 +322,8 @@ def _fetch(url: str, params: dict[str, str]) -> str:
         raise _Unreachable() from None
     watchdog = _abort_at(response, limit - (time.monotonic() - started))
     try:
+        if abandoned.is_set():
+            raise _Unreachable()
         status = response.status_code
         if status == 429:
             raise _Throttled()
@@ -270,6 +331,8 @@ def _fetch(url: str, params: dict[str, str]) -> str:
             # A redirect to Google's "sorry" page is the block page; any other redirect leaves the
             # origins the plugin declared, so it is not followed.
             raise _Throttled() if "/sorry/" in response.headers.get("Location", "") else _Unreachable()
+        if 400 <= status < 500 and status != 403:
+            raise _NoAnswer()
         if not 200 <= status < 300:
             raise _Unreachable()
         chunks: list[bytes] = []
@@ -325,7 +388,7 @@ def _translate_text(text: str, target: str, stop: Callable[[], bool], tries: int
                 raise
             _wait(delay + random.uniform(0, BACKOFF_JITTER), stop)
             delay *= BACKOFF_FACTOR
-        except (NotValidLength, NotValidPayload, TranslationNotFound):
+        except (NotValidLength, NotValidPayload, TranslationNotFound, _NoAnswer):
             return None
         except Exception as error:
             raise _Unexpected(error.__class__.__name__) from None
@@ -334,12 +397,21 @@ def _translate_text(text: str, target: str, stop: Callable[[], bool], tries: int
 class _Cue:
     """What one cue came to: its text and how it went."""
 
-    __slots__ = ("text", "translated", "empty", "tags_lost")
+    __slots__ = ("text", "translated", "empty", "partial", "tags_lost")
 
-    def __init__(self, text: str, *, translated: bool = False, empty: bool = False, tags_lost: bool = False):
+    def __init__(
+        self,
+        text: str,
+        *,
+        translated: bool = False,
+        empty: bool = False,
+        partial: bool = False,
+        tags_lost: bool = False,
+    ):
         self.text = text
         self.translated = translated  # some Google text is in `text`
         self.empty = empty  # the cue had text to translate and Google gave none
+        self.partial = partial  # some of its parts have Google text and some kept the source
         self.tags_lost = tags_lost
 
 
@@ -352,17 +424,25 @@ def _translate_cue(text: str, target: str, stop: Callable[[], bool]) -> _Cue:
         if not _translatable(inner):
             out.append(pre + body + suf)
             continue
+        # Whitespace around the text, a trailing newline for one, stays where it was.
+        lead, trail = body[: len(body) - len(body.lstrip())], body[len(body.rstrip()) :]
         answer = _translate_text(inner, target, stop)
         if answer is None or not answer.strip():
             out.append(pre + body + suf)
             missing += 1
         else:
-            out.append(pre + answer + suf)
+            out.append(pre + lead + answer + trail + suf)
             got += 1
     result = joiner.join(out)
     if lost and not got:
         result = text  # nothing was translated, so there is nothing to strip
-    return _Cue(result, translated=bool(got), empty=bool(missing and not got), tags_lost=lost and bool(got))
+    return _Cue(
+        result,
+        translated=bool(got),
+        empty=bool(missing and not got),
+        partial=bool(missing and got),
+        tags_lost=lost and bool(got),
+    )
 
 
 _executor_lock = threading.Lock()
@@ -413,18 +493,31 @@ def _with_text(line: Any, text: str) -> Any:
     return {**line, "text": text} if isinstance(line, dict) else text
 
 
+def pack_cues(cues: dict[int, str]) -> dict[str, Any]:
+    """The checkpoint data for the cues finished so far (see the module docstring)."""
+    blob = zlib.compress(json.dumps({str(index): text for index, text in cues.items()}).encode("utf-8"))
+    return {"v": CHECKPOINT_VERSION, "cues_z": base64.b64encode(blob).decode("ascii")}
+
+
+def _unpack_cues(data: Any) -> dict[str, str]:
+    if not isinstance(data, dict) or data.get("v") != CHECKPOINT_VERSION or not isinstance(data.get("cues_z"), str):
+        return {}
+    try:
+        cues = json.loads(zlib.decompress(base64.b64decode(data["cues_z"], validate=True)).decode("utf-8"))
+    except (ValueError, zlib.error):
+        return {}
+    return cues if isinstance(cues, dict) else {}
+
+
 def _resumed(request: dict[str, Any], count: int) -> dict[int, str]:
-    """The cues an earlier attempt finished, from the request's checkpoints."""
+    """The cues an earlier attempt finished, from the request's checkpoints, oldest first, a later one winning."""
     found: dict[int, str] = {}
     saved = request.get("checkpoints")
     if saved is None and request.get("checkpoint") is not None:
         saved = [request["checkpoint"]]
     for item in saved if isinstance(saved, list) else []:
         data = item.get("data", item) if isinstance(item, dict) else None
-        cues = data.get("cues") if isinstance(data, dict) else None
-        if not isinstance(cues, dict):
-            continue
-        for key, text in cues.items():
+        for key, text in _unpack_cues(data).items():
             try:
                 index = int(key)
             except (TypeError, ValueError):
@@ -514,8 +607,19 @@ class GoogleTranslatePlugin(TranslatorPlugin):
         # Cues with nothing to translate (blank, notes, digits only) go back as they came.
         finished = total - len(pending)
         usable = len(done)
-        empty = tags_lost = 0
-        unsaved: dict[str, str] = {}
+        empty = partial = tags_lost = 0
+        saved = dict(done)  # every fully translated cue so far: what each checkpoint holds
+        fresh = 0  # cues added to `saved` since the last checkpoint
+
+        async def store() -> None:
+            nonlocal fresh
+            try:
+                await ctx.checkpoint(pack_cues(saved))
+            except PluginError as error:
+                if error.code == "cancelled":
+                    raise
+                # A checkpoint that could not be stored costs a resume point, not the job.
+            fresh = 0
 
         stop_flag = threading.Event()
 
@@ -548,13 +652,15 @@ class GoogleTranslatePlugin(TranslatorPlugin):
                     outputs[index] = cue.text
                     finished += 1
                     empty += cue.empty
+                    partial += cue.partial
                     tags_lost += cue.tags_lost
                     if cue.translated:
                         usable += 1
-                        unsaved[str(index)] = cue.text
-                    if len(unsaved) >= CHECKPOINT_EVERY:
-                        await ctx.checkpoint({"v": 1, "cues": unsaved})
-                        unsaved = {}
+                    if cue.translated and not cue.partial:
+                        saved[index] = cue.text
+                        fresh += 1
+                    if fresh >= CHECKPOINT_EVERY:
+                        await store()
                 ctx.progress(finished, total, f"translated {finished} of {total} cues")
         finally:
             stop_flag.set()
@@ -562,9 +668,9 @@ class GoogleTranslatePlugin(TranslatorPlugin):
                 future.cancel()
 
         if failure is not None:
-            if unsaved and not ctx.is_cancelled:
+            if fresh and not ctx.is_cancelled:
                 try:
-                    await ctx.checkpoint({"v": 1, "cues": unsaved})
+                    await store()
                 except PluginError:
                     pass
             raise _failure(failure)
@@ -575,6 +681,8 @@ class GoogleTranslatePlugin(TranslatorPlugin):
         notes = [f"Translated {total} cues with Google Translate."]
         if tags_lost:
             notes.append(f"{tags_lost} cues came back without their tags.")
+        if partial:
+            notes.append(f"{partial} cues were only partly translated and keep some of their source text.")
         if empty:
             notes.append(f"{empty} cues kept their source text because Google gave no answer for them.")
         return {
