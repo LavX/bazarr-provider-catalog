@@ -23,7 +23,7 @@
 
 - The site sits behind Anubis (v1.26.2 as of 2026-10-24), itself behind Cloudflare. Pages answer `200` with a proof-of-work challenge until the session holds a `*-anubis-auth` cookie. The worker solves it inline with the stdlib (`fast`/`slow` SHA-256, `preact`, `metarefresh`, and the older bare-string challenge) and refetches.
 - A failed solve on a `www.subs4free.info` page renews the browser identity and retries, up to three attempts. A gate on any other host, or on the `getSub.php` POST, gets one attempt and no renewal: `getSub.php` only serves a session that has opened the subtitle's page, so a POST from a new session bounces to the detail page and would read as the anti-flood penalty (checked live on 2026-11-12).
-- Each site call has a 60-second budget. A whole search or download has `operation_timeout_seconds` (default 90), and the host gives the worker 30 seconds more. Running out raises `ServiceUnavailable` once, with no retry. A search that already found results returns them.
+- Each site call has a 60-second budget. A whole search or download has `operation_timeout_seconds` (default 90), and the host gives the worker 30 seconds more. A socket watchdog interrupts trickling headers, response bodies and redirects at the deadline, including TLS traffic. It is stopped and joined when the call ends. DNS lookup itself cannot be interrupted; the deadline is checked as soon as it returns. Running out raises `ServiceUnavailable` once, with no retry. A search that already found results returns them.
 - A `429` raises `RateLimited` carrying the site's `Retry-After`.
 
 ## Downloads

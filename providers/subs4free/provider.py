@@ -2,16 +2,20 @@
 
 import base64
 import contextlib
+import contextvars
 import datetime
 import email.utils
 import hashlib
 import html
+import http.client
 import io
 import json
 import logging
 import math
 import random
 import re
+import socket
+import threading
 import time
 import unicodedata
 import urllib.error
@@ -487,16 +491,6 @@ def _request_timeout(timeout, deadline, stage):
     return min(timeout, _remaining(deadline, stage))
 
 
-def _is_timeout(error):
-    # urllib raises a connect timeout as URLError(reason=TimeoutError) and a read timeout
-    # as a bare TimeoutError. HTTPError is a URLError too, but never a timeout.
-    if isinstance(error, urllib.error.HTTPError):
-        return False
-    if isinstance(error, urllib.error.URLError):
-        return isinstance(error.reason, TimeoutError)
-    return isinstance(error, TimeoutError)
-
-
 def _budget_sleep(seconds, deadline, stage):
     if seconds >= _remaining(deadline, stage):
         raise _budget_exhausted(stage)
@@ -508,6 +502,110 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
     # processor has already stored the cookie) instead of following it to the resource.
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
+
+
+class _DeadlineWatch:
+    """Cut every socket of a site call at its deadline, including after TLS wraps it.
+
+    A socket timeout only limits inactivity. Duplicates keep the same underlying
+    connection reachable while urllib reads trickling headers, bodies or redirects.
+    DNS lookup itself is not interruptible; connect checks the deadline when it returns.
+    """
+
+    def __init__(self, deadline):
+        self.deadline = deadline
+        self.fired = False
+        self._done = False
+        self._cutters = []
+        self._lock = threading.Lock()
+        self._timer = threading.Timer(_remaining(deadline, "request"), self.cut)
+        self._timer.name = "subs4free-deadline"
+        self._timer.daemon = True
+        self._timer.start()
+
+    def add(self, sock):
+        cutter = sock.dup()
+        with self._lock:
+            if not self.fired:
+                self._cutters.append(cutter)
+                return
+        cutter.close()
+        raise _budget_exhausted("connect")
+
+    def cut(self):
+        with self._lock:
+            if self._done:
+                return
+            self.fired = True
+            for cutter in self._cutters:
+                try:
+                    cutter.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+    def finish(self):
+        self._timer.cancel()
+        with self._lock:
+            self._done = True
+            expired = self.fired or time.monotonic() >= self.deadline
+            cutters, self._cutters = self._cutters, []
+        for cutter in cutters:
+            cutter.close()
+        self._timer.join()
+        return expired
+
+    def connect(self, address, timeout, source_address=None):
+        host, port = address
+        limit = timeout if isinstance(timeout, (int, float)) else None
+        failure = None
+        for family, kind, proto, _name, target in socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM):
+            remaining = _remaining(self.deadline, "connect")
+            sock = socket.socket(family, kind, proto)
+            try:
+                self.add(sock)
+                sock.settimeout(remaining if limit is None else min(limit, remaining))
+                if source_address:
+                    sock.bind(source_address)
+                sock.connect(target)
+                _remaining(self.deadline, "connect")
+                return sock
+            except OSError as error:
+                sock.close()
+                failure = error
+            except BaseException:
+                sock.close()
+                raise
+        _remaining(self.deadline, "connect")
+        raise failure or OSError("name resolution returned no address")
+
+
+_ACTIVE_WATCH = contextvars.ContextVar("subs4free_request_watch", default=None)
+
+
+class _WatchedConnection:
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        watch = _ACTIVE_WATCH.get()
+        if watch is not None:
+            self._create_connection = watch.connect
+
+
+class _WatchedHTTPConnection(_WatchedConnection, http.client.HTTPConnection):
+    pass
+
+
+class _WatchedHTTPSConnection(_WatchedConnection, http.client.HTTPSConnection):
+    pass
+
+
+class _WatchedHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_WatchedHTTPConnection, req)
+
+
+class _WatchedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_WatchedHTTPSConnection, req, context=self._context)
 
 
 class Subs4FreeProvider:
@@ -533,8 +631,10 @@ class Subs4FreeProvider:
         self._user_agent = user_agent
         self._cookie_jar = CookieJar()
         cookies = urllib.request.HTTPCookieProcessor(self._cookie_jar)
-        self._opener = urllib.request.build_opener(cookies)
-        self._pass_opener = urllib.request.build_opener(cookies, _NoRedirect())
+        self._opener = urllib.request.build_opener(cookies, _WatchedHTTPHandler, _WatchedHTTPSHandler)
+        self._pass_opener = urllib.request.build_opener(
+            cookies, _NoRedirect(), _WatchedHTTPHandler, _WatchedHTTPSHandler
+        )
 
     @contextlib.contextmanager
     def _operation_budget(self, config):
@@ -686,18 +786,21 @@ class Subs4FreeProvider:
             with (opener or self._opener).open(request, timeout=timeout) as response:
                 return response.getcode(), response.geturl(), response.read()
         except urllib.error.HTTPError as error:
-            if error.code == 429:
-                # Raised here, where the headers are still at hand, so the site's
-                # Retry-After reaches the host on every request (page, challenge, pass).
-                raise RateLimited(
-                    "subs4free rate limited the request",
-                    retry_after=_retry_after_seconds((error.headers or {}).get("Retry-After")),
-                ) from None
             try:
-                body = error.read()
-            except Exception:
-                body = b""
-            return error.code, error.geturl() or request.full_url, body
+                if error.code == 429:
+                    # Raised here, where the headers are still at hand, so the site's
+                    # Retry-After reaches the host on every request (page, challenge, pass).
+                    raise RateLimited(
+                        "subs4free rate limited the request",
+                        retry_after=_retry_after_seconds((error.headers or {}).get("Retry-After")),
+                    ) from None
+                try:
+                    body = error.read()
+                except Exception:
+                    body = b""
+                return error.code, error.geturl() or request.full_url, body
+            finally:
+                error.close()
 
     def _open_with_anubis(self, build_request, url, timeout, redir_url=None, renew_identity=True):
         # Only a failed gate on www.subs4free.info renews the identity and retries. Every
@@ -709,14 +812,23 @@ class Subs4FreeProvider:
         deadline = time.monotonic() + SITE_CALL_BUDGET_SECONDS
         if self._operation_deadline is not None:
             deadline = min(deadline, self._operation_deadline)
+        watch = _DeadlineWatch(deadline)
+        token = _ACTIVE_WATCH.set(watch)
         try:
-            return self._open_attempts(build_request, url, timeout, redir_url, deadline, renew_identity)
-        except (TimeoutError, urllib.error.URLError) as error:
-            # Each request timeout is clipped to what is left of the budget, so a timeout
-            # that fires at or past the deadline is the budget running out, not the site.
-            if not _is_timeout(error) or time.monotonic() < deadline:
+            try:
+                body = self._open_attempts(build_request, url, timeout, redir_url, deadline, renew_identity)
+            except (OSError, http.client.HTTPException) as error:
+                if watch.finish():
+                    if isinstance(error, urllib.error.HTTPError):
+                        error.close()
+                    raise _budget_exhausted("request") from error
                 raise
-            raise _budget_exhausted("request") from error
+            if watch.finish():
+                raise _budget_exhausted("request")
+            return body
+        finally:
+            _ACTIVE_WATCH.reset(token)
+            watch.finish()
 
     def _open_attempts(self, build_request, url, timeout, redir_url, deadline, renew_identity):
         attempts = CHALLENGE_RETRY_ATTEMPTS if renew_identity and _renews_identity(url) else 1

@@ -2,8 +2,10 @@ import base64
 import email.message
 import email.utils
 import hashlib
+import http.server
 import importlib.util
 import io
+import threading
 import time
 import unittest
 import urllib.error
@@ -945,9 +947,9 @@ class Subs4FreeAnubisTests(unittest.TestCase):
         self.assertEqual(self.mod._operation_timeout_seconds(None), 90)
 
     def test_download_shares_one_operation_budget_across_site_calls(self):
-        # The detail page takes 80 of the 90 s, so the getSub.php POST gets a timeout clipped
+        # The detail page takes 50 of the 60 s, so the getSub.php POST gets a timeout clipped
         # to the 10 s left; when it fires the download reports ServiceUnavailable, before the
-        # host's own wall (90 + 30 s) would kill the worker.
+        # host's own wall (60 + 30 s) would kill the worker.
         clock = [1000.0]
         timeouts = []
         provider = self.mod.Subs4FreeProvider()
@@ -958,7 +960,7 @@ class Subs4FreeAnubisTests(unittest.TestCase):
             if request.get_method() == "POST":
                 clock[0] += timeout
                 raise TimeoutError("The read operation timed out")
-            clock[0] += 80
+            clock[0] += 50
             return 200, request.full_url, DOWNLOAD_HTML
 
         provider._fetch = fetch
@@ -967,14 +969,14 @@ class Subs4FreeAnubisTests(unittest.TestCase):
                 provider.download(
                     {"detail_url": "https://www.subs4free.info/greek-subtitles/s3591aab93d/inception"},
                     {"alpha3": "ell", "alpha2": "el"},
-                    {"request_delay_ms": 0},
+                    {"request_delay_ms": 0, "operation_timeout_seconds": 60},
                 )
         self.assertIn("stage=request budget_exhausted", str(raised.exception))
         self.assertEqual(timeouts, [self.mod.HTTP_TIMEOUT_SECONDS, 10.0])
         self.assertIsNone(provider._operation_deadline)
 
     def test_search_returns_results_found_before_the_budget_ran_out(self):
-        # The first query finds Greek only and takes 85 of the 90 s; the English fallback
+        # The first query finds Greek only and takes 55 of the 60 s; the English fallback
         # query runs out. The Greek result is still returned instead of an error.
         clock = [1000.0]
         timeouts = []
@@ -985,7 +987,7 @@ class Subs4FreeAnubisTests(unittest.TestCase):
             del opener
             timeouts.append(timeout)
             if "search=Inception+2010" in request.full_url:
-                clock[0] += 85
+                clock[0] += 55
                 return 200, request.full_url, greek
             clock[0] += timeout
             raise urllib.error.URLError(TimeoutError("timed out"))
@@ -995,7 +997,7 @@ class Subs4FreeAnubisTests(unittest.TestCase):
             results = provider.search(
                 {"kind": "movie", "title": "Inception", "year": 2010},
                 [{"alpha3": "ell", "alpha2": "el"}, {"alpha3": "eng", "alpha2": "en"}],
-                {"request_delay_ms": 0},
+                {"request_delay_ms": 0, "operation_timeout_seconds": 60},
             )
         self.assertEqual([item["language"]["alpha3"] for item in results], ["ell"])
         self.assertEqual(timeouts, [self.mod.HTTP_TIMEOUT_SECONDS, 5.0])
@@ -1088,6 +1090,99 @@ class Subs4FreeAnubisTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as raised:
             provider._http_get("https://www.subs4free.info/greek-subtitles/missing/x")
         self.assertEqual(raised.exception.code, 404)
+        raised.exception.close()
+
+
+class _TricklingHandler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        try:
+            if self.path == "/redirect":
+                self.send_response(302)
+                self.send_header("Location", "/body")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            if self.path == "/headers":
+                self.wfile.write(b"HTTP/1.1 200 OK\r\n")
+                pieces = [b"X-Trickle: x\r\n"] * 24 + [b"Content-Length: 2\r\n\r\nok"]
+            elif self.path == "/chunked":
+                self.send_response(200)
+                self.send_header("Transfer-Encoding", "chunked")
+                self.end_headers()
+                pieces = [bytes([byte]) for byte in b"000000000000000000000001\r\nx\r\n0\r\n\r\n"]
+            elif self.path == "/ok":
+                self.send_response(200)
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                self.wfile.write(b"ok")
+                return
+            else:
+                self.send_response(503 if self.path == "/error" else 200)
+                self.send_header("Content-Length", "24")
+                self.end_headers()
+                pieces = [b"x"] * 24
+            for piece in pieces:
+                self.wfile.write(piece)
+                self.wfile.flush()
+                if self.server.stop_trickle.wait(0.03):
+                    break
+        except OSError:
+            pass
+
+
+class Subs4FreeDeadlineTransportTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.mod.SITE_CALL_BUDGET_SECONDS = 0.15
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _TricklingHandler)
+        server.daemon_threads = True
+        server.stop_trickle = threading.Event()
+        self.server = server
+        self.thread = threading.Thread(
+            target=lambda: server.serve_forever(poll_interval=0.01), daemon=True
+        )
+        self.thread.start()
+        self.addCleanup(self._close_server)
+        self.base = f"http://127.0.0.1:{server.server_port}"
+
+    def _close_server(self):
+        self.server.stop_trickle.set()
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join()
+
+    def test_deadline_interrupts_trickling_headers_body_chunk_framing_and_error_body(self):
+        provider = self.mod.Subs4FreeProvider()
+        for path in ("/body", "/headers", "/chunked", "/error", "/redirect"):
+            with self.subTest(path=path):
+                started = time.monotonic()
+                with self.assertRaises(self.mod.ServiceUnavailable) as raised:
+                    provider._http_get(self.base + path)
+                self.assertTrue(raised.exception.budget_exhausted)
+                self.assertLess(time.monotonic() - started, 0.6)
+
+    def test_operation_deadline_can_end_a_call_before_its_site_budget(self):
+        self.mod.SITE_CALL_BUDGET_SECONDS = 2
+        provider = self.mod.Subs4FreeProvider()
+        provider._operation_deadline = time.monotonic() + 0.15
+        started = time.monotonic()
+        with self.assertRaises(self.mod.ServiceUnavailable) as raised:
+            provider._http_get(self.base + "/body")
+        self.assertTrue(raised.exception.budget_exhausted)
+        self.assertLess(time.monotonic() - started, 0.6)
+
+    def test_repeated_successes_and_deadlines_leave_no_watchdog_threads(self):
+        provider = self.mod.Subs4FreeProvider()
+        for _ in range(5):
+            self.assertEqual(provider._http_get(self.base + "/ok"), b"ok")
+            with self.assertRaises(self.mod.ServiceUnavailable):
+                provider._http_get(self.base + "/body")
+        self.assertEqual(
+            [thread for thread in threading.enumerate() if thread.name == "subs4free-deadline"], []
+        )
 
 
 if __name__ == "__main__":
