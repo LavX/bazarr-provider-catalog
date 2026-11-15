@@ -542,28 +542,82 @@ class Subs4SeriesProviderTests(unittest.TestCase):
 
     def test_title_matches_either_name_of_a_bracketed_site_title(self):
         match = self.mod._title_matches
+        # Live site titles of foreign shows, the English name first or second, and the names
+        # Sonarr may send for each.
+        cases = [
+            ("Vis a Vis (Locked Up)", ["Locked Up", "Vis a vis", "Vis a Vis (Locked Up)"]),
+            ("La Casa de Papel (Money Heist)", ["Money Heist", "La casa de papel"]),
+            ("Cable Girls (Las Chicas del Cable)", ["Cable Girls", "Las chicas del cable"]),
+            ("The Bureau (Le Bureau des Legendes)", ["The Bureau", "Le Bureau des Légendes"]),
+            ("Coeurs Noirs (Dark Hearts)", ["Dark Hearts", "Coeurs noirs"]),
+            ("Riding in Darkness (Nattryttarna)", ["Riding in Darkness", "Nattryttarna"]),
+            ("Under a Dark Sun (Qui Seme le Vent)", ["Under a Dark Sun", "Qui sème le vent"]),
+        ]
+        for site_title, names in cases:
+            for name in names:
+                with self.subTest(site_title=site_title, name=name):
+                    self.assertTrue(match(site_title, name, 2017))
 
-        # The site files "Vis a vis" as "Vis a Vis (Locked Up)"; Sonarr may send either name.
-        self.assertTrue(match("Vis a Vis (Locked Up)", "Locked Up", 2015))
-        self.assertTrue(match("Vis a Vis (Locked Up)", "Vis a vis", 2015))
-        self.assertTrue(match("Vis a Vis (Locked Up)", "Vis a Vis (Locked Up)", None))
-        self.assertFalse(match("Girls Incarcerated: Young and Locked Up", "Locked Up", 2017))
-        self.assertFalse(match("Vis a vis: El oasis", "Vis a vis", 2020))
-        # A "(US)" or "(2005)" qualifier is no alternative title.
-        self.assertFalse(match("Shameless (US)", "US", 2011))
-        self.assertFalse(match("Doctor Who (2005)", "2005", 2005))
+        # Each name must match whole: a word of it, or a title that only contains it, is not enough.
+        for site_title, name in [
+            ("Girls Incarcerated: Young and Locked Up", "Locked Up"),
+            ("Vis a vis: El oasis", "Vis a vis"),
+            ("Money Heist: Korea - Joint Economic Area", "Money Heist"),
+            ("Coeurs Noirs (Dark Hearts)", "Dark"),
+            ("Riding in Darkness (Nattryttarna)", "Darkness"),
+            ("The Bureau (Le Bureau des Legendes)", "Bureau"),
+            # A "(US)" or "(2005)" qualifier is no alternative title.
+            ("Shameless (US)", "US"),
+            ("Doctor Who (2005)", "2005"),
+        ]:
+            with self.subTest(site_title=site_title, name=name):
+                self.assertFalse(match(site_title, name, 2017))
 
-    def test_find_show_paths_takes_a_show_by_its_bracketed_english_title(self):
-        html = (
-            b'<select name="Mov_sel">'
-            b'<option value="/tv-series/girls-incarcerated-young-and-locked-up/sea3eb5e822">'
-            b"Girls Incarcerated: Young and Locked Up</option>"
-            b'<option value="/tv-series/vis-a-vis-locked-up/s062203e450">Vis a Vis (Locked Up)</option>'
-            b"</select>"
+    def test_find_show_paths_takes_a_show_by_either_name_of_its_bracketed_title(self):
+        def options(*rows):
+            return (
+                '<select name="Mov_sel">'
+                + "".join(f'<option value="/{path}">{title}</option>' for path, title in rows)
+                + "</select>"
+            ).encode("utf-8")
+
+        # Live suggestion lists, searched by the English name.
+        locked_up = options(
+            ("tv-series/girls-incarcerated-young-and-locked-up/sea3eb5e822", "Girls Incarcerated: Young and Locked Up"),
+            ("tv-series/vis-a-vis-locked-up/s062203e450", "Vis a Vis (Locked Up)"),
         )
-
-        paths, _calls = self._find_show_paths({"series": "Locked Up", "year": 2015}, html)
-        self.assertEqual(paths, ["tv-series/vis-a-vis-locked-up/s062203e450"])
+        money_heist = options(
+            ("tv-series/money-heist-korea-joint-economic-area/sbb1b6878b7", "Money Heist: Korea - Joint Economic Area"),
+            ("tv-series/la-casa-de-papel-money-heist/saa5d0cc71e", "La Casa de Papel (Money Heist)"),
+        )
+        the_bureau = options(
+            ("tv-series/the-bureau-le-bureau-des-legendes/s16836225cc", "The Bureau (Le Bureau des Legendes)"),
+        )
+        dark = options(
+            ("tv-series/the-dark/s619e9d8a2b", "The Dark"),
+            ("tv-series/under-a-dark-sun-qui-seme-le-vent/s3a62a45c73", "Under a Dark Sun (Qui Seme le Vent)"),
+            ("tv-series/coeurs-noirs-dark-hearts-/s2bb340bcce", "Coeurs Noirs (Dark Hearts)"),
+            ("tv-series/riding-in-darkness-nattryttarna/s4f23d145ce", "Riding in Darkness (Nattryttarna)"),
+            ("tv-series/dark/s2cfc74f10a", "Dark"),
+            ("tv-series/in-the-dark/s23ca1f8017", "In the Dark"),
+        )
+        cases = [
+            ({"series": "Locked Up", "year": 2015}, locked_up, ["tv-series/vis-a-vis-locked-up/s062203e450"]),
+            ({"series": "Money Heist", "year": 2017}, money_heist, ["tv-series/la-casa-de-papel-money-heist/saa5d0cc71e"]),
+            ({"series": "The Bureau", "year": 2015}, the_bureau, ["tv-series/the-bureau-le-bureau-des-legendes/s16836225cc"]),
+            (
+                {"series": "Le Bureau des Légendes", "year": 2015},
+                the_bureau,
+                ["tv-series/the-bureau-le-bureau-des-legendes/s16836225cc"],
+            ),
+            # "Dark" names no bracketed show here, only the show called just that.
+            ({"series": "Dark", "year": 2017}, dark, ["tv-series/dark/s2cfc74f10a"]),
+            ({"series": "Dark Hearts", "year": 2025}, dark, ["tv-series/coeurs-noirs-dark-hearts-/s2bb340bcce"]),
+        ]
+        for video, html, expected in cases:
+            with self.subTest(series=video["series"]):
+                paths, _calls = self._find_show_paths(video, html)
+                self.assertEqual(paths, expected)
 
     def _find_show_paths(self, video, suggestions_html):
         provider = self.mod.Subs4SeriesProvider()
