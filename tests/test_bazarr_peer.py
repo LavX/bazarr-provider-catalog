@@ -2886,6 +2886,116 @@ class DownloadTests(PeerTestCase):
         self.assertNotIn("SECRET-BAD", str(caught.exception))
 
 
+class DNSDeadlineTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def serve(self):
+        server = _Upstream(lambda record: (200, {"Content-Type": "application/x-subrip"}, b"subtitle"))
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return server, f"http://127.0.0.1:{server.server_address[1]}"
+
+    def test_stalled_dns_ends_each_request_at_its_deadline_without_growing_threads(self):
+        release = threading.Event()
+        resolvers = []
+        callers = []
+        before = set(threading.enumerate())
+
+        def blocked_resolution(*args, **kwargs):
+            del args, kwargs
+            resolvers.append(threading.current_thread())
+            release.wait()
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 9))]
+
+        try:
+            with patch.object(socket, "getaddrinfo", blocked_resolution):
+                for _attempt in range(4):
+                    errors = []
+
+                    def request():
+                        started = time.monotonic()
+                        try:
+                            self.mod._fetch_stream("http://peer.invalid:9/stream", 10, started + 0.1)
+                        except Exception as error:
+                            errors.append((error, time.monotonic() - started))
+
+                    caller = threading.Thread(target=request, daemon=True)
+                    callers.append(caller)
+                    caller.start()
+                    caller.join(0.6)
+                    self.assertFalse(caller.is_alive(), "DNS kept the request blocked past its deadline")
+                    self.assertEqual(len(errors), 1)
+                    error, elapsed = errors[0]
+                    self.assertIsInstance(error, self.mod.ServiceUnavailable)
+                    self.assertIn("within the time budget", str(error))
+                    self.assertGreater(elapsed, 0.07)
+                    self.assertLess(elapsed, 0.6)
+                    helpers = [thread for thread in threading.enumerate()
+                               if thread not in before and not isinstance(thread, threading.Timer)]
+                    self.assertEqual(len(helpers), 1)
+                    self.assertTrue(helpers[0].daemon)
+                    self.assertEqual(resolvers, helpers)
+        finally:
+            release.set()
+            for thread in callers + resolvers:
+                thread.join(1)
+                self.assertFalse(thread.is_alive(), "the released DNS test left a thread running")
+        _server, base = self.serve()
+        body, _content_type = self.mod._fetch_stream(base + "/stream", 5, time.monotonic() + 2)
+        self.assertEqual(body, b"subtitle")
+
+    def test_a_resolver_failure_releases_capacity_for_the_next_request(self):
+        _server, base = self.serve()
+        real_resolve = socket.getaddrinfo
+        calls = []
+
+        def resolve(*args, **kwargs):
+            calls.append(args)
+            if len(calls) == 1:
+                raise socket.gaierror("lookup failed")
+            return real_resolve(*args, **kwargs)
+
+        with patch.object(socket, "getaddrinfo", resolve):
+            with self.assertRaises(self.mod.ServiceUnavailable):
+                self.mod._fetch_stream(base + "/stream", 5, time.monotonic() + 2)
+            body, content_type = self.mod._fetch_stream(base + "/stream", 5, time.monotonic() + 2)
+        self.assertEqual(body, b"subtitle")
+        self.assertEqual(content_type, "application/x-subrip")
+        self.assertEqual(len(calls), 2)
+
+    def test_resolved_https_keeps_the_original_hostname_and_certificate_checks(self):
+        server, _base = self.serve()
+        port = server.server_address[1]
+        context = ssl.create_default_context()
+        hostnames = []
+
+        def wrap(sock, server_hostname=None):
+            hostnames.append(server_hostname)
+            return sock
+
+        addresses = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", port))]
+        watch = self.mod._Watch(time.monotonic() + 2)
+        self.mod._LOCAL.watch = watch
+        connection = self.mod._WatchedHTTPSConnection("peer.example", context=context, timeout=2)
+        self.addCleanup(connection.close)
+        try:
+            with patch.object(socket, "getaddrinfo", return_value=addresses), patch.object(
+                context, "wrap_socket", wrap
+            ):
+                connection.request("GET", "/stream")
+                with connection.getresponse() as response:
+                    self.assertEqual(response.read(), b"subtitle")
+        finally:
+            self.mod._LOCAL.watch = None
+            watch.finish()
+        self.assertEqual(hostnames, ["peer.example"])
+        self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(context.check_hostname)
+        self.assertEqual(server.requests[0]["host"], "peer.example")
+
+
 class HashTests(PeerTestCase):
     def test_opensubtitles_hash_matches_the_reference_algorithm(self):
         data = bytes((index * 7) % 256 for index in range(300 * 1024))

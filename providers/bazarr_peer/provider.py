@@ -153,6 +153,9 @@ _ALPHA2_TO_CODE = {alpha2: alpha3 for alpha3, alpha2 in _LANGUAGE_CODES.items()}
 
 _IMDB_MAX = 10**10
 _monotonic = time.monotonic
+# A timed-out lookup keeps this slot until the resolver actually returns.
+# A stuck resolver therefore cannot accumulate helpers across requests.
+_DNS_SLOT = threading.BoundedSemaphore(1)
 
 
 class AuthenticationError(ValueError):
@@ -224,8 +227,8 @@ class _Watch:
     TLS socket whose raw socket was detached by wrapping, because the duplicate shares the connection.
 
     The request ends the watch with finish() once the body is read, or when it fails. Name
-    resolution is not bounded by the timer: the checks around each connect end the request as soon
-    as the lookup returns.
+    resolution runs in a daemon helper, with at most one unfinished lookup in this module.
+    Waiting for that helper or its slot ends at the request deadline, even if the resolver never returns.
     """
 
     def __init__(self, deadline):
@@ -276,12 +279,46 @@ class _Watch:
                 cutter.close()
             return self.fired
 
+    def _resolve(self, host, port):
+        """Wait for DNS within the deadline, with at most one unfinished lookup in the module."""
+        remaining = self.deadline - _monotonic()
+        if self.fired or remaining <= 0 or not _DNS_SLOT.acquire(timeout=min(remaining, _MAX_WATCH_SECONDS)):
+            raise ServiceUnavailable(_DEADLINE_MESSAGE)
+        try:
+            if self.fired or self.deadline <= _monotonic():
+                raise ServiceUnavailable(_DEADLINE_MESSAGE)
+            done = threading.Event()
+            result = {}
+
+            def lookup():
+                try:
+                    result["addresses"] = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
+                except BaseException as error:
+                    result["error"] = error
+                finally:
+                    done.set()
+                    _DNS_SLOT.release()
+
+            helper = threading.Thread(target=lookup, daemon=True)
+            helper.start()
+        except BaseException:
+            _DNS_SLOT.release()
+            raise
+        remaining = self.deadline - _monotonic()
+        if remaining <= 0 or not done.wait(min(remaining, _MAX_WATCH_SECONDS)):
+            raise ServiceUnavailable(_DEADLINE_MESSAGE)
+        if self.fired or self.deadline <= _monotonic():
+            raise ServiceUnavailable(_DEADLINE_MESSAGE)
+        if "error" in result:
+            raise result["error"]
+        return result["addresses"]
+
     def connect(self, address, timeout, source_address=None):
         """Connect like socket.create_connection, but every attempt gets the time left, and is watched."""
         host, port = address
         limit = timeout if isinstance(timeout, (int, float)) else None
         failure = None
-        for family, kind, proto, _name, target in socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM):
+        for family, kind, proto, _name, target in self._resolve(host, port):
             remaining = self.deadline - _monotonic()
             if self.fired or remaining <= 0:
                 raise ServiceUnavailable(_DEADLINE_MESSAGE)
