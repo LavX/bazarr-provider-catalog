@@ -157,14 +157,40 @@ class GreekSubsProviderTests(unittest.TestCase):
         self.assertIn("episode", results[0]["matches"])
 
     def test_episode_matches_the_series_by_imdb_id_whatever_its_title(self):
-        # Sonarr sends "Locked Up"; the site titles the page in French and the release "Vis.a.vis".
-        matches = self.mod._derive_matches(
-            {"kind": "episode", "series": "Locked Up", "series_imdb_id": "tt4524056", "season": 4, "episode": 1},
-            "Derrière les barreaux: La Barbie | Season 4 | Episode 1",
-            "Vis.a.vis.4x01.(Spa).HDTV.720.x265-10bit",
-        )
+        # Live GreekSubs.net pages and releases of foreign shows: they use the original or a
+        # French title, never the English one Sonarr sends.
+        cases = [
+            (
+                "Locked Up", "tt4524056", 4, 1,
+                "Derrière les barreaux: La Barbie | Season 4 | Episode 1",
+                "Vis.a.vis.4x01.(Spa).HDTV.720.x265-10bit",
+            ),
+            (
+                "Money Heist", "tt6468322", 1, 1,
+                "La casa de papel: Efectuar lo acordado | Season 1 | Episode 1",
+                "La casa de papel-1x01- newpct HDTV",
+            ),
+            (
+                "Gomorrah", "tt2049116", 1, 1,
+                "Gomorra: Il clan dei Savastano | Season 1 | Episode 1",
+                "Gomorra-1x01-Episodio 1 eW 1080p.BDRip",
+            ),
+            (
+                "Elite", "tt7134908", 1, 1,
+                # Served garbled: "Élite" as "Ã‰lite".
+                "Ã‰lite: Ã‰pisode #1.1 | Season 1 | Episode 1",
+                "Ã‰lite.S01E01.1080p.NF.WEB-DL.DDP5.1.x264-MZABI",
+            ),
+        ]
+        for series, imdb_id, season, episode, page_title, release in cases:
+            with self.subTest(series=series):
+                video = {
+                    "kind": "episode", "series": series, "series_imdb_id": imdb_id,
+                    "season": season, "episode": episode,
+                }
+                matches = self.mod._derive_matches(video, page_title, release)
 
-        self.assertEqual(matches[:3], ["series", "season", "episode"])
+                self.assertEqual(matches[:3], ["series", "season", "episode"])
 
     def test_movie_matches_the_title_by_imdb_id_whatever_its_title(self):
         matches = self.mod._derive_matches(
@@ -175,6 +201,92 @@ class GreekSubsProviderTests(unittest.TestCase):
 
         self.assertIn("title", matches)
         self.assertIn("year", matches)
+
+    def test_search_requests_an_episode_link_with_non_ascii_characters(self):
+        # Live: Vis a vis S01E01 links "un-mal-día" (served garbled as "dÃ­a"), Élite and
+        # Babylon Berlin "Ã‰pisode-1.1". urllib refused such a URL, so the search crashed.
+        episode_href = (
+            "https://greeksubs.net/en/view/tt4597334/"
+            "subtitle-for-locked-up-vis-a-vis-s01-s04-un-mal-d\u00c3\u00ada-season-1-episode-1"
+        )
+        series_html = (
+            f'<a href="{episode_href}" class="btn btn-default btn100">'
+            "Subtitles for: Locked Up (Vis a vis) (S01-S04)(Un mal d\u00c3\u00ada) Season 1 Episode 1</a>"
+        ).encode("utf-8")
+        encoded_url = (
+            "https://greeksubs.net/en/view/tt4597334/"
+            "subtitle-for-locked-up-vis-a-vis-s01-s04-un-mal-d%C3%83%C2%ADa-season-1-episode-1"
+        )
+        provider = self.mod.GreekSubsProvider()
+        requests = []
+
+        def stub(url, data=None, timeout=20, referer=None):
+            del data, timeout
+            requests.append((url, referer))
+            if url == "https://greeksubs.net/en/view/tt4524056":
+                return series_html
+            if url == encoded_url:
+                return EPISODE_HTML
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_request = stub
+        results = provider.search(
+            {"kind": "episode", "series": "Locked Up", "series_imdb_id": "tt4524056", "season": 1, "episode": 1},
+            [{"alpha3": "ell", "alpha2": "el"}],
+            {},
+        )
+
+        self.assertEqual(requests[1], (encoded_url, "https://greeksubs.net/en/view/tt4524056"))
+        self.assertTrue(results)
+        self.assertEqual(results[0]["provider_payload"]["page_url"], encoded_url)
+
+    def test_http_fetch_sends_non_ascii_urls_and_referers_percent_encoded(self):
+        provider = self.mod.GreekSubsProvider()
+        sent = []
+
+        class FakeResponse:
+            headers = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def getcode(self):
+                return 200
+
+            def read(self):
+                return b"<html></html>"
+
+        class FakeOpener:
+            def open(self, request, timeout=None):
+                del timeout
+                sent.append((request.full_url, request.get_header("Referer")))
+                return FakeResponse()
+
+        provider._opener = FakeOpener()
+        provider._http_fetch(
+            "https://greeksubs.net/en/view/tt7671662/subtitle-for-elite-s01--s08-\u00c3\u2030pisode-1.1",
+            referer="https://greeksubs.net/en/view/tt4597334/un-mal-d\u00c3\u00ada",
+        )
+
+        self.assertEqual(
+            sent,
+            [(
+                "https://greeksubs.net/en/view/tt7671662/subtitle-for-elite-s01--s08-%C3%83%E2%80%B0pisode-1.1",
+                "https://greeksubs.net/en/view/tt4597334/un-mal-d%C3%83%C2%ADa",
+            )],
+        )
+
+    def test_ascii_url_leaves_an_encoded_or_plain_url_unchanged(self):
+        for url in (
+            "https://greeksubs.net/en/view/tt4597334/un-mal-d%C3%83%C2%ADa",
+            "https://greeksubs.net/dll/Keylo-616ed4e09f037/0/8Iza7aiF9",
+            "https://greeksubs.net/en/view/tt1480055/subtitle-for-game-of-thrones-winter-is-coming-season-1-episode-1",
+        ):
+            with self.subTest(url=url):
+                self.assertEqual(self.mod._ascii_url(url), url)
 
     def test_search_requires_greek_language_and_imdb_id(self):
         provider = self.mod.GreekSubsProvider()
