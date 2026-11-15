@@ -909,6 +909,24 @@ class PayloadBoundsTests(SubsDumpTestCase):
         # The filename derives from the same capped source.
         self.assertEqual(len(results[0]["filename"]), 512 + len(".srt"))
 
+    def test_payload_release_count_keeps_persisted_hints_small(self):
+        releases = [f"release-{index:04d}-" + "x" * 512 for index in range(2000)]
+        provider = self._provider_with_responses({
+            INFO_URL: _info_body(),
+            MOVIE_SEARCH_URL: json.dumps(
+                {"subtitles": [_record(releases=releases)]}
+            ).encode("utf-8"),
+        })
+
+        results = provider.search(_movie_video(), [{"alpha3": "eng"}], CONFIG)
+
+        payload = results[0]["provider_payload"]
+        self.assertEqual(len(payload["releases"]), 16)
+        self.assertEqual(payload["releases"][0], releases[0][:512])
+        self.assertEqual(payload["releases"][-1], releases[15][:512])
+        self.assertLess(len(json.dumps(payload)), 10000)
+        self.assertEqual(results[0]["release_info"], "\n".join(releases))
+
 
 class SearchTests(SubsDumpTestCase):
     def _movie_responses(self, body=None, **extra):
@@ -1395,6 +1413,23 @@ class DownloadTests(SubsDumpTestCase):
         with self.assertRaisesRegex(ValueError, "HTML"):
             provider.download(payload, {"alpha3": "eng"}, CONFIG)
 
+    def test_html_page_with_a_comment_past_the_sniff_window_is_rejected(self):
+        provider, payload = self._provider_with_content(
+            b"<!--" + b"maintenance " * 100 + b"--><html><body>offline</body></html>"
+        )
+        with self.assertRaisesRegex(ValueError, "HTML"):
+            provider.download(payload, {"alpha3": "eng"}, CONFIG)
+
+    def test_xml_prologs_are_rejected_even_when_they_cross_the_sniff_window(self):
+        for body in (
+            b'<?xml version="1.0"?><html><body>offline</body></html>',
+            b"<?xml " + b"x" * 600 + b"?><html><body>offline</body></html>",
+        ):
+            with self.subTest(body=body[:32]):
+                provider, payload = self._provider_with_content(body)
+                with self.assertRaisesRegex(ValueError, "HTML"):
+                    provider.download(payload, {"alpha3": "eng"}, CONFIG)
+
     def test_srt_with_literal_html_text_is_accepted(self):
         # Literal "<html>" text inside a cue is not markup; searching the
         # whole sniff window for markup refused subtitles like this one.
@@ -1449,6 +1484,32 @@ class DownloadTests(SubsDumpTestCase):
         with self.assertRaisesRegex(ValueError, "HTML"):
             provider.download(payload, {"alpha3": "eng"}, CONFIG)
 
+    def test_utf16_html_is_rejected_with_incomplete_sample_characters(self):
+        for body in (
+            "<html><body>offline</body></html>".encode("utf-16") + b"x",
+            ("<html>".ljust(254, "x") + "\U0001f642</html>").encode("utf-16"),
+            b"\xfe\xff" + ("<html>".ljust(254, "x") + "\U0001f642</html>").encode("utf-16-be"),
+        ):
+            with self.subTest(bytes=len(body), bom=body[:2]):
+                provider, payload = self._provider_with_content(body)
+                with self.assertRaisesRegex(ValueError, "HTML"):
+                    provider.download(payload, {"alpha3": "eng"}, CONFIG)
+
+    def test_utf16_ass_sniff_tolerates_incomplete_characters_without_changing_bytes(self):
+        prefix = "[Script Info]\n[V4+ Styles]\n"
+        for body in (
+            prefix.encode("utf-16") + b"x",
+            (prefix.ljust(2046, "x") + "\U0001f642\n").encode("utf-16"),
+            b"\xfe\xff" + (prefix.ljust(2046, "x") + "\U0001f642\n").encode("utf-16-be"),
+        ):
+            with self.subTest(bytes=len(body), bom=body[:2]):
+                provider, payload = self._provider_with_content(body)
+
+                content = provider.download(payload, {"alpha3": "eng"}, CONFIG)
+
+                self.assertEqual(content["format"], "ass")
+                self.assertEqual(base64.b64decode(content["content_b64"]), body)
+
     def test_format_falls_back_to_release_extension_then_srt(self):
         provider, payload = self._provider_with_content(
             b"plain text without signature\n", releases=["Dune.2021.1080p.WEBRip.ass"]
@@ -1462,11 +1523,12 @@ class DownloadTests(SubsDumpTestCase):
 
     def test_zip_download_returns_archive_mode(self):
         zip_body = _zip_bytes({"dune.2021.1080p.srt": SRT_BYTES})
-        provider, payload = self._provider_with_content(zip_body, episode=1)
+        provider, payload = self._provider_with_content(zip_body, season=2, episode=1)
 
         archive = provider.download(payload, {"alpha3": "eng"}, CONFIG)
 
-        self.assertEqual(set(archive), {"archive_b64", "archive_sha256", "episode"})
+        self.assertEqual(set(archive), {"archive_b64", "archive_sha256", "season", "episode"})
+        self.assertEqual(archive["season"], 2)
         self.assertEqual(archive["episode"], 1)
         raw = base64.b64decode(archive["archive_b64"].encode("ascii"), validate=True)
         self.assertEqual(hashlib.sha256(raw).hexdigest(), archive["archive_sha256"])
@@ -1479,11 +1541,12 @@ class DownloadTests(SubsDumpTestCase):
 
     def test_rar_download_returns_archive_mode(self):
         rar_body = b"Rar!\x1a\x07\x00" + b"\x00" * 64
-        provider, payload = self._provider_with_content(rar_body, episode=3)
+        provider, payload = self._provider_with_content(rar_body, season=0, episode=3)
 
         archive = provider.download(payload, {"alpha3": "eng"}, CONFIG)
 
         self.assertEqual(archive["episode"], 3)
+        self.assertEqual(archive["season"], 0)
         raw = base64.b64decode(archive["archive_b64"].encode("ascii"), validate=True)
         self.assertEqual(raw, rar_body)
 
@@ -1494,6 +1557,7 @@ class DownloadTests(SubsDumpTestCase):
         archive = provider.download(payload, {"alpha3": "eng"}, CONFIG)
 
         self.assertIsNone(archive["episode"])
+        self.assertIsNone(archive["season"])
 
     def test_html_body_is_rejected(self):
         provider, payload = self._provider_with_content(
@@ -1588,14 +1652,26 @@ class HttpErrorTests(SubsDumpTestCase):
         with self.assertRaisesRegex(RuntimeError, "request failed"):
             provider.search(_movie_video(), [{"alpha3": "eng"}], CONFIG)
 
-    def test_a_tls_failure_is_a_configuration_error(self):
-        # A TLS failure says the URL or its scheme is wrong for this host,
-        # which reads as a settings problem, not a transient service one.
+    def test_a_certificate_verification_failure_is_a_configuration_error(self):
         provider = self._provider_with_http_error(
-            urllib.error.URLError(ssl.SSLError("certificate verify failed"))
+            urllib.error.URLError(ssl.SSLCertVerificationError("certificate verify failed"))
         )
         with self.assertRaisesRegex(self.mod.ConfigurationError, "TLS"):
             provider.search(_movie_video(), [{"alpha3": "eng"}], CONFIG)
+
+    def test_transient_tls_failures_do_not_park_the_provider_as_misconfigured(self):
+        for failure in (
+            ssl.SSLEOFError("unexpected EOF"),
+            ssl.SSLZeroReturnError("TLS session closed"),
+            ssl.SSLError("TLS connection failed"),
+        ):
+            with self.subTest(error=type(failure).__name__):
+                provider = self._provider_with_http_error(urllib.error.URLError(failure))
+
+                with self.assertRaisesRegex(RuntimeError, "request failed") as caught:
+                    provider.search(_movie_video(), [{"alpha3": "eng"}], CONFIG)
+
+                self.assertNotIsInstance(caught.exception, self.mod.ConfigurationError)
 
     def test_download_auth_rejection_is_an_authentication_error(self):
         provider = self._provider_with_http_error(
