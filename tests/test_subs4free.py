@@ -327,6 +327,13 @@ class Subs4FreeParserTests(unittest.TestCase):
         payload = self.mod.extract_download(archive, {"filename": "inception.el.zip"})
         self.assertEqual(base64.b64decode(payload["archive_b64"]), archive)
 
+    def test_extract_download_keeps_short_subtitles_containing_penalty_text(self):
+        for text in (b"Timori is here.", b"Refresh timorias [1]", b"Polla alla isxiei timoria..."):
+            with self.subTest(text=text):
+                body = b"1\n00:00:01,000 --> 00:00:02,000\n" + text + b"\n"
+                payload = self.mod.extract_download(body, {"filename": "movie.en.srt"})
+                self.assertEqual(base64.b64decode(payload["content_b64"]), body)
+
 
 class Subs4FreeProviderTests(unittest.TestCase):
     def setUp(self):
@@ -816,6 +823,28 @@ class Subs4FreeAnubisTests(unittest.TestCase):
         ):
             with self.subTest(url=url):
                 self.assertFalse(self.mod._renews_identity(url))
+
+    def test_redirected_off_site_gate_preserves_the_site_identity(self):
+        for host in ("images.subs4free.info", "www.subs4series.com"):
+            with self.subTest(host=host):
+                provider = self.mod.Subs4FreeProvider()
+                provider._cookie_jar.set_cookie(_anubis_auth_cookie())
+                jar = provider._cookie_jar
+                pages = []
+
+                def fetch(request, timeout, opener=None):
+                    del timeout, opener
+                    if "pass-challenge" in request.full_url:
+                        return 403, request.full_url, b""
+                    pages.append(request.full_url)
+                    return 200, f"https://{host}/.within.website/", CHALLENGE_HTML
+
+                provider._fetch = fetch
+                with self.assertRaises(self.mod.ServiceUnavailable):
+                    provider._http_get("https://www.subs4free.info/example")
+                self.assertIs(provider._cookie_jar, jar)
+                self.assertTrue(provider._has_anubis_auth("www.subs4free.info"))
+                self.assertEqual(pages, ["https://www.subs4free.info/example"])
 
     def test_proof_of_work_budget_exhaustion_aborts_without_retry(self):
         # A new identity cannot make the proof of work cheaper: running out of budget

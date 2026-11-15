@@ -96,7 +96,7 @@ _ANUBIS_CHALLENGE_RE = re.compile(
 )
 # getSub.php answers a flagged client with "Refresh timorias [1]" or "Polla alla isxiei
 # timoria..." (Greeklish for "punishment"): an anti-flood penalty on the client IP.
-_PENALTY_RE = re.compile(rb"timori", re.I)
+_PENALTY_RE = re.compile(rb"^(?:Refresh\s+timorias\b|Polla\s+alla\s+isxiei\s+timoria\b)", re.I)
 _PENALTY_BODY_MAX_BYTES = 512
 _YEAR_RE = re.compile(r"(?<!\d)((?:19|20)\d{2})(?!\d)")
 _NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
@@ -279,10 +279,10 @@ def _is_refused_download(body):
     # A refused download is a 302 from getSub.php back to the subtitle's detail page. Its
     # short body names the penalty; once the redirect is followed the response is that
     # detail page, which still carries the getSub.php form. Archives are never refusals,
-    # and the penalty word only counts in a short body, so a subtitle quoting it is safe.
+    # and only the site's short refusal messages count, so subtitle dialogue is safe.
     if _is_archive_body(body):
         return False
-    if len(body) <= _PENALTY_BODY_MAX_BYTES and _PENALTY_RE.search(body):
+    if len(body) <= _PENALTY_BODY_MAX_BYTES and _PENALTY_RE.search(body.lstrip()):
         return True
     if not _is_html_body(body):
         return False
@@ -737,7 +737,11 @@ class Subs4FreeProvider:
                     # provider-wide throttle.
                     raise urllib.error.HTTPError(landed or url, status, f"subs4free HTTP {status}", None, None)
                 return body
+            if not _renews_identity(landed or url):
+                attempts = attempt
             logger.warning("subs4free Anubis stage=recovery attempt=%s/%s status=%s", attempt, attempts, status)
+            if attempt >= attempts:
+                break
             if attempt < attempts:
                 _budget_sleep(RETRY_BACKOFF_SECONDS * attempt, deadline, "recovery_backoff")
                 self._new_identity()
