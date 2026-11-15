@@ -3,10 +3,12 @@ import hashlib
 import importlib.util
 import io
 import json
+import threading
 import time
 import unittest
 import urllib.error
 import zipfile
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
@@ -122,6 +124,161 @@ class FakeUrlopenResponse:
 
     def read(self):
         return self.body
+
+
+class _DeadlineHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *_args):
+        pass
+
+    def do_GET(self):
+        try:
+            if self.path == "/anubis" and not getattr(self.server, "challenge_seen", False):
+                self.server.challenge_seen = True
+                body = b'<script id="anubis_challenge">{"challenge":{"id":"a","randomData":"x","difficulty":0}}</script>'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if self.path == "/ok":
+                self.send_response(200)
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                self.wfile.write(b"ok")
+                return
+            if self.path == "/redirect":
+                self.send_response(302)
+                self.send_header("Location", "/body")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            if self.path == "/headers":
+                self.wfile.write(b"HTTP/1.1 200 OK\r\nX-Slow: ")
+            elif self.path == "/chunks":
+                self.wfile.write(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1;slow=")
+            else:
+                self.send_response(404 if self.path == "/error" else 200)
+                self.send_header("Content-Length", "60")
+                self.end_headers()
+            for _ in range(60):
+                self.wfile.write(b"x")
+                self.wfile.flush()
+                time.sleep(0.025)
+        except OSError:
+            pass
+
+
+class Subs4SeriesDeadlineTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), _DeadlineHandler)
+        self.server.daemon_threads = True
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+
+    def _provider(self):
+        import requests
+
+        provider = self.mod.Subs4SeriesProvider()
+        provider._scraper = requests.Session()
+        provider._scraper.trust_env = False
+        provider._scraper_initialized = True
+        self.addCleanup(provider._scraper.close)
+        return provider
+
+    def _url(self, path):
+        return f"http://127.0.0.1:{self.server.server_port}{path}"
+
+    def test_site_budget_interrupts_trickling_headers_body_chunks_and_redirects(self):
+        provider = self._provider()
+        for path in ("/headers", "/body", "/chunks", "/redirect"):
+            with self.subTest(path=path), patch.object(self.mod, "SITE_CALL_BUDGET_SECONDS", 0.15):
+                started = time.monotonic()
+                with self.assertRaises(self.mod.ServiceUnavailable):
+                    provider._http_get(self._url(path))
+                self.assertLess(time.monotonic() - started, 1)
+
+    def test_deadline_timeout_is_reported_as_service_unavailable(self):
+        clock = [0.0]
+        provider = self._provider()
+
+        def get(*_args, **_kwargs):
+            clock[0] = 60.0
+            raise TimeoutError("deadline reached")
+
+        provider._scraper.get = get
+        with patch.object(self.mod.time, "monotonic", side_effect=lambda: clock[0]):
+            with self.assertRaises(self.mod.ServiceUnavailable):
+                provider._http_get(self._url("/ok"))
+
+    def test_anubis_refetch_keeps_the_original_deadline(self):
+        provider = self._provider()
+
+        def solve(*_args, **_kwargs):
+            time.sleep(0.05)
+            return {"proof": "ok"}
+
+        with patch.object(self.mod, "SITE_CALL_BUDGET_SECONDS", 0.15), patch.object(
+            self.mod, "solve_anubis_challenge", side_effect=solve
+        ):
+            started = time.monotonic()
+            with self.assertRaises(self.mod.ServiceUnavailable):
+                provider._http_get(self._url("/anubis"))
+            self.assertLess(time.monotonic() - started, 0.5)
+
+    def test_stdlib_fallback_bounds_error_bodies_and_headers(self):
+        provider = self.mod.Subs4SeriesProvider()
+        provider._get_scraper = lambda: None
+        for path in ("/headers", "/error"):
+            with self.subTest(path=path), patch.object(self.mod, "SITE_CALL_BUDGET_SECONDS", 0.15):
+                started = time.monotonic()
+                with self.assertRaises(self.mod.ServiceUnavailable):
+                    provider._http_get(self._url(path))
+                self.assertLess(time.monotonic() - started, 1)
+
+    def test_cloudscraper_replacement_adapters_and_reused_connections_are_watched(self):
+        scraper = self.mod.cloudscraper.create_scraper(
+            enable_cookie_persistence=False, enable_metrics=False,
+            enable_performance_monitoring=False, enable_stealth=False,
+            enable_tls_fingerprinting=False, enable_adaptive_timing=False,
+            enable_ml_optimization=False, enable_anti_detection=False,
+            enable_enhanced_spoofing=False, enable_enhanced_error_handling=False,
+            rotate_tls_ciphers=False, min_request_interval=0,
+            interpreter="native",
+        )
+        scraper.trust_env = False
+        self.addCleanup(scraper.close)
+        provider = self.mod.Subs4SeriesProvider()
+        provider._scraper = scraper
+        provider._scraper_initialized = True
+        self.assertEqual(provider._http_get(self._url("/ok")), b"ok")
+        adapter = self.mod.cloudscraper.CipherSuiteAdapter()
+        context = adapter.ssl_context
+        scraper.get_adapter(self._url("/ok")).close()
+        scraper.mount("http://", adapter)
+        self.assertEqual(provider._http_get(self._url("/ok")), b"ok")
+        get_adapter = scraper.get_adapter
+        get_connection = adapter.get_connection_with_tls_context
+        pool_keys = list(adapter.poolmanager.pools.keys())
+        self.assertEqual(len(pool_keys), 1)
+        pool = adapter.poolmanager.pools[pool_keys[0]]
+        connection_class = pool.ConnectionCls
+        self.assertEqual(pool.num_connections, 1)
+        self.assertEqual(provider._http_get(self._url("/ok")), b"ok")
+        self.assertEqual(pool.num_connections, 1)
+        self.assertIs(scraper.get_adapter, get_adapter)
+        self.assertIs(adapter.get_connection_with_tls_context, get_connection)
+        self.assertIs(pool.ConnectionCls, connection_class)
+        self.assertIs(adapter.ssl_context, context)
+        with patch.object(self.mod, "SITE_CALL_BUDGET_SECONDS", 0.15):
+            with self.assertRaises(self.mod.ServiceUnavailable):
+                provider._http_get(self._url("/body"))
+        self.assertEqual(pool.num_connections, 1)
+        self.assertFalse(any(t.name == "subs4series-deadline" for t in threading.enumerate()))
 
 
 class Subs4SeriesParserTests(unittest.TestCase):
@@ -744,6 +901,15 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         # Without a video year there is nothing to check the show against, so it is kept.
         self.assertTrue(self._search_with_pages({"series": "Shameless"}, responses))
 
+    def test_search_rejects_a_qualifier_only_match_without_a_header_year(self):
+        suggestions = b'<select name="Mov_sel"><option value="/tv-series/shameless-us/s8a71806125">Shameless (US)</option></select>'
+        responses = {
+            "https://www.subs4series.com/search_report.php?search=Shameless&searchType=1": suggestions,
+            "https://www.subs4series.com/tv-series/shameless-us/s8a71806125/season-1/episode-1": EPISODE_HTML.replace(b"</u> (2011)", b"</u>"),
+        }
+
+        self.assertEqual(self._search_with_pages({"series": "Shameless", "year": 2004}, responses), [])
+
     def test_search_lets_an_exact_and_a_qualified_show_compete_by_year(self):
         # A site listing both "Shameless" (UK, 2004) and "Shameless (US)" (2011): the exact
         # title must not win for a 2011 video.
@@ -1233,8 +1399,8 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         }
 
         with patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), patch.object(
-            self.mod.urllib.request,
-            "urlopen",
+            provider._opener,
+            "open",
             return_value=FakeUrlopenResponse(json.dumps(flaresolverr_payload).encode("utf-8")),
         ) as urlopen:
             body = provider._http_get(

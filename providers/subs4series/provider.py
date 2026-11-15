@@ -1,11 +1,16 @@
 """Subs4Series provider for the Bazarr+ Provider Hub catalog."""
 
 import base64
+import contextlib
+import contextvars
 import hashlib
 import html
+import http.client
 import io
 import json
 import re
+import socket
+import threading
 import time
 import unicodedata
 import urllib.error
@@ -104,6 +109,206 @@ class ServiceUnavailable(RuntimeError):
 
     The worker maps this class name onto the host's ServiceUnavailable.
     """
+
+
+class _DeadlineWatch:
+    """Cut sockets at the call deadline, including TLS and trickling headers or bodies.
+
+    A socket timeout limits inactivity. Socket duplicates retain the underlying connection
+    after TLS wraps it. DNS itself cannot be interrupted; connect checks after it returns.
+    """
+
+    def __init__(self, deadline):
+        self.deadline = deadline
+        self.fired = False
+        self._done = False
+        self._cutters = []
+        self._lock = threading.Lock()
+        self._timer = threading.Timer(_remaining(deadline, "request"), self.cut)
+        self._timer.name = "subs4series-deadline"
+        self._timer.daemon = True
+        self._timer.start()
+
+    def add(self, sock):
+        # A reused connection can already be an SSLSocket, whose dup() is unsupported.
+        # Temporarily view its descriptor as a raw socket without taking ownership of it.
+        raw = socket.socket(sock.family, sock.type, sock.proto, fileno=sock.fileno())
+        try:
+            cutter = raw.dup()
+        finally:
+            raw.detach()
+        with self._lock:
+            if not self.fired:
+                self._cutters.append(cutter)
+                return
+        cutter.close()
+        raise ServiceUnavailable("subs4series Anubis stage=connect budget_exhausted")
+
+    def cut(self):
+        with self._lock:
+            if self._done:
+                return
+            self.fired = True
+            for cutter in self._cutters:
+                try:
+                    cutter.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+    def finish(self):
+        self._timer.cancel()
+        with self._lock:
+            self._done = True
+            expired = self.fired or time.monotonic() >= self.deadline
+            cutters, self._cutters = self._cutters, []
+        for cutter in cutters:
+            cutter.close()
+        self._timer.join()
+        return expired
+
+    def connect(self, address, timeout, source_address=None, socket_options=None, family=0):
+        host, port = address
+        limit = timeout if isinstance(timeout, (int, float)) else None
+        failure = None
+        for family, kind, proto, _name, target in socket.getaddrinfo(host, port, family, socket.SOCK_STREAM):
+            remaining = _remaining(self.deadline, "connect")
+            sock = socket.socket(family, kind, proto)
+            try:
+                self.add(sock)
+                for option in socket_options or ():
+                    sock.setsockopt(*option)
+                sock.settimeout(remaining if limit is None else min(limit, remaining))
+                if source_address:
+                    sock.bind(source_address)
+                sock.connect(target)
+                _remaining(self.deadline, "connect")
+                return sock
+            except OSError as error:
+                sock.close()
+                failure = error
+            except BaseException:
+                sock.close()
+                raise
+        _remaining(self.deadline, "connect")
+        raise failure or OSError("name resolution returned no address")
+
+
+_ACTIVE_WATCH = contextvars.ContextVar("subs4series_request_watch", default=None)
+
+
+class _WatchedConnection:
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        watch = _ACTIVE_WATCH.get()
+        if watch is not None:
+            self._create_connection = watch.connect
+
+
+class _WatchedHTTPConnection(_WatchedConnection, http.client.HTTPConnection):
+    pass
+
+
+class _WatchedHTTPSConnection(_WatchedConnection, http.client.HTTPSConnection):
+    pass
+
+
+class _WatchedHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_WatchedHTTPConnection, req)
+
+
+class _WatchedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_WatchedHTTPSConnection, req, context=self._context)
+
+
+def _watch_pool(pool):
+    if getattr(pool, "_subs4series_watched", False):
+        return pool
+    base_connection = pool.ConnectionCls
+
+    class WatchedConnection(base_connection):
+        def _new_conn(self):
+            watch = _ACTIVE_WATCH.get()
+            if watch is None:
+                return super()._new_conn()
+            # These connection attributes and pool hooks belong to the pinned urllib3.
+            # Only TCP creation changes; its HTTPS connection still owns TLS and SNI.
+            from urllib3.exceptions import ConnectTimeoutError, NameResolutionError, NewConnectionError
+            from urllib3.util.connection import allowed_gai_family
+
+            try:
+                return watch.connect(
+                    (self._dns_host, self.port), self.timeout, self.source_address,
+                    self.socket_options, allowed_gai_family(),
+                )
+            except socket.gaierror as error:
+                raise NameResolutionError(self.host, self, error) from error
+            except TimeoutError as error:
+                raise ConnectTimeoutError(self, "Connection timed out") from error
+            except OSError as error:
+                raise NewConnectionError(self, f"Connection failed: {error}") from error
+
+    pool.ConnectionCls = WatchedConnection
+    original_get = pool._get_conn
+
+    def get_connection(timeout=None):
+        connection = original_get(timeout)
+        if not isinstance(connection, WatchedConnection):
+            connection.close()
+            connection = pool._new_conn()
+        watch = _ACTIVE_WATCH.get()
+        if watch is not None and connection.sock is not None:
+            watch.add(connection.sock)
+        return connection
+
+    pool._get_conn = get_connection
+    pool._subs4series_watched = True
+    return pool
+
+
+def _watch_scraper(scraper):
+    if not hasattr(scraper, "get_adapter") or getattr(scraper, "_subs4series_watched", False):
+        return scraper
+    original_get = scraper.get_adapter
+
+    def get_adapter(url):
+        adapter = original_get(url)
+        if not getattr(adapter, "_subs4series_watched", False):
+            original_connection = adapter.get_connection_with_tls_context
+
+            def get_connection(*args, **kwargs):
+                return _watch_pool(original_connection(*args, **kwargs))
+
+            adapter.get_connection_with_tls_context = get_connection
+            adapter._subs4series_watched = True
+        return adapter
+
+    # Cloudscraper can replace its cipher adapter between calls. Hook adapter selection,
+    # preserving every adapter's TLS context and avoiding process-wide urllib3 changes.
+    scraper.get_adapter = get_adapter
+    scraper._subs4series_watched = True
+    return scraper
+
+
+@contextlib.contextmanager
+def _site_call(deadline):
+    watch = _DeadlineWatch(deadline)
+    token = _ACTIVE_WATCH.set(watch)
+    error = None
+    try:
+        yield
+    except Exception as caught:
+        error = caught
+    finally:
+        expired = watch.finish()
+        _ACTIVE_WATCH.reset(token)
+    if expired:
+        if isinstance(error, ServiceUnavailable):
+            raise error
+        raise ServiceUnavailable("subs4series Anubis stage=request budget_exhausted") from error
+    if error is not None:
+        raise error
 
 
 class CloudflareBlockedError(RuntimeError):
@@ -359,7 +564,9 @@ class Subs4SeriesProvider:
     def __init__(self):
         self._user_agent = _new_user_agent()
         self._cookie_jar = CookieJar()
-        self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cookie_jar))
+        self._opener = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(self._cookie_jar), _WatchedHTTPHandler, _WatchedHTTPSHandler
+        )
         self._scraper = None
         self._scraper_initialized = False
         self._flaresolverr_cookies = {}
@@ -580,8 +787,12 @@ class Subs4SeriesProvider:
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None, config=None):
         deadline = time.monotonic() + SITE_CALL_BUDGET_SECONDS
+        with _site_call(deadline):
+            return self._get_with_budget(url, timeout, referer, config, deadline)
+
+    def _get_with_budget(self, url, timeout, referer, config, deadline):
         headers = _browser_headers(referer, self._flaresolverr_user_agent or self._user_agent, self._flaresolverr_cookies)
-        scraper = self._get_scraper()
+        scraper = _watch_scraper(self._get_scraper())
         if scraper is not None:
             try:
                 response = scraper.get(url, headers=headers, timeout=timeout)
@@ -656,7 +867,7 @@ class Subs4SeriesProvider:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=timeout_ms / 1000 + 2) as response:
+            with self._opener.open(request, timeout=timeout_ms / 1000 + 2) as response:
                 response_body = response.read()
         except Exception as error:
             raise CloudflareBlockedError(f"subs4series FlareSolverr request failed: {error}") from error
@@ -1026,7 +1237,7 @@ def _select_pages(pages, video_year):
     qualified = [page for page in pages if not page[3]]
     if year is None:
         return exact or qualified
-    qualified = [page for page in qualified if page[1] is None or abs(page[1] - year) <= 1]
+    qualified = [page for page in qualified if page[1] is not None and abs(page[1] - year) <= 1]
     dated = [page for page in exact + qualified if page[1] is not None and abs(page[1] - year) <= 1]
     if dated:
         return _pages_for_year(dated, year)
