@@ -15,6 +15,7 @@ reported as lacking it.
 
 import base64
 import concurrent.futures
+import contextlib
 import datetime
 import email.utils
 import hashlib
@@ -23,6 +24,7 @@ import json
 import logging
 import math
 import re
+import socket
 import ssl
 import threading
 import time
@@ -138,6 +140,10 @@ _ALPHA2_TO_CODE = {alpha2: alpha3 for alpha3, alpha2 in _LANGUAGE_CODES.items()}
 
 _IMDB_MAX = 10**10
 _monotonic = time.monotonic
+# A timed-out lookup retains this slot until the operating system resolver returns.
+# Repeated requests therefore cannot accumulate DNS helpers or a background queue.
+_DNS_SLOT = threading.BoundedSemaphore(1)
+_MAX_WATCH_SECONDS = 86400
 
 
 class AuthenticationError(ValueError):
@@ -177,7 +183,181 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_OPENER = urllib.request.build_opener(_NoRedirect)
+class _Watch:
+    """One absolute deadline for a whole request: connect, TLS, headers and every body read.
+
+    A socket timeout bounds the silence between two reads, not the whole wait. A tracker that sends
+    a line at a time, in the response headers or in the chunk framing of a body, never trips it.
+    The watch holds a duplicate of every socket the request creates, one per address attempt, and
+    a timer shuts them all down at the deadline. A shutdown wakes a blocked read, and it reaches a
+    TLS socket whose raw socket was detached by wrapping, because the duplicate shares the connection.
+
+    The request ends the watch with finish() once the body is read, or when it fails. Name
+    resolution runs in a daemon helper, with at most one unfinished lookup in this module.
+    Waiting for that helper or its slot ends at the request deadline, even if the resolver never returns.
+    """
+
+    def __init__(self, deadline):
+        delay = deadline - _monotonic()
+        if delay <= 0:
+            raise ServiceUnavailable("the time budget was spent before the request was sent")
+        self.deadline = deadline
+        self.fired = False
+        self._done = False
+        self._cutters = []
+        self._lock = threading.Lock()
+        self._timer = threading.Timer(min(delay, _MAX_WATCH_SECONDS), self.cut)
+        self._timer.name = "unit3d-deadline"
+        self._timer.daemon = True
+        self._timer.start()
+
+    def add(self, sock):
+        """Watch a socket. Raises ServiceUnavailable when the deadline already passed."""
+        cutter = sock.dup()
+        with self._lock:
+            if not self.fired:
+                self._cutters.append(cutter)
+                return
+        cutter.close()
+        raise ServiceUnavailable(_DEADLINE_MESSAGE)
+
+    def cut(self):
+        with self._lock:
+            if self._done:
+                return
+            self.fired = True
+            for cutter in self._cutters:
+                try:
+                    cutter.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+    def finish(self):
+        self._timer.cancel()
+        with self._lock:
+            self._done = True
+            expired = self.fired or _monotonic() >= self.deadline
+            cutters, self._cutters = self._cutters, []
+        for cutter in cutters:
+            cutter.close()
+        self._timer.join()
+        return expired
+
+    def _resolve(self, host, port):
+        """Wait for DNS within the deadline, with at most one unfinished lookup in the module."""
+        remaining = self.deadline - _monotonic()
+        if self.fired or remaining <= 0 or not _DNS_SLOT.acquire(timeout=min(remaining, _MAX_WATCH_SECONDS)):
+            raise ServiceUnavailable(_DEADLINE_MESSAGE)
+        try:
+            if self.fired or self.deadline <= _monotonic():
+                raise ServiceUnavailable(_DEADLINE_MESSAGE)
+            done = threading.Event()
+            result = {}
+
+            def lookup():
+                try:
+                    result["addresses"] = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
+                except BaseException as error:
+                    result["error"] = error
+                finally:
+                    done.set()
+                    _DNS_SLOT.release()
+
+            helper = threading.Thread(target=lookup, name="unit3d-dns", daemon=True)
+            helper.start()
+        except BaseException:
+            _DNS_SLOT.release()
+            raise
+        remaining = self.deadline - _monotonic()
+        if remaining <= 0 or not done.wait(min(remaining, _MAX_WATCH_SECONDS)):
+            raise ServiceUnavailable(_DEADLINE_MESSAGE)
+        if self.fired or self.deadline <= _monotonic():
+            raise ServiceUnavailable(_DEADLINE_MESSAGE)
+        if "error" in result:
+            raise result["error"]
+        return result["addresses"]
+
+    def connect(self, address, timeout, source_address=None):
+        """Connect like socket.create_connection, but every attempt gets the time left, and is watched."""
+        host, port = address
+        limit = timeout if isinstance(timeout, (int, float)) else None
+        failure = None
+        for family, kind, proto, _name, target in self._resolve(host, port):
+            remaining = self.deadline - _monotonic()
+            if self.fired or remaining <= 0:
+                raise ServiceUnavailable(_DEADLINE_MESSAGE)
+            sock = socket.socket(family, kind, proto)
+            try:
+                self.add(sock)
+                sock.settimeout(remaining if limit is None else min(limit, remaining))
+                if source_address:
+                    sock.bind(source_address)
+                sock.connect(target)
+                if self.fired:
+                    raise ServiceUnavailable(_DEADLINE_MESSAGE)
+                sock.settimeout(socket.getdefaulttimeout() if limit is None else limit)
+                return sock
+            except OSError as error:
+                sock.close()
+                failure = error
+            except BaseException:
+                sock.close()
+                raise
+        raise failure or OSError("name resolution returned no address")
+
+
+_LOCAL = threading.local()
+_DEADLINE_MESSAGE = "the endpoint did not answer within the time budget"
+
+
+class _WatchedConnection:
+    """Opens every socket of a connection through the watch of the request that made it."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        watch = getattr(_LOCAL, "watch", None)
+        if watch is not None:
+            self._create_connection = watch.connect
+
+
+class _WatchedHTTPConnection(_WatchedConnection, http.client.HTTPConnection):
+    pass
+
+
+class _WatchedHTTPSConnection(_WatchedConnection, http.client.HTTPSConnection):
+    pass
+
+
+class _WatchedHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_WatchedHTTPConnection, req)
+
+
+class _WatchedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_WatchedHTTPSConnection, req, context=self._context)
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect, _WatchedHTTPHandler, _WatchedHTTPSHandler)
+
+
+@contextlib.contextmanager
+def _request_budget(deadline):
+    watch = _Watch(deadline)
+    previous = getattr(_LOCAL, "watch", None)
+    _LOCAL.watch = watch
+    error = None
+    try:
+        yield
+    except Exception as caught:
+        error = caught
+    finally:
+        expired = watch.finish()
+        _LOCAL.watch = previous
+    if expired:
+        raise ServiceUnavailable(_DEADLINE_MESSAGE) from None
+    if error is not None:
+        raise error
 
 
 class _Endpoint(NamedTuple):
@@ -466,10 +646,8 @@ def _read_body(response, max_bytes, deadline):
 def _fetch(endpoint, path, params, timeout, max_bytes, deadline):
     """GET one API path with the endpoint's key. Returns (body, content_type) for HTTP 200.
 
-    The timeout bounds the connection and each read of the response headers. The
-    deadline is an absolute monotonic time that bounds the whole body: each body
-    read waits no longer than the time left before it when the socket is reachable,
-    and the deadline is checked between reads otherwise.
+    One watchdog holds the absolute deadline across DNS, address attempts, TLS,
+    headers and every body read. A socket timeout alone only limits inactivity.
 
     Redirects are refused, so the key never follows a Location header. Failures
     carry a fixed message only: never the URL, the key, or a response body.
@@ -485,6 +663,13 @@ def _fetch(endpoint, path, params, timeout, max_bytes, deadline):
             "User-Agent": USER_AGENT,
         },
     )
+    if timeout <= 0:
+        raise ServiceUnavailable(_DEADLINE_MESSAGE)
+    with _request_budget(deadline):
+        return _fetch_request(request, timeout, max_bytes, deadline)
+
+
+def _fetch_request(request, timeout, max_bytes, deadline):
     try:
         with _OPENER.open(request, timeout=timeout) as response:
             status = response.getcode()
