@@ -2,6 +2,7 @@ import base64
 import hashlib
 import importlib.util
 import io
+import json
 import unittest
 import zipfile
 from pathlib import Path
@@ -139,6 +140,31 @@ class DownloadResponseTests(unittest.TestCase):
         sid = self.mod.parse_temp_page_sid(DOWN_PAGE_EPISODE, "https://subhd.tv/down/other")
         self.assertEqual(sid, "uhC1c2")
 
+    def test_prepare_url_requires_the_exact_https_origin_and_sid_path(self):
+        for url in [
+            "https://foreign.invalid/down/abc", "//foreign.invalid/down/abc",
+            "http://subhd.tv/down/abc", "https://subhd.tv:443/down/abc",
+            "https://user@subhd.tv/down/abc", "https://subhd.tv.evil/down/abc",
+            "/other/down/abc", "/down/", "/down/abc/extra", "/down/..",
+            "/down/%2e%2e", "/down/abc?x=1", "/down/abc#fragment",
+        ]:
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                self.mod.parse_prepare_download_response(json.dumps({"success": True, "url": url}).encode())
+
+    def test_file_url_requires_http_or_https(self):
+        for url in ["file:///tmp/subtitle.srt", "ftp://example.com/a.srt", "data:text/plain,subtitle", "//example.com/a.srt", "https:///missing-host"]:
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                self.mod.parse_download_response(json.dumps({"success": True, "url": url}).encode())
+        for scheme in ["http", "https"]:
+            url = scheme + "://dl.subhd.tv/file.srt"
+            self.assertEqual(self.mod.parse_download_response(json.dumps({"success": True, "url": url}).encode()), url)
+
+    def test_api_parsers_reject_malformed_json_and_missing_urls(self):
+        for parser in [self.mod.parse_prepare_download_response, self.mod.parse_download_response]:
+            for body in [b"not json", b"[]", b"null", b"1", b'{"success":true}', b'{"success":true,"url":null}', b'{"success":true,"url":42}', b'{"success":true,"url":""}']:
+                with self.subTest(parser=parser.__name__, body=body), self.assertRaises(ValueError):
+                    parser(body)
+
     def test_temp_page_sid_falls_back_to_url(self):
         sid = self.mod.parse_temp_page_sid(b"<html></html>", "https://subhd.tv/down/Xy12ab?x=1")
         self.assertEqual(sid, "Xy12ab")
@@ -178,6 +204,7 @@ class SubHDProviderSearchTests(unittest.TestCase):
         self.assertIn("episode", first["matches"])
         self.assertEqual(first["provider_payload"]["subtitle_id"], "uhC1c2")
         self.assertEqual(first["provider_payload"]["detail_url"], "https://subhd.tv/a/uhC1c2")
+        self.assertNotIn("download_url", first["provider_payload"])
 
     def test_search_rechecks_detail_languages_before_returning_english(self):
         responses = {
@@ -226,7 +253,7 @@ class SubHDProviderDownloadTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
 
-    def _stub_provider(self, file_body=SRT_BODY, down_body=API_DOWN):
+    def _stub_provider(self, file_body=SRT_BODY, down_body=API_DOWN, prepare_body=API_PREPARE, temp_body=DOWN_PAGE_EPISODE):
         provider = self.mod.SubHDProvider()
         called = []
 
@@ -236,7 +263,7 @@ class SubHDProviderDownloadTests(unittest.TestCase):
             if url == "https://subhd.tv/a/uhC1c2":
                 return DETAIL_EPISODE
             if url == "https://subhd.tv/down/uhC1c2":
-                return DOWN_PAGE_EPISODE
+                return temp_body
             if url == FILE_URL:
                 return file_body
             raise AssertionError(f"unexpected GET: {url}")
@@ -245,7 +272,7 @@ class SubHDProviderDownloadTests(unittest.TestCase):
             del timeout
             called.append(("POST", url, referer, payload))
             if url == "https://subhd.tv/api/sub/prepare-download":
-                return API_PREPARE
+                return prepare_body
             if url == "https://subhd.tv/api/sub/down":
                 return down_body
             raise AssertionError(f"unexpected POST: {url}")
@@ -280,7 +307,29 @@ class SubHDProviderDownloadTests(unittest.TestCase):
 
         result = provider.download(payload, {"alpha3": "zho", "alpha2": "zh"}, {})
 
-        self.assertEqual(called[1][1], "https://subhd.tv/api/sub/prepare-download")
+        self.assertEqual(called, [
+            ("GET", "https://subhd.tv/a/uhC1c2", None),
+            ("POST", "https://subhd.tv/api/sub/prepare-download", "https://subhd.tv/a/uhC1c2", {"sid": "uhC1c2"}),
+            ("GET", "https://subhd.tv/down/uhC1c2", "https://subhd.tv/a/uhC1c2"),
+            ("POST", "https://subhd.tv/api/sub/down", "https://subhd.tv/down/uhC1c2", {"sid": "uhC1c2"}),
+            ("GET", FILE_URL, "https://subhd.tv/down/uhC1c2"),
+        ])
+        self.assertEqual(base64.b64decode(result["content_b64"]), SRT_BODY)
+
+    def test_prepare_failure_stops_before_temp_page_and_download_api(self):
+        for body in [b'{"success":false}', b'{"success":true,"url":"https://foreign.invalid/down/abc"}']:
+            provider, called = self._stub_provider(prepare_body=body)
+            with self.subTest(body=body), self.assertRaises(ValueError):
+                provider.download(dict(PAYLOAD), {"alpha3": "zho"}, {})
+            self.assertEqual(called, [
+                ("GET", "https://subhd.tv/a/uhC1c2", None),
+                ("POST", "https://subhd.tv/api/sub/prepare-download", "https://subhd.tv/a/uhC1c2", {"sid": "uhC1c2"}),
+            ])
+
+    def test_download_uses_the_sid_from_the_temporary_page(self):
+        provider, called = self._stub_provider(temp_body=DOWN_PAGE_EPISODE.replace(b'uhC1c2', b'NewSid'))
+        result = provider.download(dict(PAYLOAD), {"alpha3": "zho"}, {})
+        self.assertEqual(called[3], ("POST", "https://subhd.tv/api/sub/down", "https://subhd.tv/down/uhC1c2", {"sid": "NewSid"}))
         self.assertEqual(base64.b64decode(result["content_b64"]), SRT_BODY)
 
     def test_download_returns_archive_bytes_for_zip_final_file(self):

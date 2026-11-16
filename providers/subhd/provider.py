@@ -242,7 +242,13 @@ def parse_prepare_download_response(body):
     url = data.get("url")
     if data.get("success") is not True or not isinstance(url, str) or "/down/" not in url:
         raise ValueError(f"subhd prepare-download failed: {data.get('msg') or 'no temp page URL'}")
-    return _absolute_url(url)
+    absolute_url = _absolute_url(url)
+    parsed = urllib.parse.urlsplit(absolute_url)
+    if (parsed.scheme != "https" or parsed.netloc != "subhd.tv"
+            or not re.fullmatch(r"/down/[A-Za-z0-9_-]+", parsed.path)
+            or parsed.query or parsed.fragment):
+        raise ValueError("subhd prepare-download returned an invalid temp page URL")
+    return absolute_url
 
 
 def parse_temp_page_sid(html_bytes, temp_url):
@@ -261,6 +267,9 @@ def parse_download_response(body):
     url = data.get("url")
     if not isinstance(url, str) or not url:
         raise ValueError("subhd download API returned no file URL")
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError("subhd download API returned an invalid file URL")
     return url
 
 
