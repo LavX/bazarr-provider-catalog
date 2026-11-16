@@ -7,6 +7,7 @@ Clean-room target for `yavkanet`.
 - Site: `https://yavka.net/`
 - Search endpoint shape: `/imdb/<tt-imdb-id>`.
 - Detail pages may expose either a legacy POST form with hidden fields or a current direct `/download?q=...` link.
+- Downloads refresh the detail page in the current session before using its handoff. Solver clearance and native session cookies share the scoped HTTP cookie jar; the explicit cookie header previously hid a native `PHPSESSID` and caused a download refusal.
 - Supported media: movies and episodes.
 - Supported languages: Bulgarian, English, Russian, Spanish, and Italian.
 - Search scans the latest IMDb rows exposed by the site, keeps the last 50 rows, then fetches each detail page to capture either the download form or direct download link.

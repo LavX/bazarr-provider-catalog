@@ -12,6 +12,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+from http.cookiejar import Cookie, CookieJar
+from http.cookies import SimpleCookie
 
 try:
     import cloudscraper
@@ -423,6 +425,13 @@ class YavkaNetProvider:
         if not download_url:
             raise ValueError("yavkanet download requires download_url")
         method = str(payload.get("method") or ("POST" if form_data else "GET")).upper()
+        page_url = payload.get("page_url")
+        if page_url:
+            _site_url(page_url)
+            page = self._http_get(page_url, config=config, state=self._http_state, referer=HOME_URL)
+            form = parse_download_form(page, page_url)
+            download_url, form_data, method = form["action_url"], form["data"], form["method"]
+        _site_url(download_url)
         if method == "GET":
             body = self._http_get(
                 download_url,
@@ -786,7 +795,7 @@ def _flaresolverr_request(method, url, data=None, timeout=HTTP_TIMEOUT_SECONDS, 
     if method == "POST":
         payload["postData"] = urllib.parse.urlencode(data or {})
         payload["headers"] = {"Content-Type": "application/x-www-form-urlencoded"}
-    cookies = (state or {}).get("flaresolverr_cookies")
+    cookies = _solver_request_cookies(state, url)
     if cookies:
         payload["cookies"] = [{"name": name, "value": value} for name, value in cookies.items()]
     request = urllib.request.Request(
@@ -837,11 +846,65 @@ def _store_flaresolverr_solution(state, solution):
         state["user_agent"] = user_agent
         state["flaresolverr_user_agent"] = user_agent
     cookies = state.setdefault("flaresolverr_cookies", {})
+    scoped = []
+    host = urllib.parse.urlsplit(BASE_URL).hostname
     for cookie in solution.get("cookies") or []:
         name = cookie.get("name")
         value = cookie.get("value")
-        if name and value is not None:
+        domain = cookie.get("domain") or host
+        if name and value is not None and domain.lstrip(".").lower() == host:
+            if name == "PHPSESSID":
+                # Native detail responses use a host-only session cookie. Match
+                # that scope so Requests replaces it before following redirects.
+                domain = host
             cookies[name] = value
+            expires = cookie.get("expiry", cookie.get("expires"))
+            try:
+                expires = int(float(expires)) if expires is not None else None
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if expires is not None and expires < 0:
+                expires = None
+            path = cookie.get("path") or "/"
+            scoped.append(Cookie(
+                version=0, name=name, value=value, port=None, port_specified=False,
+                domain=domain, domain_specified=domain.startswith("."), domain_initial_dot=domain.startswith("."),
+                path=path, path_specified=True, secure=bool(cookie.get("secure")), expires=expires,
+                discard=expires is None, comment=None, comment_url=None, rest={}, rfc2109=False,
+            ))
+    _merge_session_cookies(state.get("cloudscraper"), scoped)
+
+
+def _merge_session_cookies(scraper, cookies):
+    jar = getattr(scraper, "cookies", None)
+    if not isinstance(jar, CookieJar):
+        return
+    for cookie in cookies:
+        if cookie.name == "PHPSESSID":
+            for previous in list(jar):
+                if (previous.name == cookie.name and previous.path == cookie.path
+                        and previous.domain.lstrip(".").lower() == cookie.domain.lstrip(".").lower()):
+                    jar.clear(previous.domain, previous.path, previous.name)
+        jar.set_cookie(cookie)
+
+
+def _solver_request_cookies(state, url):
+    _site_url(url)
+    scraper = (state or {}).get("cloudscraper")
+    jar = getattr(scraper, "cookies", None)
+    if isinstance(jar, CookieJar):
+        request = urllib.request.Request(url)
+        jar.add_cookie_header(request)
+        return {name: item.value for name, item in SimpleCookie(request.get_header("Cookie", "")).items()}
+    return (state or {}).get("flaresolverr_cookies") or {}
+
+
+def _site_url(url):
+    parsed = urllib.parse.urlsplit(url)
+    origin = urllib.parse.urlsplit(BASE_URL)
+    if parsed.scheme != origin.scheme or parsed.netloc != origin.netloc or parsed.fragment:
+        raise ValueError("yavkanet download URL must use the provider origin")
+    return url
 
 
 def _request_headers(state=None, referer=None):
@@ -851,18 +914,9 @@ def _request_headers(state=None, referer=None):
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
     }
-    cookie = _cookie_header(state.get("flaresolverr_cookies"))
-    if cookie:
-        headers["Cookie"] = cookie
     if referer:
         headers["Referer"] = referer
     return headers
-
-
-def _cookie_header(cookies):
-    if not cookies:
-        return ""
-    return "; ".join(f"{name}={value}" for name, value in cookies.items() if name and value is not None)
 
 
 def _flaresolverr_url(config):

@@ -76,7 +76,7 @@ If you run **Bazarr+ alongside Sonarr / Radarr / Plex / Jellyfin / Emby**, insta
 | [`subsunacs`](providers/subsunacs/) | 0.1.6 | Scrapes [subsunacs.net](https://subsunacs.net) for Bulgarian and English movie and episode subtitles. Direct entry pages plus ZIP, RAR, and 7Z downloads are supported. |
 | [`subx`](providers/subx/) | 0.1.2 | Uses the [SubX](https://subx-api.duckdns.org/docs/getting-started/quickstart/) API for Spanish movie and episode subtitles. Requires an API key. ZIP and RAR downloads are supported. |
 | [`subtitlecat`](providers/subtitlecat/) | 0.1.9 | Scrapes [subtitlecat.com](https://www.subtitlecat.com) (no login, no API key). Worked example for the [scraper authoring guide](docs/writing-a-scraper-provider.md). |
-| [`yavkanet`](providers/yavkanet/) | 0.1.11 | Scrapes [Yavka.net](https://yavka.net) for Bulgarian, English, Russian, Spanish, and Italian subtitles by IMDb id. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback. |
+| [`yavkanet`](providers/yavkanet/) | 0.1.12 | Scrapes [Yavka.net](https://yavka.net) for Bulgarian, English, Russian, Spanish, and Italian subtitles by IMDb id. Uses ai-cloudscraper with inline Anubis solving and optional FlareSolverr fallback. |
 | [`supersubtitles`](providers/supersubtitles/) | 0.1.6 | Scrapes [feliratok.eu](https://feliratok.eu) for Hungarian and English movie and episode subtitles. No login or API key. |
 | [`titrari`](providers/titrari/) | 0.1.6 | Scrapes [Titrari.ro](https://www.titrari.ro) for Romanian and English movie and episode subtitles. No login or API key. |
 | [`titlovi`](providers/titlovi/) | 0.1.9 | Uses the [Titlovi](https://kodi.titlovi.com/api/subtitles) Kodi API for movie and episode subtitles. Login required. |
