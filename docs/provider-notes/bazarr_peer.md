@@ -23,6 +23,7 @@
 
 - Each endpoint gets one search request per search, for page 1. The request carries every requested language in one comma-separated value. Forced requests are not searched, because the peer has no forced-only search.
 - The request's timeout is the time left in the search budget. An endpoint that the budget ends before its request is skipped and logged as `budget_spent`. No request is sent and no cooldown is set.
+- DNS resolution shares the request deadline. At most one DNS lookup can remain unfinished in the worker module; other requests wait for that slot only until their own deadlines. A lookup that outlasts its request keeps the slot until the operating system resolver returns, preventing repeated timeouts from accumulating threads. Connections still use the original hostname for TLS verification and SNI.
 - When `total_count` is larger than the rows received, the search logs `more_results_not_fetched` and raises nothing. Later pages are never requested.
 - A failed endpoint contributes no results, and its failure logs one line with the endpoint tag, the exception class, and a reason. The candidates of the other endpoints are kept. A valid empty response is a success.
 - A search raises for invalid settings, and when every endpoint failed. If they failed the same way, it raises that class: `APIThrottled` with the longest Retry-After, `AuthenticationError`, or `ConfigurationError`. Otherwise it raises `ServiceUnavailable`. A rate limit on one endpoint never raises while another endpoint returns candidates.
@@ -52,6 +53,7 @@
 - A context over 1024 bytes is dropped and logged as `context_too_large`, and that subtitle cannot be recovered after a peer restart. A query over 128 characters is not kept in the context.
 - The search budget is at most 90 seconds, the limit this provider sends to the peer. A configured value outside 30 to 90 is refused.
 - The download call has a 30-second budget. Its login, its download request, and its one recovery search share that budget. The stream fetch has a 30-second deadline of its own.
+- If the operating system resolver never returns, its one helper stays blocked and later DNS requests expire at their deadlines until the worker restarts.
 - The library probe answer is cached for 600 seconds, in worker memory only.
 - A link origin mismatch is refused, not relaxed. Operators behind a reverse proxy must forward `X-Forwarded-Proto` and `X-Forwarded-Host`, so that the peer builds links at the configured address.
 - The manifest lists alpha3 codes and `por-BR`, and declares no hearing-impaired variants. A `por-BR` request keeps the rows of Brazil and the rows with no country, and drops rows of another country, such as `pt-PT`. A plain request keeps every row of its language.
