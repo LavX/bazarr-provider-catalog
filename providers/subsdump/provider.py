@@ -32,6 +32,7 @@ RELEASE_PARAM_MAX_CHARS = 512
 # Release strings persisted in the provider payload are capped at the same
 # length the service itself accepts.
 PAYLOAD_RELEASE_MAX_CHARS = 512
+PAYLOAD_RELEASE_MAX_COUNT = 16
 PER_PAGE = 100
 SUBTITLE_EXTENSIONS = (".srt", ".ass", ".ssa", ".vtt", ".sub")
 
@@ -777,10 +778,7 @@ def _sniff_text(body, limit):
     """
     sample = body[:limit]
     if sample.startswith((b"\xff\xfe", b"\xfe\xff")):
-        try:
-            return sample.decode("utf-16").lower()
-        except UnicodeDecodeError:
-            return ""
+        return sample.decode("utf-16", errors="ignore").lower()
     return sample.lstrip(b"\xef\xbb\xbf \t\r\n").decode("utf-8", "replace").lower()
 
 
@@ -789,18 +787,19 @@ def _looks_like_html(body):
 
     After the byte-order mark and whitespace, any number of leading
     ``<!-- ... -->`` comments may precede the first markup, which must be a
-    tag or doctype opening at the effective start. Literal ``<html>`` text
-    inside a subtitle cue is not markup, so searching the whole sniff
-    window for markup refused valid subtitles.
+    tag or doctype opening at the effective start. An unterminated leading
+    comment or XML prolog is markup too, even beyond the sample window.
+    Literal ``<html>`` text inside a subtitle cue is not markup, so searching
+    the whole sniff window for markup refused valid subtitles.
     """
     sample = _sniff_text(body, 512)
     while True:
         sample = sample.lstrip(" \t\r\n")
         if not sample.startswith("<!--"):
-            return sample.startswith(("<!doctype", "<html", "<head", "<body"))
+            return sample.startswith(("<!doctype", "<html", "<head", "<body", "<?xml"))
         end = sample.find("-->", 4)
         if end < 0:
-            return False
+            return True
         sample = sample[end + 3:]
 
 
@@ -912,7 +911,7 @@ def _result(video, record, code, base_url):
         # The payload crosses the worker boundary and is persisted, so a
         # service reply with runaway release strings is capped here; the
         # result's own release_info keeps the full list.
-        "releases": [str(release)[:PAYLOAD_RELEASE_MAX_CHARS] for release in releases],
+        "releases": [str(release)[:PAYLOAD_RELEASE_MAX_CHARS] for release in releases[:PAYLOAD_RELEASE_MAX_COUNT]],
         "language_code": code,
     }
     if (video or {}).get("kind") == "episode":
@@ -1024,6 +1023,7 @@ class SubsDumpProvider:
             archive = {
                 "archive_b64": base64.b64encode(body).decode("ascii"),
                 "archive_sha256": hashlib.sha256(body).hexdigest(),
+                "season": _safe_int(payload.get("season")),
                 "episode": _safe_int(payload.get("episode")),
             }
             return archive
@@ -1107,9 +1107,9 @@ class SubsDumpProvider:
             finally:
                 error.close()
         except urllib.error.URLError as error:
-            if isinstance(error.reason, ssl.SSLError):
-                # A TLS failure says the URL or its scheme is wrong for this
-                # host, which reads as a settings problem.
+            if isinstance(error.reason, ssl.SSLCertVerificationError):
+                # A certificate failure needs a settings or server repair;
+                # transport interruptions must not cause long configuration parking.
                 raise ConfigurationError(f"SubsDump request failed (TLS): {error.reason}") from error
             raise RuntimeError(f"SubsDump request failed: {error.reason}") from error
         if len(body) > max_bytes:
