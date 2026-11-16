@@ -566,8 +566,6 @@ def _request_with_retry(scraper, method, url, request_kwargs):
                 raise
             _sleep_backoff(attempt)
             continue
-        for received in [*getattr(response, "history", ()), response]:
-            _merge_session_cookies(scraper, getattr(received, "cookies", ()))
         retry_after = _transient_response_retry_after(response)
         if retry_after is None or attempt >= HTTP_MAX_ATTEMPTS:
             return response
@@ -855,6 +853,10 @@ def _store_flaresolverr_solution(state, solution):
         value = cookie.get("value")
         domain = cookie.get("domain") or host
         if name and value is not None and domain.lstrip(".").lower() == host:
+            if name == "PHPSESSID":
+                # Native detail responses use a host-only session cookie. Match
+                # that scope so Requests replaces it before following redirects.
+                domain = host
             cookies[name] = value
             expires = cookie.get("expiry", cookie.get("expires"))
             try:

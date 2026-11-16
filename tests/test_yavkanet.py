@@ -365,6 +365,13 @@ class YavkaNetSessionTests(unittest.TestCase):
                 pass
 
             def do_GET(self):
+                if self.path == "/delete-session":
+                    self.send_response(302)
+                    self.send_header("Set-Cookie", "PHPSESSID=temporary; Path=/")
+                    self.send_header("Location", "/deleted-page")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
                 if self.path == "/redirect-detail":
                     self.send_response(302)
                     self.send_header("Set-Cookie", "PHPSESSID=fixture-current; Path=/")
@@ -372,13 +379,23 @@ class YavkaNetSessionTests(unittest.TestCase):
                     self.send_header("Content-Length", "0")
                     self.end_headers()
                     return
-                if self.path == "/detail":
+                if self.path == "/deleted-page":
+                    self.send_response(200)
+                    self.send_header("Set-Cookie", "PHPSESSID=; Max-Age=0; Path=/")
+                    response = b"deleted"
+                elif self.path == "/cookie-status":
+                    self.send_response(200)
+                    response = b"present" if "PHPSESSID=" in self.headers.get("Cookie", "") else b"none"
+                elif self.path == "/detail":
                     self.send_response(200)
                     self.send_header("Set-Cookie", "PHPSESSID=fixture-current; Path=/")
                     response = b'<a id="down" href="/download?q=fresh">Download</a>'
                 elif self.path == "/redirected-page":
                     self.send_response(200)
-                    response = b'<a id="down" href="/download?q=fresh">Download</a>'
+                    cookies = self.headers.get("Cookie", "")
+                    sessions = [piece.split("=", 1)[1] for piece in cookies.split(";") if piece.strip().startswith("PHPSESSID=")]
+                    token = b"fresh" if sessions == ["fixture-current"] else b"stale"
+                    response = b'<a id="down" href="/download?q=' + token + b'">Download</a>'
                 else:
                     cookies = self.headers.get("Cookie", "")
                     sessions = [piece.split("=", 1)[1] for piece in cookies.split(";") if piece.strip().startswith("PHPSESSID=")]
@@ -445,6 +462,12 @@ class YavkaNetSessionTests(unittest.TestCase):
             "page_url": self.base + "/redirect-detail", "method": "GET",
             "download_url": self.base + "/download?q=stale", "filename": "fixture.srt",
         })
+
+    def test_redirect_history_does_not_resurrect_a_deleted_session(self):
+        provider = self._provider()
+        self.assertEqual(provider._http_get(self.base + "/delete-session"), b"deleted")
+
+        self.assertEqual(provider._http_get(self.base + "/cookie-status"), b"none")
 
     def test_solver_cookies_keep_domain_path_and_secure_scopes(self):
         provider = self._provider([
