@@ -1,0 +1,68 @@
+{
+  "total_pages": 1,
+  "total_count": 2,
+  "per_page": 50,
+  "page": 1,
+  "data": [
+    {
+      "id": "6101",
+      "type": "subtitle",
+      "attributes": {
+        "subtitle_id": "6101",
+        "language": "en",
+        "release": "Sample.Show.S01E02.720p.WEB-DL.x264-EXAMPLE",
+        "moviehash_match": false,
+        "hearing_impaired": false,
+        "foreign_parts_only": false,
+        "ai_translated": false,
+        "url": "",
+        "download_count": 4,
+        "feature_details": {
+          "feature_type": "Episode",
+          "imdb_id": 7654321,
+          "season_number": 1,
+          "episode_number": 2
+        },
+        "uploader": {
+          "name": "example-uploader"
+        },
+        "files": [
+          {
+            "file_id": 61010,
+            "file_name": "Sample.Show.S01E02.720p.WEB-DL.x264-EXAMPLE.srt"
+          }
+        ]
+      }
+    },
+    {
+      "id": "6102",
+      "type": "subtitle",
+      "attributes": {
+        "subtitle_id": "6102",
+        "language": "en",
+        "release": "Sample.Show.S01E02.1080p.WEB-DL.x264-EXAMPLE",
+        "moviehash_match": false,
+        "hearing_impaired": false,
+        "foreign_parts_only": false,
+        "ai_translated": true,
+        "url": "",
+        "download_count": 1,
+        "feature_details": {
+          "feature_type": "Episode",
+          "imdb_id": 7654321,
+          "season_number": 1,
+          "episode_number": 2
+        },
+        "uploader": {
+          "name": "example-uploader-two"
+        },
+        "files": [
+          {
+            "file_id": 61020,
+            "file_name": "Sample.Show.S01E02.1080p.WEB-DL.x264-EXAMPLE.srt"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -4,6 +4,7 @@ import importlib.util
 import socket
 import urllib.error
 import urllib.parse
+import urllib.request
 import unittest
 from pathlib import Path
 
@@ -64,6 +65,26 @@ class GreekSubsParserTests(unittest.TestCase):
                 "dll": "1",
             },
         )
+
+
+    def test_encoding_names_greek_legacy_codepage_only_for_greek_text(self):
+        self.assertEqual(self.mod._encoding_for("Καλημέρα".encode("utf-8")), "utf-8")
+        self.assertEqual(self.mod._encoding_for("Καλημέρα".encode("windows-1253")), "windows-1253")
+        # 0xD2 is unassigned in both Greek codepages; 0x80 and 0x85 are only punctuation there.
+        self.assertEqual(self.mod._encoding_for(b"caf\xd2"), "latin-1")
+        self.assertEqual(self.mod._encoding_for(b"\x80 5 \x85"), "latin-1")
+
+    def test_response_filename_reads_plain_and_rfc2231_content_disposition(self):
+        def response(value):
+            return self.mod.HttpResponse(200, b"", {"content-disposition": value})
+
+        self.assertEqual(self.mod._response_filename(response('attachment; filename="dune (2021).srt"')), "dune (2021).srt")
+        self.assertEqual(
+            self.mod._response_filename(response("attachment; filename*=UTF-8''%CE%B1%CE%B2.srt")),
+            "\u03b1\u03b2.srt",
+        )
+        self.assertEqual(self.mod._response_filename(response('attachment; filename="../x/evil.srt"')), "evil.srt")
+        self.assertEqual(self.mod._response_filename(self.mod.HttpResponse(200, b"", {})), "")
 
 
 class GreekSubsProviderTests(unittest.TestCase):
@@ -135,6 +156,138 @@ class GreekSubsProviderTests(unittest.TestCase):
         self.assertIn("season", results[0]["matches"])
         self.assertIn("episode", results[0]["matches"])
 
+    def test_episode_matches_the_series_by_imdb_id_whatever_its_title(self):
+        # Live GreekSubs.net pages and releases of foreign shows: they use the original or a
+        # French title, never the English one Sonarr sends.
+        cases = [
+            (
+                "Locked Up", "tt4524056", 4, 1,
+                "Derrière les barreaux: La Barbie | Season 4 | Episode 1",
+                "Vis.a.vis.4x01.(Spa).HDTV.720.x265-10bit",
+            ),
+            (
+                "Money Heist", "tt6468322", 1, 1,
+                "La casa de papel: Efectuar lo acordado | Season 1 | Episode 1",
+                "La casa de papel-1x01- newpct HDTV",
+            ),
+            (
+                "Gomorrah", "tt2049116", 1, 1,
+                "Gomorra: Il clan dei Savastano | Season 1 | Episode 1",
+                "Gomorra-1x01-Episodio 1 eW 1080p.BDRip",
+            ),
+            (
+                "Elite", "tt7134908", 1, 1,
+                # Served garbled: "Élite" as "Ã‰lite".
+                "Ã‰lite: Ã‰pisode #1.1 | Season 1 | Episode 1",
+                "Ã‰lite.S01E01.1080p.NF.WEB-DL.DDP5.1.x264-MZABI",
+            ),
+        ]
+        for series, imdb_id, season, episode, page_title, release in cases:
+            with self.subTest(series=series):
+                video = {
+                    "kind": "episode", "series": series, "series_imdb_id": imdb_id,
+                    "season": season, "episode": episode,
+                }
+                matches = self.mod._derive_matches(video, page_title, release)
+
+                self.assertEqual(matches[:3], ["series", "season", "episode"])
+
+    def test_movie_matches_the_title_by_imdb_id_whatever_its_title(self):
+        matches = self.mod._derive_matches(
+            {"kind": "movie", "title": "The Motorcycle Diaries", "imdb_id": "tt0318462", "year": 2004},
+            "Diarios de motocicleta (2004)",
+            "Diarios.de.motocicleta.2004.DVDRip.XviD",
+        )
+
+        self.assertIn("title", matches)
+        self.assertIn("year", matches)
+
+    def test_search_requests_an_episode_link_with_non_ascii_characters(self):
+        # Live: Vis a vis S01E01 links "un-mal-día" (served garbled as "dÃ­a"), Élite and
+        # Babylon Berlin "Ã‰pisode-1.1". urllib refused such a URL, so the search crashed.
+        episode_href = (
+            "https://greeksubs.net/en/view/tt4597334/"
+            "subtitle-for-locked-up-vis-a-vis-s01-s04-un-mal-d\u00c3\u00ada-season-1-episode-1"
+        )
+        series_html = (
+            f'<a href="{episode_href}" class="btn btn-default btn100">'
+            "Subtitles for: Locked Up (Vis a vis) (S01-S04)(Un mal d\u00c3\u00ada) Season 1 Episode 1</a>"
+        ).encode("utf-8")
+        encoded_url = (
+            "https://greeksubs.net/en/view/tt4597334/"
+            "subtitle-for-locked-up-vis-a-vis-s01-s04-un-mal-d%C3%83%C2%ADa-season-1-episode-1"
+        )
+        provider = self.mod.GreekSubsProvider()
+        requests = []
+
+        def stub(url, data=None, timeout=20, referer=None):
+            del data, timeout
+            requests.append((url, referer))
+            if url == "https://greeksubs.net/en/view/tt4524056":
+                return series_html
+            if url == encoded_url:
+                return EPISODE_HTML
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_request = stub
+        results = provider.search(
+            {"kind": "episode", "series": "Locked Up", "series_imdb_id": "tt4524056", "season": 1, "episode": 1},
+            [{"alpha3": "ell", "alpha2": "el"}],
+            {},
+        )
+
+        self.assertEqual(requests[1], (encoded_url, "https://greeksubs.net/en/view/tt4524056"))
+        self.assertTrue(results)
+        self.assertEqual(results[0]["provider_payload"]["page_url"], encoded_url)
+
+    def test_http_fetch_sends_non_ascii_urls_and_referers_percent_encoded(self):
+        provider = self.mod.GreekSubsProvider()
+        sent = []
+
+        class FakeResponse:
+            headers = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def getcode(self):
+                return 200
+
+            def read(self):
+                return b"<html></html>"
+
+        class FakeOpener:
+            def open(self, request, timeout=None):
+                del timeout
+                sent.append((request.full_url, request.get_header("Referer")))
+                return FakeResponse()
+
+        provider._opener = FakeOpener()
+        provider._http_fetch(
+            "https://greeksubs.net/en/view/tt7671662/subtitle-for-elite-s01--s08-\u00c3\u2030pisode-1.1",
+            referer="https://greeksubs.net/en/view/tt4597334/un-mal-d\u00c3\u00ada",
+        )
+
+        self.assertEqual(
+            sent,
+            [(
+                "https://greeksubs.net/en/view/tt7671662/subtitle-for-elite-s01--s08-%C3%83%E2%80%B0pisode-1.1",
+                "https://greeksubs.net/en/view/tt4597334/un-mal-d%C3%83%C2%ADa",
+            )],
+        )
+
+    def test_ascii_url_leaves_an_encoded_or_plain_url_unchanged(self):
+        for url in (
+            "https://greeksubs.net/en/view/tt4597334/un-mal-d%C3%83%C2%ADa",
+            "https://greeksubs.net/dll/Keylo-616ed4e09f037/0/8Iza7aiF9",
+            "https://greeksubs.net/en/view/tt1480055/subtitle-for-game-of-thrones-winter-is-coming-season-1-episode-1",
+        ):
+            with self.subTest(url=url):
+                self.assertEqual(self.mod._ascii_url(url), url)
+
     def test_search_requires_greek_language_and_imdb_id(self):
         provider = self.mod.GreekSubsProvider()
         provider._http_request = lambda *args, **kwargs: (_ for _ in ()).throw(
@@ -158,17 +311,84 @@ class GreekSubsProviderTests(unittest.TestCase):
             [],
         )
 
-    def test_download_posts_gate_fields_and_returns_subtitle_payload(self):
+    def test_download_returns_subtitle_served_directly_by_the_gate_url(self):
+        provider = self.mod.GreekSubsProvider()
+        page_url = "https://greeksubs.net/en/view/tt1160419"
+        download_url = "https://greeksubs.net/dll/Keylo-616ed4e09f037/0/8Iza7aiF9"
+        subtitle = "1\r\n00:00:04,120 --> 00:00:08,690\r\nΤα όνειρα είναι μηνύματα.\r\n".encode("windows-1253")
+        calls = []
+
+        def stub(url, data=None, timeout=20, referer=None, allow_redirects=True):
+            del timeout
+            calls.append((url, data, referer, allow_redirects))
+            return self.mod.HttpResponse(200, subtitle, _headers("application/octet-stream", 'attachment; filename="dune (2021).srt"'))
+
+        provider._http_fetch = stub
+        result = provider.download(
+            {
+                "provider": "greeksubs",
+                "schema": 1,
+                "download_url": download_url,
+                "page_url": page_url,
+                "subtitle_id": "Keylo-616ed4e09f037",
+                "filename": "greeksubs.DUNE.2021.el.ass",
+            },
+            {"alpha3": "ell", "alpha2": "el"},
+            {},
+        )
+
+        decoded = base64.b64decode(result["content_b64"])
+        self.assertEqual(calls, [(download_url, None, page_url, False)])
+        self.assertEqual(decoded, subtitle.replace(b"\r\n", b"\n"))
+        self.assertEqual(result["format"], "srt")
+        self.assertEqual(result["encoding"], "windows-1253")
+        self.assertEqual(decoded.decode(result["encoding"]).splitlines()[2], "Τα όνειρα είναι μηνύματα.")
+        self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
+        self.assertFalse(result["empty"])
+
+    def test_download_returns_a_utf16_subtitle_as_utf8_with_single_line_breaks(self):
+        # Shaped like the live "Gladiator (2000) EXTENDED" upload: UTF-16 with a BOM and CRLF.
+        # It used to come back declared latin-1, with every line break doubled.
+        text = "1\r\n00:01:04,607 --> 00:01:07,234\r\nΣTO AΠOΓEIO THΣ ΔOΞΑΣ THΣ,\r\n\r\n2\r\n00:01:08,000 --> 00:01:09,000\r\nΆκου.\r\n"
+        expected = text.replace("\r\n", "\n")
+        for codec in ("utf-16", "utf-16-be"):
+            with self.subTest(codec=codec):
+                body = text.encode(codec) if codec == "utf-16" else b"\xfe\xff" + text.encode(codec)
+                provider = self.mod.GreekSubsProvider()
+                provider._http_fetch = lambda *args, **kwargs: self.mod.HttpResponse(
+                    200, body, _headers("application/octet-stream", 'attachment; filename="gladiator.srt"')
+                )
+
+                result = provider.download(
+                    {"download_url": "https://greeksubs.net/dll/x/0/code", "page_url": "https://greeksubs.net/en/view/tt0172495"},
+                    {"alpha3": "ell", "alpha2": "el"},
+                    {},
+                )
+
+                decoded = base64.b64decode(result["content_b64"])
+                self.assertEqual(result["encoding"], "utf-8")
+                self.assertEqual(decoded.decode("utf-8"), expected)
+                self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
+
+    def test_utf8_from_wide_unicode_handles_utf32_and_leaves_other_bytes_alone(self):
+        self.assertEqual(self.mod._utf8_from_wide_unicode("Άκου\r\n".encode("utf-32")), "Άκου\r\n".encode("utf-8"))
+        cp1253 = "Άκου\r\n".encode("windows-1253")
+        self.assertEqual(self.mod._utf8_from_wide_unicode(cp1253), cp1253)
+        broken = b"\xff\xfe\x00\xd8"  # a UTF-16 BOM followed by a lone surrogate
+        self.assertEqual(self.mod._utf8_from_wide_unicode(broken), broken)
+
+    def test_download_posts_legacy_gate_fields_and_returns_subtitle_payload(self):
         provider = self.mod.GreekSubsProvider()
         subtitle = b"1\r\n00:00:01,000 --> 00:00:02,000\r\nGreek line\r\n"
         calls = []
 
-        def stub(url, data=None, timeout=20, referer=None):
+        def stub(url, data=None, timeout=20, referer=None, allow_redirects=True):
             del timeout
             calls.append((url, data, referer))
             if data is None:
+                self.assertFalse(allow_redirects)
                 self.assertEqual(referer, "https://greeksubs.net/en/view/tt1480055/subtitle-for-game-of-thrones-winter-is-coming-season-1-episode-1")
-                return DOWNLOAD_GATE_HTML
+                return self.mod.HttpResponse(200, DOWNLOAD_GATE_HTML, _headers("text/html; charset=UTF-8"))
             self.assertEqual(
                 urllib.parse.parse_qs(data.decode("ascii")),
                 {
@@ -178,9 +398,9 @@ class GreekSubsProviderTests(unittest.TestCase):
                     "dll": ["1"],
                 },
             )
-            return subtitle
+            return self.mod.HttpResponse(200, subtitle, _headers("application/octet-stream"))
 
-        provider._http_request = stub
+        provider._http_fetch = stub
         result = provider.download(
             {
                 "provider": "greeksubs",
@@ -198,12 +418,15 @@ class GreekSubsProviderTests(unittest.TestCase):
         self.assertEqual(decoded, b"1\n00:00:01,000 --> 00:00:02,000\nGreek line\n")
         self.assertEqual(result["format"], "srt")
         self.assertEqual(result["content_type"], "application/x-subrip")
+        self.assertEqual(result["encoding"], "utf-8")
         self.assertEqual(result["content_sha256"], hashlib.sha256(decoded).hexdigest())
         self.assertFalse(result["empty"])
 
     def test_download_rejects_missing_gate_form(self):
         provider = self.mod.GreekSubsProvider()
-        provider._http_request = lambda *args, **kwargs: b"<html>expired token</html>"
+        provider._http_fetch = lambda *args, **kwargs: self.mod.HttpResponse(
+            200, b"<html>expired token</html>", _headers("text/html")
+        )
 
         with self.assertRaises(ValueError):
             provider.download(
@@ -217,7 +440,7 @@ class GreekSubsProviderTests(unittest.TestCase):
                 {},
             )
 
-    def test_download_refreshes_expired_sec_code_from_matching_detail_page(self):
+    def test_download_refreshes_used_sec_code_from_matching_detail_page(self):
         provider = self.mod.GreekSubsProvider()
         page_url = "https://greeksubs.net/en/view/tt1480055/subtitle-for-game-of-thrones-winter-is-coming-season-1-episode-1"
         stale_url = "https://greeksubs.net/dll/kDCtQ-5a72ef1d3756e/0/stale-token"
@@ -225,20 +448,60 @@ class GreekSubsProviderTests(unittest.TestCase):
         subtitle = b"1\r\n00:00:01,000 --> 00:00:02,000\r\nGreek line\r\n"
         calls = []
 
-        def stub(url, data=None, timeout=20, referer=None):
+        def stub(url, data=None, timeout=20, referer=None, allow_redirects=True):
             del timeout
-            calls.append((url, data, referer))
+            calls.append((url, data, referer, allow_redirects))
             if url == stale_url and data is None:
-                return b"<html>expired token</html>"
+                # GreekSubs.net refuses a used or foreign-session token by redirecting home.
+                return self.mod.HttpResponse(302, b"", _headers("text/html", location="https://greeksubs.net/"))
             if url == page_url and data is None:
-                return EPISODE_HTML
+                return self.mod.HttpResponse(200, EPISODE_HTML, _headers("text/html; charset=UTF-8"))
             if url == fresh_url and data is None:
-                return DOWNLOAD_GATE_HTML
-            if url == fresh_url and data is not None:
-                return subtitle
+                return self.mod.HttpResponse(200, subtitle, _headers("application/octet-stream", 'attachment; filename="got.srt"'))
             raise AssertionError(f"unexpected URL: {url}")
 
-        provider._http_request = stub
+        provider._http_fetch = stub
+        result = provider.download(
+            {
+                "provider": "greeksubs",
+                "schema": 1,
+                "download_url": stale_url,
+                "page_url": page_url,
+                "subtitle_id": "kDCtQ-5a72ef1d3756e",
+                "filename": "game-of-thrones.srt",
+            },
+            {"alpha3": "ell", "alpha2": "el"},
+            {},
+        )
+
+        self.assertEqual([call[0] for call in calls], [stale_url, page_url, fresh_url])
+        self.assertEqual(calls[0][2:], (page_url, False))
+        self.assertIsNone(calls[1][2])
+        self.assertEqual(calls[2][2:], (page_url, False))
+        self.assertEqual(base64.b64decode(result["content_b64"]), b"1\n00:00:01,000 --> 00:00:02,000\nGreek line\n")
+
+    def test_download_refreshes_expired_legacy_gate_from_matching_detail_page(self):
+        provider = self.mod.GreekSubsProvider()
+        page_url = "https://greeksubs.net/en/view/tt1480055/subtitle-for-game-of-thrones-winter-is-coming-season-1-episode-1"
+        stale_url = "https://greeksubs.net/dll/kDCtQ-5a72ef1d3756e/0/stale-token"
+        fresh_url = "https://greeksubs.net/dll/kDCtQ-5a72ef1d3756e/0/dZCzW0PjQ"
+        subtitle = b"1\r\n00:00:01,000 --> 00:00:02,000\r\nGreek line\r\n"
+        calls = []
+
+        def stub(url, data=None, timeout=20, referer=None, allow_redirects=True):
+            del timeout, allow_redirects
+            calls.append((url, data, referer))
+            if url == stale_url and data is None:
+                return self.mod.HttpResponse(200, b"<html>expired token</html>", _headers("text/html"))
+            if url == page_url and data is None:
+                return self.mod.HttpResponse(200, EPISODE_HTML, _headers("text/html"))
+            if url == fresh_url and data is None:
+                return self.mod.HttpResponse(200, DOWNLOAD_GATE_HTML, _headers("text/html"))
+            if url == fresh_url and data is not None:
+                return self.mod.HttpResponse(200, subtitle, _headers("application/octet-stream"))
+            raise AssertionError(f"unexpected URL: {url}")
+
+        provider._http_fetch = stub
         result = provider.download(
             {
                 "provider": "greeksubs",
@@ -253,10 +516,77 @@ class GreekSubsProviderTests(unittest.TestCase):
         )
 
         self.assertEqual([call[0] for call in calls], [stale_url, page_url, fresh_url, fresh_url])
-        self.assertIsNone(calls[1][2])
-        self.assertEqual(calls[2][2], page_url)
         self.assertEqual(calls[3][2], fresh_url)
         self.assertEqual(base64.b64decode(result["content_b64"]), b"1\n00:00:01,000 --> 00:00:02,000\nGreek line\n")
+
+    def test_download_refreshes_the_token_when_the_legacy_post_is_refused(self):
+        # A refused POST used to be followed to the home page, whose HTML came back as the subtitle.
+        page_url = "https://greeksubs.net/en/view/tt1480055/subtitle-for-game-of-thrones-winter-is-coming-season-1-episode-1"
+        stale_url = "https://greeksubs.net/dll/kDCtQ-5a72ef1d3756e/0/stale-token"
+        fresh_url = "https://greeksubs.net/dll/kDCtQ-5a72ef1d3756e/0/dZCzW0PjQ"
+        subtitle = b"1\r\n00:00:01,000 --> 00:00:02,000\r\nGreek line\r\n"
+        refusals = {
+            "redirect": self.mod.HttpResponse(302, b"", _headers("text/html", location="https://greeksubs.net/")),
+            "html page": self.mod.HttpResponse(200, b"<!DOCTYPE html><html>home</html>", _headers("text/html")),
+        }
+        for kind, refusal in refusals.items():
+            with self.subTest(refusal=kind):
+                provider = self.mod.GreekSubsProvider()
+                calls = []
+
+                def stub(url, data=None, timeout=20, referer=None, allow_redirects=True, refusal=refusal):
+                    del timeout, referer
+                    calls.append((url, data is not None, allow_redirects))
+                    if data is None and url in (stale_url, fresh_url):
+                        return self.mod.HttpResponse(200, DOWNLOAD_GATE_HTML, _headers("text/html"))
+                    if data is None and url == page_url:
+                        return self.mod.HttpResponse(200, EPISODE_HTML, _headers("text/html"))
+                    if data is not None and url == stale_url:
+                        return refusal
+                    if data is not None and url == fresh_url:
+                        return self.mod.HttpResponse(200, subtitle, _headers("application/octet-stream"))
+                    raise AssertionError(f"unexpected URL: {url}")
+
+                provider._http_fetch = stub
+                result = provider.download(
+                    {"download_url": stale_url, "page_url": page_url, "subtitle_id": "kDCtQ-5a72ef1d3756e", "filename": "got.srt"},
+                    {"alpha3": "ell", "alpha2": "el"},
+                    {},
+                )
+
+                self.assertEqual(
+                    calls,
+                    [(stale_url, False, False), (stale_url, True, False), (page_url, False, True), (fresh_url, False, False), (fresh_url, True, False)],
+                )
+                self.assertEqual(base64.b64decode(result["content_b64"]), b"1\n00:00:01,000 --> 00:00:02,000\nGreek line\n")
+
+    def test_download_gives_up_when_refreshed_token_is_refused_too(self):
+        provider = self.mod.GreekSubsProvider()
+        page_url = "https://greeksubs.net/en/view/tt1480055/subtitle-for-game-of-thrones-winter-is-coming-season-1-episode-1"
+        calls = []
+
+        def stub(url, data=None, timeout=20, referer=None, allow_redirects=True):
+            del data, timeout, referer, allow_redirects
+            calls.append(url)
+            if url == page_url:
+                return self.mod.HttpResponse(200, EPISODE_HTML, _headers("text/html"))
+            return self.mod.HttpResponse(302, b"", _headers("text/html", location="https://greeksubs.net/"))
+
+        provider._http_fetch = stub
+        with self.assertRaisesRegex(ValueError, "after a token refresh"):
+            provider.download(
+                {
+                    "provider": "greeksubs",
+                    "schema": 1,
+                    "download_url": "https://greeksubs.net/dll/kDCtQ-5a72ef1d3756e/0/stale-token",
+                    "page_url": page_url,
+                    "subtitle_id": "kDCtQ-5a72ef1d3756e",
+                },
+                {"alpha3": "ell", "alpha2": "el"},
+                {},
+            )
+
+        self.assertEqual(len(calls), 3)
 
     def test_expired_download_rejects_subtitle_id_missing_from_detail_page(self):
         provider = self.mod.GreekSubsProvider()
@@ -264,16 +594,16 @@ class GreekSubsProviderTests(unittest.TestCase):
         stale_url = "https://greeksubs.net/dll/wrong-subtitle-id/0/stale-token"
         calls = []
 
-        def stub(url, data=None, timeout=20, referer=None):
-            del timeout
-            calls.append((url, data, referer))
+        def stub(url, data=None, timeout=20, referer=None, allow_redirects=True):
+            del data, timeout, referer, allow_redirects
+            calls.append(url)
             if url == stale_url:
-                return b"<html>expired token</html>"
+                return self.mod.HttpResponse(302, b"", _headers("text/html", location="https://greeksubs.net/"))
             if url == page_url:
-                return EPISODE_HTML
+                return self.mod.HttpResponse(200, EPISODE_HTML, _headers("text/html"))
             raise AssertionError(f"unexpected URL: {url}")
 
-        provider._http_request = stub
+        provider._http_fetch = stub
         with self.assertRaisesRegex(ValueError, "subtitle id"):
             provider.download(
                 {
@@ -287,12 +617,25 @@ class GreekSubsProviderTests(unittest.TestCase):
                 {},
             )
 
-        self.assertEqual([call[0] for call in calls], [stale_url, page_url])
+        self.assertEqual(calls, [stale_url, page_url])
+
+
+def _headers(content_type, disposition=None, location=None):
+    headers = {"Content-Type": content_type}
+    if disposition:
+        headers["Content-Disposition"] = disposition
+    if location:
+        headers["Location"] = location
+    return headers
 
 
 class _FakeResponse:
     def __init__(self, body):
         self._body = body
+        self.headers = {}
+
+    def getcode(self):
+        return 200
 
     def read(self):
         return self._body
@@ -302,6 +645,79 @@ class _FakeResponse:
 
     def __exit__(self, *exc):
         return False
+
+
+class GreekSubsMissingTitleTests(unittest.TestCase):
+    # GreekSubs answers 404 for a title or episode it does not carry.
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def _search(self, video, pages):
+        provider = self.mod.GreekSubsProvider()
+        requests = []
+
+        def stub(url, data=None, timeout=20, referer=None):
+            del data, timeout, referer
+            requests.append(url)
+            page = pages.get(url, 404)
+            if isinstance(page, int):
+                raise urllib.error.HTTPError(url, page, "error", {}, None)
+            return page
+
+        provider._http_request = stub
+        return provider.search(video, [{"alpha3": "ell", "alpha2": "el"}], {}), requests
+
+    def test_search_returns_nothing_for_a_movie_the_site_lacks(self):
+        results, requests = self._search({"kind": "movie", "title": "Nonexistent", "imdb_id": "tt9999999"}, {})
+
+        self.assertEqual(results, [])
+        self.assertEqual(requests, ["https://greeksubs.net/en/view/tt9999999"])
+
+    def test_search_returns_nothing_for_a_series_the_site_lacks(self):
+        # The British Shameless, which GreekSubs does not carry.
+        results, _requests = self._search(
+            {"kind": "episode", "series": "Shameless", "series_imdb_id": "tt0377260", "season": 1, "episode": 1},
+            {},
+        )
+
+        self.assertEqual(results, [])
+
+    def test_search_returns_nothing_when_the_episode_page_is_missing(self):
+        episode_url = "https://greeksubs.net/en/view/tt1480055/subtitle-for-game-of-thrones-winter-is-coming-season-1-episode-1"
+        results, requests = self._search(
+            {"kind": "episode", "series": "Game of Thrones", "series_imdb_id": "tt0944947", "season": 1, "episode": 1},
+            {"https://greeksubs.net/en/view/tt0944947": SERIES_HTML},
+        )
+
+        self.assertEqual(results, [])
+        self.assertEqual(requests, ["https://greeksubs.net/en/view/tt0944947", episode_url])
+
+    def test_search_returns_nothing_when_the_episode_fallback_page_is_missing(self):
+        # S01E03 is not linked from the series page, so the episode's own IMDb page is tried.
+        results, requests = self._search(
+            {
+                "kind": "episode",
+                "series": "Game of Thrones",
+                "series_imdb_id": "tt0944947",
+                "imdb_id": "tt1480057",
+                "season": 1,
+                "episode": 3,
+            },
+            {"https://greeksubs.net/en/view/tt0944947": SERIES_HTML},
+        )
+
+        self.assertEqual(results, [])
+        self.assertEqual(requests[-1], "https://greeksubs.net/en/view/tt1480057")
+
+    def test_search_still_raises_other_http_errors(self):
+        for code in (403, 500):
+            with self.subTest(code=code):
+                with self.assertRaises(urllib.error.HTTPError) as raised:
+                    self._search(
+                        {"kind": "movie", "title": "Dune", "imdb_id": "tt1160419"},
+                        {"https://greeksubs.net/en/view/tt1160419": code},
+                    )
+                self.assertEqual(raised.exception.code, code)
 
 
 class GreekSubsTransportRetryTests(unittest.TestCase):
@@ -411,3 +827,31 @@ class GreekSubsTransportRetryTests(unittest.TestCase):
             provider._http_request("https://greeksubs.net/x")
         self.assertEqual(len(attempts), self.mod.HTTP_MAX_ATTEMPTS)
         self.assertEqual(len(self.slept), self.mod.HTTP_MAX_ATTEMPTS - 1)
+
+    def test_gate_fetch_returns_redirect_unfollowed_without_retrying(self):
+        provider = self.mod.GreekSubsProvider()
+        attempts = []
+
+        def fake_open(request, timeout=None):
+            attempts.append(request.full_url)
+            raise self._http_error(302, {"Location": "https://greeksubs.net/"})
+
+        provider._no_redirect_opener.open = fake_open
+
+        response = provider._http_fetch("https://greeksubs.net/dll/x/0/used", allow_redirects=False)
+        self.assertEqual(
+            (response.status, response.headers["Location"], response.body),
+            (302, "https://greeksubs.net/", b""),
+        )
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(self.slept, [])
+
+    def test_no_redirect_opener_does_not_allow_redirects(self):
+        provider = self.mod.GreekSubsProvider()
+        handler = next(
+            h for h in provider._no_redirect_opener.handlers if isinstance(h, urllib.request.HTTPRedirectHandler)
+        )
+        self.assertIsInstance(handler, self.mod._NoRedirectHandler)
+        self.assertIsNone(
+            handler.redirect_request(None, None, 302, "Found", {}, "https://greeksubs.net/")
+        )

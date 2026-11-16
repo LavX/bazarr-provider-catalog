@@ -451,6 +451,66 @@ class AssrtProviderTests(unittest.TestCase):
         # Chinese and English.
         self.assertEqual({item["language"]["alpha3"] for item in results}, {"zho", "eng"})
 
+    def test_search_ignores_falsy_legacy_language_values(self):
+        for absent in (False, 0, "", None, [], {}):
+            with self.subTest(absent=absent):
+                response = {"sub": {"subs": [{
+                    "id": 74010,
+                    "videoname": "Example.Movie.2024",
+                    "lang": {"langlist": {"langchs": True, "langeng": absent}},
+                }]}}
+                provider = self.mod.AssrtProvider()
+                provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else response
+                provider._sleep = lambda seconds: None
+
+                results = provider.search(
+                    {"kind": "movie", "title": "Example Movie", "year": 2024},
+                    [{"alpha3": "zho", "country_alpha2": "CN"}, {"alpha3": "eng"}],
+                    {"token": "secret-token"},
+                )
+
+                self.assertEqual([item["language"]["alpha3"] for item in results], ["zho"])
+
+    def test_search_skips_non_dict_legacy_lang_without_losing_valid_rows(self):
+        for malformed in ("English", "", ["langeng"], [], 1, False):
+            with self.subTest(lang=malformed):
+                response = {"sub": {"subs": [
+                    {"id": 74011, "videoname": "Example.Movie.2024", "lang": malformed, "m_langn": "langeng"},
+                    {"id": 74012, "videoname": "Example.Movie.2024", "lang": {"langlist": {"langeng": 1}}},
+                    {"fileid": 74013, "sub_name": "Example.Movie.2024", "m_langn": "langeng"},
+                ]}}
+                provider = self.mod.AssrtProvider()
+                provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else response
+                provider._sleep = lambda seconds: None
+
+                results = provider.search(
+                    {"kind": "movie", "title": "Example Movie", "year": 2024},
+                    [{"alpha3": "eng"}],
+                    {"token": "secret-token"},
+                )
+
+                self.assertEqual({item["provider_payload"]["subtitle_id"] for item in results}, {"74012", "74013"})
+
+    def test_search_keeps_meaningless_videoname_when_sub_name_is_empty(self):
+        response = {"sub": {"subs": [{
+            "id": 74014,
+            "videoname": "不知道",
+            "sub_name": "",
+            "lang": {"langlist": {"langeng": 1}},
+        }]}}
+        provider = self.mod.AssrtProvider()
+        provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else response
+        provider._sleep = lambda seconds: None
+
+        results = provider.search(
+            {"kind": "movie", "title": "Example Movie", "year": 2024},
+            [{"alpha3": "eng"}],
+            {"token": "secret-token"},
+        )
+
+        self.assertEqual([item["provider_payload"]["subtitle_id"] for item in results], ["74014"])
+        self.assertEqual(results[0]["release_info"], "不知道")
+
     def test_search_honors_country_alpha2_for_chinese_variants(self):
         provider = self.mod.AssrtProvider()
         provider._http_get_json = lambda url, timeout=15, config=None: QUOTA if "/user/quota" in url else SEARCH_RICK

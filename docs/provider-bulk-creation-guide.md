@@ -254,9 +254,9 @@ These issues recur across the catalog and are the first things automated review 
 
 **Downloads and encoding**
 
-- Return the full download content contract (content, sha256, format, content type, encoding) and report the real format and MIME. Preserve the site's explicit extension field instead of defaulting everything to `srt`.
+- Return the full download content contract (content, sha256, format, content type) and report the real format and MIME. Leave `encoding` unset so the host detects it through `Subtitle.normalize()`, as required by archive rule 3. Preserve the site's explicit extension field instead of defaulting everything to `srt`.
 - Report the requested output format after any conversion.
-- Detect the site's legacy code page before falling back to latin-1: cp1250 (Polish), cp1251 or windows-1251 (Cyrillic), windows-1255 (Hebrew), and the site's regional encoding. Accept a candidate encoding only if it decodes into that script's character range.
+- Preserve subtitle bytes for the host's encoding detection. Do not guess a legacy code page or fall back to latin-1 in the worker.
 - Reject an archive whose members are not actually subtitle text (an error page saved as `.srt`).
 
 **Sessions, auth, and anti-bot**
