@@ -1,11 +1,16 @@
 """Subs4Series provider for the Bazarr+ Provider Hub catalog."""
 
 import base64
+import contextlib
+import contextvars
 import hashlib
 import html
+import http.client
 import io
 import json
 import re
+import socket
+import threading
 import time
 import unicodedata
 import urllib.error
@@ -39,6 +44,10 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 BazarrProviderHub"
 )
 HTTP_TIMEOUT_SECONDS = 15
+# One site call, an Anubis solve included, stays well inside the host's 120 s worker timeout,
+# as in subs4free. Running out aborts the call with ServiceUnavailable; it is never retried.
+SITE_CALL_BUDGET_SECONDS = 60
+CAPTCHA_RETRY_DELAY_SECONDS = 5
 DEFAULT_FLARESOLVERR_TIMEOUT_MS = 25000
 MIN_FLARESOLVERR_TIMEOUT_MS = 5000
 MAX_FLARESOLVERR_TIMEOUT_MS = 25000
@@ -70,8 +79,12 @@ _FORM_RE = re.compile(r"<form\b[^>]*>", re.I | re.S)
 _WS_RE = re.compile(r"\s+")
 _NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
 _YEAR_RE = re.compile(r"(?<!\d)((?:19|20)\d{2})(?!\d)")
-_SXXEXX_RE = re.compile(r"\bs0*(?P<season>\d{1,2})e0*(?P<episode>\d{1,3})\b", re.I)
+# These run on _normalize()d text, where punctuation is a space: "S02-Ep01" reads "s02 ep01".
+_SXXEXX_RE = re.compile(r"\bs0*(?P<season>\d{1,2}) ?ep? ?0*(?P<episode>\d{1,3})\b", re.I)
 _X_EPISODE_RE = re.compile(r"\b0*(?P<season>\d{1,2})x0*(?P<episode>\d{1,3})\b", re.I)
+_SEASON_EPISODE_WORDS_RE = re.compile(
+    r"\bseason 0*(?P<season>\d{1,2}) (?:episode|ep) 0*(?P<episode>\d{1,3})\b", re.I
+)
 _META_REFRESH_RE = re.compile(
     r"""<meta\s+http-equiv=["']refresh["']\s+content=["'](?P<delay>\d+);\s*url=(?P<url>[^"']+)["']""",
     re.I,
@@ -80,6 +93,222 @@ _ANUBIS_CHALLENGE_RE = re.compile(
     r"""<script\s+id=["']anubis_challenge["'][^>]*>\s*(?P<json>.*?)\s*</script>""",
     re.I | re.S,
 )
+
+
+class APIThrottled(Exception):
+    """subs4series kept a reCAPTCHA gate on a download and no captcha solver is configured.
+
+    The gate is occasional and cleared within minutes in live checks, so this is a
+    short-lived block, not a broken provider. The worker maps this class name onto the host's counted
+    APIThrottled: the provider sits out the current run and is retried later.
+    """
+
+
+class ServiceUnavailable(RuntimeError):
+    """A site call ran out of its time budget, typically while solving an Anubis challenge.
+
+    The worker maps this class name onto the host's ServiceUnavailable.
+    """
+
+
+class _DeadlineWatch:
+    """Cut sockets at the call deadline, including TLS and trickling headers or bodies.
+
+    A socket timeout limits inactivity. Socket duplicates retain the underlying connection
+    after TLS wraps it. DNS itself cannot be interrupted; connect checks after it returns.
+    """
+
+    def __init__(self, deadline):
+        self.deadline = deadline
+        self.fired = False
+        self._done = False
+        self._cutters = []
+        self._lock = threading.Lock()
+        self._timer = threading.Timer(_remaining(deadline, "request"), self.cut)
+        self._timer.name = "subs4series-deadline"
+        self._timer.daemon = True
+        self._timer.start()
+
+    def add(self, sock):
+        # A reused connection can already be an SSLSocket, whose dup() is unsupported.
+        # Temporarily view its descriptor as a raw socket without taking ownership of it.
+        raw = socket.socket(sock.family, sock.type, sock.proto, fileno=sock.fileno())
+        try:
+            cutter = raw.dup()
+        finally:
+            raw.detach()
+        with self._lock:
+            if not self.fired:
+                self._cutters.append(cutter)
+                return
+        cutter.close()
+        raise ServiceUnavailable("subs4series Anubis stage=connect budget_exhausted")
+
+    def cut(self):
+        with self._lock:
+            if self._done:
+                return
+            self.fired = True
+            for cutter in self._cutters:
+                try:
+                    cutter.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+    def finish(self):
+        self._timer.cancel()
+        with self._lock:
+            self._done = True
+            expired = self.fired or time.monotonic() >= self.deadline
+            cutters, self._cutters = self._cutters, []
+        for cutter in cutters:
+            cutter.close()
+        self._timer.join()
+        return expired
+
+    def connect(self, address, timeout, source_address=None, socket_options=None, family=0):
+        host, port = address
+        limit = timeout if isinstance(timeout, (int, float)) else None
+        failure = None
+        for family, kind, proto, _name, target in socket.getaddrinfo(host, port, family, socket.SOCK_STREAM):
+            remaining = _remaining(self.deadline, "connect")
+            sock = socket.socket(family, kind, proto)
+            try:
+                self.add(sock)
+                for option in socket_options or ():
+                    sock.setsockopt(*option)
+                sock.settimeout(remaining if limit is None else min(limit, remaining))
+                if source_address:
+                    sock.bind(source_address)
+                sock.connect(target)
+                _remaining(self.deadline, "connect")
+                return sock
+            except OSError as error:
+                sock.close()
+                failure = error
+            except BaseException:
+                sock.close()
+                raise
+        _remaining(self.deadline, "connect")
+        raise failure or OSError("name resolution returned no address")
+
+
+_ACTIVE_WATCH = contextvars.ContextVar("subs4series_request_watch", default=None)
+
+
+class _WatchedConnection:
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        watch = _ACTIVE_WATCH.get()
+        if watch is not None:
+            self._create_connection = watch.connect
+
+
+class _WatchedHTTPConnection(_WatchedConnection, http.client.HTTPConnection):
+    pass
+
+
+class _WatchedHTTPSConnection(_WatchedConnection, http.client.HTTPSConnection):
+    pass
+
+
+class _WatchedHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_WatchedHTTPConnection, req)
+
+
+class _WatchedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_WatchedHTTPSConnection, req, context=self._context)
+
+
+def _watch_pool(pool):
+    if getattr(pool, "_subs4series_watched", False):
+        return pool
+    base_connection = pool.ConnectionCls
+
+    class WatchedConnection(base_connection):
+        def _new_conn(self):
+            watch = _ACTIVE_WATCH.get()
+            if watch is None:
+                return super()._new_conn()
+            # These connection attributes and pool hooks belong to the pinned urllib3.
+            # Only TCP creation changes; its HTTPS connection still owns TLS and SNI.
+            from urllib3.exceptions import ConnectTimeoutError, NameResolutionError, NewConnectionError
+            from urllib3.util.connection import allowed_gai_family
+
+            try:
+                return watch.connect(
+                    (self._dns_host, self.port), self.timeout, self.source_address,
+                    self.socket_options, allowed_gai_family(),
+                )
+            except socket.gaierror as error:
+                raise NameResolutionError(self.host, self, error) from error
+            except TimeoutError as error:
+                raise ConnectTimeoutError(self, "Connection timed out") from error
+            except OSError as error:
+                raise NewConnectionError(self, f"Connection failed: {error}") from error
+
+    pool.ConnectionCls = WatchedConnection
+    original_get = pool._get_conn
+
+    def get_connection(timeout=None):
+        connection = original_get(timeout)
+        if not isinstance(connection, WatchedConnection):
+            connection.close()
+            connection = pool._new_conn()
+        watch = _ACTIVE_WATCH.get()
+        if watch is not None and connection.sock is not None:
+            watch.add(connection.sock)
+        return connection
+
+    pool._get_conn = get_connection
+    pool._subs4series_watched = True
+    return pool
+
+
+def _watch_scraper(scraper):
+    if not hasattr(scraper, "get_adapter") or getattr(scraper, "_subs4series_watched", False):
+        return scraper
+    original_get = scraper.get_adapter
+
+    def get_adapter(url):
+        adapter = original_get(url)
+        if not getattr(adapter, "_subs4series_watched", False):
+            original_connection = adapter.get_connection_with_tls_context
+
+            def get_connection(*args, **kwargs):
+                return _watch_pool(original_connection(*args, **kwargs))
+
+            adapter.get_connection_with_tls_context = get_connection
+            adapter._subs4series_watched = True
+        return adapter
+
+    # Cloudscraper can replace its cipher adapter between calls. Hook adapter selection,
+    # preserving every adapter's TLS context and avoiding process-wide urllib3 changes.
+    scraper.get_adapter = get_adapter
+    scraper._subs4series_watched = True
+    return scraper
+
+
+@contextlib.contextmanager
+def _site_call(deadline):
+    watch = _DeadlineWatch(deadline)
+    token = _ACTIVE_WATCH.set(watch)
+    error = None
+    try:
+        yield
+    except Exception as caught:
+        error = caught
+    finally:
+        expired = watch.finish()
+        _ACTIVE_WATCH.reset(token)
+    if expired:
+        if isinstance(error, ServiceUnavailable):
+            raise error
+        raise ServiceUnavailable("subs4series Anubis stage=request budget_exhausted") from error
+    if error is not None:
+        raise error
 
 
 class CloudflareBlockedError(RuntimeError):
@@ -280,7 +509,14 @@ def _safe_int(value):
         return None
 
 
-def derive_matches(video, item):
+def derive_matches(video, item, show_matched=False):
+    """The video properties this subtitle matches.
+
+    show_matched is True when the subtitle comes from a show the search already picked by
+    title and year. That show is the video's series even when its site title lacks a word
+    of the requested one, such as Sonarr's "The Office (US)" against the site's
+    "The Office", or when it was found through an alternative title.
+    """
     video = video or {}
     release = item.get("release_info") if isinstance(item, dict) else item
     series_title = item.get("series_title", "") if isinstance(item, dict) else ""
@@ -288,7 +524,7 @@ def derive_matches(video, item):
     normalized = _normalize(text)
     matches = []
     series_tokens = _tokens(video.get("series"))
-    if series_tokens and all(token in normalized.split() for token in series_tokens):
+    if show_matched or (series_tokens and all(token in normalized.split() for token in series_tokens)):
         matches.append("series")
     season, episode = _episode_markers(normalized)
     try:
@@ -313,8 +549,8 @@ def derive_matches(video, item):
     return matches
 
 
-def compute_score(video, item):
-    matches = set(derive_matches(video, item))
+def compute_score(video, item, show_matched=False):
+    matches = set(derive_matches(video, item, show_matched=show_matched))
     if {"series", "season", "episode"}.issubset(matches):
         return 100
     if {"series", "episode"}.issubset(matches):
@@ -328,7 +564,9 @@ class Subs4SeriesProvider:
     def __init__(self):
         self._user_agent = _new_user_agent()
         self._cookie_jar = CookieJar()
-        self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cookie_jar))
+        self._opener = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(self._cookie_jar), _WatchedHTTPHandler, _WatchedHTTPSHandler
+        )
         self._scraper = None
         self._scraper_initialized = False
         self._flaresolverr_cookies = {}
@@ -342,15 +580,21 @@ class Subs4SeriesProvider:
         requested = {language for language in requested if language in SUPPORTED_LANGUAGES}
         if not requested:
             return []
-        show_paths = self._find_show_paths(video, config or {})
-        results = []
-        seen = set()
-        for show_path in show_paths:
+        pages = []
+        for show_path, exact_title in self._find_shows(video, config or {}):
             episode_url = _episode_url(show_path, video)
             if not episode_url:
                 continue
             _sleep(config)
-            for item in parse_episode_page(self._http_get(episode_url, referer=BASE_URL, config=config)):
+            body = self._episode_page(episode_url, config)
+            if body is None:
+                continue
+            text = _decode(body)
+            pages.append((episode_url, _series_year_from_page(text), parse_episode_page(text), exact_title))
+        results = []
+        seen = set()
+        for episode_url, _year, items, _exact in _select_pages(pages, video.get("year")):
+            for item in items:
                 if item["language"] not in requested:
                     continue
                 key = (item["detail_url"], item["language"])
@@ -360,6 +604,19 @@ class Subs4SeriesProvider:
                 results.append(self._result(video, item, episode_url))
         return sorted(results, key=lambda result: result["score"], reverse=True)
 
+    def _episode_page(self, episode_url, config):
+        # Shows that share a title ("The Office" 2005 and 2024) need not share seasons: a 404
+        # means this one lacks the episode, and the next show path may still have it.
+        try:
+            return self._http_get(episode_url, referer=BASE_URL, config=config)
+        except Exception as error:
+            if _http_status(error) == 404:
+                close = getattr(error, "close", None)
+                if close is not None:
+                    close()
+                return None
+            raise
+
     def download(self, provider_payload, language, config):
         del language
         provider_payload = dict(provider_payload or {})
@@ -367,35 +624,37 @@ class Subs4SeriesProvider:
         detail_url = provider_payload.get("detail_url")
         if not detail_url:
             raise ValueError("subs4series detail_url missing from provider payload")
-        _sleep(config)
-        detail_body = self._http_get(detail_url, referer=provider_payload.get("page_link"), config=config)
-        detail_text = _decode(detail_body)
-        # The detail page only links to the getSub page; the reCAPTCHA gate (and the real
-        # POST form) live on that getSub page, not here.
-        first_link = _direct_download_target(detail_text) or _form_download_target(detail_text)
-        if not first_link:
-            raise ValueError("subs4series download link not found on detail page")
-        getsub_url = _absolute_url(first_link)
-        self._apply_anti_block(detail_url, config)
-        _sleep(config)
-        gate_body = self._http_get(getsub_url, referer=detail_url, config=config)
-        # Some subtitles download straight from the getSub page with no captcha gate.
+        page_link = provider_payload.get("page_link")
+        getsub_url, gate_body = self._open_getsub(detail_url, page_link, config)
+        # The getSub page normally answers with the archive itself.
         if _is_archive_body(gate_body):
             return extract_download(gate_body, provider_payload)
         gate_text = _decode(gate_body)
+        if _has_captcha(gate_text) and not _captcha_configured(config):
+            # The reCAPTCHA gate used to guard every download. Since late 2026 it shows up
+            # only now and then and cleared within minutes in live checks, so without a
+            # solver take a fresh getSub token once before giving up.
+            time.sleep(CAPTCHA_RETRY_DELAY_SECONDS)
+            getsub_url, gate_body = self._open_getsub(detail_url, page_link, config)
+            if _is_archive_body(gate_body):
+                return extract_download(gate_body, provider_payload)
+            gate_text = _decode(gate_body)
+            if _has_captcha(gate_text):
+                raise APIThrottled(
+                    "subs4series showed a reCAPTCHA gate for this download twice "
+                    f"(page title: {_page_title(gate_text)!r}). It is usually temporary, so the "
+                    "host retries later. To solve it instead, set captcha_solver_url (+ optional "
+                    "captcha_solver_token) or captcha_response in the provider config."
+                )
         site_key = _captcha_site_key(gate_text)
-        captcha_required = bool(site_key or "g-recaptcha" in gate_text or "grecaptcha" in gate_text)
+        captcha_required = _has_captcha(gate_text)
         form_action = _form_download_target(gate_text) or _direct_download_target(gate_text)
         post_url = _absolute_url(form_action) if form_action else getsub_url
         data = {"my_recaptcha_challenge_field": "manual_challenge"}
         if captcha_required:
-            captcha_response = self._captcha_response(site_key, getsub_url, config)
+            captcha_response = self._captcha_response(site_key, getsub_url, config, invisible=_captcha_is_invisible(gate_text))
             if not captcha_response:
-                raise ValueError(
-                    "subs4series requires a captcha solver: the download page is gated by reCAPTCHA. "
-                    "Set captcha_solver_url (+ optional captcha_solver_token) or captcha_response in the "
-                    "provider config."
-                )
+                raise ValueError("subs4series captcha solver returned no response token for the reCAPTCHA gate")
             data["g-recaptcha-response"] = captcha_response
             data["recaptcha_response"] = captcha_response
         _sleep(config)
@@ -408,26 +667,40 @@ class Subs4SeriesProvider:
         return extract_download(download_body, provider_payload)
 
     def _find_show_paths(self, video, config):
-        paths = []
-        seen = set()
+        return [path for path, _exact in self._find_shows(video, config)]
+
+    def _find_shows(self, video, config):
+        """(show_path, exact_title) for each show matching the video's title."""
         for title in _video_titles(video):
             query = urllib.parse.urlencode({"search": title, "searchType": "1"})
             url = f"{SEARCH_URL}?{query}"
             _sleep(config)
-            for suggestion in parse_suggestions(self._http_get(url, referer=BASE_URL, config=config)):
-                if not _title_matches(suggestion["title"], title, video.get("year")):
-                    continue
-                if suggestion["show_path"] in seen:
-                    continue
-                seen.add(suggestion["show_path"])
-                paths.append(suggestion["show_path"])
-            if paths:
-                break
-        return paths
+            suggestions = parse_suggestions(self._http_get(url, referer=BASE_URL, config=config))
+            # A title differing by a trailing "(US)" or "(2005)" qualifier counts too: the
+            # site and Sonarr each add one where the other may not ("Shameless (US)" here,
+            # "The Office (US)" in Sonarr). With a video year, both kinds go on to compete by
+            # page year in _select_pages; without one, an exact title wins outright.
+            exact = list(dict.fromkeys(
+                s["show_path"] for s in suggestions if _title_matches(s["title"], title, video.get("year"))
+            ))
+            qualified = [
+                path for path in dict.fromkeys(
+                    s["show_path"] for s in suggestions
+                    if _title_matches_without_qualifier(s["title"], title, video.get("year"))
+                )
+                if path not in exact
+            ]
+            if exact and _safe_int(video.get("year")) is None:
+                qualified = []
+            shows = [(path, True) for path in exact] + [(path, False) for path in qualified]
+            if shows:
+                return shows
+        return []
 
     def _result(self, video, item, episode_url):
-        matches = derive_matches(video, item)
-        score = compute_score(video, item)
+        # Every item here comes from a show _find_shows matched by title and year.
+        matches = derive_matches(video, item, show_matched=True)
+        score = compute_score(video, item, show_matched=True)
         alpha2 = item["alpha2"]
         filename = (
             f"subs4series.{_slug(item.get('series_title'))}."
@@ -468,12 +741,26 @@ class Subs4SeriesProvider:
             "display": item["release_info"],
         }
 
+    def _open_getsub(self, detail_url, page_link, config):
+        # The detail page only links to the getSub page; the reCAPTCHA gate (and the real
+        # POST form) live on that getSub page, not here. Each detail page load hands out a
+        # fresh getSub token.
+        _sleep(config)
+        detail_text = _decode(self._http_get(detail_url, referer=page_link, config=config))
+        first_link = _direct_download_target(detail_text) or _form_download_target(detail_text)
+        if not first_link:
+            raise ValueError("subs4series download link not found on detail page")
+        getsub_url = _absolute_url(first_link)
+        self._apply_anti_block(detail_url, config)
+        _sleep(config)
+        return getsub_url, self._http_get(getsub_url, referer=detail_url, config=config)
+
     def _apply_anti_block(self, referer, config):
         for url in ANTI_BLOCK_URLS:
             _sleep(config)
             self._http_get(url, referer=referer, config=config)
 
-    def _captcha_response(self, site_key, page_url, config):
+    def _captcha_response(self, site_key, page_url, config, invisible=False):
         if config.get("captcha_response"):
             return str(config["captcha_response"])
         solver_url = _coerce_text(config.get("captcha_solver_url"))
@@ -484,7 +771,7 @@ class Subs4SeriesProvider:
             "site_key": site_key,
             "site_url": page_url,
             "url": page_url,
-            "invisible": True,
+            "invisible": invisible,
         }
         timeout = max(1, int(config.get("captcha_solver_timeout_ms") or 30000) / 1000)
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
@@ -502,8 +789,13 @@ class Subs4SeriesProvider:
         return None
 
     def _http_get(self, url, timeout=HTTP_TIMEOUT_SECONDS, referer=None, config=None):
+        deadline = time.monotonic() + SITE_CALL_BUDGET_SECONDS
+        with _site_call(deadline):
+            return self._get_with_budget(url, timeout, referer, config, deadline)
+
+    def _get_with_budget(self, url, timeout, referer, config, deadline):
         headers = _browser_headers(referer, self._flaresolverr_user_agent or self._user_agent, self._flaresolverr_cookies)
-        scraper = self._get_scraper()
+        scraper = _watch_scraper(self._get_scraper())
         if scraper is not None:
             try:
                 response = scraper.get(url, headers=headers, timeout=timeout)
@@ -515,10 +807,10 @@ class Subs4SeriesProvider:
             if body is None:
                 body = str(getattr(response, "text", "")).encode("utf-8")
             if is_anubis_challenge(getattr(response, "url", ""), getattr(response, "status_code", 0)) or _has_anubis_challenge_body(body):
-                solved = solve_anubis_challenge(scraper, response.url, url, timeout=timeout)
+                solved = solve_anubis_challenge(scraper, response.url, url, timeout=timeout, deadline=deadline)
                 if not solved:
                     raise CloudflareBlockedError("subs4series Anubis challenge could not be solved")
-                response = scraper.get(url, headers=headers, timeout=timeout)
+                response = scraper.get(url, headers=headers, timeout=_request_timeout(timeout, deadline, "resource_refetch"))
                 body = getattr(response, "content", None)
                 if body is None:
                     body = str(getattr(response, "text", "")).encode("utf-8")
@@ -533,10 +825,13 @@ class Subs4SeriesProvider:
         try:
             return self._raw_request(url, method="GET", headers=headers, timeout=timeout)
         except urllib.error.HTTPError as error:
-            body = error.read()
-            if _is_cloudflare_challenge(error.code, error.headers, body) and _flaresolverr_url(config):
-                return self._flaresolverr_get(url, timeout, config)
-            raise
+            try:
+                body = error.read()
+                if _is_cloudflare_challenge(error.code, error.headers, body) and _flaresolverr_url(config):
+                    return self._flaresolverr_get(url, timeout, config)
+                raise
+            finally:
+                error.close()
 
     def _http_post(self, url, data, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         headers = _browser_headers(referer, self._flaresolverr_user_agent or self._user_agent, self._flaresolverr_cookies)
@@ -578,7 +873,7 @@ class Subs4SeriesProvider:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=timeout_ms / 1000 + 2) as response:
+            with self._opener.open(request, timeout=timeout_ms / 1000 + 2) as response:
                 response_body = response.read()
         except Exception as error:
             raise CloudflareBlockedError(f"subs4series FlareSolverr request failed: {error}") from error
@@ -633,6 +928,28 @@ class Subs4SeriesProvider:
         return self._scraper
 
 
+def _close_replaced_adapters(session):
+    """Close an unmounted adapter once its replacement was mounted successfully."""
+    mount = getattr(session, "mount", None)
+    adapters = getattr(session, "adapters", None)
+    if not callable(mount) or not isinstance(adapters, dict):
+        return session
+    if getattr(session, "_bazarr_adapter_cleanup", False) is True:
+        return session
+
+    def mount_and_close(prefix, adapter):
+        previous = session.adapters.get(prefix)
+        result = mount(prefix, adapter)
+        if previous is not None and previous is not adapter:
+            if not any(previous is mounted for mounted in session.adapters.values()):
+                previous.close()
+        return result
+
+    session.mount = mount_and_close
+    session._bazarr_adapter_cleanup = True
+    return session
+
+
 def _create_cloudscraper(user_agent=USER_AGENT):
     if cloudscraper is None:
         return None
@@ -643,13 +960,13 @@ def _create_cloudscraper(user_agent=USER_AGENT):
         "debug": False,
     }
     try:
-        return cloudscraper.create_scraper(**options)
+        return _close_replaced_adapters(cloudscraper.create_scraper(**options))
     except TypeError as error:
         if "enable_cookie_persistence" not in str(error):
             raise
         fallback_options = dict(options)
         fallback_options.pop("enable_cookie_persistence", None)
-        return cloudscraper.create_scraper(**fallback_options)
+        return _close_replaced_adapters(cloudscraper.create_scraper(**fallback_options))
 
 
 def _normalize_headers(headers):
@@ -713,10 +1030,12 @@ def _extract_anubis_challenge(html_text):
     }
 
 
-def _solve_pow(random_data, difficulty):
+def _solve_pow(random_data, difficulty, deadline=None):
     prefix = "0" * difficulty
     nonce = 0
     while True:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise ServiceUnavailable("subs4series Anubis stage=proof_of_work budget_exhausted")
         digest = hashlib.sha256(f"{random_data}{nonce}".encode("utf-8")).hexdigest()
         if digest.startswith(prefix):
             return nonce, digest
@@ -727,8 +1046,33 @@ def _solve_preact(random_data, difficulty):
     return hashlib.sha256(random_data.encode("utf-8")).hexdigest(), difficulty * 0.125
 
 
-def solve_anubis_challenge(session, challenge_url, original_url, timeout=HTTP_TIMEOUT_SECONDS):
+def _remaining(deadline, stage):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise ServiceUnavailable(f"subs4series Anubis stage={stage} budget_exhausted")
+    return remaining
+
+
+def _request_timeout(timeout, deadline, stage):
+    return min(timeout, _remaining(deadline, stage))
+
+
+def _connect_read_timeout(timeout, deadline, stage):
+    remaining = _remaining(deadline, stage)
+    return (min(10, remaining), min(timeout, remaining))
+
+
+def _budget_sleep(seconds, deadline, stage):
+    # The delay comes from the challenge page; never wait past the call's budget for it.
+    if seconds >= _remaining(deadline, stage):
+        raise ServiceUnavailable(f"subs4series Anubis stage={stage} budget_exhausted")
+    time.sleep(seconds)
+
+
+def solve_anubis_challenge(session, challenge_url, original_url, timeout=HTTP_TIMEOUT_SECONDS, deadline=None):
     del original_url
+    if deadline is None:
+        deadline = time.monotonic() + SITE_CALL_BUDGET_SECONDS
     parsed = urllib.parse.urlparse(challenge_url)
     query = urllib.parse.parse_qs(parsed.query)
     redir = query.get("redir", [parsed.path])[0]
@@ -736,7 +1080,9 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=HTTP_TI
     challenge_page_url = challenge_url if challenge_url.startswith("http") else base + challenge_url
     started = time.monotonic()
 
-    response = session.get(challenge_page_url, timeout=(10, timeout), allow_redirects=True)
+    response = session.get(
+        challenge_page_url, timeout=_connect_read_timeout(timeout, deadline, "challenge_fetch"), allow_redirects=True
+    )
     challenge = _extract_anubis_challenge(getattr(response, "text", ""))
     if not challenge:
         return None
@@ -746,13 +1092,15 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=HTTP_TI
         redirect_url = challenge["redirect_url"]
         if not redirect_url.startswith("http"):
             redirect_url = base + redirect_url
-        time.sleep(challenge.get("delay", 1))
-        solved = session.get(redirect_url, timeout=(10, timeout), allow_redirects=True)
+        _budget_sleep(challenge.get("delay", 1), deadline, "pass_submit")
+        solved = session.get(
+            redirect_url, timeout=_connect_read_timeout(timeout, deadline, "pass_submit"), allow_redirects=True
+        )
         if getattr(solved, "cookies", None):
             session.cookies.update(solved.cookies)
     elif method == "preact":
         result, delay = _solve_preact(challenge["randomData"], challenge["difficulty"])
-        time.sleep(delay)
+        _budget_sleep(delay, deadline, "pass_submit")
         params = {
             "id": challenge["id"],
             "result": result,
@@ -761,13 +1109,13 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=HTTP_TI
         }
         solved = session.get(
             f"{base}/.within.website/x/cmd/anubis/api/pass-challenge?{urllib.parse.urlencode(params)}",
-            timeout=(10, timeout),
+            timeout=_connect_read_timeout(timeout, deadline, "pass_submit"),
             allow_redirects=False,
         )
         if getattr(solved, "cookies", None):
             session.cookies.update(solved.cookies)
     else:
-        nonce, digest = _solve_pow(challenge["randomData"], challenge["difficulty"])
+        nonce, digest = _solve_pow(challenge["randomData"], challenge["difficulty"], deadline=deadline)
         params = {
             "id": challenge["id"],
             "response": digest,
@@ -777,7 +1125,7 @@ def solve_anubis_challenge(session, challenge_url, original_url, timeout=HTTP_TI
         }
         solved = session.get(
             f"{base}/.within.website/x/cmd/anubis/api/pass-challenge?{urllib.parse.urlencode(params)}",
-            timeout=(10, timeout),
+            timeout=_connect_read_timeout(timeout, deadline, "pass_submit"),
             allow_redirects=False,
         )
         if getattr(solved, "cookies", None):
@@ -881,12 +1229,111 @@ def _episode_url(show_path, video):
     return f"{BASE_URL}/{path}/season-{season}/episode-{episode}"
 
 
+def _pages_for_year(pages, video_year):
+    """The shows whose first-air year is the video's, when the title names several.
+
+    Subs4Series lists no IMDb/TVDB ids, so shows sharing a title are told apart by the year in
+    each page's header, the same first-air year Bazarr+ sends for an episode. With no show of
+    that year, those one year off are kept, for a premiere the two sources date differently.
+    With one show, no video year, or no show within a year, every page is kept as before.
+    """
+    year = _safe_int(video_year)
+    if len(pages) < 2 or year is None:
+        return pages
+    same_year = [page for page in pages if page[1] == year]
+    if same_year:
+        return same_year
+    year_off = [page for page in pages if page[1] is not None and abs(page[1] - year) == 1]
+    return year_off or pages
+
+
+def _select_pages(pages, video_year):
+    """The episode pages to take subtitles from, each (url, page_year, items, exact_title).
+
+    exact_title is False for a show matched only by ignoring a trailing "(US)" or "(2005)"
+    qualifier. Ignoring one can land on another country's show, so such a show counts only
+    when its page-header year is within a year of the video's, even when it is the only one:
+    Sonarr's "The Office (UK)" (2001) must not take the site's US (2005) or 2024 show.
+
+    With a video year, exact and qualified shows compete on it: a site with both "Shameless"
+    (2004, UK) and "Shameless (US)" (2011) gives a 2011 video the US show. The same year wins
+    over one year off. With no show within a year, the exact titles are kept as before, and
+    without a video year, an exact title wins outright.
+    """
+    year = _safe_int(video_year)
+    exact = [page for page in pages if page[3]]
+    qualified = [page for page in pages if not page[3]]
+    if year is None:
+        return exact or qualified
+    qualified = [page for page in qualified if page[1] is not None and abs(page[1] - year) <= 1]
+    dated = [page for page in exact + qualified if page[1] is not None and abs(page[1] - year) <= 1]
+    if dated:
+        return _pages_for_year(dated, year)
+    return exact or qualified
+
+
+_TITLE_QUALIFIER_RE = re.compile(
+    r"^(?P<title>.*?)\s*\(\s*(?:(?P<year>\d{4})|(?P<country>[A-Za-z]{2}))\s*\)\s*$"
+)
+
+
+def _split_title_qualifier(value):
+    """("Shameless", "us", None) for "Shameless (US)", ("Doctor Who", None, 2005) for "Doctor Who (2005)"."""
+    text = _coerce_text(value)
+    match = _TITLE_QUALIFIER_RE.match(text)
+    if not match:
+        return text, None, None
+    country = (match.group("country") or "").lower() or None
+    return match.group("title").strip(), country, _safe_int(match.group("year"))
+
+
+def _title_matches_without_qualifier(candidate, title, year=None):
+    candidate_title, candidate_country, candidate_year = _split_title_qualifier(candidate)
+    video_title, video_country, video_year = _split_title_qualifier(title)
+    candidate_norm = _normalize_title(candidate_title)
+    if not candidate_norm or candidate_norm != _normalize_title(video_title):
+        return False
+    if candidate_country and video_country and candidate_country != video_country:
+        return False
+    if candidate_year is not None:
+        # A site title dated "(2005)" sits beside others of that name: as in _title_matches,
+        # take it only for a video of that very year, never by default.
+        return candidate_year == (video_year or _safe_int(year))
+    return True
+
+
+def _http_status(error):
+    status = getattr(error, "code", None)
+    if status is None:
+        status = getattr(getattr(error, "response", None), "status_code", None)
+    return _safe_int(status)
+
+
+_TITLE_ALIAS_RE = re.compile(r"^(?P<title>.+?)\s*\(\s*(?P<alias>[^()]+?)\s*\)\s*$")
+
+
+def _title_aliases(value):
+    """The names a site title goes by: "Vis a Vis (Locked Up)" is both "Vis a Vis" and "Locked Up".
+
+    The site puts a foreign show's English title in brackets after its original one, while
+    Sonarr may send either. A "(US)" or "(2005)" qualifier is no alias; _split_title_qualifier
+    handles those.
+    """
+    text = _coerce_text(value)
+    aliases = [text]
+    match = _TITLE_ALIAS_RE.match(text)
+    if match and not _TITLE_QUALIFIER_RE.match(text):
+        aliases.extend([match.group("title"), match.group("alias")])
+    return aliases
+
+
 def _title_matches(candidate, title, year=None):
-    candidate_norm = _normalize_title(candidate)
     title_norm = _normalize_title(title)
-    if candidate_norm == title_norm:
-        return True
-    return bool(year and candidate_norm == f"{title_norm} {year}")
+    for alias in _title_aliases(candidate):
+        candidate_norm = _normalize_title(alias)
+        if candidate_norm == title_norm or (year and candidate_norm == f"{title_norm} {year}"):
+            return True
+    return False
 
 
 def _series_title_from_page(text):
@@ -989,6 +1436,32 @@ def _form_download_target(text):
     return None
 
 
+def _has_captcha(text):
+    return bool(_captcha_site_key(text) or "g-recaptcha" in text or "grecaptcha" in text)
+
+
+def _captcha_is_invisible(text):
+    """Whether the gate's reCAPTCHA is the invisible kind, which a solver handles differently.
+
+    The live getSub gate is a visible v2 checkbox (a plain g-recaptcha div); an invisible one
+    is marked data-size="invisible" or run through grecaptcha.execute().
+    """
+    widget = re.search(r"<[^>]*\bg-recaptcha\b[^>]*>", text, re.I)
+    if widget and re.search(r"""data-size=["']invisible["']""", widget.group(0), re.I):
+        return True
+    return "grecaptcha.execute" in text
+
+
+def _captcha_configured(config):
+    return bool(config.get("captcha_response") or _coerce_text(config.get("captcha_solver_url")))
+
+
+def _page_title(text):
+    match = re.search(r"<title[^>]*>(.*?)</title>", text, re.I | re.S)
+    title = " ".join(html.unescape(match.group(1)).split()) if match else ""
+    return title[:80] or "none"
+
+
 def _captcha_site_key(text):
     for pattern in (
         r"g-recaptcha\b[^>]*\bdata-sitekey=[\"'](?P<key>[^\"']+)[\"']",
@@ -1071,7 +1544,7 @@ def _normalize_release_group(value):
 
 
 def _episode_markers(normalized):
-    for pattern in (_SXXEXX_RE, _X_EPISODE_RE):
+    for pattern in (_SXXEXX_RE, _X_EPISODE_RE, _SEASON_EPISODE_WORDS_RE):
         match = pattern.search(normalized or "")
         if match:
             return int(match.group("season")), int(match.group("episode"))

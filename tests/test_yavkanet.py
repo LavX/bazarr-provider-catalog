@@ -1,12 +1,17 @@
 import base64
 import hashlib
+import http.cookies
+import http.server
 import importlib.util
 import io
 import json
+import threading
 import unittest
 import zipfile
 from pathlib import Path
 from unittest import mock
+
+import requests
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_DIR = ROOT / "providers" / "yavkanet"
@@ -348,6 +353,156 @@ class YavkaNetCloudflareTests(unittest.TestCase):
         with mock.patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper):
             with self.assertRaises(self.mod.CloudflareBlockedError):
                 self.mod.http_get("https://yavka.net/imdb/tt1160419", state={})
+
+
+class YavkaNetSessionTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+        body = b"1\n00:00:01,000 --> 00:00:02,000\nFixture subtitle\n"
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_GET(self):
+                if self.path == "/delete-session":
+                    self.send_response(302)
+                    self.send_header("Set-Cookie", "PHPSESSID=temporary; Path=/")
+                    self.send_header("Location", "/deleted-page")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                if self.path == "/redirect-detail":
+                    self.send_response(302)
+                    self.send_header("Set-Cookie", "PHPSESSID=fixture-current; Path=/")
+                    self.send_header("Location", "/redirected-page")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                if self.path == "/deleted-page":
+                    self.send_response(200)
+                    self.send_header("Set-Cookie", "PHPSESSID=; Max-Age=0; Path=/")
+                    response = b"deleted"
+                elif self.path == "/cookie-status":
+                    self.send_response(200)
+                    response = b"present" if "PHPSESSID=" in self.headers.get("Cookie", "") else b"none"
+                elif self.path == "/detail":
+                    self.send_response(200)
+                    self.send_header("Set-Cookie", "PHPSESSID=fixture-current; Path=/")
+                    response = b'<a id="down" href="/download?q=fresh">Download</a>'
+                elif self.path == "/redirected-page":
+                    self.send_response(200)
+                    cookies = self.headers.get("Cookie", "")
+                    sessions = [piece.split("=", 1)[1] for piece in cookies.split(";") if piece.strip().startswith("PHPSESSID=")]
+                    token = b"fresh" if sessions == ["fixture-current"] else b"stale"
+                    response = b'<a id="down" href="/download?q=' + token + b'">Download</a>'
+                else:
+                    cookies = self.headers.get("Cookie", "")
+                    sessions = [piece.split("=", 1)[1] for piece in cookies.split(";") if piece.strip().startswith("PHPSESSID=")]
+                    values = http.cookies.SimpleCookie(cookies)
+                    valid = (
+                        self.path == "/download?q=fresh"
+                        and sessions == ["fixture-current"]
+                        and "cf_clearance" in values
+                        and values["cf_clearance"].value == "fixture-clearance"
+                        and not any(name in values for name in ("foreign_cookie", "private_path", "secure_only", "expired_cookie"))
+                    )
+                    self.send_response(200 if valid else 400)
+                    response = body if valid else b"Invalid or expired token."
+                self.send_header("Content-Length", str(len(response)))
+                self.end_headers()
+                self.wfile.write(response)
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=lambda: self.server.serve_forever(poll_interval=0.01), daemon=True)
+        self.thread.start()
+        self.addCleanup(self._close_server)
+        self.base = f"http://127.0.0.1:{self.server.server_port}"
+        self.mod.BASE_URL = self.base
+        self.mod.HOME_URL = self.base + "/"
+        self.expected_body = body
+
+    def _close_server(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join()
+
+    def _provider(self, extra_cookies=()):
+        provider = self.mod.YavkaNetProvider()
+        session = requests.Session()
+        session.trust_env = False
+        self.addCleanup(session.close)
+        provider._http_state["cloudscraper"] = session
+        self.mod._store_flaresolverr_solution(provider._http_state, {"cookies": [
+            {"name": "cf_clearance", "value": "fixture-clearance", "domain": "127.0.0.1", "path": "/"},
+            *extra_cookies,
+        ]})
+        return provider
+
+    def _download(self, provider, payload):
+        result = provider.download(payload, {"alpha3": "eng"}, {})
+        self.assertEqual(base64.b64decode(result["content_b64"]), self.expected_body)
+
+    def test_native_session_cookie_is_sent_with_solver_clearance(self):
+        provider = self._provider()
+        provider._http_get(self.base + "/detail")
+
+        self._download(provider, {"method": "GET", "download_url": self.base + "/download?q=fresh", "filename": "fixture.srt"})
+
+    def test_native_session_replaces_a_solver_cookie_with_a_dotted_domain(self):
+        provider = self._provider([{"name": "PHPSESSID", "value": "fixture-stale", "domain": ".127.0.0.1", "path": "/"}])
+        provider._http_get(self.base + "/detail")
+
+        self._download(provider, {"method": "GET", "download_url": self.base + "/download?q=fresh", "filename": "fixture.srt"})
+
+    def test_redirected_detail_replaces_the_stale_solver_session(self):
+        provider = self._provider([{"name": "PHPSESSID", "value": "fixture-stale", "domain": ".127.0.0.1", "path": "/"}])
+
+        self._download(provider, {
+            "page_url": self.base + "/redirect-detail", "method": "GET",
+            "download_url": self.base + "/download?q=stale", "filename": "fixture.srt",
+        })
+
+    def test_redirect_history_does_not_resurrect_a_deleted_session(self):
+        provider = self._provider()
+        self.assertEqual(provider._http_get(self.base + "/delete-session"), b"deleted")
+
+        self.assertEqual(provider._http_get(self.base + "/cookie-status"), b"none")
+
+    def test_solver_cookies_keep_domain_path_and_secure_scopes(self):
+        provider = self._provider([
+            {"name": "foreign_cookie", "value": "fixture-foreign", "domain": "foreign.invalid", "path": "/"},
+            {"name": "private_path", "value": "fixture-private", "domain": "127.0.0.1", "path": "/admin"},
+            {"name": "secure_only", "value": "fixture-secure", "domain": "127.0.0.1", "path": "/", "secure": True},
+            {"name": "expired_cookie", "value": "fixture-expired", "domain": "127.0.0.1", "path": "/", "expires": 0},
+        ])
+        provider._http_get(self.base + "/detail")
+
+        self._download(provider, {"method": "GET", "download_url": self.base + "/download?q=fresh", "filename": "fixture.srt"})
+
+    def test_download_refreshes_a_stale_handoff_in_its_own_session(self):
+        self._download(self._provider(), {
+            "method": "GET", "download_url": self.base + "/download?q=stale",
+            "page_url": self.base + "/detail", "filename": "fixture.srt",
+        })
+
+    def test_download_refuses_foreign_detail_and_action_urls(self):
+        for payload in (
+            {"page_url": "https://foreign.invalid/detail", "download_url": self.base + "/download?q=stale"},
+            {"download_url": "https://foreign.invalid/download", "method": "POST", "form_data": {"token": "fixture-token"}},
+        ):
+            with self.subTest(payload=payload):
+                provider = self._provider()
+                with mock.patch.object(provider, "_http_get", side_effect=AssertionError("foreign GET")), mock.patch.object(provider, "_http_post", side_effect=AssertionError("foreign POST")):
+                    with self.assertRaises(ValueError):
+                        provider.download(payload, {"alpha3": "eng"}, {})
+
+    def test_refreshed_form_cannot_send_its_fields_to_a_foreign_origin(self):
+        provider = self._provider()
+        page = b'<form method="post" action="https://foreign.invalid/download"><input name="token" value="fixture-token"></form>'
+        with mock.patch.object(provider, "_http_get", return_value=page), mock.patch.object(provider, "_http_post", side_effect=AssertionError("foreign POST")):
+            with self.assertRaises(ValueError):
+                provider.download({"page_url": self.base + "/detail", "download_url": self.base + "/download", "method": "POST"}, {"alpha3": "eng"}, {})
 
 
 class YavkaNetRetryTests(unittest.TestCase):

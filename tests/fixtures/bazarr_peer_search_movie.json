@@ -1,0 +1,68 @@
+{
+  "total_pages": 1,
+  "total_count": 2,
+  "per_page": 50,
+  "page": 1,
+  "data": [
+    {
+      "id": "5001",
+      "type": "subtitle",
+      "attributes": {
+        "subtitle_id": "5001",
+        "language": "en",
+        "release": "Sample.Feature.2020.1080p.WEB-DL.x264-EXAMPLE",
+        "moviehash_match": true,
+        "hearing_impaired": false,
+        "foreign_parts_only": false,
+        "ai_translated": false,
+        "url": "https://subtitles.example/sample-feature-2020/5001",
+        "download_count": 17,
+        "feature_details": {
+          "feature_type": "Movie",
+          "imdb_id": 1234567,
+          "season_number": 0,
+          "episode_number": 0
+        },
+        "uploader": {
+          "name": "example-uploader"
+        },
+        "files": [
+          {
+            "file_id": 9001,
+            "file_name": "Sample.Feature.2020.1080p.WEB-DL.x264-EXAMPLE.srt"
+          }
+        ]
+      }
+    },
+    {
+      "id": "local-movie-1234567-en-881",
+      "type": "subtitle",
+      "attributes": {
+        "subtitle_id": "local-movie-1234567-en-881",
+        "language": "en",
+        "release": "Sample.Feature.2020.720p.HDTV.x264-EXAMPLE.srt",
+        "moviehash_match": false,
+        "hearing_impaired": false,
+        "foreign_parts_only": false,
+        "ai_translated": false,
+        "url": "",
+        "download_count": 0,
+        "feature_details": {
+          "feature_type": "Movie",
+          "imdb_id": 1234567,
+          "season_number": 0,
+          "episode_number": 0
+        },
+        "uploader": {
+          "name": "bazarr:local"
+        },
+        "files": [
+          {
+            "file_id": 881,
+            "file_name": "Sample.Feature.2020.720p.HDTV.x264-EXAMPLE.srt"
+          }
+        ]
+      }
+    }
+  ]
+}

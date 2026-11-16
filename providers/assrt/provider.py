@@ -467,7 +467,11 @@ def _languages_from_search_item(item):
     # Current rows carry "m_langn" instead, as a single string or a list of the
     # same keys. Read both sources and drop duplicate and non-string entries.
     item = item or {}
-    keys = [str(key) for key in (item.get("lang") or {}).get("langlist") or {}]
+    legacy_lang = item.get("lang")
+    if legacy_lang is not None and not isinstance(legacy_lang, dict):
+        return
+    langlist = (legacy_lang or {}).get("langlist")
+    keys = [str(key) for key, present in langlist.items() if present] if isinstance(langlist, dict) else []
     m_langn = item.get("m_langn")
     if isinstance(m_langn, str):
         m_langn = [m_langn]

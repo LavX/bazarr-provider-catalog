@@ -6,7 +6,7 @@ Authoring tooling for building subtitle provider plugins distributed through the
 
 ## Commands
 
-- `python3 -B -m sdk validate`: validate `catalog.json`, manifests, file hashes, bundle hashes, and dependency locks.
+- `python3 -B -m sdk validate`: validate `catalog.json`, manifests, file hashes, bundle hashes, and dependency locks. It also checks every catalog manifest with the released-host validators vendored in `sdk/released_hosts/`.
 - `python3 -B -m sdk hash providers/<id>`: print the deterministic bundle SHA256 for a provider folder.
 - `python3 -B -m sdk build-catalog`: refresh provider file hashes and regenerate the embedded catalog.
 - `python3 -B -m sdk runtime-matrix`: print the supported Bazarr+ Provider Hub Python runtimes and wheel tags.
@@ -38,7 +38,7 @@ drain_events() -> list[dict]
 itself (rar/7z are not stdlib-listable). When `download()` returns `select_member: true`
 with the raw `archive_b64`, the host lists the members and calls `select_archive_member`
 with their names; the worker runs its own language tagging and returns
-`{"member": <name>|None, "decision": "pin"|"defer"|"reject"}` — **pin** the named member,
+`{"member": <name>|None, "decision": "pin"|"defer"|"reject"}`: **pin** the named member,
 **defer** to the host's episode pick (safe for single-language archives), or **reject**
 (host fails loud, e.g. a multilingual archive missing the requested language). This keeps
 language selection identical for zip and rar/7z and avoids silent wrong-language downloads.
@@ -132,6 +132,23 @@ class ExampleProvider:
 ```
 
 Never include secret values in `release_info`, `display`, `provider_payload`, errors, or subtitle content.
+
+### Endpoint Lists
+
+A setting that holds several endpoints is a whitespace-separated string. A secret field that pairs with it, such as one API key per endpoint, uses the same order, and its count must match. Compare the counts over the whole lists first. Raise `ConfigurationError` when they differ, and name both counts in the message, as they were given.
+
+Then keep at most 16 endpoints, with their keys. Log a warning that names how many were dropped, and ignore the rest: entries past the sixteenth are never validated, so a bad one there cannot fail the search.
+
+Validate each kept endpoint before the first request:
+
+- Accept only `http` and `https` URLs with a host. Refuse user credentials, query strings, and fragments.
+- Remove a trailing slash and keep the base path.
+- Refuse duplicate normalized URLs.
+- Derive each endpoint's tag from the first 16 hex characters of the SHA-256 of its normalized URL. Refuse tag collisions.
+
+Use the tag in candidate ids and `provider_payload`, not the URL. Never log a key, a credential, or a response body.
+
+A failed endpoint contributes no results and logs one bounded line with its tag, exception class, and reason. A valid empty response is a success. Raise ConfigurationError before any request when the settings are invalid. Otherwise raise only when every endpoint failed: raise the shared class when all of them failed the same way, and `ServiceUnavailable` otherwise. Raise with `from None` so that transport exceptions do not chain into worker output.
 
 ## Dependency Locks
 

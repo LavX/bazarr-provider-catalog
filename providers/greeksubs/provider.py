@@ -1,6 +1,8 @@
-"""GreekSubs provider for the Bazarr+ Provider Hub catalog."""
+"""GreekSubs.net provider for the Bazarr+ Provider Hub catalog."""
 
 import base64
+import codecs
+import email.message
 import hashlib
 import html
 import http.cookiejar
@@ -188,7 +190,7 @@ def parse_episode_links(body):
             continue
         href = html.unescape(match.group("href"))
         imdb_match = _IMDB_RE.search(href)
-        url = urllib.parse.urljoin(BASE_URL + "/", href)
+        url = _ascii_url(urllib.parse.urljoin(BASE_URL + "/", href))
         episodes[(int(season_episode.group(1)), int(season_episode.group(2)))] = {
             "url": url,
             "label": label,
@@ -206,6 +208,18 @@ def extract_download_form(body):
     return {key: parser.inputs[key] for key in required}
 
 
+class HttpResponse:
+    def __init__(self, status, body, headers):
+        self.status = int(status)
+        self.body = body or b""
+        self.headers = dict(headers or {})
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class GreekSubsProvider:
     def __init__(self):
         self._user_agent = ua_generator.generate(
@@ -214,24 +228,49 @@ class GreekSubsProvider:
             browser=("firefox", "chrome"),
             options=Options(latest_versions=True),
         ).text
+        # GreekSubs.net ties each page's secCode to the PHPSESSID cookie, so both openers share one jar.
         cookie_jar = http.cookiejar.CookieJar()
-        self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookie_jar))
+        cookies = urllib.request.HTTPCookieProcessor(cookie_jar)
+        self._opener = urllib.request.build_opener(cookies)
+        self._no_redirect_opener = urllib.request.build_opener(cookies, _NoRedirectHandler())
+
+    def _view_page(self, url, referer=None):
+        # GreekSubs answers 404 for a title or episode it does not carry. That is an empty
+        # result, not a failed search: the SDK counts a valid empty response as a success.
+        # Every other error still raises.
+        try:
+            return self._http_request(url, referer=referer)
+        except urllib.error.HTTPError as error:
+            if error.code == 404:
+                return None
+            raise
 
     def _http_request(self, url, data=None, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
+        return self._http_fetch(url, data=data, timeout=timeout, referer=referer).body
+
+    def _http_fetch(
+        self, url, data=None, timeout=HTTP_TIMEOUT_SECONDS, referer=None, allow_redirects=True
+    ):
+        """An HttpResponse; with allow_redirects=False a 3xx comes back as one, not followed."""
         headers = {
             "User-Agent": self._user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         }
         if referer:
-            headers["Referer"] = referer
+            headers["Referer"] = _ascii_url(referer)
         if data is not None:
             headers["Content-Type"] = "application/x-www-form-urlencoded"
-        request = urllib.request.Request(url, data=data, headers=headers)
+        request = urllib.request.Request(_ascii_url(url), data=data, headers=headers)
+        opener = self._opener if allow_redirects else self._no_redirect_opener
         for attempt in range(1, HTTP_MAX_ATTEMPTS + 1):
             try:
-                with self._opener.open(request, timeout=timeout) as response:
-                    return response.read()
+                with opener.open(request, timeout=timeout) as response:
+                    return HttpResponse(
+                        response.getcode(), response.read(), response.headers.items()
+                    )
             except urllib.error.HTTPError as error:
+                if not allow_redirects and 300 <= error.code < 400:
+                    return HttpResponse(error.code, b"", error.headers.items())
                 if error.code not in RETRYABLE_STATUS or attempt >= HTTP_MAX_ATTEMPTS:
                     raise
                 _retry_sleep(attempt, error.headers.get("Retry-After") if error.code == 429 else None)
@@ -253,7 +292,9 @@ class GreekSubsProvider:
         config = config or {}
         start_url = f"{BASE_URL}/en/view/{imdb_id}"
         _sleep(config)
-        start_body = self._http_request(start_url)
+        start_body = self._view_page(start_url)
+        if start_body is None:
+            return []
         page_url = start_url
         page_body = start_body
         if kind == "episode":
@@ -261,11 +302,13 @@ class GreekSubsProvider:
             if episode_page_url:
                 _sleep(config)
                 page_url = episode_page_url
-                page_body = self._http_request(page_url, referer=start_url)
+                page_body = self._view_page(page_url, referer=start_url)
             elif video.get("imdb_id") and _normalize_imdb_id(video.get("imdb_id")) != imdb_id:
                 _sleep(config)
                 page_url = f"{BASE_URL}/en/view/{_normalize_imdb_id(video.get('imdb_id'))}"
-                page_body = self._http_request(page_url, referer=start_url)
+                page_body = self._view_page(page_url, referer=start_url)
+            if page_body is None:
+                return []
         page = parse_subtitle_page(page_body, page_url)
         if not page["sec_code"]:
             return []
@@ -290,27 +333,43 @@ class GreekSubsProvider:
         if not download_url:
             raise ValueError("greeksubs download requires download_url")
         page_url = payload.get("page_url") or BASE_URL + "/"
-        gate_body = self._http_request(download_url, referer=page_url)
-        try:
-            form = extract_download_form(gate_body)
-        except ValueError as initial_error:
+        fetched = self._fetch_subtitle(download_url, page_url)
+        if fetched is None:
+            # The secCode is single-use and bound to the session that loaded the page: one from a
+            # cached search result, an earlier download, or another worker is refused with a 302.
             download_url = self._refresh_download_url(payload, page_url, download_url)
-            if not download_url:
-                raise initial_error
-            gate_body = self._http_request(download_url, referer=page_url)
-            try:
-                form = extract_download_form(gate_body)
-            except ValueError as error:
-                raise ValueError(
-                    "greeksubs download gate remained invalid after token refresh"
-                ) from error
-        post_body = urllib.parse.urlencode(form).encode("ascii")
-        subtitle_body = self._http_request(download_url, data=post_body, referer=download_url)
-        normalized = _normalize_line_endings(subtitle_body)
+            fetched = self._fetch_subtitle(download_url, page_url)
+            if fetched is None:
+                raise ValueError("greeksubs refused the download even after a token refresh")
+        subtitle_body, served_name = fetched
+        normalized = _normalize_line_endings(_utf8_from_wide_unicode(subtitle_body))
         if not normalized:
             raise ValueError("greeksubs download returned an empty subtitle")
-        subtitle_format = _subtitle_format(form.get("output") or payload.get("filename") or "")
+        subtitle_format = _subtitle_format(served_name or payload.get("filename") or "")
         return _content_payload(normalized, subtitle_format)
+
+    def _fetch_subtitle(self, download_url, page_url):
+        """(bytes, served filename), or None when GreekSubs.net refuses the token.
+
+        GreekSubs.net now serves the file straight from the GET; the older gate page, whose hidden
+        form had to be POSTed back, is still handled in case it returns.
+        """
+        response = self._http_fetch(download_url, referer=page_url, allow_redirects=False)
+        if 300 <= response.status < 400:
+            return None
+        if not _looks_like_html(response):
+            return response.body, _response_filename(response)
+        try:
+            form = extract_download_form(response.body)
+        except ValueError:
+            return None
+        post_body = urllib.parse.urlencode(form).encode("ascii")
+        posted = self._http_fetch(download_url, data=post_body, referer=download_url, allow_redirects=False)
+        # A refused POST is a redirect, like a refused GET, or an HTML page; either way it is
+        # not the subtitle, and the caller refreshes the token instead.
+        if 300 <= posted.status < 400 or _looks_like_html(posted):
+            return None
+        return posted.body, form.get("output") or _response_filename(posted)
 
     def _refresh_download_url(self, payload, page_url, stale_download_url):
         subtitle_id = str(payload.get("subtitle_id") or "").strip()
@@ -324,7 +383,7 @@ class GreekSubsProvider:
             or parsed_page.netloc != base.netloc
             or not parsed_page.path.startswith("/en/view/")
         ):
-            raise ValueError("greeksubs expired download requires its GreekSubs detail page")
+            raise ValueError("greeksubs expired download requires its GreekSubs.net detail page")
 
         expected_prefix = f"{BASE_URL}/dll/{urllib.parse.quote(subtitle_id, safe='')}/0/"
         if not str(stale_download_url).startswith(expected_prefix):
@@ -403,6 +462,16 @@ def _normalize_imdb_id(value):
     return ""
 
 
+def _ascii_url(url):
+    """url with its non-ASCII characters percent-encoded as UTF-8, as a browser sends it.
+
+    GreekSubs.net slugs carry episode titles, "un-mal-día" or a garbled "Ã‰pisode-1.1", and
+    urllib refuses a request line or header that is not ASCII. Encoding is idempotent: "%"
+    and the reserved characters are kept as they are.
+    """
+    return urllib.parse.quote(str(url), safe=":/?#[]@!$&'()*+,;=%~")
+
+
 def _episode_page_url(body, video):
     try:
         season = int(video.get("season"))
@@ -416,19 +485,18 @@ def _derive_matches(video, page_title, release):
     video = video or {}
     haystack = f"{page_title} {release}"
     tokens = set(_tokens(haystack))
+    # Every page comes from the video's IMDb id, so it is the video's movie or series even
+    # when its title is not the one Bazarr+ sends: the site titles "Vis a vis" (Sonarr's
+    # "Locked Up") in French, "Derrière les barreaux", and its releases "Vis.a.vis".
     matches = []
     if video.get("kind") == "movie":
-        title_tokens = _tokens(video.get("title"))
-        if title_tokens and all(token in tokens for token in title_tokens):
-            matches.append("title")
+        matches.append("title")
         year = video.get("year")
         if year and str(year) in tokens:
             matches.append("year")
         _append_release_match(matches, video, release)
     elif video.get("kind") == "episode":
-        series_tokens = _tokens(video.get("series"))
-        if series_tokens and all(token in tokens for token in series_tokens):
-            matches.append("series")
+        matches.append("series")
         season_episode = _season_episode_markers(haystack)
         try:
             expected = (int(video.get("season")), int(video.get("episode")))
@@ -509,7 +577,67 @@ def _encoding_for(content):
         content.decode("utf-8")
         return "utf-8"
     except UnicodeDecodeError:
-        return "latin-1"
+        pass
+    # Greek SRTs are commonly encoded as Windows-1253 or ISO-8859-7. latin-1 accepts
+    # any byte sequence, so try the Greek legacy encodings first and only fall back to
+    # latin-1 when the bytes do not decode to actual Greek text.
+    for encoding in ("windows-1253", "iso-8859-7"):
+        try:
+            decoded = content.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+        if any("\u0370" <= char <= "\u03ff" for char in decoded):
+            return encoding
+    return "latin-1"
+
+
+def _looks_like_html(response):
+    content_type = _header_value(response.headers, "content-type").lower()
+    sample = (response.body or b"").lstrip()[:2048].decode("utf-8", errors="ignore").lower()
+    return "text/html" in content_type or sample.startswith("<!doctype html") or sample.startswith("<html")
+
+
+def _response_filename(response):
+    value = _header_value(response.headers, "content-disposition")
+    if not value:
+        return ""
+    message = email.message.Message()
+    message["Content-Disposition"] = value
+    filename = message.get_filename() or ""
+    return os.path.basename(filename.replace("\\", "/"))
+
+
+def _header_value(headers, name):
+    wanted = name.lower()
+    for key, value in (headers or {}).items():
+        if str(key).lower() == wanted:
+            return str(value or "")
+    return ""
+
+
+# UTF-32 first: its little-endian BOM starts with the UTF-16 one.
+_WIDE_UNICODE_BOMS = (
+    (codecs.BOM_UTF32_LE, "utf-32"),
+    (codecs.BOM_UTF32_BE, "utf-32"),
+    (codecs.BOM_UTF16_LE, "utf-16"),
+    (codecs.BOM_UTF16_BE, "utf-16"),
+)
+
+
+def _utf8_from_wide_unicode(content):
+    """UTF-8 bytes for a subtitle served as UTF-16 or UTF-32 with a BOM, else the bytes as given.
+
+    Some GreekSubs.net uploads are UTF-16 ("Gladiator (2000) EXTENDED"). Neither Greek
+    codepage decodes them, so they were reported as latin-1, and line endings normalized on
+    the raw bytes turned each "\\r\\x00\\n\\x00" into two line breaks.
+    """
+    for bom, codec in _WIDE_UNICODE_BOMS:
+        if content.startswith(bom):
+            try:
+                return content.decode(codec).encode("utf-8")
+            except UnicodeDecodeError:
+                return content
+    return content
 
 
 def _normalize_line_endings(content):

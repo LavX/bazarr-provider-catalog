@@ -410,7 +410,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "1d8391c6640eca3d82e5305a7a8d7c42564d992249d999b54aa789de3816b690",
+        "bundle_sha256": "53b24ef2dd96af0385189161b93e8d4a874dbca6c00b4fa1e9dabc2d87a235d7",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -432,7 +432,7 @@
         "entry_class": "AssrtProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "3acf5fb984252f22ab184bc450e7ce28e5d34c98a8f1e92b3d2e1defed4216ba"
+          "provider.py": "b7f1163f4f47d3a4fe2c89075ff47d9f29d94bfc033313e842da2226f0716da2"
         },
         "languages": [
           "eng",
@@ -459,7 +459,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.7"
+        "version": "0.1.8"
       }
     },
     {
@@ -711,6 +711,164 @@
           "episode"
         ],
         "version": "0.1.6"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "426039b2f4a001172a371cfeda4451144e47afef6551fd21155640404e6478d6",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "api_keys": {
+              "description": "Whitespace-separated Distribution Hub API keys, one per endpoint, in the same order as the endpoints. Over http the key travels in cleartext, so prefer https on a trusted network.",
+              "minLength": 1,
+              "secret": true,
+              "title": "API keys",
+              "type": "string"
+            },
+            "endpoints": {
+              "description": "Whitespace-separated addresses of the Bazarr+ instances to search, for example http://192.168.1.20:6767. Use the private network address that this Bazarr instance can reach. The peer must be reached at this address, because its forwarded headers build the download links. Public-internet peers are not supported.",
+              "format": "uri",
+              "minLength": 1,
+              "title": "Endpoints",
+              "type": "string"
+            },
+            "include_ai_translated": {
+              "default": false,
+              "description": "Include subtitles that the peer marks as AI translated.",
+              "title": "Include AI translated subtitles",
+              "type": "boolean"
+            },
+            "library_only": {
+              "default": true,
+              "description": "Search only the subtitles in the peer's own library. This needs the peer's serve_local_subs setting turned on. If the key has an allow-list, the key must include local.",
+              "title": "Library only",
+              "type": "boolean"
+            },
+            "timeout_seconds": {
+              "default": 45,
+              "description": "Whole-search time budget in seconds, shared by every peer. A search waits at most 90 seconds.",
+              "maximum": 90,
+              "minimum": 30,
+              "title": "Search timeout (seconds)",
+              "type": "integer"
+            },
+            "use_hash": {
+              "default": true,
+              "description": "Send the video's OpenSubtitles hash so that a peer can flag the exact release. When the host supplies no hash, it is computed from the local file.",
+              "title": "Use file hash",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "endpoints",
+            "api_keys"
+          ],
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Bazarr+ instances on a private network can now search each other's subtitle libraries through the Distribution Hub, using its existing API keys.",
+        "entry_class": "BazarrPeerProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "17d73719f07fc69b166c01fef62227cbbf2db3a93b001d7ba174516ac4f4c507"
+        },
+        "languages": [
+          "ara",
+          "aze",
+          "bel",
+          "ben",
+          "bos",
+          "bul",
+          "cat",
+          "ces",
+          "dan",
+          "deu",
+          "ell",
+          "eng",
+          "epo",
+          "est",
+          "eus",
+          "fas",
+          "fin",
+          "fra",
+          "heb",
+          "hin",
+          "hrv",
+          "hun",
+          "hye",
+          "ind",
+          "isl",
+          "ita",
+          "jpn",
+          "kal",
+          "kan",
+          "kat",
+          "khm",
+          "kin",
+          "kor",
+          "kur",
+          "lav",
+          "lit",
+          "mal",
+          "mkd",
+          "mon",
+          "msa",
+          "mya",
+          "nep",
+          "nld",
+          "nor",
+          "pan",
+          "pol",
+          "por",
+          "por-BR",
+          "pus",
+          "ron",
+          "rus",
+          "sin",
+          "slk",
+          "slv",
+          "som",
+          "spa",
+          "sqi",
+          "srp",
+          "sun",
+          "swa",
+          "swe",
+          "tam",
+          "tel",
+          "tgl",
+          "tha",
+          "tur",
+          "ukr",
+          "urd",
+          "vie",
+          "yor",
+          "zho"
+        ],
+        "name": "Bazarr+ Peer",
+        "provider_id": "bazarr_peer",
+        "schema_version": 1,
+        "secret_fields": [
+          "api_keys"
+        ],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/bazarr_peer",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.5"
       }
     },
     {
@@ -1553,7 +1711,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "2b066badd93df00f59dba5cf6837f8525bbb34a8151be7dcc28f73cb36260627",
+        "bundle_sha256": "41c6a86d4a19447e3eed1d93c946585d44dbd1085f31e137ed0c44c6485ed590",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -1583,12 +1741,12 @@
         "entry_class": "GreekSubsProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "cd3c38610644fc54ef3871693b6f59a7d253892557c778f53d9369ac786ffb1b"
+          "provider.py": "ef3c0dd9172d2d72ae4c34e9a189244d14a1f4d165386687630a95888e4e24ea"
         },
         "languages": [
           "ell"
         ],
-        "name": "GreekSubs",
+        "name": "GreekSubs.net",
         "provider_id": "greeksubs",
         "schema_version": 1,
         "secret_fields": [],
@@ -1605,7 +1763,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.3"
+        "version": "0.2.0"
       }
     },
     {
@@ -2369,7 +2527,7 @@
       "manifest": {
         "anti_captcha": true,
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "cea7025b770294495ccb6f3964d65d06e52c50d784c59dd6d233252f8080350d",
+        "bundle_sha256": "9b36ab7d4f156be6c49ce8eaeaf5b30fc564e979d51b33f10145fa5de585d5df",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -2731,7 +2889,7 @@
         "entry_class": "LegendasDivxProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "c674a94b6b2ad05b7a4e924dfa0954c4135ab5afcca7c0fc603fc91c2cd562b0"
+          "provider.py": "27adab0c63ae462392d8db242753072f2d7bb3e592f48f9a56d4b7185e13bee0"
         },
         "flaresolverr": true,
         "languages": [
@@ -2760,7 +2918,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.2.3"
+        "version": "0.2.4"
       }
     },
     {
@@ -3010,7 +3168,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "bf110efd89127f1e2a9efca64fa0cde8904107ed1c46e707a0dc6203491d68fa",
+        "bundle_sha256": "12f53fefec866994c8f65e459270cbc9999e1e56cbac01b3be002fa35222ab20",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -3332,7 +3490,7 @@
         "entry_class": "NapiProjektProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "7508f91bc520ffc464f88963ff321091fbce59e5636cff577c271e4b7978acd7"
+          "provider.py": "39e1662b7a294535060a05b90e6cf0c48a48f7ac020fc5d87977380be7bd3139"
         },
         "flaresolverr": true,
         "languages": [
@@ -3355,7 +3513,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.8"
+        "version": "0.1.9"
       }
     },
     {
@@ -3482,7 +3640,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "c5788b5ff4ceac7bb92ff0e6c13db4946a702a98736d04ac2fa00c7a4c5ba968",
+        "bundle_sha256": "186408909027d091cb5c9a3a13e0c64f55de1ebc0df7193fb9305b0dba4656e8",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -3818,7 +3976,7 @@
         "entry_class": "OpenSubtitlesOrgProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "7b81bc7efd43e05bb15425e6c25633a32995101649b8c59184cea1cabf5225d9"
+          "provider.py": "4f1a87e4223925595f61493e6566fe02829f8ee27d06e05145a40f141b83b8d4"
         },
         "flaresolverr": true,
         "languages": [
@@ -4261,7 +4419,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.14"
+        "version": "0.1.15"
       }
     },
     {
@@ -4880,7 +5038,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "67ad05d083347e8233c9049819e58344441cd9cc48869a1f2b264684ffd9499b",
+        "bundle_sha256": "899c813d009dc96d6d853f89b03205671fec451ec22cf28259e0534e98195490",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -5192,7 +5350,7 @@
         "entry_class": "SubSceneProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "03b92240f206c093697233df9937e53ec21201d8917b60926d150b303051d7ea"
+          "provider.py": "f3802d385d18d6d8d944aa060501e6a2ee5fc068c5a32b723abe21ef522ed48b"
         },
         "flaresolverr": true,
         "languages": [
@@ -5250,7 +5408,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.18"
+        "version": "0.1.19"
       }
     },
     {
@@ -5641,7 +5799,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "2c8cc9471a8ef5473cdf87f5d6d4e9572fb3739aac0954b84531f12fc6e51755",
+        "bundle_sha256": "f4a1910930ec9bd2ad3b5a63023dd21937cbafe6837bb1b57308fb9be8b305fd",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -5671,7 +5829,7 @@
         "entry_class": "SubHDProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "90f185d7d02046e1427ee772330fca5318b504432bb99354f18df37b518bbe6b"
+          "provider.py": "cc7fde816b602e81b1a517327ca8fa56b032d159aef1d72cfd590625da17c5e4"
         },
         "languages": [
           "zho",
@@ -5707,16 +5865,24 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.6"
+        "version": "0.1.7"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "b39f832db238ab604773da79f0cc4ab61de11b90c6abd489690d6705097f6691",
+        "bundle_sha256": "39af871139474cfa1605ec299068d2ca028c962bb19496d345be1cc8d2c5d5f7",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
+            "operation_timeout_seconds": {
+              "default": 90,
+              "description": "Longest a search or download may take, Anubis solves and request delays included. Bazarr gives the provider at least 30 seconds more than this, so it stops on its own and reports the site as unavailable instead of being cut off.",
+              "maximum": 600,
+              "minimum": 30,
+              "title": "Search/download timeout (seconds)",
+              "type": "integer"
+            },
             "request_delay_ms": {
               "default": 0,
               "description": "Optional politeness delay between HTTP calls to subs4free.info.",
@@ -5739,11 +5905,11 @@
             }
           ]
         },
-        "description": "Scrapes subs4free.info for Greek and English movie subtitles. Supports the legacy anti-block download flow plus ZIP and RAR archives.",
+        "description": "Scrapes subs4free.info for Greek and English movie subtitles, solving the site's Anubis proof-of-work challenge inline. Supports ZIP and RAR archives.",
         "entry_class": "Subs4FreeProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "24067d483670f4311e5ff89a32d71984d015ca9ba46ede6d64201e3c5dadd37b"
+          "provider.py": "1c0c31b884a67ad2b307608cf25a90f34f30127d50c73f3599307d0b62a85268"
         },
         "languages": [
           "ell",
@@ -5765,14 +5931,14 @@
         "supported_media": [
           "movie"
         ],
-        "version": "0.1.5"
+        "version": "0.2.0"
       }
     },
     {
       "manifest": {
         "anti_captcha": true,
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "f2f4b4a8fabd2ee872802cf1768397835617e2883ab5bb013cffd3dd62b88628",
+        "bundle_sha256": "015105c900ac8d9ea73e8d1ebecf3c170377f2bf002eb3317b93c33be795d5e0",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -6112,7 +6278,7 @@
         "entry_class": "Subs4SeriesProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "d81bf3f72c97a0c21449361e6946544458aa7adda23e4e870db64f241db8798c"
+          "provider.py": "58b36fa642dfe3df62b3a74316031aebe9b5ae21c65ab10d84a0806726fa0291"
         },
         "flaresolverr": true,
         "languages": [
@@ -6138,7 +6304,7 @@
         "supported_media": [
           "episode"
         ],
-        "version": "0.1.9"
+        "version": "0.2.1"
       }
     },
     {
@@ -6292,7 +6458,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "711c539f9d0db947f5d51a12f4094fbd50d4274b54a1d92f0ed848b4b864e136",
+        "bundle_sha256": "65d5c988dc568f3410dd289f8a1b1f1d6f181fb45340c63fbab6e9001f529d21",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -6320,7 +6486,7 @@
         "entry_class": "SubsDumpProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "5110a8449791409681b1d4e6418e4704552a497533297d7badbc5503b07dde00"
+          "provider.py": "0a4e2f6c1e821d6e1898ddea9a77da72db33e37446e5a5914c4b2613645451e3"
         },
         "languages": [
           "ara",
@@ -6415,7 +6581,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.0"
+        "version": "0.1.1"
       }
     },
     {
@@ -7708,7 +7874,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "b699439fcbfc62862d158fd5ca6bb4b3e7724740c77cb564dbf7ab47efa0ca70",
+        "bundle_sha256": "9553365e034d165b23fc1faa80bb94220cacc9bee4e55f51576384e57e919f76",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -8031,7 +8197,7 @@
         "entry_class": "TurkceAltyaziOrgProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "440aee6bc9e446b64d18db2ec0f3ac1b83dec7d9af799b83d1a5d43e8bc17af2"
+          "provider.py": "300b8ce7b127513020402d58dfd4b49ddeb446e5145ec300d56be07a6acd23c3"
         },
         "flaresolverr": true,
         "languages": [
@@ -8057,7 +8223,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.8"
+        "version": "0.1.9"
       }
     },
     {
@@ -8137,6 +8303,150 @@
           "episode"
         ],
         "version": "0.1.4"
+      }
+    },
+    {
+      "manifest": {
+        "api_version": "bazarr.provider-hub.v1",
+        "bundle_sha256": "f346b0318a9a68e89de16f166378ac7b996bac9fb86813a7e63c1ec3c34fba65",
+        "config_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "api_keys": {
+              "description": "Whitespace-separated API keys, one per endpoint, in the same order as the endpoints.",
+              "minLength": 1,
+              "secret": true,
+              "title": "API keys",
+              "type": "string"
+            },
+            "endpoints": {
+              "description": "Whitespace-separated base URLs of the UNIT3D trackers to search, for example https://tracker.example.",
+              "minLength": 1,
+              "title": "Endpoints",
+              "type": "string"
+            },
+            "match_files": {
+              "default": true,
+              "description": "Send the video file size and name with each search. The tracker decides how to use them.",
+              "title": "Match files",
+              "type": "boolean"
+            },
+            "timeout_seconds": {
+              "default": 30,
+              "description": "Whole-search time budget in seconds, shared by every endpoint and page.",
+              "maximum": 60,
+              "minimum": 10,
+              "title": "Search timeout (seconds)",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "endpoints",
+            "api_keys"
+          ],
+          "type": "object"
+        },
+        "dependencies": {
+          "requirements": []
+        },
+        "description": "Searches the UNIT3D subtitle API of one or more trackers, each with its own API key, inside one shared time budget.",
+        "entry_class": "UNIT3DProvider",
+        "entry_module": "provider",
+        "files": {
+          "provider.py": "9089ed2a85ffa1206dbf29530e9ee3b658cc956f8aeafcea5d9ab9492783ca0b"
+        },
+        "languages": [
+          "ara",
+          "aze",
+          "bel",
+          "ben",
+          "bos",
+          "bul",
+          "cat",
+          "ces",
+          "dan",
+          "deu",
+          "ell",
+          "eng",
+          "epo",
+          "est",
+          "eus",
+          "fas",
+          "fin",
+          "fra",
+          "heb",
+          "hin",
+          "hrv",
+          "hun",
+          "hye",
+          "ind",
+          "isl",
+          "ita",
+          "jpn",
+          "kal",
+          "kan",
+          "kat",
+          "khm",
+          "kin",
+          "kor",
+          "kur",
+          "lav",
+          "lit",
+          "mal",
+          "mkd",
+          "mon",
+          "msa",
+          "mya",
+          "nep",
+          "nld",
+          "nor",
+          "pan",
+          "pol",
+          "por",
+          "pus",
+          "ron",
+          "rus",
+          "sin",
+          "slk",
+          "slv",
+          "som",
+          "spa",
+          "sqi",
+          "srp",
+          "sun",
+          "swa",
+          "swe",
+          "tam",
+          "tel",
+          "tgl",
+          "tha",
+          "tur",
+          "ukr",
+          "urd",
+          "vie",
+          "yor",
+          "zho"
+        ],
+        "name": "UNIT3D",
+        "provider_id": "unit3d",
+        "schema_version": 1,
+        "secret_fields": [
+          "api_keys"
+        ],
+        "source": {
+          "catalog_url": "https://github.com/LavX/bazarr-provider-catalog/blob/main/catalog.json",
+          "commit": "0000000000000000000000000000000000000000",
+          "path": "providers/unit3d",
+          "ref": "main",
+          "repo": "LavX/bazarr-provider-catalog",
+          "trusted": true,
+          "type": "github"
+        },
+        "supported_media": [
+          "movie",
+          "episode"
+        ],
+        "version": "0.1.5"
       }
     },
     {
@@ -8377,7 +8687,7 @@
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "1e66385ec413c91a199352e53255ac0050c503446bb9ebd55e4d1bdeda52e2e3",
+        "bundle_sha256": "1e7fca2bee90bbffa99195d5de6489985b09f946d55f47b387e6f45bad30b962",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -8680,7 +8990,7 @@
         "entry_class": "WizdomProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "354889ea75c34849de708bb0d8a418a6c452c33b8711935b5e62555539df8ce0"
+          "provider.py": "037616c94197efc7560736404ba84033b9d3ae6b1dacf6bcd0adcc688a1026a8"
         },
         "flaresolverr": true,
         "languages": [
@@ -8703,13 +9013,13 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.5"
+        "version": "0.1.6"
       }
     },
     {
       "manifest": {
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "759a3dba0ff51204712953a0d37f4d3d0828bb1fbed8e0baa8a3f2f499feca1a",
+        "bundle_sha256": "23509201e46f3fcd0e51e32ec986810a402d365ff7bb5cc4624d1db72f8957a3",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -9021,7 +9331,7 @@
         "entry_class": "YavkaNetProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "440906199f1f371bf62779347445439041cd782f4b03483db400c281fc3de7e7"
+          "provider.py": "fce8d0c7a6602a34da0fd11aa06fd57fef4eee81869ec41f73e1c734fe2ddd11"
         },
         "flaresolverr": true,
         "languages": [
@@ -9048,7 +9358,7 @@
           "movie",
           "episode"
         ],
-        "version": "0.1.11"
+        "version": "0.1.13"
       }
     },
     {

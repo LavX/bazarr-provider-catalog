@@ -10,6 +10,8 @@ import sys
 import zipfile
 from pathlib import Path, PurePosixPath
 
+from . import released_hosts
+
 SCHEMA_VERSION = 1
 CATALOG_NAME = "Bazarr Provider Catalog"
 API_VERSION = "bazarr.provider-hub.v1"
@@ -58,6 +60,13 @@ KNOWN_MULTIWHEEL_PACKAGES = frozenset({
 # itself (see docs/provider-bulk-creation-guide.md "Archive extraction"), so a worker
 # never carries py7zz (which has no aarch64 wheel) or another archive backend.
 BUNDLED_ARCHIVE_PACKAGES = frozenset({"py7zz", "py7zr", "rarfile"})
+# Fields only a schema-2 host understands. Hosts up to 2.7 ignore unknown fields,
+# so a providers entry that carries one would install without the behavior it
+# asks for. A schema 2 entry cannot ship in this catalog yet.
+SCHEMA_2_ONLY_FIELDS = frozenset({
+    "id", "kind", "kind_api", "min_host_version", "platforms", "runtime", "settings",
+    "settings_version", "requires", "provides", "extends", "permissions", "endpoints", "login",
+})
 
 
 class CatalogError(Exception):
@@ -199,6 +208,11 @@ def validate_manifest(root, provider_dir, seen_ids):
 
     if manifest.get("schema_version") != SCHEMA_VERSION:
         raise CatalogError(f"{manifest_path} schema_version must be {SCHEMA_VERSION}")
+    newer_fields = sorted(SCHEMA_2_ONLY_FIELDS & set(manifest))
+    if newer_fields:
+        raise CatalogError(
+            f"{manifest_path} uses {newer_fields}, which released hosts ignore; a schema 2 entry cannot ship in this catalog yet"
+        )
     provider_id = manifest.get("provider_id")
     if not isinstance(provider_id, str) or not _PROVIDER_ID_RE.match(provider_id):
         raise CatalogError(f"{manifest_path} provider_id is invalid")
@@ -311,6 +325,9 @@ def validate_catalog(root):
     expected = build_catalog(root)
     if catalog != expected:
         raise CatalogError("catalog.json is stale or invalid, run: python -m sdk build-catalog")
+    errors = released_hosts.released_host_errors([item["manifest"] for item in catalog["providers"]])
+    if errors:
+        raise CatalogError("released hosts cannot load these providers entries:\n  " + "\n  ".join(errors))
     return catalog
 
 

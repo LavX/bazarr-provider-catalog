@@ -1,9 +1,17 @@
 {
   "api_version": "bazarr.provider-hub.v1",
-  "bundle_sha256": "b39f832db238ab604773da79f0cc4ab61de11b90c6abd489690d6705097f6691",
+  "bundle_sha256": "39af871139474cfa1605ec299068d2ca028c962bb19496d345be1cc8d2c5d5f7",
   "config_schema": {
     "additionalProperties": false,
     "properties": {
+      "operation_timeout_seconds": {
+        "default": 90,
+        "description": "Longest a search or download may take, Anubis solves and request delays included. Bazarr gives the provider at least 30 seconds more than this, so it stops on its own and reports the site as unavailable instead of being cut off.",
+        "maximum": 600,
+        "minimum": 30,
+        "title": "Search/download timeout (seconds)",
+        "type": "integer"
+      },
       "request_delay_ms": {
         "default": 0,
         "description": "Optional politeness delay between HTTP calls to subs4free.info.",
@@ -26,11 +34,11 @@
       }
     ]
   },
-  "description": "Scrapes subs4free.info for Greek and English movie subtitles. Supports the legacy anti-block download flow plus ZIP and RAR archives.",
+  "description": "Scrapes subs4free.info for Greek and English movie subtitles, solving the site's Anubis proof-of-work challenge inline. Supports ZIP and RAR archives.",
   "entry_class": "Subs4FreeProvider",
   "entry_module": "provider",
   "files": {
-    "provider.py": "24067d483670f4311e5ff89a32d71984d015ca9ba46ede6d64201e3c5dadd37b"
+    "provider.py": "1c0c31b884a67ad2b307608cf25a90f34f30127d50c73f3599307d0b62a85268"
   },
   "languages": [
     "ell",
@@ -52,5 +60,5 @@
   "supported_media": [
     "movie"
   ],
-  "version": "0.1.5"
+  "version": "0.2.0"
 }
