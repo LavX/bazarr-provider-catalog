@@ -19,6 +19,7 @@ import sys
 import threading
 import time
 import unittest
+import urllib.error
 import urllib.parse
 import zipfile
 from pathlib import Path
@@ -666,6 +667,160 @@ class PaginationAndBudgetTests(UNIT3DTestCase):
         self.assertIn("budget", "\n".join(logs.output))
         self.assertEqual(len(self.search([(base, "key-a")], provider=provider)), 1)
         self.assertEqual(len(server.requests), 1)
+
+
+class _BudgetHandler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *_args):
+        pass
+
+    def do_GET(self):
+        try:
+            path = urllib.parse.urlsplit(self.path).path
+            if path in ("/headers", "/error-headers", "/chunks") or path.startswith("/slow/"):
+                status = 503 if path == "/error-headers" else 200
+                self.wfile.write(f"HTTP/1.1 {status} response\r\n".encode())
+                if path == "/chunks":
+                    self.wfile.write(b"Transfer-Encoding: chunked\r\n\r\n")
+                for index in range(20):
+                    piece = b"0" if path == "/chunks" else f"X-Slow-{index}: yes\r\n".encode()
+                    self.wfile.write(piece)
+                    self.wfile.flush()
+                    if self.server.stop_trickle.wait(0.025):
+                        return
+                self.wfile.write(b"\r\n\r\n" if path == "/chunks" else b"Content-Length: 0\r\n\r\n")
+                return
+            if path == "/body":
+                self.send_response(200)
+                self.send_header("Content-Length", "40")
+                self.end_headers()
+                for _ in range(40):
+                    self.wfile.write(b"x")
+                    self.wfile.flush()
+                    if self.server.stop_trickle.wait(0.025):
+                        return
+                return
+            status, headers, body = _page([_record(1)])
+            self.send_response(status)
+            for key, value in headers.items():
+                self.send_header(key, value)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except OSError:
+            pass
+
+
+class AbsoluteDeadlineTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_provider_module()
+
+    def serve(self):
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _BudgetHandler)
+        server.daemon_threads = True
+        server.stop_trickle = threading.Event()
+        thread = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.01), daemon=True)
+        thread.start()
+        self.addCleanup(thread.join)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.addCleanup(server.stop_trickle.set)
+        base = f"http://127.0.0.1:{server.server_port}"
+        return self.mod._Endpoint(_tag(base), base, "127.0.0.1", "fixture-key")
+
+    def test_headers_chunks_error_headers_and_body_share_the_request_deadline(self):
+        endpoint = self.serve()
+        for path in ("/headers", "/chunks", "/error-headers", "/body"):
+            with self.subTest(path=path):
+                started = time.monotonic()
+                with self.assertRaises(self.mod.ServiceUnavailable):
+                    self.mod._fetch(endpoint, path, None, 3, 4096, started + 0.12)
+                self.assertLess(time.monotonic() - started, 0.6)
+
+    def test_stuck_dns_repeatedly_expires_without_accumulating_helpers(self):
+        release = threading.Event()
+        resolvers, callers = [], []
+
+        def resolve(*_args, **_kwargs):
+            resolvers.append(threading.current_thread())
+            release.wait()
+            return []
+
+        try:
+            with patch.object(socket, "getaddrinfo", resolve):
+                for _ in range(4):
+                    failures = []
+
+                    def request():
+                        endpoint = self.mod._Endpoint("fixture", "http://peer.invalid", "peer.invalid", "fixture-key")
+                        try:
+                            self.mod._fetch(endpoint, "/api/subtitles", None, 3, 4096, time.monotonic() + 0.1)
+                        except Exception as error:
+                            failures.append(error)
+
+                    caller = threading.Thread(target=request, daemon=True)
+                    callers.append(caller)
+                    caller.start()
+                    caller.join(0.6)
+                    self.assertFalse(caller.is_alive(), "DNS exceeded the request deadline")
+                    self.assertEqual(len(failures), 1)
+                    self.assertIsInstance(failures[0], self.mod.ServiceUnavailable)
+                    self.assertEqual(len(resolvers), 1)
+        finally:
+            release.set()
+            for thread in callers + resolvers:
+                thread.join(1)
+                self.assertFalse(thread.is_alive())
+        endpoint = self.serve()
+        body, _content_type = self.mod._fetch(endpoint, "/ok", None, 2, 4096, time.monotonic() + 2)
+        self.assertTrue(body)
+
+    def test_failed_endpoint_keeps_the_other_endpoints_candidates_within_the_budget(self):
+        endpoint = self.serve()
+        provider = self.mod.UNIT3DProvider()
+        config = _config([(endpoint.base + "/slow", "first-key"), (endpoint.base, "second-key")])
+        with patch.object(self.mod, "_timeout_seconds", return_value=0.15), self.assertLogs("unit3d", level="WARNING"):
+            started = time.monotonic()
+            candidates = provider.search(dict(MOVIE_VIDEO), [ENGLISH], config)
+        self.assertLess(time.monotonic() - started, 0.6)
+        self.assertEqual([candidate["id"] for candidate in candidates], [f"{endpoint.tag}:1"])
+
+    def test_success_and_expiry_close_watch_sockets_and_join_the_timer(self):
+        endpoint = self.serve()
+        watches = []
+        original = self.mod._Watch
+
+        def watch(deadline):
+            result = original(deadline)
+            watches.append(result)
+            return result
+
+        with patch.object(self.mod, "_Watch", side_effect=watch):
+            for _ in range(3):
+                self.mod._fetch(endpoint, "/ok", None, 2, 4096, time.monotonic() + 2)
+            with self.assertRaises(self.mod.ServiceUnavailable):
+                self.mod._fetch(endpoint, "/headers", None, 3, 4096, time.monotonic() + 0.1)
+        self.assertEqual(len(watches), 4)
+        for item in watches:
+            self.assertTrue(item._done)
+            self.assertEqual(item._cutters, [])
+            self.assertFalse(item._timer.is_alive())
+
+    def test_http_error_response_is_closed_when_it_arrives_at_the_deadline(self):
+        response = io.BytesIO(b"error")
+        error = urllib.error.HTTPError("http://fixture.invalid", 503, "unavailable", {}, response)
+        endpoint = self.serve()
+        clock = [0.0]
+
+        def opened(*_args, **_kwargs):
+            clock[0] = 1.0
+            raise error
+
+        with patch.object(self.mod, "_monotonic", side_effect=lambda: clock[0]), patch.object(
+            self.mod._OPENER, "open", side_effect=opened
+        ):
+            with self.assertRaises(self.mod.ServiceUnavailable):
+                self.mod._fetch(endpoint, "/error", None, 1, 4096, 1.0)
+        self.assertTrue(response.closed)
 
 
 class SlowBodyTests(UNIT3DTestCase):
