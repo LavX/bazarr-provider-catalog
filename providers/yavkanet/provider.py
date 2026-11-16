@@ -566,7 +566,8 @@ def _request_with_retry(scraper, method, url, request_kwargs):
                 raise
             _sleep_backoff(attempt)
             continue
-        _merge_session_cookies(scraper, getattr(response, "cookies", ()))
+        for received in [*getattr(response, "history", ()), response]:
+            _merge_session_cookies(scraper, getattr(received, "cookies", ()))
         retry_after = _transient_response_retry_after(response)
         if retry_after is None or attempt >= HTTP_MAX_ATTEMPTS:
             return response

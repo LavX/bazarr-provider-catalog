@@ -365,9 +365,19 @@ class YavkaNetSessionTests(unittest.TestCase):
                 pass
 
             def do_GET(self):
+                if self.path == "/redirect-detail":
+                    self.send_response(302)
+                    self.send_header("Set-Cookie", "PHPSESSID=fixture-current; Path=/")
+                    self.send_header("Location", "/redirected-page")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
                 if self.path == "/detail":
                     self.send_response(200)
                     self.send_header("Set-Cookie", "PHPSESSID=fixture-current; Path=/")
+                    response = b'<a id="down" href="/download?q=fresh">Download</a>'
+                elif self.path == "/redirected-page":
+                    self.send_response(200)
                     response = b'<a id="down" href="/download?q=fresh">Download</a>'
                 else:
                     cookies = self.headers.get("Cookie", "")
@@ -427,6 +437,14 @@ class YavkaNetSessionTests(unittest.TestCase):
         provider._http_get(self.base + "/detail")
 
         self._download(provider, {"method": "GET", "download_url": self.base + "/download?q=fresh", "filename": "fixture.srt"})
+
+    def test_redirected_detail_replaces_the_stale_solver_session(self):
+        provider = self._provider([{"name": "PHPSESSID", "value": "fixture-stale", "domain": ".127.0.0.1", "path": "/"}])
+
+        self._download(provider, {
+            "page_url": self.base + "/redirect-detail", "method": "GET",
+            "download_url": self.base + "/download?q=stale", "filename": "fixture.srt",
+        })
 
     def test_solver_cookies_keep_domain_path_and_secure_scopes(self):
         provider = self._provider([
