@@ -687,6 +687,28 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def _close_replaced_adapters(session):
+    """Close an unmounted adapter once its replacement was mounted successfully."""
+    mount = getattr(session, "mount", None)
+    adapters = getattr(session, "adapters", None)
+    if not callable(mount) or not isinstance(adapters, dict):
+        return session
+    if getattr(session, "_bazarr_adapter_cleanup", False) is True:
+        return session
+
+    def mount_and_close(prefix, adapter):
+        previous = session.adapters.get(prefix)
+        result = mount(prefix, adapter)
+        if previous is not None and previous is not adapter:
+            if not any(previous is mounted for mounted in session.adapters.values()):
+                previous.close()
+        return result
+
+    session.mount = mount_and_close
+    session._bazarr_adapter_cleanup = True
+    return session
+
+
 def _create_cloudscraper(user_agent=USER_AGENT):
     if cloudscraper is None:
         return None
@@ -697,13 +719,13 @@ def _create_cloudscraper(user_agent=USER_AGENT):
         "debug": False,
     }
     try:
-        return cloudscraper.create_scraper(**options)
+        return _close_replaced_adapters(cloudscraper.create_scraper(**options))
     except TypeError as error:
         if "enable_cookie_persistence" not in str(error):
             raise
         fallback = dict(options)
         fallback.pop("enable_cookie_persistence", None)
-        return cloudscraper.create_scraper(**fallback)
+        return _close_replaced_adapters(cloudscraper.create_scraper(**fallback))
 
 
 def _is_session_cookie(name):

@@ -115,6 +115,28 @@ if cloudscraper is None:  # pragma: no cover, dependency is declared in provider
     cloudscraper = _MissingCloudscraper()
 
 
+def _close_replaced_adapters(session):
+    """Close an unmounted adapter once its replacement was mounted successfully."""
+    mount = getattr(session, "mount", None)
+    adapters = getattr(session, "adapters", None)
+    if not callable(mount) or not isinstance(adapters, dict):
+        return session
+    if getattr(session, "_bazarr_adapter_cleanup", False) is True:
+        return session
+
+    def mount_and_close(prefix, adapter):
+        previous = session.adapters.get(prefix)
+        result = mount(prefix, adapter)
+        if previous is not None and previous is not adapter:
+            if not any(previous is mounted for mounted in session.adapters.values()):
+                previous.close()
+        return result
+
+    session.mount = mount_and_close
+    session._bazarr_adapter_cleanup = True
+    return session
+
+
 def _create_cloudscraper_session(user_agent=DEFAULT_USER_AGENT):
     kwargs = {
         "browser": {"custom": user_agent},
@@ -123,12 +145,12 @@ def _create_cloudscraper_session(user_agent=DEFAULT_USER_AGENT):
         "debug": False,
     }
     try:
-        return cloudscraper.create_scraper(**kwargs)
+        return _close_replaced_adapters(cloudscraper.create_scraper(**kwargs))
     except TypeError as exc:
         if "enable_cookie_persistence" not in str(exc):
             raise
         kwargs.pop("enable_cookie_persistence")
-        return cloudscraper.create_scraper(**kwargs)
+        return _close_replaced_adapters(cloudscraper.create_scraper(**kwargs))
 
 
 class TurkceAltyaziOrgProvider:
