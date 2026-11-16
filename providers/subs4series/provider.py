@@ -611,6 +611,9 @@ class Subs4SeriesProvider:
             return self._http_get(episode_url, referer=BASE_URL, config=config)
         except Exception as error:
             if _http_status(error) == 404:
+                close = getattr(error, "close", None)
+                if close is not None:
+                    close()
                 return None
             raise
 
@@ -822,10 +825,13 @@ class Subs4SeriesProvider:
         try:
             return self._raw_request(url, method="GET", headers=headers, timeout=timeout)
         except urllib.error.HTTPError as error:
-            body = error.read()
-            if _is_cloudflare_challenge(error.code, error.headers, body) and _flaresolverr_url(config):
-                return self._flaresolverr_get(url, timeout, config)
-            raise
+            try:
+                body = error.read()
+                if _is_cloudflare_challenge(error.code, error.headers, body) and _flaresolverr_url(config):
+                    return self._flaresolverr_get(url, timeout, config)
+                raise
+            finally:
+                error.close()
 
     def _http_post(self, url, data, timeout=HTTP_TIMEOUT_SECONDS, referer=None):
         headers = _browser_headers(referer, self._flaresolverr_user_agent or self._user_agent, self._flaresolverr_cookies)

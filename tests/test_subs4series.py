@@ -162,10 +162,11 @@ class _DeadlineHandler(BaseHTTPRequestHandler):
                 self.send_response(404 if self.path == "/error" else 200)
                 self.send_header("Content-Length", "60")
                 self.end_headers()
+            pause = threading.Event()
             for _ in range(60):
                 self.wfile.write(b"x")
                 self.wfile.flush()
-                time.sleep(0.025)
+                pause.wait(0.025)
         except OSError:
             pass
 
@@ -219,7 +220,7 @@ class Subs4SeriesDeadlineTests(unittest.TestCase):
         provider = self._provider()
 
         def solve(*_args, **_kwargs):
-            time.sleep(0.05)
+            threading.Event().wait(0.05)
             return {"proof": "ok"}
 
         with patch.object(self.mod, "SITE_CALL_BUDGET_SECONDS", 0.15), patch.object(
@@ -239,6 +240,26 @@ class Subs4SeriesDeadlineTests(unittest.TestCase):
                 with self.assertRaises(self.mod.ServiceUnavailable):
                     provider._http_get(self._url(path))
                 self.assertLess(time.monotonic() - started, 1)
+
+    def test_stdlib_error_response_is_closed_when_the_deadline_interrupts_its_body(self):
+        provider = self.mod.Subs4SeriesProvider()
+        provider._get_scraper = lambda: None
+        raw_request = provider._raw_request
+        errors = []
+
+        def request(*args, **kwargs):
+            try:
+                return raw_request(*args, **kwargs)
+            except urllib.error.HTTPError as error:
+                errors.append(error)
+                raise
+
+        provider._raw_request = request
+        with patch.object(self.mod, "SITE_CALL_BUDGET_SECONDS", 0.15):
+            with self.assertRaises(self.mod.ServiceUnavailable):
+                provider._http_get(self._url("/error"))
+        self.assertEqual(len(errors), 1)
+        self.assertTrue(errors[0].fp.closed)
 
     def test_cloudscraper_replacement_adapters_and_reused_connections_are_watched(self):
         scraper = self.mod.cloudscraper.create_scraper(
