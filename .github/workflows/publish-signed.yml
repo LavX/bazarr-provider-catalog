@@ -16,6 +16,13 @@ name: Publish signed feed
 #
 # Manual dispatch signs the branch it is started on. With renew set it keeps the current signed
 # body, its source_commit included, and only restamps the dates.
+#
+# The daily schedule signs nothing and holds no key. It reads when each channel's signature runs
+# out. At 30 days left it starts a renewal run (a dispatch with renew set) that waits for approval
+# like any other, unless a publish or renewal run for that channel is already waiting or running.
+# At 14 days left it fails, so GitHub e-mails the owner, and it keeps failing daily until a fresh
+# signature lands. A channel with no signed file yet is skipped. Scheduled workflows run from the
+# default branch only, and GitHub turns them off after 60 days without repository activity.
 
 on:
   push:
@@ -28,14 +35,18 @@ on:
         description: Restamp the current signed body with fresh dates instead of rebuilding it
         type: boolean
         default: false
+  schedule:
+    - cron: "17 6 * * *"
 
 permissions:
   contents: read
 
 # One signing run per branch at a time. A later push queues behind a run that is waiting for
-# approval instead of cancelling it, and replaces any older queued run.
+# approval instead of cancelling it, and replaces any older queued run. The scheduled check has a
+# group of its own, so it never queues behind a signing run that is waiting for approval and never
+# replaces one that is queued.
 concurrency:
-  group: publish-signed-${{ github.ref_name }}
+  group: publish-signed-${{ github.event_name == 'schedule' && 'check' || github.ref_name }}
   cancel-in-progress: false
 
 defaults:
@@ -47,6 +58,7 @@ jobs:
     name: sign ${{ github.ref_name }}
     if: >-
       github.repository == 'LavX/bazarr-provider-catalog'
+      && github.event_name != 'schedule'
       && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta')
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -196,3 +208,51 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run pages-mirror.yml --ref "$CHANNEL"
+
+  check:
+    name: check signature expiry
+    if: github.repository == 'LavX/bazarr-provider-catalog' && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # No environment and no secret: this job signs nothing and never waits for approval.
+    permissions:
+      contents: read
+      actions: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Fetch both channels
+        run: git fetch --no-tags --depth=1 origin "+refs/heads/main:refs/remotes/origin/main" "+refs/heads/beta:refs/remotes/origin/beta"
+
+      - name: List the publish runs that are not finished
+        # A waiting run has not been approved yet. If the list cannot be read, nothing is requested
+        # (a duplicate could be started), and the alarm still works.
+        run: |
+          gh run list --workflow publish-signed.yml --limit 200 --json status,headBranch,event > "$RUNNER_TEMP/runs.json" \
+            || echo "::warning::The run list could not be read, so no renewal is requested today."
+
+      - name: Read when each signature runs out
+        id: expiry
+        run: python3 -B -m sdk check-expiry --git-ref-prefix origin/ --runs "$RUNNER_TEMP/runs.json" --outputs-file "$GITHUB_OUTPUT" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Request a renewal
+        # A renewal keeps the published body and restamps the dates. It waits for the owner's approval.
+        if: steps.expiry.outputs.request != ''
+        env:
+          CHANNELS: ${{ steps.expiry.outputs.request }}
+        run: |
+          status=0
+          for channel in $CHANNELS; do
+            gh workflow run publish-signed.yml --ref "$channel" -f renew=true || status=1
+          done
+          exit "$status"
+
+      - name: Fail while a signature is close to its end
+        # Fails daily from 14 days before expiry until a fresh signature lands. GitHub e-mails the failure.
+        if: steps.expiry.outputs.alarm == 'true'
+        run: |
+          echo "::error::A channel's signature runs out within 14 days. Approve the waiting renewal run, or start one with renew set."
+          exit 1

@@ -1028,7 +1028,7 @@ def command_build_signed_feed(args):
 
 
 def command_sign(args):
-    from . import signing
+    from . import resign, signing
 
     now = signing.parse_now(args.now) if args.now else signing.utc_now()
     key = signing.private_key_from_env(args.key_env)
@@ -1048,7 +1048,42 @@ def command_sign(args):
         f"signed {args.channel}: signed_version {result.signed_version}, "
         f"key {result.signer_key_id}, expires {signing.format_time(result.expires)}"
     )
+    renew_by, alarm_by = resign.reminder_dates(result.expires)
+    print(
+        f"calendar: add two reminders outside GitHub, on {renew_by.isoformat()} "
+        f"({resign.RENEW_WITHIN_DAYS} days before expiry) and {alarm_by.isoformat()} "
+        f"({resign.ALARM_WITHIN_DAYS} days before expiry)"
+    )
     return 0
+
+
+def command_check_expiry(args):
+    from . import resign, signing
+
+    now = signing.parse_now(args.now) if args.now else signing.utc_now()
+    runs = None
+    if args.runs:
+        try:
+            runs = json.loads(Path(args.runs).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            runs = None
+    assessments = resign.check(
+        Path(args.root).resolve(),
+        args.channel or SIGNED_FEED_CHANNELS,
+        now=now,
+        runs=runs,
+        git_ref_prefix=args.git_ref_prefix,
+    )
+    print(resign.render(assessments), end="")
+    request = " ".join(item.channel for item in assessments if item.request)
+    alarm = any(item.alarm for item in assessments)
+    for item in assessments:
+        if item.alarm:
+            print(f"::error::{item.channel}: {item.detail}", file=sys.stderr)
+    if args.outputs_file:
+        with Path(args.outputs_file).open("a", encoding="utf-8") as handle:
+            handle.write(f"request={request}\nalarm={'true' if alarm else 'false'}\n")
+    return 1 if alarm and args.fail_on_alarm else 0
 
 
 def command_verify(args):
@@ -1143,6 +1178,19 @@ def build_parser():
     sign.add_argument("--validity-days", type=int, default=90, help="days until expiry, 1 to 366 (default 90)")
     sign.add_argument("--now", help="signing time as YYYY-MM-DDTHH:MM:SSZ (tests and rehearsals only)")
     sign.set_defaults(func=command_sign)
+
+    check_expiry = subparsers.add_parser(
+        "check-expiry",
+        help="read the expiry of each channel's signed body and decide whether to request a renewal or raise the alarm",
+    )
+    check_expiry.add_argument("root", nargs="?", default=".", help="catalog root directory")
+    check_expiry.add_argument("--channel", action="append", choices=SIGNED_FEED_CHANNELS, help="channel to check (default: all)")
+    check_expiry.add_argument("--git-ref-prefix", help="read signed/<channel>/ from <prefix><channel> of the checkout, such as origin/")
+    check_expiry.add_argument("--runs", help="JSON of the publish workflow's runs (status, headBranch, event); unreadable means unknown")
+    check_expiry.add_argument("--now", help="the time to judge at, as YYYY-MM-DDTHH:MM:SSZ (tests and rehearsals only)")
+    check_expiry.add_argument("--outputs-file", help="append request=<channels> and alarm=<true|false> here (GITHUB_OUTPUT)")
+    check_expiry.add_argument("--fail-on-alarm", action="store_true", help="exit 1 while any channel is in the alarm window")
+    check_expiry.set_defaults(func=command_check_expiry)
 
     verify = subparsers.add_parser(
         "verify",
