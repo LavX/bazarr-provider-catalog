@@ -26,7 +26,7 @@ jobs:
       - name: catalog.json is up to date
         run: |
           python3 -B -m sdk build-catalog
-          git diff --exit-code -- catalog.json providers
+          git diff --exit-code -- catalog.json providers plugins
       - name: Install pinned provider test dependencies
         # The ai-cloudscraper, smokehub and SubCentral tests import real modules.
         # Pin to the versions locked in the manifests (derived here, single source of
@@ -50,4 +50,4 @@ jobs:
         # silently passing on an empty (no-drift) diff.
         run: |
           python3 scripts/expand_wheel_hashes.py --strict
-          git diff --exit-code -- providers
+          git diff --exit-code -- providers plugins
