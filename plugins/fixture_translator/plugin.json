@@ -1,0 +1,56 @@
+{
+  "bundle_sha256": "7c11b1231b4bb865eb387215ed06a9240b8dbd51000f44aa49499cda6971f1c2",
+  "dependencies": {
+    "requirements": []
+  },
+  "description": "Test fixture for the catalog tooling. Not a working translator.",
+  "endpoints": [
+    "https://translate.example.org:443"
+  ],
+  "entry_class": "FixtureTranslator",
+  "entry_module": "translator",
+  "files": {
+    "translator.py": "2543b6535e575fcc5a76052ace96d729411bad831d064044b4d6595632fb4026"
+  },
+  "id": "fixture_translator",
+  "kind": "translator",
+  "kind_api": "bazarr.translator.v1",
+  "min_host_version": "99.0.0",
+  "name": "Fixture translator",
+  "permissions": [
+    "network"
+  ],
+  "platforms": [
+    "any"
+  ],
+  "provides": [
+    "translator.engine.v1"
+  ],
+  "requires": [],
+  "runtime": {
+    "artifact": "python",
+    "process": "worker"
+  },
+  "schema_version": 2,
+  "settings": {
+    "fields": [
+      {
+        "key": "api_key",
+        "type": "secret"
+      },
+      {
+        "key": "request_timeout",
+        "type": "integer"
+      }
+    ]
+  },
+  "settings_version": 1,
+  "source": {
+    "commit": "0000000000000000000000000000000000000000",
+    "path": "plugins/fixture_translator",
+    "ref": "main",
+    "repo": "LavX/bazarr-provider-catalog",
+    "type": "github"
+  },
+  "version": "0.0.1"
+}
