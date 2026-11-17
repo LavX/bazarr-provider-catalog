@@ -97,12 +97,13 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/signing-venv"
           "$RUNNER_TEMP/signing-venv/bin/python" -m pip install --quiet --require-hashes --only-binary=:all: -r sdk/requirements-signing.txt
+          echo "SIGNING_PYTHON=$RUNNER_TEMP/signing-venv/bin/python" >> "$GITHUB_ENV"
 
       - name: Signing tests and catalog checks
         if: steps.head.outputs.proceed == 'true' && steps.head.outputs.sign == 'true'
         run: |
-          "$RUNNER_TEMP/signing-venv/bin/python" -B -m sdk validate
-          "$RUNNER_TEMP/signing-venv/bin/python" -B -m unittest discover -s tests -p 'test_signing*.py'
+          "$SIGNING_PYTHON" -B -m sdk validate
+          "$SIGNING_PYTHON" -B -m unittest discover -s tests -p 'test_signing*.py'
 
       - name: Sign
         if: steps.head.outputs.proceed == 'true' && steps.head.outputs.sign == 'true'
@@ -116,11 +117,11 @@ jobs:
           else
             args+=(--source-commit "$SOURCE_COMMIT")
           fi
-          "$RUNNER_TEMP/signing-venv/bin/python" -B -m sdk "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+          "$SIGNING_PYTHON" -B -m sdk "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Verify the signed pair against the committed key file
         if: steps.head.outputs.proceed == 'true' && steps.head.outputs.sign == 'true'
-        run: '"$RUNNER_TEMP/signing-venv/bin/python" -B -m sdk verify --channel "$CHANNEL"'
+        run: '"$SIGNING_PYTHON" -B -m sdk verify --channel "$CHANNEL"'
 
       - name: Commit the signed files to the branch
         id: push
@@ -130,12 +131,11 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- "signed/${CHANNEL}"
-          if git diff --cached --quiet; then
-            echo "Nothing changed under signed/${CHANNEL}."
-            exit 0
-          fi
-          git commit --quiet -m "chore(catalog): sign ${CHANNEL}"
+          # This run's complete signed files, kept aside before the tree moves to the tip.
+          out="$RUNNER_TEMP/signed-out"
+          rm -rf "$out"
+          mkdir -p "$out"
+          cp "signed/${CHANNEL}/catalog.json" "signed/${CHANNEL}/catalog.json.sig" "$out/"
           # The same rule as at the start: the signature covers the commit that was signed, so it
           # may only land on a tip that differs from it in signed/** alone. A newer push that
           # arrived during the run has its own run, and this one stands down without pushing.
@@ -145,10 +145,22 @@ jobs:
             echo "pushed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # Only signed/** can differ, so this replays the sign commit onto the tip without running
-          # anything from it. When the tip holds an earlier signing of this channel, the new
-          # signature wins the conflict (in a rebase, "theirs" is the commit being replayed).
-          git rebase --quiet -X theirs "origin/${CHANNEL}"
+          # Take the tip, which differs from the signed commit under signed/** only, and lay this
+          # run's files over its signed/<channel>/ whole. Nothing is merged hunk by hunk, so the body
+          # and the envelope that get pushed are always the pair this run signed.
+          git reset --quiet --hard "origin/${CHANNEL}"
+          rm -rf "signed/${CHANNEL}"
+          mkdir -p "signed/${CHANNEL}"
+          cp "$out/catalog.json" "$out/catalog.json.sig" "signed/${CHANNEL}/"
+          git add -- "signed/${CHANNEL}"
+          if git diff --cached --quiet; then
+            echo "Nothing changed under signed/${CHANNEL}."
+            exit 0
+          fi
+          # The exact bytes about to be committed, against the committed key file. A pair that does not
+          # verify is never pushed.
+          "$SIGNING_PYTHON" -B -m sdk verify --channel "$CHANNEL"
+          git commit --quiet -m "chore(catalog): sign ${CHANNEL}"
           git push origin "HEAD:refs/heads/${CHANNEL}"
           echo "pushed=true" >> "$GITHUB_OUTPUT"
 

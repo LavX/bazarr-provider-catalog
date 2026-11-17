@@ -1,11 +1,24 @@
 """The publish workflow keeps the key in one step, runs in the protected environment and cannot loop."""
 
+import base64
+import importlib.util
+import json
 import os
 import re
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+HAVE_CRYPTOGRAPHY = importlib.util.find_spec("cryptography") is not None
+if HAVE_CRYPTOGRAPHY:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from sdk import host_signing, signing
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = (ROOT / ".github/workflows/publish-signed.yml").read_text(encoding="utf-8")
@@ -68,8 +81,18 @@ class PublishWorkflowTests(unittest.TestCase):
         # never reset or checked out to a later tip before the signing step.
         checkout = steps()[0][1]
         self.assertNotIn("ref:", checkout)
-        for forbidden in ("git reset", "git checkout", "git merge", "git pull", "git switch"):
+        for forbidden in ("git checkout", "git merge", "git pull", "git switch", "git rebase", "-X theirs", "-X ours"):
             self.assertNotIn(forbidden, WORKFLOW, forbidden)
+        # Moving to the tip happens once, in the push step, after the same stand-down rule, and the
+        # signed files go over it whole.
+        for name, text in steps():
+            if name != "Commit the signed files to the branch":
+                self.assertNotIn("git reset", text, name)
+        push = dict(steps())["Commit the signed files to the branch"]
+        self.assertLess(push.index(":(exclude)signed"), push.index("git reset --quiet --hard"))
+        self.assertLess(push.index("git reset --quiet --hard"), push.index('cp "$out/catalog.json"'))
+        # The pair about to be pushed is verified first, and nothing is pushed if that fails.
+        self.assertLess(push.index("sdk verify --channel"), push.index("git push"))
         # A moved branch stands down in every mode, renewals included.
         guard = dict(steps())["Stand down if the branch has moved on"]
         standing_down = next(line for line in guard.splitlines() if 'if [ "$tip"' in line)
@@ -124,10 +147,15 @@ class PushGuardTests(unittest.TestCase):
         self.git(base, "clone", "-q", str(self.origin), str(self.other))
         (self.work / "signed" / "beta").mkdir(parents=True)
         (self.work / "signed" / "beta" / "catalog.json").write_text("signed\n", encoding="utf-8")
+        (self.work / "signed" / "beta" / "catalog.json.sig").write_text("signed sig\n", encoding="utf-8")
         self.output = base / "github_output"
         self.output.write_text("", encoding="utf-8")
+        (base / "runner").mkdir()
+        self.stub_verifier = base / "verify-ok.sh"
+        self.stub_verifier.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        self.stub_verifier.chmod(0o755)
 
-    def run_step(self, name="Commit the signed files to the branch", cwd=None, renew="false"):
+    def run_step(self, name="Commit the signed files to the branch", cwd=None, renew="false", signing_python=None):
         script = dict(steps())[name].split("run: |\n", 1)[1]
         script = "\n".join(line[10:] for line in script.splitlines())
         env = {
@@ -136,6 +164,8 @@ class PushGuardTests(unittest.TestCase):
             "RENEW": renew,
             "SOURCE_COMMIT": self.source,
             "GITHUB_OUTPUT": str(self.output),
+            "RUNNER_TEMP": str(self.output.parent / "runner"),
+            "SIGNING_PYTHON": str(signing_python or self.stub_verifier),
         }
         return subprocess.run(["bash", "-e", "-c", script], cwd=cwd or self.work, env=env, capture_output=True, text=True)
 
@@ -146,6 +176,7 @@ class PushGuardTests(unittest.TestCase):
         self.git(clone, "checkout", "-q", "--detach", self.source)
         (clone / "signed" / "beta").mkdir(parents=True)
         (clone / "signed" / "beta" / "catalog.json").write_text(content + "\n", encoding="utf-8")
+        (clone / "signed" / "beta" / "catalog.json.sig").write_text(content + " sig\n", encoding="utf-8")
         return clone
 
     def tip_file(self, path):
@@ -192,6 +223,7 @@ class PushGuardTests(unittest.TestCase):
         (self.work / "signed" / "beta" / "catalog.json").write_text(
             '{"channel": "beta", "source_commit": "%s"}\n' % source_commit, encoding="utf-8"
         )
+        (self.work / "signed" / "beta" / "catalog.json.sig").write_text("sig\n", encoding="utf-8")
 
     def test_a_rerun_skips_signing_when_the_tip_already_signs_this_commit(self):
         self.write_signed_body(self.source)
@@ -234,6 +266,90 @@ class PushGuardTests(unittest.TestCase):
                 self.assertNotIn("outputs.sign", text)
             else:
                 self.assertIn("steps.head.outputs.sign == 'true'", text, name)
+
+    def real_verifier(self, roots):
+        """Stands in for the signing venv's python: runs the real `sdk verify` with the test's roots."""
+        base = self.output.parent
+        script = base / "verify_with_test_roots.py"
+        script.write_text(
+            "import base64, json, os, sys\n"
+            f"sys.path.insert(0, {str(ROOT)!r})\n"
+            "from sdk import cli, signing\n"
+            "signing.ROOTS.clear()\n"
+            "signing.ROOTS.update({k: base64.b64decode(v) for k, v in json.loads(os.environ['TEST_ROOTS']).items()})\n"
+            "raise SystemExit(cli.main(sys.argv[1:]))\n",
+            encoding="utf-8",
+        )
+        wrapper = base / "verify-real.sh"
+        wrapper.write_text(f'#!/bin/sh\nshift 3\nexec {sys.executable} -B {script} "$@"\n', encoding="utf-8")
+        wrapper.chmod(0o755)
+        os.environ["TEST_ROOTS"] = json.dumps({k: base64.b64encode(v).decode() for k, v in roots.items()})
+        self.addCleanup(os.environ.pop, "TEST_ROOTS", None)
+        return wrapper
+
+    @unittest.skipUnless(HAVE_CRYPTOGRAPHY, "needs the cryptography package (sdk/requirements-signing.txt)")
+    def test_a_renewal_behind_a_normal_signing_pushes_a_pair_that_verifies(self):
+        def raw(key):
+            return key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+
+        root_key, ci_key = Ed25519PrivateKey.generate(), Ed25519PrivateKey.generate()
+        roots = {signing.key_id(raw(root_key)): raw(root_key)}
+        keys = [{
+            "key_id": signing.key_id(raw(ci_key)), "algorithm": "ed25519",
+            "public_key": base64.b64encode(raw(ci_key)).decode(), "added": "2026-11-17",
+        }]
+        statement = host_signing.key_file_statement(signing.key_id(raw(root_key)), 1, keys, [])
+        key_file = {
+            "key_file_version": 1, "root_key_id": signing.key_id(raw(root_key)), "keys": keys,
+            "revocations": [], "signature": base64.b64encode(root_key.sign(statement)).decode(),
+        }
+        verifier = self.real_verifier(roots)
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+
+        # The branch holds an older signed pair (Pold), as a renewal would find it.
+        shutil.rmtree(self.work / "signed")
+        shutil.copytree(ROOT / "providers/smoke", self.work / "providers/smoke", ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copytree(ROOT / "tests/fixtures/plugins/fixture_translator",
+                        self.work / "plugins/fixture_translator", ignore=shutil.ignore_patterns("__pycache__"))
+        (self.work / "keys").mkdir()
+        (self.work / "keys/catalog-signing-keys.json").write_text(json.dumps(key_file), encoding="utf-8")
+        signing.sign(self.work, "beta", ci_key, now=now - timedelta(days=5), source_commit="d" * 40, roots=roots)
+        self.git(self.work, "add", ".")
+        self.git(self.work, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "content and old pair")
+        self.git(self.work, "push", "-q", "origin", "HEAD:refs/heads/beta")
+        self.source = self.git(self.work, "rev-parse", "HEAD")
+
+        def checkout(name):
+            clone = self.output.parent / name
+            self.git(self.output.parent, "clone", "-q", str(self.origin), str(clone))
+            self.git(clone, "checkout", "-q", "--detach", self.source)
+            return clone
+
+        # Both runs were created for this commit. The normal signing pushes first.
+        normal, renewal = checkout("normal"), checkout("renewal")
+        signing.sign(normal, "beta", ci_key, now=now - timedelta(days=2), source_commit=self.source, roots=roots)
+        self.assertEqual(self.run_step(cwd=normal, signing_python=verifier).returncode, 0)
+        signing.sign(renewal, "beta", ci_key, now=now - timedelta(hours=1), renew=True, roots=roots)
+        self.output.write_text("", encoding="utf-8")
+        result = self.run_step(cwd=renewal, signing_python=verifier)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("pushed=true", self.output.read_text(encoding="utf-8"))
+
+        # What landed is exactly the renewal's pair, whole, and the host's verifier accepts it.
+        landed = checkout("landed")
+        self.git(landed, "checkout", "-q", "--detach", "origin/beta")
+        for name in ("catalog.json", "catalog.json.sig"):
+            self.assertEqual((landed / "signed/beta" / name).read_bytes(), (renewal / "signed/beta" / name).read_bytes())
+        self.assertTrue(signing.verify_files(landed, "beta", now=now, roots=roots).ok)
+
+    def test_a_pair_that_does_not_verify_is_never_pushed(self):
+        failing = self.output.parent / "verify-fails.sh"
+        failing.write_text("#!/bin/sh\necho refused >&2\nexit 1\n", encoding="utf-8")
+        failing.chmod(0o755)
+        before = self.tip()
+        result = self.run_step(signing_python=failing)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.tip(), before)
 
     def test_the_mirror_build_is_not_started_after_a_stand_down(self):
         self.assertIn("steps.push.outputs.pushed != 'false'", dict(steps())["Start the Pages mirror build"])
