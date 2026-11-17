@@ -1,0 +1,7 @@
+{
+  "bazarr_commit": "464d35ee3d3d91bd98d04ea6ea36ebf14837c186",
+  "notice_lines": 2,
+  "source_blob": "806821c0355b61371bf6e8d2e4ce86880bd00b79",
+  "source_path": "bazarr/provider_hub/signing.py",
+  "vendored_blob": "1498a462976a641f280bcb731267be2aee57626a"
+}
