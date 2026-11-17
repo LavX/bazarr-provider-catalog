@@ -1,0 +1,130 @@
+name: Publish signed feed
+
+# Signs the plugins feed of the branch that was pushed and commits signed/<channel>/ back to it.
+#
+# The job runs in the catalog-signing environment. That environment has the project owner as its
+# required reviewer, accepts only main and beta, and holds the secret CATALOG_SIGNING_KEY (the CI
+# signing key as an unencrypted PKCS8 PEM). Nothing is signed until the owner approves the run.
+#
+# The key is handed to exactly one step, as an environment variable. sdk/signing.py reads it into
+# memory, removes the variable from its own process and never writes it anywhere, never prints it
+# and never puts it on a command line. No other step sees it, and no step runs with shell tracing.
+#
+# A push that touches only signed/** starts nothing, and a commit pushed with the default
+# GITHUB_TOKEN starts no workflow, so the sign commit cannot loop. For the same reason the run
+# starts the Pages mirror itself: the mirror's push trigger never sees the sign commit.
+#
+# Manual dispatch signs the branch it is started on. With renew set it keeps the current signed
+# body, its source_commit included, and only restamps the dates.
+
+on:
+  push:
+    branches: [main, beta]
+    paths-ignore:
+      - "signed/**"
+  workflow_dispatch:
+    inputs:
+      renew:
+        description: Restamp the current signed body with fresh dates instead of rebuilding it
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# One signing run per branch at a time. A later push queues behind a run that is waiting for
+# approval instead of cancelling it, and replaces any older queued run.
+concurrency:
+  group: publish-signed-${{ github.ref_name }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  sign:
+    name: sign ${{ github.ref_name }}
+    if: >-
+      github.repository == 'LavX/bazarr-provider-catalog'
+      && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: catalog-signing
+    permissions:
+      contents: write
+      actions: write
+    env:
+      CHANNEL: ${{ github.ref_name }}
+      RENEW: ${{ inputs.renew && 'true' || 'false' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Use the branch as it is now
+        id: head
+        # The approval can take days. If the branch has moved on with anything but sign commits,
+        # that push has its own run and signs the newer tree, so this run stands down.
+        run: |
+          git fetch --no-tags origin "+refs/heads/${CHANNEL}:refs/remotes/origin/${CHANNEL}"
+          tip="$(git rev-parse "origin/${CHANNEL}")"
+          if [ "$tip" != "$(git rev-parse HEAD)" ]; then
+            if [ "$RENEW" != "true" ] && ! git diff --quiet HEAD "$tip" -- . ':(exclude)signed'; then
+              echo "::notice::${CHANNEL} moved on to ${tip}; the run for that push signs it."
+              echo "proceed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            git reset --hard "$tip"
+          fi
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Install the signing dependencies
+        if: steps.head.outputs.proceed == 'true'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/signing-venv"
+          "$RUNNER_TEMP/signing-venv/bin/python" -m pip install --quiet --require-hashes --only-binary=:all: -r sdk/requirements-signing.txt
+
+      - name: Signing tests and catalog checks
+        if: steps.head.outputs.proceed == 'true'
+        run: |
+          "$RUNNER_TEMP/signing-venv/bin/python" -B -m sdk validate
+          "$RUNNER_TEMP/signing-venv/bin/python" -B -m unittest discover -s tests -p 'test_signing*.py'
+
+      - name: Sign
+        if: steps.head.outputs.proceed == 'true'
+        env:
+          CATALOG_SIGNING_KEY: ${{ secrets.CATALOG_SIGNING_KEY }}
+          SOURCE_COMMIT: ${{ steps.head.outputs.commit }}
+        run: |
+          args=(sign --channel "$CHANNEL" --key-env CATALOG_SIGNING_KEY)
+          if [ "$RENEW" = "true" ]; then
+            args+=(--renew)
+          else
+            args+=(--source-commit "$SOURCE_COMMIT")
+          fi
+          "$RUNNER_TEMP/signing-venv/bin/python" -B -m sdk "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify the signed pair against the committed key file
+        if: steps.head.outputs.proceed == 'true'
+        run: '"$RUNNER_TEMP/signing-venv/bin/python" -B -m sdk verify --channel "$CHANNEL"'
+
+      - name: Commit the signed files to the branch
+        if: steps.head.outputs.proceed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "signed/${CHANNEL}"
+          if git diff --cached --quiet; then
+            echo "Nothing changed under signed/${CHANNEL}."
+            exit 0
+          fi
+          git commit --quiet -m "chore(catalog): sign ${CHANNEL}"
+          git push origin "HEAD:refs/heads/${CHANNEL}"
+
+      - name: Start the Pages mirror build
+        if: steps.head.outputs.proceed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages-mirror.yml --ref "$CHANNEL"
