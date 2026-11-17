@@ -6,8 +6,13 @@ name: Pages mirror
 #
 # Every run builds both channels from the branch tips as they are when the run starts, never
 # from the commit that triggered it, and refuses to deploy when that would move a channel
-# behind what the live site already serves (scripts/check_advance.py). Rerunning an old run
-# therefore cannot roll the mirror back.
+# behind what the live site already serves (scripts/check_advance.py). The site artifact is
+# named per run attempt, so re-running only the deploy job of an older attempt finds no artifact
+# and fails instead of redeploying stale files. Verify then requires the live pointers not to be
+# older than the ones the guard saw before the deploy.
+#
+# The scripts and the layout they publish come from the ref that triggered the run. A change to
+# the site layout therefore reaches both channels only once it is on the branch that runs.
 #
 # Notes for whoever adds the signing workflow: a push made with the default GITHUB_TOKEN does
 # not start this workflow, so the signing run must dispatch it (or push with another credential),
@@ -48,6 +53,7 @@ jobs:
       contents: read
     outputs:
       heads: ${{ steps.build.outputs.heads }}
+      live: ${{ steps.advance.outputs.live }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -63,16 +69,18 @@ jobs:
         id: build
         run: python3 -B scripts/build_mirror.py --repo . --out "$RUNNER_TEMP/site" --outputs-file "$GITHUB_OUTPUT"
       - name: Refuse to move a channel backwards
+        id: advance
         env:
           ALLOW_NON_ADVANCE: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_non_advance }}
         run: |
           flag=""
           if [ "$ALLOW_NON_ADVANCE" = "true" ]; then flag="--allow-non-advance"; fi
           owner="${GITHUB_REPOSITORY_OWNER,,}"
-          python3 -B scripts/check_advance.py --repo . --site "$RUNNER_TEMP/site" \
+          python3 -B scripts/check_advance.py --repo . --site "$RUNNER_TEMP/site" --outputs-file "$GITHUB_OUTPUT" \
             --base-url "https://${owner}.github.io/${GITHUB_REPOSITORY#*/}/" $flag
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
+          name: github-pages-${{ github.run_attempt }}
           path: ${{ runner.temp }}/site
 
   deploy:
@@ -91,6 +99,8 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+        with:
+          artifact_name: github-pages-${{ github.run_attempt }}
 
   verify:
     name: verify published mirror
@@ -110,4 +120,12 @@ jobs:
         env:
           PAGE_URL: ${{ needs.deploy.outputs.page_url }}
           HEADS: ${{ needs.build.outputs.heads }}
-        run: python3 -B scripts/verify_mirror.py --repo . --base-url "$PAGE_URL" --heads "$HEADS"
+          LIVE_BEFORE: ${{ needs.build.outputs.live }}
+          ALLOW_NON_ADVANCE: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_non_advance }}
+        run: |
+          flag=""
+          if [ "$ALLOW_NON_ADVANCE" = "true" ]; then flag="--allow-non-advance"; fi
+          live="$LIVE_BEFORE"
+          if [ -z "$live" ]; then live='{}'; fi
+          python3 -B scripts/verify_mirror.py --repo . --base-url "$PAGE_URL" --heads "$HEADS" \
+            --live-before "$live" $flag

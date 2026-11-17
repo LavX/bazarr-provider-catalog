@@ -18,6 +18,12 @@ lags its branch head by design and names the commit its bundles were built from
 published under that commit by the pins read from its own tree, and ``verify_mirror.py``
 checks that a head's signed body can be fully served that way.
 
+A signed body can name a commit older than the retained window. That commit is published as
+well, bundles only (it is not in ``history``), for every signed body in the window, so a signed
+catalog a client holds never loses its bundles to retention. The head's signed body has to be
+fully servable (its source commit is readable and carries every file the body pins), or the
+build fails before anything is uploaded.
+
 ``v1/<channel>/current`` is a small JSON pointer:
 
     {"channel", "commit", "catalog_sha256", "published_at", "history"}
@@ -49,7 +55,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-RETENTION = 20
+RETENTION = 40
 CHANNELS = {"main": "origin/main", "beta": "origin/beta"}
 KEY_FILE_PATH = "keys/catalog-signing-keys.json"
 PLUGINS_DIR = "plugins"
@@ -67,7 +73,8 @@ MAX_PINS = 5_000
 MAX_COMMIT_BYTES = 64 * 1024 * 1024
 
 _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
-_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]*$")
+# The host's path segment set (transport.py), with no leading dot: the Pages upload drops dotfiles.
+_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_@+=,~-][A-Za-z0-9._@+=,~-]*$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -170,7 +177,9 @@ def _add_pins(pins: dict[str, str], entries, count: int) -> int:
     for entry in entries:
         try:
             manifest = _manifest_of(entry)
-            source_path = manifest["source"].get("path", "")
+            source = manifest["source"]
+            # Like the client: path, else bundle_path, and null counts as empty.
+            source_path = source.get("path") or source.get("bundle_path") or ""
             files = manifest["files"]
         except (KeyError, TypeError, AttributeError) as exc:
             raise ValidationError(f"malformed entry: {exc}") from exc
@@ -242,17 +251,22 @@ def signed_body_pins(body_bytes: bytes) -> tuple[str, dict[str, str]]:
 
 
 def plugin_manifests(repo: Path, commit: str) -> list[dict]:
-    """The ``plugins/<id>/plugin.json`` manifests of one commit, sorted by directory name."""
-    raw = git(repo, "ls-tree", "-z", "-d", "--name-only", commit, f"{PLUGINS_DIR}/")
-    names = sorted(entry.decode("utf-8", "replace") for entry in raw.split(b"\0") if entry)
-    paths = [f"{safe_relative_path(name)}/{PLUGIN_MANIFEST}" for name in names]
-    info = object_info(repo, commit, paths)
+    """The ``plugins/<id>/plugin.json`` manifests of one commit, sorted by directory name.
+
+    Directories without a manifest are ignored, whatever they are called.
+    """
+    raw = git(repo, "ls-tree", "-r", "-z", "--name-only", commit, f"{PLUGINS_DIR}/")
+    paths = []
+    for entry in raw.split(b"\0"):
+        parts = entry.decode("utf-8", "replace").split("/")
+        if len(parts) == 3 and parts[0] == PLUGINS_DIR and parts[2] == PLUGIN_MANIFEST:
+            paths.append(safe_relative_path("/".join(parts)))
+    paths.sort()
     manifests = []
     for path in paths:
-        entry = info[path]
-        if entry is None:
-            continue
         data = blob_or_none(repo, commit, path)
+        if data is None:
+            continue
         try:
             manifest = json.loads(data)
         except (ValueError, RecursionError) as exc:
@@ -301,6 +315,46 @@ def commit_files(repo: Path, commit: str, channel: str) -> dict[str, bytes]:
     return files
 
 
+def signed_source(files: dict[str, bytes], channel: str) -> str | None:
+    """The commit a commit's signed body names as the source of its bundles, or None without a body.
+
+    Raises ValidationError when the body is there and cannot be read.
+    """
+    body = files.get(opaque_paths(channel)[0])
+    if body is None:
+        return None
+    return signed_body_pins(body)[0]
+
+
+def signed_pin_problems(body: bytes, source_files: dict[str, bytes]) -> list[str]:
+    """The files a signed body pins that ``source_files`` (its source commit) does not carry as pinned."""
+    _, pins = signed_body_pins(body)
+    return [
+        path for path, digest in sorted(pins.items())
+        if path not in source_files or hashlib.sha256(source_files[path]).hexdigest() != digest
+    ]
+
+
+def is_ancestor(repo: Path, older: str, newer: str) -> bool:
+    """Whether ``older`` is ``newer`` or reachable from it. An unknown commit counts as not."""
+    result = subprocess.run(
+        ["git", "--no-pager", "-C", str(repo), "merge-base", "--is-ancestor", older, newer],
+        capture_output=True,
+    )
+    return result.returncode == 0
+
+
+def advance_problem(repo: Path, channel: str, new: dict, live: dict) -> str | None:
+    """Why ``new`` may not replace the ``live`` pointer of a channel, or None when it may."""
+    if new["published_at"] < live["published_at"]:
+        return (f"{channel}: the pointer is stamped {new['published_at']}, older than the previously "
+                f"served pointer's {live['published_at']}")
+    if new["commit"] != live["commit"] and not is_ancestor(repo, live["commit"], new["commit"]):
+        return (f"{channel}: the previously served commit {live['commit']} is not an ancestor of "
+                f"{new['commit']}, so this would roll the channel back or rewrite it")
+    return None
+
+
 def build_site(
     repo: Path,
     out: Path,
@@ -311,18 +365,38 @@ def build_site(
     max_site_bytes: int = MAX_SITE_BYTES,
     log=lambda message: print(message, file=sys.stderr),
 ) -> dict[str, dict]:
-    """Write the site under ``out`` and return the pointer document per channel."""
+    """Write the site under ``out`` and return the pointer document per channel.
+
+    A channel publishes its retained history, plus every commit that a signed body in that history
+    names as the source of its bundles and that fell out of the window. Those extra commits are not
+    in ``history`` (it stays the contiguous window); they exist so a signed catalog the client holds
+    can still fetch its bundles. The head's signed body must be fully servable or the build fails.
+    """
     channels = channels or CHANNELS
     if out.exists() and any(out.iterdir()):
         raise MirrorError(f"output directory is not empty: {out}")
     published_at = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    total_files = 0
-    total_bytes = 0
+    totals = {"files": 0, "bytes": 0}
     pointers: dict[str, dict] = {}
+
+    def publish(channel: str, commit: str, files: dict[str, bytes]) -> None:
+        totals["files"] += len(files)
+        totals["bytes"] += sum(len(data) for data in files.values())
+        if totals["files"] + len(channels) > max_files:
+            raise MirrorError(f"site exceeds {max_files} files")
+        if totals["bytes"] > max_site_bytes:
+            raise MirrorError(f"site exceeds {max_site_bytes} bytes")
+        base = out / "v1" / channel / commit
+        for path, data in files.items():
+            target = base / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
 
     for channel, ref in channels.items():
         safe_relative_path(channel)
         kept: list[str] = []
+        sources: dict[str, tuple[str | None, ValidationError | None]] = {}
+        head_files: dict[str, bytes] = {}
         for index, commit in enumerate(retained_commits(repo, ref, retention)):
             try:
                 files = commit_files(repo, commit, channel)
@@ -333,32 +407,56 @@ def build_site(
                     raise
                 log(f"skipping {channel}/{commit}: {exc}")
                 continue
-            total_files += len(files)
-            total_bytes += sum(len(data) for data in files.values())
-            if total_files + len(channels) > max_files:
-                raise MirrorError(f"site exceeds {max_files} files")
-            if total_bytes > max_site_bytes:
-                raise MirrorError(f"site exceeds {max_site_bytes} bytes")
-            base = out / "v1" / channel / commit
-            for path, data in files.items():
-                target = base / path
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(data)
+            try:
+                sources[commit] = (signed_source(files, channel), None)
+            except ValidationError as exc:
+                sources[commit] = (None, exc)
+            publish(channel, commit, files)
             kept.append(commit)
             if index == 0:
-                head_catalog = files["catalog.json"]
+                head_files = files
         pointer = {
             "channel": channel,
             "commit": kept[0],
-            "catalog_sha256": hashlib.sha256(head_catalog).hexdigest(),
+            "catalog_sha256": hashlib.sha256(head_files["catalog.json"]).hexdigest(),
             "published_at": published_at,
             "history": kept,
         }
+
+        extras: list[str] = []
+        for index, commit in enumerate(kept):
+            source, error = sources[commit]
+            if error is not None:
+                if index == 0:
+                    raise ValidationError(f"{commit}: {error}")
+                log(f"{channel}/{commit}: signed catalog not readable, its bundles are not kept: {error}")
+                continue
+            if source is None or source in kept or source in extras:
+                continue
+            try:
+                source_files = commit_files(repo, source, channel)
+            except ValidationError as exc:
+                if index == 0:
+                    raise ValidationError(f"{commit}: its signed catalog names {source}: {exc}") from exc
+                log(f"{channel}/{commit}: bundles at {source} are not kept: {exc}")
+                continue
+            publish(channel, source, source_files)
+            extras.append(source)
+        head_source = sources[kept[0]][0]
+        if head_source is not None:
+            source_files = commit_files(repo, head_source, channel)
+            missing = signed_pin_problems(head_files[opaque_paths(channel)[0]], source_files)
+            if missing:
+                raise ValidationError(
+                    f"{kept[0]}: its signed catalog pins files that {head_source} does not carry as pinned: "
+                    + ", ".join(missing[:5])
+                )
+
         pointer_path = out / "v1" / channel / "current"
         pointer_path.write_text(json.dumps(pointer, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         pointers[channel] = pointer
-        log(f"{channel}: {len(kept)} commits, head {kept[0]}")
-    log(f"site: {total_files} files, {total_bytes} bytes")
+        log(f"{channel}: {len(kept)} commits and {len(extras)} bundle-only, head {kept[0]}")
+    log(f"site: {totals['files']} files, {totals['bytes']} bytes")
     return pointers
 
 

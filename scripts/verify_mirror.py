@@ -12,7 +12,10 @@ has them, and every bundle file the commit's manifests pin. The checks are:
 * ``history`` equals the retained history recomputed from git (see below);
 * the pointer reached the commit this run built (or a newer one);
 * when the head carries a signed body, the commit it names as ``source_commit`` is published
-  and carries every bundle file the body pins, with the pinned bytes.
+  and carries every bundle file the body pins, with the pinned bytes; a source commit outside
+  the retained history is published as bundles only, for every signed body in the history;
+* with ``--live-before``, the pointer the site serves is not older than the one the site served
+  before this run deployed.
 
 Retention contract: the expected history is the RETENTION newest first-parent commits ending
 at the pointer commit (which must lie on the first-parent chain of ``origin/<channel>``), minus
@@ -42,12 +45,14 @@ from pathlib import Path
 from build_mirror import (
     MAX_FILE_BYTES,
     ValidationError,
+    advance_problem,
     commit_files,
     opaque_paths,
     RETENTION,
     MirrorError,
     git,
-    signed_body_pins,
+    signed_pin_problems,
+    signed_source,
 )
 
 _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -184,50 +189,41 @@ def check_history(repo: Path, channel: str, ref: str, pointer: dict, retention: 
     return None
 
 
-def check_signed_body(repo: Path, channel: str, pointer: dict, signed: bytes) -> list[str]:
-    """Check that the head's signed body can be served: the commit it names carries its bundle files.
-
-    The client reads a signed body at the head and its bundle files at the body's ``source_commit``,
-    which can be an older commit. That commit has to be published, and each file the body pins has to
-    be published there with the pinned bytes. The published bytes of every file are fetched and compared
-    with git in the per-commit jobs, so this only compares the body's pins with what git holds there.
-    """
-    try:
-        source_commit, pins = signed_body_pins(signed)
-    except ValidationError as exc:
-        return [f"{channel}/{pointer['commit']}: {exc}"]
-    if source_commit not in pointer["history"]:
-        return [f"{channel}/{pointer['commit']}: the signed catalog names {source_commit}, which the mirror does not carry"]
-    try:
-        files = commit_files(repo, source_commit, channel)
-    except ValidationError as exc:
-        return [f"{channel}/{source_commit}: {exc}"]
-    problems = []
-    for path, digest in sorted(pins.items()):
-        data = files.get(path)
-        if data is None or hashlib.sha256(data).hexdigest() != digest:
-            problems.append(f"{channel}/{source_commit}/{path}: the signed catalog pins a file the mirror does not carry as pinned")
-    return problems
-
-
 def verify_channel(fetch, repo: Path, channel: str, expected: str | None = None,
                    attempts: int = 6, delay: float = 10.0, workers: int = 16,
-                   ref: str | None = None) -> list[str]:
-    """Return the list of problems found for one channel (empty means verified)."""
+                   ref: str | None = None, live_before: dict | None = None,
+                   retention: int = RETENTION) -> list[str]:
+    """Return the list of problems found for one channel (empty means verified).
+
+    ``live_before`` is the pointer the site served before this run deployed, when there was one. The
+    pointer served now may not be older than it.
+    """
     try:
         pointer = fetch_pointer(fetch, channel, expected, attempts, delay)
     except MirrorError as exc:
         return [str(exc)]
-    problem = check_history(repo, channel, ref or f"origin/{channel}", pointer)
+    problem = check_history(repo, channel, ref or f"origin/{channel}", pointer, retention)
     if problem:
         return [problem]
+    if live_before:
+        problem = advance_problem(repo, channel, pointer, live_before)
+        if problem:
+            return [f"the site went backwards: {problem}"]
 
     errors: list[str] = []
     jobs: list[tuple[str, str, str, str]] = []  # (label, url path, kind, expected sha256)
     opaque = {"catalog.json", *opaque_paths(channel)}
+    history = pointer["history"]
     head_files: dict[str, bytes] = {}
+    sources: list[tuple[int, str]] = []
 
-    for index, commit in enumerate(pointer["history"]):
+    def add_jobs(commit: str, files: dict[str, bytes]) -> None:
+        for path, data in sorted(files.items()):
+            kind = "bytes" if path in opaque else "pin"
+            jobs.append((f"{channel}/{commit}/{path}", f"v1/{channel}/{commit}/{path}", kind,
+                         hashlib.sha256(data).hexdigest()))
+
+    for index, commit in enumerate(history):
         try:
             files = commit_files(repo, commit, channel)
         except ValidationError as exc:
@@ -237,14 +233,43 @@ def verify_channel(fetch, repo: Path, channel: str, expected: str | None = None,
             head_files = files
             if hashlib.sha256(files["catalog.json"]).hexdigest() != pointer["catalog_sha256"]:
                 errors.append(f"{channel}/{commit}: pointer catalog_sha256 differs from the git blob")
-        for path, data in sorted(files.items()):
-            kind = "bytes" if path in opaque else "pin"
-            jobs.append((f"{channel}/{commit}/{path}", f"v1/{channel}/{commit}/{path}", kind,
-                         hashlib.sha256(data).hexdigest()))
+        add_jobs(commit, files)
+        try:
+            source = signed_source(files, channel)
+        except ValidationError as exc:
+            if index == 0:
+                errors.append(f"{channel}/{commit}: {exc}")
+            continue
+        if source is not None:
+            sources.append((index, source))
 
-    signed = head_files.get(f"signed/{channel}/catalog.json")
-    if signed is not None:
-        errors.extend(check_signed_body(repo, channel, pointer, signed))
+    # Bundles of signed bodies whose source commit fell out of the window are published on their own.
+    extras: set[str] = set()
+    for index, source in sources:
+        if source in history or source in extras:
+            continue
+        try:
+            source_files = commit_files(repo, source, channel)
+        except ValidationError as exc:
+            if index == 0:
+                errors.append(f"{channel}/{history[0]}: its signed catalog names {source}: {exc}")
+            continue
+        extras.add(source)
+        add_jobs(source, source_files)
+
+    signed = head_files.get(opaque_paths(channel)[0])
+    head_source = dict(sources).get(0)
+    if signed is not None and head_source is not None:
+        try:
+            source_files = commit_files(repo, head_source, channel)
+            missing = signed_pin_problems(signed, source_files)
+        except ValidationError as exc:
+            errors.append(f"{channel}/{head_source}: {exc}")
+        else:
+            errors.extend(
+                f"{channel}/{head_source}/{path}: the signed catalog pins a file the mirror does not carry as pinned"
+                for path in missing
+            )
 
     def run(job):
         label, url_path, kind, want = job
@@ -270,11 +295,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--heads", default="{}", help='JSON {"channel": "commit"} the build produced')
     parser.add_argument("--ref-template", default="origin/{channel}",
                         help="git ref that holds each channel's history")
+    parser.add_argument("--live-before", default="{}",
+                        help='JSON {"channel": pointer or null}: what the site served before the deploy')
+    parser.add_argument("--allow-non-advance", action="store_true",
+                        help="do not require the pointer to be at or ahead of --live-before")
     parser.add_argument("--attempts", type=int, default=6)
     parser.add_argument("--delay", type=float, default=10.0)
     args = parser.parse_args(argv)
     try:
         heads = json.loads(args.heads)
+        live_before = {} if args.allow_non_advance else json.loads(args.live_before)
+        if not isinstance(live_before, dict):
+            raise ValueError("--live-before must be a JSON object")
         fetch = http_fetcher(args.base_url)
     except (ValueError, MirrorError) as exc:
         print(f"verify failed: {exc}", file=sys.stderr)
@@ -286,7 +318,8 @@ def main(argv: list[str] | None = None) -> int:
     for channel, expected in sorted(heads.items()):
         try:
             problems = verify_channel(fetch, args.repo, channel, expected, args.attempts, args.delay,
-                                      ref=args.ref_template.format(channel=channel))
+                                      ref=args.ref_template.format(channel=channel),
+                                      live_before=live_before.get(channel))
         except MirrorError as exc:
             problems = [f"{channel}: {exc}"]
         for problem in problems[:50]:

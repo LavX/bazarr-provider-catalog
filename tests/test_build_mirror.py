@@ -126,11 +126,11 @@ class BuildLayoutTests(MirrorTestCase):
         published = {p.name for p in (self.out / "v1/main").iterdir()}
         self.assertEqual(published, {"current", *pointer["history"]})
 
-    def test_default_retention_is_twenty(self):
-        self.assertEqual(build_mirror.RETENTION, 20)
-        for i in range(22):
+    def test_default_retention_is_forty(self):
+        self.assertEqual(build_mirror.RETENTION, 40)
+        for i in range(42):
             self.repo.commit(f"v{i}\n".encode(), message=str(i))
-        self.assertEqual(len(self.build()["main"]["history"]), 20)
+        self.assertEqual(len(self.build()["main"]["history"]), 40)
 
     def test_history_follows_first_parent_only(self):
         self.repo.commit(b"base\n")
@@ -153,8 +153,10 @@ class BuildLayoutTests(MirrorTestCase):
         self.assertTrue((self.out / "v1/beta/current").is_file())
 
     def test_the_signed_files_are_copied_as_opaque_bytes_under_their_own_paths(self):
+        source = self.repo.commit(b"source\n", message="source")
+        body = json.dumps({"source_commit": source, "providers": []}, indent=1).encode() + b"\n"
         signed = {
-            "signed/main/catalog.json": b"{\"not\": \"parsed\"}\n",
+            "signed/main/catalog.json": body,
             "signed/main/catalog.json.sig": b"\x00\xffsig",
             "keys/catalog-signing-keys.json": b"keys \xff",
         }
@@ -610,31 +612,67 @@ class SignedFeedTests(MirrorTestCase):
         (self.out / "v1/main" / self.source / "plugins/alpha/engine.py").unlink()
         self.assertTrue(any("plugins/alpha/engine.py" in e for e in self.verify()))
 
-    def test_a_signed_body_that_names_a_commit_the_mirror_lacks_is_caught(self):
+    def sign_again(self, **changes):
         body = json.loads(self.repo.blob(self.head, "signed/main/catalog.json"))
-        body["source_commit"] = "b" * 40
-        head = self.repo.commit(
-            b"source\n", extra={"signed/main/catalog.json": json.dumps(body).encode()}, message="bad sign"
+        for key, value in changes.items():
+            body[key] = value
+        return self.repo.commit(
+            b"source\n", extra={"signed/main/catalog.json": json.dumps(body).encode()}, message="sign again"
         )
-        out = self.tmp / "site-bad"
-        build_mirror.build_site(self.repo.path, out, channels={"main": "main"}, now=NOW, log=self.quiet)
-        errors = verify_mirror.verify_channel(
-            self.site_fetch(out), self.repo.path, "main", head, attempts=1, delay=0, workers=4, ref="main"
-        )
-        self.assertTrue(any("does not carry" in e for e in errors), errors)
 
-    def test_a_signed_body_pin_that_git_does_not_hold_is_caught(self):
+    def test_a_head_that_names_a_commit_git_does_not_have_fails_the_build(self):
+        self.sign_again(source_commit="b" * 40)
+        with self.assertRaisesRegex(build_mirror.MirrorError, "its signed catalog names " + "b" * 40):
+            build_mirror.build_site(self.repo.path, self.tmp / "site-bad", channels={"main": "main"}, now=NOW,
+                                    log=self.quiet)
+
+    def test_a_head_whose_pins_its_source_commit_does_not_carry_fails_the_build(self):
         body = json.loads(self.repo.blob(self.head, "signed/main/catalog.json"))
         body["plugins"][0]["manifest"]["files"]["engine.py"] = "0" * 64
-        head = self.repo.commit(
+        self.repo.commit(
             b"source\n", extra={"signed/main/catalog.json": json.dumps(body).encode()}, message="bad pin"
         )
-        out = self.tmp / "site-pin"
-        build_mirror.build_site(self.repo.path, out, channels={"main": "main"}, now=NOW, log=self.quiet)
-        errors = verify_mirror.verify_channel(
-            self.site_fetch(out), self.repo.path, "main", head, attempts=1, delay=0, workers=4, ref="main"
-        )
-        self.assertTrue(any("plugins/alpha/engine.py" in e and "as pinned" in e for e in errors), errors)
+        with self.assertRaisesRegex(build_mirror.MirrorError, "plugins/alpha/engine.py"):
+            build_mirror.build_site(self.repo.path, self.tmp / "site-pin", channels={"main": "main"}, now=NOW,
+                                    log=self.quiet)
+
+    def test_a_head_with_an_unreadable_signed_body_fails_the_build(self):
+        self.repo.commit(b"source\n", extra={"signed/main/catalog.json": b"not json"}, message="broken")
+        with self.assertRaisesRegex(build_mirror.MirrorError, "signed catalog is not a catalog"):
+            build_mirror.build_site(self.repo.path, self.tmp / "site-x", channels={"main": "main"}, now=NOW,
+                                    log=self.quiet)
+
+    def test_an_unreadable_signed_body_on_an_older_commit_is_skipped(self):
+        self.repo.commit(b"source\n", extra={"signed/main/catalog.json": b"not json"}, message="broken")
+        self.repo.git("rm", "-q", "signed/main/catalog.json")
+        self.repo.git("commit", "-q", "-m", "unsign")
+        pointer = build_mirror.build_site(
+            self.repo.path, self.tmp / "site-skip", channels={"main": "main"}, now=NOW, log=self.quiet
+        )["main"]
+        self.assertGreater(len(pointer["history"]), 3)
+
+    def test_a_missing_bundle_at_the_source_commit_is_caught_by_verify(self):
+        (self.out / "v1/main" / self.source / "plugins/alpha/engine.py").unlink()
+        self.assertTrue(any("plugins/alpha/engine.py" in e for e in self.verify()))
+
+    def test_directories_without_a_manifest_are_ignored_whatever_they_are_called(self):
+        extra = {"plugins/.cache/x.bin": b"x", "plugins/my plugin/notes.txt": b"x", "plugins/-odd/a.txt": b"x"}
+        self.repo.commit(b"source\n", extra=extra, message="stray")
+        self.assertIn("catalog.json", build_mirror.commit_files(self.repo.path, "HEAD", "main"))
+
+    def test_plugin_paths_the_client_accepts_are_published(self):
+        files = {"data/a+b.txt": b"1", "-lead.txt": b"2", "x@y=z,w~v.txt": b"3"}
+        self.repo.commit(b"source\n", extra=plugin_files("beta_plugin", files), message="odd names")
+        out = self.tmp / "site-odd"
+        pointer = build_mirror.build_site(self.repo.path, out, channels={"main": "main"}, now=NOW, log=self.quiet)
+        for name, data in files.items():
+            self.assertEqual((out / "v1/main" / pointer["main"]["commit"] / "plugins/beta_plugin" / name).read_bytes(), data)
+
+    def test_the_source_path_falls_back_to_bundle_path_and_null_means_empty(self):
+        for source, expected in (({"bundle_path": "plugins/gamma"}, "plugins/gamma/f.py"), ({"path": None}, "f.py")):
+            with self.subTest(source=source):
+                manifest = {"source": source, "files": {"f.py": sha(b"x")}}
+                self.assertEqual(list(build_mirror.catalog_pins(catalog_for({}), [manifest])), [expected])
 
     def test_a_plugin_pin_that_does_not_match_its_bytes_fails_the_build(self):
         manifest = json.loads(self.repo.blob(self.head, "plugins/alpha/plugin.json"))
@@ -668,6 +706,113 @@ class SignedFeedTests(MirrorTestCase):
         self.assertEqual(listing(self.out), listing(again))
 
 
+class RetentionBoundaryTests(MirrorTestCase):
+    """A signed body can name a commit older than the retained window."""
+
+    RETENTION = 3
+
+    def setUp(self):
+        super().setUp()
+        self.old = self.repo.commit(
+            b"old\n", extra=plugin_files("alpha", {"engine.py": b"engine\n"}), message="old source"
+        )
+        for i in range(5):
+            self.repo.commit(f"v{i}\n".encode(), message=f"v{i}")
+        self.head = self.repo.commit(
+            b"v4\n",
+            extra={
+                "signed/main/catalog.json": signed_body(self.repo, self.old, ["alpha"]),
+                "signed/main/catalog.json.sig": b"sig",
+                "keys/catalog-signing-keys.json": b"{}",
+            },
+            message="sign",
+        )
+        self.pointer = self.build(retention=self.RETENTION)["main"]
+
+    def verify(self, fetch=None):
+        return verify_mirror.verify_channel(
+            fetch or self.site_fetch(), self.repo.path, "main", self.head, attempts=1, delay=0, workers=4,
+            ref="main", retention=self.RETENTION,
+        )
+
+    def test_the_source_commit_is_outside_the_window_and_still_published(self):
+        self.assertNotIn(self.old, self.pointer["history"])
+        self.assertEqual(len(self.pointer["history"]), self.RETENTION)
+        base = self.out / "v1/main" / self.old
+        self.assertEqual((base / "plugins/alpha/engine.py").read_bytes(), b"engine\n")
+        self.assertEqual((base / "providers/demo/provider.py").read_bytes(), b"old\n")
+
+    def test_the_client_can_fetch_every_bundle_the_head_signed_catalog_pins(self):
+        fetch = self.site_fetch()
+        body = json.loads(fetch(f"v1/main/{self.head}/signed/main/catalog.json"))
+        self.assertEqual(body["source_commit"], self.old)
+        for item in body["providers"] + body["plugins"]:
+            manifest = item["manifest"]
+            for name, digest in manifest["files"].items():
+                path = "/".join((manifest["source"]["path"], name))
+                self.assertEqual(sha(fetch(f"v1/main/{self.old}/{path}")), digest, path)
+
+    def test_the_site_verifies_and_a_missing_bundle_only_commit_file_is_caught(self):
+        self.assertEqual(self.verify(), [])
+        (self.out / "v1/main" / self.old / "plugins/alpha/engine.py").unlink()
+        self.assertTrue(any("plugins/alpha/engine.py" in e for e in self.verify()))
+
+    def test_every_signed_body_in_the_window_keeps_its_bundles(self):
+        # An older signing commit inside the window names a still older source commit.
+        out = self.tmp / "site-two"
+        repo = GitRepo(self.tmp / "repo2")
+        first = repo.commit(b"first\n", extra=plugin_files("alpha", {"engine.py": b"one\n"}), message="first")
+        repo.commit(b"mid\n", extra={"signed/main/catalog.json": signed_body(repo, first, ["alpha"])}, message="sign 1")
+        second = repo.commit(b"second\n", extra=plugin_files("alpha", {"engine.py": b"two\n"}), message="second")
+        for i in range(3):
+            repo.commit(f"v{i}\n".encode(), message=f"v{i}")
+        head = repo.commit(b"head\n", extra={"signed/main/catalog.json": signed_body(repo, second, ["alpha"])}, message="sign 2")
+        pointer = build_mirror.build_site(repo.path, out, channels={"main": "main"}, retention=3, now=NOW,
+                                          log=self.quiet)["main"]
+        self.assertEqual(pointer["commit"], head)
+        for source in (first, second):
+            self.assertNotIn(source, pointer["history"])
+            self.assertTrue((out / "v1/main" / source / "plugins/alpha/engine.py").is_file(), source)
+
+    def test_only_the_window_and_the_source_commit_are_published(self):
+        listing = sorted(p.name for p in (self.out / "v1/main").iterdir())
+        self.assertEqual(listing, sorted(["current", self.old, *self.pointer["history"]]))
+
+
+class LiveBeforeTests(MirrorTestCase):
+    def setUp(self):
+        super().setUp()
+        self.c1 = self.repo.commit(b"1\n", message="1")
+        self.c2 = self.repo.commit(b"2\n", message="2")
+        self.out = self.tmp / "site-new"
+        self.pointer = self.build()["main"]
+
+    def verify(self, live_before):
+        return verify_mirror.verify_channel(
+            self.site_fetch(), self.repo.path, "main", self.c2, attempts=1, delay=0, workers=4, ref="main",
+            live_before=live_before,
+        )
+
+    def seen(self, commit, published_at="2026-11-07T11:00:00Z"):
+        return {"channel": "main", "commit": commit, "catalog_sha256": "0" * 64, "published_at": published_at,
+                "history": [commit]}
+
+    def test_a_pointer_that_advanced_is_fine(self):
+        self.assertEqual(self.verify(self.seen(self.c1)), [])
+        self.assertEqual(self.verify(self.seen(self.c2)), [])
+        self.assertEqual(self.verify(None), [])
+
+    def test_a_pointer_older_than_the_one_seen_before_the_deploy_fails(self):
+        problems = self.verify(self.seen(self.c2, "2026-11-08T00:00:00Z"))
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("went backwards", problems[0])
+
+    def test_a_pointer_behind_the_commit_seen_before_the_deploy_fails(self):
+        c3 = self.repo.commit(b"3\n", message="3")
+        problems = self.verify(self.seen(c3))
+        self.assertTrue(any("went backwards" in p for p in problems), problems)
+
+
 class AdvanceGuardTests(MirrorTestCase):
     def setUp(self):
         super().setUp()
@@ -691,7 +836,7 @@ class AdvanceGuardTests(MirrorTestCase):
     def check(self, live_ref, new_ref, live_when=NOW, new_when=NOW):
         live = self.site(live_ref, "live", live_when) if live_ref else self.tmp / "nothing"
         new = self.site(new_ref, "new", new_when)
-        return check_advance.check_channel(self.live(live), self.repo.path, new, "main")
+        return check_advance.check_channel(self.live(live), self.repo.path, new, "main")[0]
 
     def test_an_advance_is_allowed(self):
         self.assertIsNone(self.check(self.c2, self.c3))
@@ -718,11 +863,11 @@ class AdvanceGuardTests(MirrorTestCase):
                    "published_at": "2026-11-01T00:00:00Z", "history": ["a" * 40]}
         (live / "v1/main/current").write_text(json.dumps(pointer))
         new = self.site(self.c3, "new")
-        self.assertIn("not an ancestor", check_advance.check_channel(self.live(live), self.repo.path, new, "main"))
+        self.assertIn("not an ancestor", check_advance.check_channel(self.live(live), self.repo.path, new, "main")[0])
 
     def test_an_older_stamp_is_refused_even_for_a_newer_commit(self):
         later = datetime(2026, 11, 8, tzinfo=timezone.utc)
-        self.assertIn("older than the live", self.check(self.c2, self.c3, live_when=later))
+        self.assertIn("older than the previously served", self.check(self.c2, self.c3, live_when=later))
 
     def test_an_unreadable_live_pointer_is_refused(self):
         new = self.site(self.c3, "new")
@@ -730,14 +875,50 @@ class AdvanceGuardTests(MirrorTestCase):
         def broken(path, retry_not_found=True):
             raise verify_mirror.FetchError("boom")
 
-        self.assertIn("cannot read the live pointer", check_advance.check_channel(broken, self.repo.path, new, "main"))
+        self.assertIn("cannot read the live pointer", check_advance.check_channel(broken, self.repo.path, new, "main")[0])
 
     def test_a_malformed_live_pointer_is_refused(self):
         live = self.tmp / "live"
         (live / "v1/main").mkdir(parents=True)
         (live / "v1/main/current").write_text("{}")
         new = self.site(self.c3, "new")
-        self.assertIn("unreadable", check_advance.check_channel(self.live(live), self.repo.path, new, "main"))
+        self.assertIn("unreadable", check_advance.check_channel(self.live(live), self.repo.path, new, "main")[0])
+
+    def serve(self, directory):
+        class Quiet(http.server.SimpleHTTPRequestHandler):
+            def __init__(inner, *a, **kw):
+                super().__init__(*a, directory=str(directory), **kw)
+
+            def log_message(inner, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Quiet)
+        self.addCleanup(server.server_close)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        return f"http://127.0.0.1:{server.server_address[1]}/"
+
+    def test_a_first_deploy_passes_through_the_real_fetcher_and_records_no_live_pointer(self):
+        empty = self.tmp / "empty-site"
+        empty.mkdir()
+        new = self.site(self.c3, "new")
+        outputs = self.tmp / "outputs"
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            status = check_advance.main(["--site", str(new), "--base-url", self.serve(empty),
+                                         "--repo", str(self.repo.path), "--outputs-file", str(outputs)])
+        self.assertEqual(status, 0)
+        self.assertEqual(outputs.read_text(), 'live={"main": null}\n')
+
+    def test_the_live_pointer_seen_is_recorded_for_verify(self):
+        live = self.site(self.c2, "live")
+        new = self.site(self.c3, "new")
+        outputs = self.tmp / "outputs"
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            status = check_advance.main(["--site", str(new), "--base-url", self.serve(live),
+                                         "--repo", str(self.repo.path), "--outputs-file", str(outputs)])
+        self.assertEqual(status, 0)
+        recorded = json.loads(outputs.read_text().removeprefix("live="))
+        self.assertEqual(recorded["main"]["commit"], self.c2)
 
     def test_exit_status_and_the_override(self):
         live = self.site(self.c3, "live")
@@ -910,6 +1091,23 @@ class WorkflowTests(unittest.TestCase):
                 self.assertLess(block.index("actions/checkout"), block.index(refresh))
         build = self.job("build")
         self.assertLess(build.index(refresh), build.index("scripts/build_mirror.py"))
+
+    def test_the_site_artifact_is_named_per_attempt_so_a_deploy_only_rerun_finds_none(self):
+        name = "github-pages-${{ github.run_attempt }}"
+        self.assertIn(f"name: {name}", self.job("build"))
+        self.assertIn(f"artifact_name: {name}", self.job("deploy"))
+        self.assertNotIn("name: github-pages\n", self.job("build"))
+
+    def test_deploy_only_deploys(self):
+        deploy = self.job("deploy")
+        self.assertNotIn("run:", deploy)
+        self.assertEqual(deploy.count("uses:"), 1)
+
+    def test_verify_gets_the_live_pointers_seen_before_the_deploy(self):
+        self.assertIn("live: ${{ steps.advance.outputs.live }}", self.job("build"))
+        verify = self.job("verify")
+        self.assertIn("needs.build.outputs.live", verify)
+        self.assertIn("--live-before", verify)
 
     def test_the_advance_guard_runs_before_anything_is_uploaded(self):
         build = self.job("build")
