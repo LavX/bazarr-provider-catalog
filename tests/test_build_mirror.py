@@ -165,6 +165,41 @@ class BuildLayoutTests(MirrorTestCase):
         for path, data in signed.items():
             self.assertEqual((self.out / "v1/main" / commit / path).read_bytes(), data, path)
 
+    def signed_tree(self, source, omit=None):
+        files = {
+            "signed/main/catalog.json": json.dumps({"source_commit": source, "providers": []}).encode(),
+            "signed/main/catalog.json.sig": b"sig",
+            "keys/catalog-signing-keys.json": b"{}",
+        }
+        return {path: data for path, data in files.items() if path != omit}
+
+    def test_a_signed_body_without_its_envelope_or_the_key_file_is_not_published(self):
+        for missing in ("signed/main/catalog.json.sig", "keys/catalog-signing-keys.json"):
+            with self.subTest(missing=missing):
+                repo = GitRepo(self.tmp / f"partial-{Path(missing).name}")
+                first = repo.commit(b"source\n", message="source")
+                repo.commit(extra=self.signed_tree(first, omit=missing), message="partial")
+                with self.assertRaisesRegex(build_mirror.MirrorError, f"has signed/main/catalog.json but not {missing}"):
+                    build_mirror.build_site(repo.path, self.tmp / f"out-{Path(missing).name}",
+                                            channels={"main": "main"}, now=NOW, log=self.quiet)
+
+    def test_an_older_partial_signed_feed_is_dropped_from_history(self):
+        first = self.repo.commit(b"source\n", message="source")
+        partial = self.repo.commit(
+            extra={"signed/main/catalog.json": json.dumps({"source_commit": first, "providers": []}).encode()},
+            message="partial",
+        )
+        self.repo.git("rm", "-q", "-r", "signed")
+        self.repo.git("commit", "-q", "-m", "unsign")
+        pointer = self.build()["main"]
+        self.assertNotIn(partial, pointer["history"])
+        self.assertIn(first, pointer["history"])
+
+    def test_the_envelope_or_key_file_without_a_body_is_published_as_is(self):
+        commit = self.repo.commit(extra={"signed/main/catalog.json.sig": b"sig", "keys/catalog-signing-keys.json": b"{}"})
+        self.build()
+        self.assertEqual((self.out / "v1/main" / commit / "keys/catalog-signing-keys.json").read_bytes(), b"{}")
+
     def test_only_the_channels_own_signed_files_are_published(self):
         commit = self.repo.commit(extra={"signed/beta/catalog.json": b"beta", "catalog.json.sig": b"legacy"})
         self.build()
@@ -762,7 +797,15 @@ class RetentionBoundaryTests(MirrorTestCase):
         out = self.tmp / "site-two"
         repo = GitRepo(self.tmp / "repo2")
         first = repo.commit(b"first\n", extra=plugin_files("alpha", {"engine.py": b"one\n"}), message="first")
-        repo.commit(b"mid\n", extra={"signed/main/catalog.json": signed_body(repo, first, ["alpha"])}, message="sign 1")
+        repo.commit(
+            b"mid\n",
+            extra={
+                "signed/main/catalog.json": signed_body(repo, first, ["alpha"]),
+                "signed/main/catalog.json.sig": b"sig",
+                "keys/catalog-signing-keys.json": b"{}",
+            },
+            message="sign 1",
+        )
         second = repo.commit(b"second\n", extra=plugin_files("alpha", {"engine.py": b"two\n"}), message="second")
         for i in range(3):
             repo.commit(f"v{i}\n".encode(), message=f"v{i}")

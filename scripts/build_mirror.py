@@ -7,8 +7,8 @@ for, and nothing else:
 
     catalog.json                         byte-for-byte the git blob of that commit
     signed/<channel>/catalog.json        the signed body, when the commit has one
-    signed/<channel>/catalog.json.sig    its detached envelope, when the commit has one
-    keys/catalog-signing-keys.json       the root-signed key file, when the commit has one
+    signed/<channel>/catalog.json.sig    its detached envelope (required with a signed body)
+    keys/catalog-signing-keys.json       the root-signed key file (required with a signed body)
     <source.path>/<file>                 every bundle file the commit's catalog.json or
                                          plugins/<id>/plugin.json manifests pin
 
@@ -289,6 +289,12 @@ def commit_files(repo: Path, commit: str, channel: str) -> dict[str, bytes]:
     pins = catalog_pins(catalog, plugin_manifests(repo, commit), {"catalog.json", *opaque})
     paths = opaque + sorted(pins)
     info = object_info(repo, commit, paths)
+    if info[opaque[0]] is not None:
+        # A signed body is only usable with its envelope and the key file, so a commit that has the
+        # body and lacks either is not published, rather than published as a partial feed.
+        for path in opaque[1:]:
+            if info[path] is None:
+                raise ValidationError(f"{commit}: has {opaque[0]} but not {path}")
     total = len(catalog)
     for path in paths:
         entry = info[path]
