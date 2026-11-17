@@ -79,21 +79,33 @@ jobs:
           fi
           echo "proceed=true" >> "$GITHUB_OUTPUT"
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          # A re-run after this run already pushed its signing commit (the Pages dispatch failed,
+          # say) must not sign again: the tip already holds this commit's signature for the channel.
+          # Only the mirror build is started again. A renewal keeps an older source_commit by design,
+          # so it is never mistaken for a repeat.
+          signed_source="$(git show "origin/${CHANNEL}:signed/${CHANNEL}/catalog.json" 2>/dev/null \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit", ""))' 2>/dev/null || true)"
+          if [ "$RENEW" != "true" ] && [ "$signed_source" = "$(git rev-parse HEAD)" ]; then
+            echo "::notice::${CHANNEL} already holds the signature for this commit; only the mirror build is started."
+            echo "sign=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "sign=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Install the signing dependencies
-        if: steps.head.outputs.proceed == 'true'
+        if: steps.head.outputs.proceed == 'true' && steps.head.outputs.sign == 'true'
         run: |
           python3 -m venv "$RUNNER_TEMP/signing-venv"
           "$RUNNER_TEMP/signing-venv/bin/python" -m pip install --quiet --require-hashes --only-binary=:all: -r sdk/requirements-signing.txt
 
       - name: Signing tests and catalog checks
-        if: steps.head.outputs.proceed == 'true'
+        if: steps.head.outputs.proceed == 'true' && steps.head.outputs.sign == 'true'
         run: |
           "$RUNNER_TEMP/signing-venv/bin/python" -B -m sdk validate
           "$RUNNER_TEMP/signing-venv/bin/python" -B -m unittest discover -s tests -p 'test_signing*.py'
 
       - name: Sign
-        if: steps.head.outputs.proceed == 'true'
+        if: steps.head.outputs.proceed == 'true' && steps.head.outputs.sign == 'true'
         env:
           CATALOG_SIGNING_KEY: ${{ secrets.CATALOG_SIGNING_KEY }}
           SOURCE_COMMIT: ${{ steps.head.outputs.commit }}
@@ -107,12 +119,12 @@ jobs:
           "$RUNNER_TEMP/signing-venv/bin/python" -B -m sdk "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Verify the signed pair against the committed key file
-        if: steps.head.outputs.proceed == 'true'
+        if: steps.head.outputs.proceed == 'true' && steps.head.outputs.sign == 'true'
         run: '"$RUNNER_TEMP/signing-venv/bin/python" -B -m sdk verify --channel "$CHANNEL"'
 
       - name: Commit the signed files to the branch
         id: push
-        if: steps.head.outputs.proceed == 'true'
+        if: steps.head.outputs.proceed == 'true' && steps.head.outputs.sign == 'true'
         env:
           SOURCE_COMMIT: ${{ steps.head.outputs.commit }}
         run: |
@@ -134,8 +146,9 @@ jobs:
             exit 0
           fi
           # Only signed/** can differ, so this replays the sign commit onto the tip without running
-          # anything from it.
-          git rebase --quiet "origin/${CHANNEL}"
+          # anything from it. When the tip holds an earlier signing of this channel, the new
+          # signature wins the conflict (in a rebase, "theirs" is the commit being replayed).
+          git rebase --quiet -X theirs "origin/${CHANNEL}"
           git push origin "HEAD:refs/heads/${CHANNEL}"
           echo "pushed=true" >> "$GITHUB_OUTPUT"
 

@@ -72,7 +72,8 @@ class PublishWorkflowTests(unittest.TestCase):
             self.assertNotIn(forbidden, WORKFLOW, forbidden)
         # A moved branch stands down in every mode, renewals included.
         guard = dict(steps())["Stand down if the branch has moved on"]
-        self.assertNotIn("RENEW", guard)
+        standing_down = next(line for line in guard.splitlines() if 'if [ "$tip"' in line)
+        self.assertNotIn("RENEW", standing_down)
         self.assertIn("proceed=false", guard)
         self.assertIn(":(exclude)signed", guard)
         # Everything after the guard runs only when it let the run proceed, and the install and the
@@ -126,11 +127,29 @@ class PushGuardTests(unittest.TestCase):
         self.output = base / "github_output"
         self.output.write_text("", encoding="utf-8")
 
-    def run_step(self):
-        script = dict(steps())["Commit the signed files to the branch"].split("run: |\n", 1)[1]
+    def run_step(self, name="Commit the signed files to the branch", cwd=None, renew="false"):
+        script = dict(steps())[name].split("run: |\n", 1)[1]
         script = "\n".join(line[10:] for line in script.splitlines())
-        env = {**os.environ, "CHANNEL": "beta", "SOURCE_COMMIT": self.source, "GITHUB_OUTPUT": str(self.output)}
-        return subprocess.run(["bash", "-e", "-c", script], cwd=self.work, env=env, capture_output=True, text=True)
+        env = {
+            **os.environ,
+            "CHANNEL": "beta",
+            "RENEW": renew,
+            "SOURCE_COMMIT": self.source,
+            "GITHUB_OUTPUT": str(self.output),
+        }
+        return subprocess.run(["bash", "-e", "-c", script], cwd=cwd or self.work, env=env, capture_output=True, text=True)
+
+    def rerun_clone(self, content):
+        """A fresh checkout of the signed commit, as a re-run of the same job starts, with a new signature."""
+        clone = self.output.parent / f"rerun-{content}"
+        self.git(self.output.parent, "clone", "-q", str(self.origin), str(clone))
+        self.git(clone, "checkout", "-q", "--detach", self.source)
+        (clone / "signed" / "beta").mkdir(parents=True)
+        (clone / "signed" / "beta" / "catalog.json").write_text(content + "\n", encoding="utf-8")
+        return clone
+
+    def tip_file(self, path):
+        return self.git(self.origin, "show", f"refs/heads/beta:{path}")
 
     def tip(self):
         return self.git(self.origin, "rev-parse", "refs/heads/beta")
@@ -157,6 +176,64 @@ class PushGuardTests(unittest.TestCase):
         result = self.run_step()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.git(self.origin, "log", "--format=%s", "-1", "refs/heads/beta"), "chore(catalog): sign beta")
+
+    def test_a_rerun_after_its_own_signing_commit_replaces_the_signature_instead_of_conflicting(self):
+        self.assertEqual(self.run_step().returncode, 0)
+        self.assertEqual(self.tip_file("signed/beta/catalog.json"), "signed")
+        again = self.rerun_clone("signed again")
+        self.output.write_text("", encoding="utf-8")
+        result = self.run_step(cwd=again)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("pushed=true", self.output.read_text(encoding="utf-8"))
+        self.assertEqual(self.tip_file("signed/beta/catalog.json"), "signed again")
+        self.assertEqual(self.git(self.origin, "show", "refs/heads/beta:README.md"), "one")
+
+    def write_signed_body(self, source_commit):
+        (self.work / "signed" / "beta" / "catalog.json").write_text(
+            '{"channel": "beta", "source_commit": "%s"}\n' % source_commit, encoding="utf-8"
+        )
+
+    def test_a_rerun_skips_signing_when_the_tip_already_signs_this_commit(self):
+        self.write_signed_body(self.source)
+        self.assertEqual(self.run_step().returncode, 0)
+        clone = self.output.parent / "again"
+        self.git(self.output.parent, "clone", "-q", str(self.origin), str(clone))
+        self.git(clone, "checkout", "-q", "--detach", self.source)
+        self.output.write_text("", encoding="utf-8")
+        result = self.run_step("Stand down if the branch has moved on", cwd=clone)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        written = self.output.read_text(encoding="utf-8")
+        self.assertIn("proceed=true", written)
+        self.assertIn("sign=false", written)
+
+    def test_signing_goes_ahead_when_the_tip_signs_another_commit(self):
+        self.write_signed_body("c" * 40)
+        self.assertEqual(self.run_step().returncode, 0)
+        clone = self.output.parent / "again"
+        self.git(self.output.parent, "clone", "-q", str(self.origin), str(clone))
+        self.git(clone, "checkout", "-q", "--detach", self.source)
+        self.output.write_text("", encoding="utf-8")
+        result = self.run_step("Stand down if the branch has moved on", cwd=clone)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("sign=true", self.output.read_text(encoding="utf-8"))
+
+    def test_a_renewal_is_never_taken_for_a_repeat(self):
+        self.write_signed_body(self.source)
+        self.assertEqual(self.run_step().returncode, 0)
+        clone = self.output.parent / "again"
+        self.git(self.output.parent, "clone", "-q", str(self.origin), str(clone))
+        self.git(clone, "checkout", "-q", "--detach", self.source)
+        self.output.write_text("", encoding="utf-8")
+        result = self.run_step("Stand down if the branch has moved on", cwd=clone, renew="true")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("sign=true", self.output.read_text(encoding="utf-8"))
+
+    def test_every_signing_step_is_skipped_for_a_repeat_and_the_mirror_build_still_starts(self):
+        for name, text in steps()[2:]:
+            if name == "Start the Pages mirror build":
+                self.assertNotIn("outputs.sign", text)
+            else:
+                self.assertIn("steps.head.outputs.sign == 'true'", text, name)
 
     def test_the_mirror_build_is_not_started_after_a_stand_down(self):
         self.assertIn("steps.push.outputs.pushed != 'false'", dict(steps())["Start the Pages mirror build"])
