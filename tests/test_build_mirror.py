@@ -1,5 +1,7 @@
+import contextlib
 import hashlib
 import http.server
+import io
 import json
 import subprocess
 import sys
@@ -12,6 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import build_mirror  # noqa: E402
+import check_advance  # noqa: E402
 import verify_mirror  # noqa: E402
 
 NOW = datetime(2026, 11, 7, 12, 0, 0, tzinfo=timezone.utc)
@@ -44,6 +47,11 @@ class GitRepo:
             ["git", "-C", str(self.path), *args], check=True, capture_output=True, text=True
         ).stdout.strip()
 
+    def blob(self, commit: str, path: str) -> bytes:
+        return subprocess.run(
+            ["git", "-C", str(self.path), "cat-file", "blob", f"{commit}:{path}"], check=True, capture_output=True
+        ).stdout
+
     def commit(self, provider: bytes = b"print(1)\n", extra: dict[str, bytes] | None = None,
                catalog: bytes | None = None, message: str = "c") -> str:
         target = self.path / "providers" / "demo"
@@ -53,6 +61,7 @@ class GitRepo:
             catalog = catalog_for({"provider.py": provider})
         (self.path / "catalog.json").write_bytes(catalog)
         for name, data in (extra or {}).items():
+            (self.path / name).parent.mkdir(parents=True, exist_ok=True)
             (self.path / name).write_bytes(data)
         self.git("add", "-A")
         self.git("commit", "-q", "-m", message)
@@ -143,15 +152,28 @@ class BuildLayoutTests(MirrorTestCase):
         self.assertNotEqual(pointers["main"]["commit"], beta)
         self.assertTrue((self.out / "v1/beta/current").is_file())
 
-    def test_signature_file_is_copied_as_opaque_bytes(self):
-        commit = self.repo.commit(extra={"catalog.json.sig": b"\x00\xffsig"})
+    def test_the_signed_files_are_copied_as_opaque_bytes_under_their_own_paths(self):
+        signed = {
+            "signed/main/catalog.json": b"{\"not\": \"parsed\"}\n",
+            "signed/main/catalog.json.sig": b"\x00\xffsig",
+            "keys/catalog-signing-keys.json": b"keys \xff",
+        }
+        commit = self.repo.commit(extra=signed)
         self.build()
-        self.assertEqual((self.out / "v1/main" / commit / "catalog.json.sig").read_bytes(), b"\x00\xffsig")
+        for path, data in signed.items():
+            self.assertEqual((self.out / "v1/main" / commit / path).read_bytes(), data, path)
 
-    def test_commit_without_signature_publishes_none(self):
+    def test_only_the_channels_own_signed_files_are_published(self):
+        commit = self.repo.commit(extra={"signed/beta/catalog.json": b"beta", "catalog.json.sig": b"legacy"})
+        self.build()
+        self.assertFalse((self.out / "v1/main" / commit / "signed/beta").exists())
+        self.assertFalse((self.out / "v1/main" / commit / "catalog.json.sig").exists())
+
+    def test_a_commit_without_signed_files_publishes_none(self):
         commit = self.repo.commit()
         self.build()
-        self.assertFalse((self.out / "v1/main" / commit / "catalog.json.sig").exists())
+        self.assertFalse((self.out / "v1/main" / commit / "signed").exists())
+        self.assertFalse((self.out / "v1/main" / commit / "keys").exists())
 
     def test_refuses_a_non_empty_output_directory(self):
         self.repo.commit()
@@ -182,7 +204,7 @@ class BuildRefusalTests(MirrorTestCase):
             self.build()
 
     def test_unsafe_paths_are_refused(self):
-        for bad in ("../x", "/abs", "a//b", "a/./b", ".hidden", "a\\b", ""):
+        for bad in ("../x", "/abs", "a//b", "a/./b", ".hidden", "a\\b", "", "f.py\n", "a/f.py\n"):
             with self.subTest(path=bad), self.assertRaises(build_mirror.MirrorError):
                 build_mirror.safe_relative_path(bad)
 
@@ -222,11 +244,11 @@ class BuildRefusalTests(MirrorTestCase):
         real = build_mirror.commit_files
         calls = []
 
-        def flaky(repo, commit):
+        def flaky(repo, commit, channel):
             calls.append(commit)
             if len(calls) == 2:
                 raise build_mirror.MirrorError("git exploded")
-            return real(repo, commit)
+            return real(repo, commit, channel)
 
         build_mirror.commit_files = flaky
         self.addCleanup(setattr, build_mirror, "commit_files", real)
@@ -248,7 +270,7 @@ class BuildRefusalTests(MirrorTestCase):
         self.repo.git("add", "-A")
         self.repo.git("commit", "-q", "-m", "dir")
         with self.assertRaisesRegex(build_mirror.ValidationError, "not a file"):
-            build_mirror.commit_files(self.repo.path, "HEAD")
+            build_mirror.commit_files(self.repo.path, "HEAD", "main")
 
     def test_excessive_pin_counts_are_refused_before_any_blob_is_read(self):
         original = build_mirror.MAX_PINS
@@ -274,8 +296,8 @@ class BuildRefusalTests(MirrorTestCase):
         build_mirror.git = lambda *args: calls.append(args) or real(*args)
         self.addCleanup(setattr, build_mirror, "git", real)
         with self.assertRaisesRegex(build_mirror.ValidationError, "in total"):
-            build_mirror.commit_files(self.repo.path, "HEAD")
-        self.assertEqual([c for c in calls if c[:2] == ("cat-file", "blob") and "f" in c[2]], [])
+            build_mirror.commit_files(self.repo.path, "HEAD", "main")
+        self.assertEqual([c for c in calls if c[1:3] == ("cat-file", "blob") and "/f" in c[3]], [])
 
     def test_file_count_bound(self):
         self.repo.commit()
@@ -476,10 +498,268 @@ class VerifyTests(MirrorTestCase):
         args = ["--base-url", url, "--repo", str(self.repo.path),
                 "--heads", json.dumps({"main": self.head}), "--attempts", "1", "--delay", "0",
                 "--ref-template", "{channel}"]
-        self.assertEqual(verify_mirror.main(args), 0)
-        path = self.out / "v1/main" / self.head / "catalog.json"
-        path.write_bytes(path.read_bytes() + b"\n")
-        self.assertEqual(verify_mirror.main(args), 1)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(verify_mirror.main(args), 0)
+            path = self.out / "v1/main" / self.head / "catalog.json"
+            path.write_bytes(path.read_bytes() + b"\n")
+            self.assertEqual(verify_mirror.main(args), 1)
+
+
+def plugin_files(plugin_id: str, files: dict[str, bytes]) -> dict[str, bytes]:
+    """The tree of one plugin: its files and a plugin.json that pins them."""
+    manifest = {
+        "id": plugin_id,
+        "source": {"path": f"plugins/{plugin_id}", "repo": "x/y"},
+        "files": {name: sha(data) for name, data in files.items()},
+    }
+    tree = {f"plugins/{plugin_id}/{name}": data for name, data in files.items()}
+    tree[f"plugins/{plugin_id}/plugin.json"] = json.dumps(manifest).encode()
+    return tree
+
+
+def signed_body(repo: GitRepo, source_commit: str, plugin_ids=()) -> bytes:
+    """A signed body as the signing run builds it: the providers of catalog.json at the source commit
+    and the plugin manifests of that commit."""
+    catalog = json.loads(repo.blob(source_commit, "catalog.json"))
+    plugins = [
+        {"manifest": json.loads(repo.blob(source_commit, f"plugins/{plugin_id}/plugin.json"))}
+        for plugin_id in plugin_ids
+    ]
+    return json.dumps({
+        "schema_version": 2, "name": "t", "channel": "main", "signed_version": 1,
+        "not_before": "2026-11-01T00:00:00Z", "expires": "2027-01-30T00:00:00Z",
+        "source_commit": source_commit, "providers": catalog["providers"], "plugins": plugins,
+    }).encode()
+
+
+class SignedFeedTests(MirrorTestCase):
+    """The mirror carries every path the client asks for: the signed trio at the head and the
+    bundle files, providers and plugins, at the signed body's source commit."""
+
+    def setUp(self):
+        super().setUp()
+        self.repo.commit(b"older\n", message="older")
+        self.source = self.repo.commit(
+            b"source\n", extra=plugin_files("alpha", {"engine.py": b"engine\n", "data/words.txt": b"words\n"}),
+            message="source",
+        )
+        # The signing commit comes after the commit it signs and lags the head by design.
+        self.head = self.repo.commit(
+            b"source\n",
+            extra={
+                "signed/main/catalog.json": signed_body(self.repo, self.source, ["alpha"]),
+                "signed/main/catalog.json.sig": b'{"schema_version": 1, "signatures": []}',
+                "keys/catalog-signing-keys.json": b"{}",
+            },
+            message="sign",
+        )
+        self.build()
+
+    def verify(self, expected=None):
+        return verify_mirror.verify_channel(
+            self.site_fetch(), self.repo.path, "main", expected or self.head, attempts=1, delay=0, workers=4,
+            ref="main",
+        )
+
+    def test_the_client_finds_every_path_it_asks_for_byte_identical_to_git(self):
+        fetch = self.site_fetch()
+        head = f"v1/main/{self.head}/"
+        # The three signed files, at the head, under the channel's own path.
+        for path in ("signed/main/catalog.json", "signed/main/catalog.json.sig", "keys/catalog-signing-keys.json"):
+            self.assertEqual(fetch(head + path), self.repo.blob(self.head, path), path)
+        body = json.loads(fetch(head + "signed/main/catalog.json"))
+        # Bundle files are read at the body's source commit, as source.path plus the file name.
+        source = f"v1/main/{body['source_commit']}/"
+        asked = 0
+        for item in body["providers"] + body["plugins"]:
+            manifest = item["manifest"]
+            for name, digest in manifest["files"].items():
+                path = "/".join(part for part in (manifest["source"]["path"], name) if part)
+                got = fetch(source + path)
+                self.assertEqual(sha(got), digest, path)
+                self.assertEqual(got, self.repo.blob(body["source_commit"], path), path)
+                asked += 1
+        self.assertGreaterEqual(asked, 3)
+        self.assertIn("plugins/alpha/data/words.txt", [
+            "/".join((i["manifest"]["source"]["path"], n)) for i in body["plugins"] for n in i["manifest"]["files"]
+        ])
+
+    def test_plugin_files_are_published_under_the_commit_that_has_them(self):
+        base = self.out / "v1/main" / self.source / "plugins/alpha"
+        self.assertEqual((base / "engine.py").read_bytes(), b"engine\n")
+        self.assertEqual((base / "data/words.txt").read_bytes(), b"words\n")
+        self.assertFalse((base / "plugin.json").exists())
+
+    def test_the_clean_site_verifies(self):
+        self.assertEqual(self.verify(), [])
+
+    def test_a_flipped_signed_byte_is_caught(self):
+        for path in ("signed/main/catalog.json", "signed/main/catalog.json.sig", "keys/catalog-signing-keys.json"):
+            with self.subTest(path=path):
+                target = self.out / "v1/main" / self.head / path
+                original = target.read_bytes()
+                target.write_bytes(original + b" ")
+                self.assertTrue(any(path in e and "git blob" in e for e in self.verify()))
+                target.write_bytes(original)
+
+    def test_a_missing_signed_file_is_caught(self):
+        (self.out / "v1/main" / self.head / "keys/catalog-signing-keys.json").unlink()
+        self.assertTrue(any("catalog-signing-keys.json" in e for e in self.verify()))
+
+    def test_a_missing_plugin_file_at_the_source_commit_is_caught(self):
+        (self.out / "v1/main" / self.source / "plugins/alpha/engine.py").unlink()
+        self.assertTrue(any("plugins/alpha/engine.py" in e for e in self.verify()))
+
+    def test_a_signed_body_that_names_a_commit_the_mirror_lacks_is_caught(self):
+        body = json.loads(self.repo.blob(self.head, "signed/main/catalog.json"))
+        body["source_commit"] = "b" * 40
+        head = self.repo.commit(
+            b"source\n", extra={"signed/main/catalog.json": json.dumps(body).encode()}, message="bad sign"
+        )
+        out = self.tmp / "site-bad"
+        build_mirror.build_site(self.repo.path, out, channels={"main": "main"}, now=NOW, log=self.quiet)
+        errors = verify_mirror.verify_channel(
+            self.site_fetch(out), self.repo.path, "main", head, attempts=1, delay=0, workers=4, ref="main"
+        )
+        self.assertTrue(any("does not carry" in e for e in errors), errors)
+
+    def test_a_signed_body_pin_that_git_does_not_hold_is_caught(self):
+        body = json.loads(self.repo.blob(self.head, "signed/main/catalog.json"))
+        body["plugins"][0]["manifest"]["files"]["engine.py"] = "0" * 64
+        head = self.repo.commit(
+            b"source\n", extra={"signed/main/catalog.json": json.dumps(body).encode()}, message="bad pin"
+        )
+        out = self.tmp / "site-pin"
+        build_mirror.build_site(self.repo.path, out, channels={"main": "main"}, now=NOW, log=self.quiet)
+        errors = verify_mirror.verify_channel(
+            self.site_fetch(out), self.repo.path, "main", head, attempts=1, delay=0, workers=4, ref="main"
+        )
+        self.assertTrue(any("plugins/alpha/engine.py" in e and "as pinned" in e for e in errors), errors)
+
+    def test_a_plugin_pin_that_does_not_match_its_bytes_fails_the_build(self):
+        manifest = json.loads(self.repo.blob(self.head, "plugins/alpha/plugin.json"))
+        manifest["files"]["engine.py"] = "0" * 64
+        self.repo.commit(b"source\n", extra={"plugins/alpha/plugin.json": json.dumps(manifest).encode()})
+        with self.assertRaisesRegex(build_mirror.MirrorError, "does not match its pin"):
+            build_mirror.build_site(self.repo.path, self.tmp / "site-x", channels={"main": "main"}, now=NOW,
+                                    log=self.quiet)
+
+    def test_a_plugin_pin_on_a_signed_path_is_refused(self):
+        tree = plugin_files("alpha", {"engine.py": b"engine\n"})
+        manifest = json.loads(tree["plugins/alpha/plugin.json"])
+        manifest["source"]["path"] = "signed/main"
+        manifest["files"] = {"catalog.json": sha(b"x")}
+        with self.assertRaisesRegex(build_mirror.ValidationError, "collides with a mirror file"):
+            build_mirror.catalog_pins(
+                catalog_for({"provider.py": b"x"}), [manifest], {"catalog.json", *build_mirror.opaque_paths("main")}
+            )
+
+    def test_a_malformed_plugin_manifest_is_a_validation_error(self):
+        self.repo.commit(b"source\n", extra={"plugins/alpha/plugin.json": b"not json"})
+        with self.assertRaisesRegex(build_mirror.ValidationError, "is not JSON"):
+            build_mirror.commit_files(self.repo.path, "HEAD", "main")
+
+    def test_the_same_tree_gives_the_same_site(self):
+        again = self.tmp / "site-again"
+        build_mirror.build_site(self.repo.path, again, channels={"main": "main"}, now=NOW, log=self.quiet)
+        listing = lambda root: sorted(  # noqa: E731
+            (str(p.relative_to(root)), p.read_bytes()) for p in root.rglob("*") if p.is_file()
+        )
+        self.assertEqual(listing(self.out), listing(again))
+
+
+class AdvanceGuardTests(MirrorTestCase):
+    def setUp(self):
+        super().setUp()
+        self.c1 = self.repo.commit(b"1\n", message="1")
+        self.c2 = self.repo.commit(b"2\n", message="2")
+        self.c3 = self.repo.commit(b"3\n", message="3")
+
+    def site(self, ref, name, when=NOW):
+        out = self.tmp / name
+        build_mirror.build_site(self.repo.path, out, channels={"main": ref}, now=when, log=self.quiet)
+        return out
+
+    def live(self, root):
+        def fetch(path, retry_not_found=True):
+            try:
+                return (root / path).read_bytes()
+            except FileNotFoundError as exc:
+                raise verify_mirror.NotFound(path) from exc
+        return fetch
+
+    def check(self, live_ref, new_ref, live_when=NOW, new_when=NOW):
+        live = self.site(live_ref, "live", live_when) if live_ref else self.tmp / "nothing"
+        new = self.site(new_ref, "new", new_when)
+        return check_advance.check_channel(self.live(live), self.repo.path, new, "main")
+
+    def test_an_advance_is_allowed(self):
+        self.assertIsNone(self.check(self.c2, self.c3))
+
+    def test_the_same_commit_is_allowed(self):
+        self.assertIsNone(self.check(self.c3, self.c3))
+
+    def test_a_first_deploy_is_allowed(self):
+        self.assertIsNone(self.check(None, self.c3))
+
+    def test_an_older_commit_is_refused(self):
+        self.assertIn("not an ancestor", self.check(self.c3, self.c1))
+
+    def test_a_diverged_commit_is_refused(self):
+        self.repo.git("checkout", "-q", "-b", "side", self.c2)
+        side = self.repo.commit(b"side\n", message="side")
+        self.repo.git("checkout", "-q", "main")
+        self.assertIn("not an ancestor", self.check(self.c3, side))
+
+    def test_a_live_commit_this_clone_does_not_know_is_refused(self):
+        live = self.tmp / "live"
+        (live / "v1/main").mkdir(parents=True)
+        pointer = {"channel": "main", "commit": "a" * 40, "catalog_sha256": "0" * 64,
+                   "published_at": "2026-11-01T00:00:00Z", "history": ["a" * 40]}
+        (live / "v1/main/current").write_text(json.dumps(pointer))
+        new = self.site(self.c3, "new")
+        self.assertIn("not an ancestor", check_advance.check_channel(self.live(live), self.repo.path, new, "main"))
+
+    def test_an_older_stamp_is_refused_even_for_a_newer_commit(self):
+        later = datetime(2026, 11, 8, tzinfo=timezone.utc)
+        self.assertIn("older than the live", self.check(self.c2, self.c3, live_when=later))
+
+    def test_an_unreadable_live_pointer_is_refused(self):
+        new = self.site(self.c3, "new")
+
+        def broken(path, retry_not_found=True):
+            raise verify_mirror.FetchError("boom")
+
+        self.assertIn("cannot read the live pointer", check_advance.check_channel(broken, self.repo.path, new, "main"))
+
+    def test_a_malformed_live_pointer_is_refused(self):
+        live = self.tmp / "live"
+        (live / "v1/main").mkdir(parents=True)
+        (live / "v1/main/current").write_text("{}")
+        new = self.site(self.c3, "new")
+        self.assertIn("unreadable", check_advance.check_channel(self.live(live), self.repo.path, new, "main"))
+
+    def test_exit_status_and_the_override(self):
+        live = self.site(self.c3, "live")
+        new = self.site(self.c1, "new")
+
+        class Quiet(http.server.SimpleHTTPRequestHandler):
+            def __init__(inner, *a, **kw):
+                super().__init__(*a, directory=str(live), **kw)
+
+            def log_message(inner, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Quiet)
+        self.addCleanup(server.server_close)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        args = ["--site", str(new), "--base-url", f"http://127.0.0.1:{server.server_address[1]}/",
+                "--repo", str(self.repo.path)]
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(check_advance.main(args), 1)
+            self.assertEqual(check_advance.main(args + ["--allow-non-advance"]), 0)
+            self.assertEqual(check_advance.main(["--site", str(live), "--base-url", args[3], "--repo", args[5]]), 0)
 
 
 class FetcherTests(unittest.TestCase):
@@ -508,6 +788,52 @@ class FetcherTests(unittest.TestCase):
             self.assertTrue(path.startswith("/site/v1/main/current?cb="), path)
             self.assertEqual(cache_control, "no-cache")
         self.assertNotEqual(seen[0][0], seen[1][0])
+
+    def serve(self, handler):
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        self.addCleanup(server.server_close)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        return f"http://127.0.0.1:{server.server_address[1]}/"
+
+    def test_a_404_is_typed_and_retried_only_on_request(self):
+        seen = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(inner):
+                seen.append(inner.path)
+                inner.send_response(404)
+                inner.end_headers()
+
+            def log_message(inner, *args):
+                pass
+
+        fetch = verify_mirror.http_fetcher(self.serve(Handler), retries=3, backoff=0)
+        with self.assertRaises(verify_mirror.NotFound):
+            fetch("v1/main/current", retry_not_found=False)
+        self.assertEqual(len(seen), 1)
+        with self.assertRaises(verify_mirror.NotFound):
+            fetch("v1/main/current")
+        self.assertEqual(len(seen), 4)
+
+    def test_a_truncated_body_is_retried_and_ends_as_a_fetch_error(self):
+        seen = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(inner):
+                seen.append(inner.path)
+                inner.send_response(200)
+                inner.send_header("Content-Length", "100")
+                inner.end_headers()
+                inner.wfile.write(b"abc")
+
+            def log_message(inner, *args):
+                pass
+
+        fetch = verify_mirror.http_fetcher(self.serve(Handler), retries=3, backoff=0)
+        with self.assertRaises(verify_mirror.FetchError):
+            fetch("v1/main/current")
+        self.assertEqual(len(seen), 3)
 
     def test_plain_http_to_a_real_host_is_refused(self):
         with self.assertRaises(build_mirror.MirrorError):
@@ -543,9 +869,54 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("refs/heads/main", self.text)
         self.assertIn("refs/heads/beta", self.text)
 
+    def job(self, name):
+        """The text of one job under ``jobs:``."""
+        import re
+
+        jobs = self.text.split("\njobs:\n", 1)[1]
+        blocks = re.split(r"^  (?=[a-z][\w-]*:\n)", jobs, flags=re.M)
+        for block in blocks:
+            if block.startswith(f"{name}:\n"):
+                return block
+        self.fail(f"no job {name}")
+
     def test_no_wide_permissions(self):
         self.assertNotIn("write-all", self.text)
         self.assertNotIn("contents: write", self.text)
+        top = self.text.split("\npermissions:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertEqual(top.split(), ["contents:", "read"])
+        for name in ("build", "verify"):
+            with self.subTest(job=name):
+                block = self.job(name)
+                self.assertNotIn("pages: write", block)
+                self.assertNotIn("id-token: write", block)
+        deploy = self.job("deploy")
+        self.assertIn("pages: write", deploy)
+        self.assertIn("id-token: write", deploy)
+        self.assertNotIn("checkout", deploy)
+
+    def test_runs_never_overlap_and_are_never_cancelled(self):
+        head = self.text.split("\njobs:\n", 1)[0]
+        self.assertIn("group: pages-mirror", head)
+        self.assertIn("cancel-in-progress: false", head)
+
+    def test_builds_and_verifies_from_the_branch_tips_not_the_event_commit(self):
+        refresh = "+refs/heads/main:refs/remotes/origin/main"
+        for name in ("build", "verify"):
+            with self.subTest(job=name):
+                block = self.job(name)
+                self.assertIn(refresh, block)
+                self.assertIn("+refs/heads/beta:refs/remotes/origin/beta", block)
+                self.assertLess(block.index("actions/checkout"), block.index(refresh))
+        build = self.job("build")
+        self.assertLess(build.index(refresh), build.index("scripts/build_mirror.py"))
+
+    def test_the_advance_guard_runs_before_anything_is_uploaded(self):
+        build = self.job("build")
+        self.assertIn("scripts/check_advance.py", build)
+        self.assertLess(build.index("scripts/build_mirror.py"), build.index("scripts/check_advance.py"))
+        self.assertLess(build.index("scripts/check_advance.py"), build.index("upload-pages-artifact"))
+        self.assertIn("allow_non_advance", self.text)
 
 
 if __name__ == "__main__":

@@ -2,15 +2,17 @@
 """Verify the deployed Pages mirror against git.
 
 For every channel this fetches ``v1/<channel>/current`` and then, for each commit in its
-history, the published ``catalog.json`` (and ``catalog.json.sig`` when git has one) and
-every bundle file the catalog pins. The checks are:
+history, every file the build publishes for that commit: ``catalog.json``, the signed trio
+(``signed/<channel>/catalog.json``, its ``.sig`` and ``keys/catalog-signing-keys.json``) when git
+has them, and every bundle file the commit's manifests pin. The checks are:
 
-* each published ``catalog.json`` is byte-identical (sha256) to ``git cat-file blob
-  <commit>:catalog.json``;
+* each published file is byte-identical (sha256) to ``git cat-file blob <commit>:<path>``;
 * the pointer's ``catalog_sha256`` matches its head catalog, and ``history[0]`` is ``commit``;
-* each bundle file matches the sha256 pinned by the git blob of the catalog;
+* each bundle file matches the sha256 pinned by the git blobs;
 * ``history`` equals the retained history recomputed from git (see below);
-* the pointer reached the commit this run built (or a newer one).
+* the pointer reached the commit this run built (or a newer one);
+* when the head carries a signed body, the commit it names as ``source_commit`` is published
+  and carries every bundle file the body pins, with the pinned bytes.
 
 Retention contract: the expected history is the RETENTION newest first-parent commits ending
 at the pointer commit (which must lie on the first-parent chain of ``origin/<channel>``), minus
@@ -25,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import re
 import sys
@@ -40,12 +43,11 @@ from build_mirror import (
     MAX_FILE_BYTES,
     ValidationError,
     commit_files,
-    OPAQUE_FILES,
+    opaque_paths,
     RETENTION,
     MirrorError,
-    blob_or_none,
-    catalog_pins,
     git,
+    signed_body_pins,
 )
 
 _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -57,6 +59,10 @@ class FetchError(Exception):
     pass
 
 
+class NotFound(FetchError):
+    """The site answered 404: the file is not published."""
+
+
 def http_fetcher(base_url: str, retries: int = 3, backoff: float = 2.0, timeout: float = 30.0):
     """Return ``fetch(path) -> bytes`` for a Pages site, with a cache-buster on every request."""
     parsed = urllib.parse.urlsplit(base_url)
@@ -65,8 +71,11 @@ def http_fetcher(base_url: str, retries: int = 3, backoff: float = 2.0, timeout:
         raise MirrorError(f"base url must be https: {base_url!r}")
     base = base_url if base_url.endswith("/") else base_url + "/"
 
-    def fetch(path: str) -> bytes:
+    def fetch(path: str, retry_not_found: bool = True) -> bytes:
+        """Fetch one file. A 404 is retried like any other failure (a fresh deploy can lag) unless
+        ``retry_not_found`` is false, and it ends as ``NotFound`` so a caller can tell it apart."""
         last = "no attempt"
+        missing = False
         for attempt in range(retries):
             url = f"{base}{urllib.parse.quote(path)}?cb={uuid.uuid4().hex}"
             request = urllib.request.Request(
@@ -75,14 +84,24 @@ def http_fetcher(base_url: str, retries: int = 3, backoff: float = 2.0, timeout:
             try:
                 with urllib.request.urlopen(request, timeout=timeout) as response:
                     data = response.read(MAX_FILE_BYTES + 1)
+                    declared = response.headers.get("Content-Length")
+                if declared is not None and declared.isdigit() and len(data) < int(declared) <= MAX_FILE_BYTES:
+                    # A bounded read returns what arrived when the connection drops.
+                    raise http.client.IncompleteRead(data, int(declared) - len(data))
                 if len(data) > MAX_FILE_BYTES:
                     raise FetchError(f"{path}: larger than {MAX_FILE_BYTES} bytes")
                 return data
-            except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            except (urllib.error.URLError, http.client.HTTPException, OSError) as exc:
+                # OSError covers timeouts, resets and TLS failures raised while reading the body.
                 last = str(exc)
+                missing = isinstance(exc, urllib.error.HTTPError) and exc.code == 404
+                if isinstance(exc, urllib.error.HTTPError):
+                    exc.close()
+                if missing and not retry_not_found:
+                    break
                 if attempt + 1 < retries:
                     time.sleep(backoff * (attempt + 1))
-        raise FetchError(f"{path}: {last}")
+        raise (NotFound if missing else FetchError)(f"{path}: {last}")
 
     return fetch
 
@@ -98,14 +117,14 @@ def parse_pointer(channel: str, raw: bytes) -> dict:
     if (
         pointer["channel"] != channel
         or not isinstance(pointer["commit"], str)
-        or not _COMMIT_RE.match(pointer["commit"])
+        or not _COMMIT_RE.fullmatch(pointer["commit"])
         or not isinstance(pointer["catalog_sha256"], str)
-        or not _SHA256_RE.match(pointer["catalog_sha256"])
+        or not _SHA256_RE.fullmatch(pointer["catalog_sha256"])
         or not isinstance(pointer["published_at"], str)
         or not isinstance(history, list)
         or not 1 <= len(history) <= RETENTION
         or len(set(history)) != len(history)
-        or not all(isinstance(c, str) and _COMMIT_RE.match(c) for c in history)
+        or not all(isinstance(c, str) and _COMMIT_RE.fullmatch(c) for c in history)
         or history[0] != pointer["commit"]
     ):
         raise MirrorError(f"{channel}: current is malformed")
@@ -150,7 +169,7 @@ def check_history(repo: Path, channel: str, ref: str, pointer: dict, retention: 
         expected = []
         for index, commit in enumerate(window):
             try:
-                commit_files(repo, commit)
+                commit_files(repo, commit, channel)
             except ValidationError as exc:
                 if index == 0:
                     return f"{channel}: pointer commit fails validation: {exc}"
@@ -163,6 +182,32 @@ def check_history(repo: Path, channel: str, ref: str, pointer: dict, retention: 
         extra = [c for c in pointer["history"] if c not in expected]
         return f"{channel}: history differs from the retained history in git (missing {missing}, unexpected {extra})"
     return None
+
+
+def check_signed_body(repo: Path, channel: str, pointer: dict, signed: bytes) -> list[str]:
+    """Check that the head's signed body can be served: the commit it names carries its bundle files.
+
+    The client reads a signed body at the head and its bundle files at the body's ``source_commit``,
+    which can be an older commit. That commit has to be published, and each file the body pins has to
+    be published there with the pinned bytes. The published bytes of every file are fetched and compared
+    with git in the per-commit jobs, so this only compares the body's pins with what git holds there.
+    """
+    try:
+        source_commit, pins = signed_body_pins(signed)
+    except ValidationError as exc:
+        return [f"{channel}/{pointer['commit']}: {exc}"]
+    if source_commit not in pointer["history"]:
+        return [f"{channel}/{pointer['commit']}: the signed catalog names {source_commit}, which the mirror does not carry"]
+    try:
+        files = commit_files(repo, source_commit, channel)
+    except ValidationError as exc:
+        return [f"{channel}/{source_commit}: {exc}"]
+    problems = []
+    for path, digest in sorted(pins.items()):
+        data = files.get(path)
+        if data is None or hashlib.sha256(data).hexdigest() != digest:
+            problems.append(f"{channel}/{source_commit}/{path}: the signed catalog pins a file the mirror does not carry as pinned")
+    return problems
 
 
 def verify_channel(fetch, repo: Path, channel: str, expected: str | None = None,
@@ -178,28 +223,28 @@ def verify_channel(fetch, repo: Path, channel: str, expected: str | None = None,
         return [problem]
 
     errors: list[str] = []
-    jobs: list[tuple[str, str, str, bytes | None]] = []  # (label, url path, kind, git bytes / digest)
+    jobs: list[tuple[str, str, str, str]] = []  # (label, url path, kind, expected sha256)
+    opaque = {"catalog.json", *opaque_paths(channel)}
+    head_files: dict[str, bytes] = {}
 
     for index, commit in enumerate(pointer["history"]):
-        base = f"v1/{channel}/{commit}"
-        git_catalog = blob_or_none(repo, commit, "catalog.json")
-        if git_catalog is None:
-            errors.append(f"{channel}/{commit}: no catalog.json in git")
-            continue
-        if index == 0 and hashlib.sha256(git_catalog).hexdigest() != pointer["catalog_sha256"]:
-            errors.append(f"{channel}/{commit}: pointer catalog_sha256 differs from the git blob")
-        jobs.append((f"{channel}/{commit}/catalog.json", f"{base}/catalog.json", "bytes", git_catalog))
-        for name in OPAQUE_FILES:
-            data = blob_or_none(repo, commit, name)
-            if data is not None:
-                jobs.append((f"{channel}/{commit}/{name}", f"{base}/{name}", "bytes", data))
         try:
-            pins = catalog_pins(git_catalog)
-        except MirrorError as exc:
+            files = commit_files(repo, commit, channel)
+        except ValidationError as exc:
             errors.append(f"{channel}/{commit}: {exc}")
             continue
-        for path, digest in sorted(pins.items()):
-            jobs.append((f"{channel}/{commit}/{path}", f"{base}/{path}", "sha256", digest.encode()))
+        if index == 0:
+            head_files = files
+            if hashlib.sha256(files["catalog.json"]).hexdigest() != pointer["catalog_sha256"]:
+                errors.append(f"{channel}/{commit}: pointer catalog_sha256 differs from the git blob")
+        for path, data in sorted(files.items()):
+            kind = "bytes" if path in opaque else "pin"
+            jobs.append((f"{channel}/{commit}/{path}", f"v1/{channel}/{commit}/{path}", kind,
+                         hashlib.sha256(data).hexdigest()))
+
+    signed = head_files.get(f"signed/{channel}/catalog.json")
+    if signed is not None:
+        errors.extend(check_signed_body(repo, channel, pointer, signed))
 
     def run(job):
         label, url_path, kind, want = job
@@ -207,9 +252,9 @@ def verify_channel(fetch, repo: Path, channel: str, expected: str | None = None,
             got = fetch(url_path)
         except FetchError as exc:
             return f"{label}: {exc}"
-        if kind == "bytes" and got != want:
-            return f"{label}: published bytes differ from the git blob"
-        if kind == "sha256" and hashlib.sha256(got).hexdigest().encode() != want:
+        if hashlib.sha256(got).hexdigest() != want:
+            if kind == "bytes":
+                return f"{label}: published bytes differ from the git blob"
             return f"{label}: published bytes do not match the catalog pin"
         return None
 
@@ -239,8 +284,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     failed = False
     for channel, expected in sorted(heads.items()):
-        problems = verify_channel(fetch, args.repo, channel, expected, args.attempts, args.delay,
-                                  ref=args.ref_template.format(channel=channel))
+        try:
+            problems = verify_channel(fetch, args.repo, channel, expected, args.attempts, args.delay,
+                                      ref=args.ref_template.format(channel=channel))
+        except MirrorError as exc:
+            problems = [f"{channel}: {exc}"]
         for problem in problems[:50]:
             print(f"MISMATCH {problem}", file=sys.stderr)
         if len(problems) > 50:

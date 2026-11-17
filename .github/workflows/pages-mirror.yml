@@ -3,17 +3,34 @@ name: Pages mirror
 # Publishes a static, verifiable copy of the catalog to GitHub Pages for both channels.
 # It runs only on pushes to main and beta (and manual dispatch of those branches), never
 # on pull requests, so nothing from a fork can reach the deploy job.
+#
+# Every run builds both channels from the branch tips as they are when the run starts, never
+# from the commit that triggered it, and refuses to deploy when that would move a channel
+# behind what the live site already serves (scripts/check_advance.py). Rerunning an old run
+# therefore cannot roll the mirror back.
+#
+# Notes for whoever adds the signing workflow: a push made with the default GITHUB_TOKEN does
+# not start this workflow, so the signing run must dispatch it (or push with another credential),
+# or the pointer lags the signing commit until the next push. A head commit that fails validation
+# on either channel stops the whole publish, because both channels share one site. The verify job
+# runs after the site is live, so a red verify is an alert, not an undo.
 
 on:
   push:
     branches: [main, beta]
   workflow_dispatch:
+    inputs:
+      allow_non_advance:
+        description: Deploy even if a channel would move backwards (reviewed force-push or repair only)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
-# One deploy at a time. Later pushes queue instead of cancelling a running deploy, so a
-# half-finished publish never leaves the site in an in-between state.
+# One deploy at a time for the whole site, so runs for one channel never overlap either. Later
+# pushes queue instead of cancelling a running deploy, so a half-finished publish never leaves
+# the site in an in-between state.
 concurrency:
   group: pages-mirror
   cancel-in-progress: false
@@ -36,11 +53,24 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Refresh both channel heads
+        # The checkout pins the triggering branch to the event commit, which is stale in a
+        # rerun. Read the tips as they are now.
+        run: git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main' '+refs/heads/beta:refs/remotes/origin/beta'
       - name: Mirror tests
         run: python3 -B -m unittest discover -s tests -p 'test_build_mirror.py'
       - name: Build site from git
         id: build
         run: python3 -B scripts/build_mirror.py --repo . --out "$RUNNER_TEMP/site" --outputs-file "$GITHUB_OUTPUT"
+      - name: Refuse to move a channel backwards
+        env:
+          ALLOW_NON_ADVANCE: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_non_advance }}
+        run: |
+          flag=""
+          if [ "$ALLOW_NON_ADVANCE" = "true" ]; then flag="--allow-non-advance"; fi
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          python3 -B scripts/check_advance.py --repo . --site "$RUNNER_TEMP/site" \
+            --base-url "https://${owner}.github.io/${GITHUB_REPOSITORY#*/}/" $flag
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: ${{ runner.temp }}/site
@@ -74,6 +104,8 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Refresh both channel heads
+        run: git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main' '+refs/heads/beta:refs/remotes/origin/beta'
       - name: Compare the published files with git
         env:
           PAGE_URL: ${{ needs.deploy.outputs.page_url }}

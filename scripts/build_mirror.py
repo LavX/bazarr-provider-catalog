@@ -2,11 +2,21 @@
 """Build the static GitHub Pages mirror of the provider catalog from git history.
 
 For every channel (a branch) the last RETENTION first-parent commits are
-published under ``v1/<channel>/<commit>/``:
+published under ``v1/<channel>/<commit>/``. These are the paths the Bazarr+ client asks
+for, and nothing else:
 
-    catalog.json                    byte-for-byte the git blob of that commit
-    catalog.json.sig                copied as opaque bytes when the commit has one
-    <source.path>/<file>            every bundle file the catalog pins
+    catalog.json                         byte-for-byte the git blob of that commit
+    signed/<channel>/catalog.json        the signed body, when the commit has one
+    signed/<channel>/catalog.json.sig    its detached envelope, when the commit has one
+    keys/catalog-signing-keys.json       the root-signed key file, when the commit has one
+    <source.path>/<file>                 every bundle file the commit's catalog.json or
+                                         plugins/<id>/plugin.json manifests pin
+
+The signed files are opaque bytes: nothing here parses or checks a signature. A signed body
+lags its branch head by design and names the commit its bundles were built from
+(``source_commit``), so the client reads the bundle files at that commit. Those files are
+published under that commit by the pins read from its own tree, and ``verify_mirror.py``
+checks that a head's signed body can be fully served that way.
 
 ``v1/<channel>/current`` is a small JSON pointer:
 
@@ -25,8 +35,7 @@ per-file, per-commit and pin-count bounds. An older commit failing validation is
 (never replaced by an even older one); the newest commit failing it fails the build. Any other
 error (git failure, I/O, bad output) fails the build, so a healthy commit is never omitted.
 
-The site is rebuilt from git on every run. Nothing here signs or parses
-signatures: ``catalog.json.sig`` is only copied when it exists.
+The site is rebuilt from git on every run.
 """
 
 from __future__ import annotations
@@ -42,7 +51,14 @@ from pathlib import Path
 
 RETENTION = 20
 CHANNELS = {"main": "origin/main", "beta": "origin/beta"}
-OPAQUE_FILES = ("catalog.json.sig",)
+KEY_FILE_PATH = "keys/catalog-signing-keys.json"
+PLUGINS_DIR = "plugins"
+PLUGIN_MANIFEST = "plugin.json"
+
+
+def opaque_paths(channel: str) -> list[str]:
+    """The signed files the client reads per commit, published as opaque bytes when present."""
+    return [f"signed/{channel}/catalog.json", f"signed/{channel}/catalog.json.sig", KEY_FILE_PATH]
 
 MAX_FILES = 50_000
 MAX_FILE_BYTES = 5 * 1024 * 1024
@@ -80,7 +96,7 @@ def retained_commits(repo: Path, ref: str, limit: int = RETENTION) -> list[str]:
     if not out:
         raise MirrorError(f"no commits found for {ref}")
     for commit in out:
-        if not _COMMIT_RE.match(commit):
+        if not _COMMIT_RE.fullmatch(commit):
             raise MirrorError(f"unexpected rev-list output for {ref}: {commit!r}")
     return out
 
@@ -137,44 +153,42 @@ def safe_relative_path(path: str) -> str:
     if not isinstance(path, str) or not path:
         raise ValidationError(f"unsafe path: {path!r}")
     for segment in path.split("/"):
-        if not _SEGMENT_RE.match(segment) or segment in {".", ".."} or ".." in segment:
+        if not _SEGMENT_RE.fullmatch(segment) or segment in {".", ".."} or ".." in segment:
             raise ValidationError(f"unsafe path: {path!r}")
     return path
 
 
-def catalog_pins(catalog_bytes: bytes) -> dict[str, str]:
-    """Map each pinned bundle file (``<source.path>/<file>``) to its sha256.
+def _manifest_of(entry):
+    """The manifest of a catalog entry: ``{"manifest": {...}}``, or a bare manifest."""
+    if isinstance(entry, dict) and isinstance(entry.get("manifest"), dict):
+        return entry["manifest"]
+    return entry
 
-    The same path pinned to two different hashes is a catalog error.
-    """
-    try:
-        catalog = json.loads(catalog_bytes)
-        providers = catalog["providers"]
-    except (ValueError, KeyError, TypeError, RecursionError) as exc:
-        raise ValidationError(f"catalog.json is not a catalog: {exc}") from exc
-    if not isinstance(providers, list):
-        raise ValidationError("catalog.json providers is not a list")
-    pins: dict[str, str] = {}
-    count = 0
-    for entry in providers:
+
+def _add_pins(pins: dict[str, str], entries, count: int) -> int:
+    """Add the ``<source.path>/<file>`` pins of every manifest in ``entries``; return the running count."""
+    for entry in entries:
         try:
-            manifest = entry["manifest"]
+            manifest = _manifest_of(entry)
             source_path = manifest["source"].get("path", "")
             files = manifest["files"]
         except (KeyError, TypeError, AttributeError) as exc:
-            raise ValidationError(f"malformed provider entry: {exc}") from exc
+            raise ValidationError(f"malformed entry: {exc}") from exc
         if not isinstance(files, dict) or not isinstance(source_path, str):
-            raise ValidationError("provider files or source path has the wrong type")
+            raise ValidationError("entry files or source path has the wrong type")
         count += len(files)
         if count > MAX_PINS:
             raise ValidationError(f"catalog pins more than {MAX_PINS} files")
         for name, digest in files.items():
-            if not isinstance(digest, str) or not _SHA256_RE.match(digest):
+            if not isinstance(digest, str) or not _SHA256_RE.fullmatch(digest):
                 raise ValidationError(f"bad sha256 pin for {name!r}")
             full = safe_relative_path("/".join(part for part in (source_path, name) if part))
             if pins.setdefault(full, digest) != digest:
                 raise ValidationError(f"conflicting pins for {full}")
-    reserved = {"catalog.json", *OPAQUE_FILES}
+    return count
+
+
+def _check_pin_paths(pins: dict[str, str], reserved: set[str]) -> None:
     taken = set(pins) | reserved
     for path in pins:
         if path in reserved:
@@ -184,10 +198,72 @@ def catalog_pins(catalog_bytes: bytes) -> dict[str, str]:
             if parent in taken:
                 raise ValidationError(f"{parent} is pinned as a file and also used as a directory by {path}")
             parent = parent.rsplit("/", 1)[0] if "/" in parent else ""
+
+
+def catalog_pins(
+    catalog_bytes: bytes, plugin_manifests: list | None = None, reserved: set[str] | None = None
+) -> dict[str, str]:
+    """Map each pinned bundle file (``<source.path>/<file>``) to its sha256.
+
+    Pins come from the providers of ``catalog.json`` and from the given plugin manifests. The same
+    path pinned to two different hashes is a catalog error, and so is a pin on a path the mirror
+    writes itself (``reserved``, by default only ``catalog.json``).
+    """
+    try:
+        catalog = json.loads(catalog_bytes)
+        providers = catalog["providers"]
+    except (ValueError, KeyError, TypeError, RecursionError) as exc:
+        raise ValidationError(f"catalog.json is not a catalog: {exc}") from exc
+    if not isinstance(providers, list):
+        raise ValidationError("catalog.json providers is not a list")
+    pins: dict[str, str] = {}
+    count = _add_pins(pins, providers, 0)
+    _add_pins(pins, plugin_manifests or [], count)
+    _check_pin_paths(pins, {"catalog.json"} if reserved is None else reserved)
     return pins
 
 
-def commit_files(repo: Path, commit: str) -> dict[str, bytes]:
+def signed_body_pins(body_bytes: bytes) -> tuple[str, dict[str, str]]:
+    """The ``source_commit`` of a signed body and the bundle files its providers and plugins pin."""
+    try:
+        body = json.loads(body_bytes)
+        source_commit = body["source_commit"]
+        providers, plugins = body["providers"], body.get("plugins", [])
+    except (ValueError, KeyError, TypeError, RecursionError) as exc:
+        raise ValidationError(f"signed catalog is not a catalog: {exc}") from exc
+    if not isinstance(source_commit, str) or not _COMMIT_RE.fullmatch(source_commit):
+        raise ValidationError("signed catalog source_commit is not a commit")
+    if not isinstance(providers, list) or not isinstance(plugins, list):
+        raise ValidationError("signed catalog providers or plugins is not a list")
+    pins: dict[str, str] = {}
+    count = _add_pins(pins, providers, 0)
+    _add_pins(pins, plugins, count)
+    return source_commit, pins
+
+
+def plugin_manifests(repo: Path, commit: str) -> list[dict]:
+    """The ``plugins/<id>/plugin.json`` manifests of one commit, sorted by directory name."""
+    raw = git(repo, "ls-tree", "-z", "-d", "--name-only", commit, f"{PLUGINS_DIR}/")
+    names = sorted(entry.decode("utf-8", "replace") for entry in raw.split(b"\0") if entry)
+    paths = [f"{safe_relative_path(name)}/{PLUGIN_MANIFEST}" for name in names]
+    info = object_info(repo, commit, paths)
+    manifests = []
+    for path in paths:
+        entry = info[path]
+        if entry is None:
+            continue
+        data = blob_or_none(repo, commit, path)
+        try:
+            manifest = json.loads(data)
+        except (ValueError, RecursionError) as exc:
+            raise ValidationError(f"{commit}: {path} is not JSON: {exc}") from exc
+        if not isinstance(manifest, dict):
+            raise ValidationError(f"{commit}: {path} is not an object")
+        manifests.append(manifest)
+    return manifests
+
+
+def commit_files(repo: Path, commit: str, channel: str) -> dict[str, bytes]:
     """Collect every file published for one commit, verifying each bundle file against its pin.
 
     Raises ValidationError for content problems and MirrorError for everything else.
@@ -195,8 +271,9 @@ def commit_files(repo: Path, commit: str) -> dict[str, bytes]:
     catalog = blob_or_none(repo, commit, "catalog.json")
     if catalog is None:
         raise ValidationError(f"{commit}: no catalog.json")
-    pins = catalog_pins(catalog)
-    paths = [name for name in OPAQUE_FILES] + sorted(pins)
+    opaque = opaque_paths(channel)
+    pins = catalog_pins(catalog, plugin_manifests(repo, commit), {"catalog.json", *opaque})
+    paths = opaque + sorted(pins)
     info = object_info(repo, commit, paths)
     total = len(catalog)
     for path in paths:
@@ -248,7 +325,7 @@ def build_site(
         kept: list[str] = []
         for index, commit in enumerate(retained_commits(repo, ref, retention)):
             try:
-                files = commit_files(repo, commit)
+                files = commit_files(repo, commit, channel)
             except ValidationError as exc:
                 # The head must be publishable. An older commit that is not is dropped
                 # from the window, which only makes the history shorter.
