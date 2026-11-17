@@ -167,7 +167,7 @@ class PushGuardTests(unittest.TestCase):
             "RUNNER_TEMP": str(self.output.parent / "runner"),
             "SIGNING_PYTHON": str(signing_python or self.stub_verifier),
         }
-        return subprocess.run(["bash", "-e", "-c", script], cwd=cwd or self.work, env=env, capture_output=True, text=True)
+        return subprocess.run(["bash", "-eo", "pipefail", "-c", script], cwd=cwd or self.work, env=env, capture_output=True, text=True)
 
     def rerun_clone(self, content):
         """A fresh checkout of the signed commit, as a re-run of the same job starts, with a new signature."""
@@ -382,6 +382,15 @@ class PushGuardTests(unittest.TestCase):
             result = self.run_step(guard, cwd=renewal, renew=renew)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn(expected, self.output.read_text(encoding="utf-8"), renew)
+
+    def test_a_first_signing_with_no_signed_file_at_the_tip_is_pushed_under_errexit_and_pipefail(self):
+        self.assertEqual(subprocess.run(["git", "ls-tree", "-r", "--name-only", "refs/heads/beta"], cwd=self.origin,
+                                        capture_output=True, text=True).stdout.split(), ["README.md"])
+        (self.work / "signed/beta/catalog.json").write_text('{"signed_version": 1}\n', encoding="utf-8")
+        result = self.run_step()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("pushed=true", self.output.read_text(encoding="utf-8"))
+        self.assertEqual(self.tip_file("signed/beta/catalog.json"), '{"signed_version": 1}')
 
     def test_a_signing_that_is_not_newer_than_the_tip_is_never_pushed(self):
         self.commit_file(self.other, "signed/beta/catalog.json", '{"signed_version": 10}\n', "chore(catalog): sign beta")

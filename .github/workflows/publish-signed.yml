@@ -175,9 +175,12 @@ jobs:
           version_of() {
             python3 -c 'import json,sys; v=json.load(sys.stdin).get("signed_version"); print(v if isinstance(v, int) and not isinstance(v, bool) else "")' 2>/dev/null || true
           }
-          tip_version="$(git show "HEAD:signed/${CHANNEL}/catalog.json" 2>/dev/null | version_of)"
-          new_version="$(version_of < "signed/${CHANNEL}/catalog.json")"
-          if [ -n "$tip_version" ] && [ -n "$new_version" ] && [ "$new_version" -le "$tip_version" ]; then
+          # A channel's first publication has no signed file at the tip: its previous version is 0.
+          # The lookup cannot fail the step under errexit and pipefail.
+          tip_version="$({ git show "HEAD:signed/${CHANNEL}/catalog.json" 2>/dev/null || true; } | version_of || true)"
+          tip_version="${tip_version:-0}"
+          new_version="$(version_of < "signed/${CHANNEL}/catalog.json" || true)"
+          if [ -n "$new_version" ] && [ "$new_version" -le "$tip_version" ]; then
             echo "::error::signed_version ${new_version} is not greater than the ${tip_version} on ${CHANNEL}; nothing was pushed."
             exit 1
           fi
