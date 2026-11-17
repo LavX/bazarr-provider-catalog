@@ -176,7 +176,7 @@ Browser-style providers generate a current desktop User-Agent once per provider 
 - `providers/whisperai/`: generates subtitles through a configured Whisper web service after extracting local audio with ffmpeg.
 - `providers/yifysubtitles/`: scrapes YIFYSubtitles movie subtitle pages and ZIP downloads.
 - `providers/zimuku/`: scrapes Zimuku / srtku.com for Chinese and English movie and episode subtitles, with native Yunsuo image verification and optional helper settings.
-- `plugins/google_translate/`: the Google Translate translator plugin (kind `bazarr.translator.v1`): its code, a locked dependency closure and the wheels it is built from. It is not in `catalog.json`: translator plugins are published through the signed feed's `plugins` list, not the `providers` list this file embeds. See `docs/plugin-notes/google_translate.md`.
+- `plugins/google_translate/`: the Google Translate translator plugin (kind `bazarr.translator.v1`): its code, a locked dependency closure and the wheels that closure resolves to. It is not in `catalog.json`: translator plugins are published through the signed feed's `plugins` list, not the `providers` list this file embeds. See `docs/plugin-notes/google_translate.md`.
 - `sdk/`: standalone authoring tools and templates, see the [SDK reference](sdk/README.md).
 - `providers/titulky/`: scrapes Titulky.com Czech and Slovak movie and episode subtitle listings and archive downloads.
 - `tests/`: catalog validation tests. The released-host tests load vendored copies of Bazarr's `manifest.py` and `migration.py` from `sdk/released_hosts/` and import the snapshot script from `scripts/`.

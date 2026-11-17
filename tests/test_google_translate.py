@@ -14,6 +14,9 @@ from pathlib import Path
 from unittest import mock
 from urllib.parse import parse_qs, urlsplit
 
+if importlib.util.find_spec("bazarr_plugin_sdk") is None:
+    raise unittest.SkipTest("needs bazarr-plugin-sdk (tests/requirements-google-translate.txt)")
+
 from bazarr_plugin_sdk.testing import LoopbackHost, run_conformance
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -186,6 +189,39 @@ class PluginTestCase(unittest.TestCase):
     @staticmethod
     def texts(response):
         return [line["text"] if isinstance(line, dict) else line for line in response.value["lines"]]
+
+    @staticmethod
+    def host_view(sources, response):
+        """What Bazarr+'s translator runtime makes of an answer: its ``read_result`` and ``_compose``.
+
+        Returns the output lines, one per source line, and how many cues the host would record as
+        untranslated. A line that is neither returned, nor blank, nor allowed by a ``partial`` status
+        fails the job on the host, so it fails here.
+        """
+        value = response.value
+        assert value.get("status", "complete") in ("complete", "partial"), value.get("status")
+        returned = {}
+        for item in value["lines"]:
+            assert isinstance(item, dict) and isinstance(item.get("text"), str), item
+            position = item["position"]
+            assert isinstance(position, int) and not isinstance(position, bool) and 0 <= position < len(sources)
+            assert position not in returned, "a position came back twice"
+            returned[position] = item["text"]
+        missing = value.get("missing") or []
+        assert all(isinstance(item, int) and 0 <= item < len(sources) for item in missing)
+        partial = value.get("status") == "partial"
+        output, untranslated = [], 0
+        for position, text in enumerate(sources):
+            if position in returned:
+                output.append(returned[position])
+            elif not text.strip():
+                output.append(text)
+            elif partial:
+                output.append(text)
+                untranslated += 1
+            else:
+                raise AssertionError(f"the host would fail the job: line {position} came back missing")
+        return output, max(untranslated, len(missing)) if partial else 0
 
 
 class LanguageMapTests(PluginTestCase):
@@ -396,6 +432,25 @@ class RetryTests(PluginTestCase):
         with self.assertRaises(self.module._Throttled):
             self.fetch()
         self.assertEqual(len(fake.requests), 6)
+
+    def test_a_retry_after_is_kept_on_the_throttle(self):
+        self.serve(lambda request: Reply(status=429, headers={"Retry-After": "120"}))
+        with self.assertRaises(self.module._Throttled) as raised:
+            self.fetch(tries=1)
+        self.assertEqual(raised.exception.retry_after, 120.0)
+
+    def test_the_second_throttle_in_a_row_on_one_cue_stops_every_cue_from_retrying(self):
+        fake = self.serve(lambda request: Reply(status=429))
+        gate = threading.Event()
+        with mock.patch.object(self.module, "BACKOFF_START", 0.01), mock.patch.object(self.module, "BACKOFF_JITTER", 0.0):
+            with self.assertRaises(self.module._Throttled):
+                self.module._translate_text("One", "de", lambda: False, None, gate)
+            self.assertEqual(len(fake.requests), 2)
+            self.assertTrue(gate.is_set())
+            # Another cue of the same job gives up at its first throttle.
+            with self.assertRaises(self.module._Throttled):
+                self.module._translate_text("Two", "de", lambda: False, None, gate)
+        self.assertEqual(len(fake.requests), 3)
 
     def test_six_tries_and_then_a_server_error_is_unreachable(self):
         fake = self.serve(lambda request: Reply(status=503))
@@ -720,6 +775,22 @@ class OperationTests(PluginTestCase):
         host = self.host()
         self.assertEqual(host.request("validate", {"config": ["x"]}).code, "invalid_config")
 
+    def test_the_hosts_own_config_shape_is_read_for_validate_and_test(self):
+        fake = self.serve()
+        host = self.host()
+        shaped = {"settings": {}, "connection": {"id": "1", "type": "", "enabled": True, "settings": {}}, "limits": {}}
+        self.assertEqual(host.request("validate", {"config": shaped}).value, {})
+        self.assertEqual(host.request("validate", {"config": {"settings": {}}}).value, {})
+        self.assertEqual(host.request("test", {"config": shaped}).value["ok"], True)
+        self.assertEqual(len(fake.requests), 1)
+        # Settings inside the host's shape are still refused, by name.
+        response = host.request("validate", {"config": {"settings": {"api_key": "x"}}})
+        self.assertEqual(response.code, "invalid_config")
+        self.assertEqual(sorted(response.error["field_errors"]), ["api_key"])
+        self.assertEqual(host.request("validate", {"config": {"settings": "x"}}).code, "invalid_config")
+        # A bare object that merely mixes a host key with another key is not the host's shape.
+        self.assertEqual(host.request("validate", {"config": {"settings": {}, "api_key": "x"}}).code, "invalid_config")
+
     def test_migrate_is_the_identity_at_version_one(self):
         host = self.host()
         response = host.request("migrate", {"from_version": 1, "settings": {}, "connections": []})
@@ -763,10 +834,12 @@ class TranslateTests(PluginTestCase):
         )
         self.assertEqual(response.value["status"], "complete")
 
-    def test_plain_string_lines_come_back_as_strings(self):
+    def test_plain_string_lines_come_back_with_their_positions(self):
         self.serve()
         response = self.translate(self.host(), ["One", "Two"])
-        self.assertEqual(response.value["lines"], ["T[de]:One", "T[de]:Two"])
+        self.assertEqual(
+            response.value["lines"], [{"position": 0, "text": "T[de]:One"}, {"position": 1, "text": "T[de]:Two"}]
+        )
 
     def test_the_target_is_mapped_before_it_is_sent(self):
         fake = self.serve()
@@ -814,25 +887,52 @@ class TranslateTests(PluginTestCase):
         self.assertEqual(self.texts(response), ["♪♪", "", "T[de]:Hello"])
         self.assertEqual(len(fake.requests), 1)
 
-    def test_a_cue_google_has_no_answer_for_keeps_its_source_text(self):
+    def test_a_cue_google_has_no_answer_for_is_reported_as_missing_and_the_status_is_partial(self):
         def behaviour(request):
             return Reply(body=page("no_result")) if request["q"] == "Odd" else translated(request)
 
         self.serve(behaviour)
-        response = self.translate(self.host(), ["Hello", "Odd"])
-        self.assertEqual(self.texts(response), ["T[de]:Hello", "Odd"])
-        self.assertIn("1 cues kept their source text", response.value["message"])
+        sources = ["Hello", "Odd"]
+        response = self.translate(self.host(), sources)
+        self.assertEqual(response.value["status"], "partial")
+        self.assertEqual(response.value["missing"], [1])
+        self.assertEqual(response.value["model"], "google_translate")
+        self.assertEqual([line["position"] for line in response.value["lines"]], [0])
+        # The host keeps the source text for it and records the job as partial, never as complete.
+        self.assertEqual(self.host_view(sources, response), (["T[de]:Hello", "Odd"], 1))
+        self.assertIn("1 cues are left out", response.value["message"])
 
-    def test_a_multiline_cue_that_is_only_partly_translated_is_counted_as_partial(self):
+    def test_a_job_with_every_cue_translated_is_complete_and_has_no_missing_list(self):
+        self.serve()
+        response = self.translate(self.host(), ["Hello", "", "World", "\u266a"])
+        self.assertEqual(response.value["status"], "complete")
+        self.assertNotIn("missing", response.value)
+        self.assertEqual(self.host_view(["Hello", "", "World", "\u266a"], response)[1], 0)
+
+    def test_missing_positions_follow_the_requests_own_positions(self):
         def behaviour(request):
             return Reply(body=page("no_result")) if request["q"] == "Odd" else translated(request)
 
         self.serve(behaviour)
-        response = self.translate(self.host(), ["<i>Hello</i>\n<i>Odd</i>", "Plain"])
-        self.assertEqual(self.texts(response), ["<i>T[de]:Hello</i>\n<i>Odd</i>", "T[de]:Plain"])
+        lines = [{"position": 10, "text": "Hello"}, {"position": 11, "text": "Odd"}]
+        response = self.translate(self.host(), lines)
+        self.assertEqual(response.value["missing"], [11])
+        self.assertEqual(response.value["lines"], [{"position": 10, "text": "T[de]:Hello"}])
+
+    def test_a_multiline_cue_that_is_only_partly_translated_is_left_out_as_missing(self):
+        def behaviour(request):
+            return Reply(body=page("no_result")) if request["q"] == "Odd" else translated(request)
+
+        self.serve(behaviour)
+        sources = ["<i>Hello</i>\n<i>Odd</i>", "Plain"]
+        response = self.translate(self.host(), sources)
+        self.assertEqual(response.value["status"], "partial")
+        self.assertEqual(response.value["missing"], [0])
+        # No half-translated cue is handed over as a translation: the host keeps the source for it.
+        self.assertEqual(self.host_view(sources, response), (sources[:1] + ["T[de]:Plain"], 1))
         message = response.value["message"]
         self.assertIn("1 cues were only partly translated", message)
-        self.assertNotIn("kept their source text because Google gave no answer", message)
+        self.assertNotIn("because Google gave no answer", message)
 
     def test_a_cue_with_one_refused_part_and_one_empty_part_is_not_counted_as_refused(self):
         def behaviour(request):
@@ -855,7 +955,7 @@ class TranslateTests(PluginTestCase):
         self.serve(lambda request: Reply(body=page("no_result")) if request["q"] in ("Odd", "Even") else translated(request))
         response = self.translate(self.host(), ["<i>Odd</i>\n<i>Even</i>", "Plain"])
         message = response.value["message"]
-        self.assertIn("1 cues kept their source text", message)
+        self.assertIn("1 cues are left out because Google gave no answer", message)
         self.assertNotIn("partly", message)
 
     def test_a_client_error_for_one_cue_skips_that_cue_and_the_job_goes_on(self):
@@ -865,9 +965,11 @@ class TranslateTests(PluginTestCase):
         fake = self.serve(behaviour)
         response = self.translate(self.host(), ["Hello", "Bad", "World"])
         self.assertTrue(response.ok, response.error)
-        self.assertEqual(self.texts(response), ["T[de]:Hello", "Bad", "T[de]:World"])
+        self.assertEqual(response.value["status"], "partial")
+        self.assertEqual(response.value["missing"], [1])
+        self.assertEqual(self.host_view(["Hello", "Bad", "World"], response)[0], ["T[de]:Hello", "Bad", "T[de]:World"])
         self.assertEqual([request["q"] for request in fake.requests].count("Bad"), 1)  # not retried
-        self.assertIn("1 cues kept their source text", response.value["message"])
+        self.assertIn("1 cues are left out", response.value["message"])
 
     def test_a_retired_route_that_answers_4xx_to_everything_is_declined_as_unreachable(self):
         fake = self.serve(lambda request: Reply(status=404))
@@ -964,6 +1066,30 @@ class TranslateTests(PluginTestCase):
         self.assertEqual(response.error["retry_after"], self.module.THROTTLE_RETRY_AFTER)
         self.assertGreaterEqual(self.module.THROTTLE_RETRY_AFTER, 300)
 
+    def test_the_retry_time_follows_googles_retry_after_between_one_and_sixty_minutes(self):
+        for sent, expected in (("120", 120.0), ("5", self.module.THROTTLE_RETRY_MIN), ("999999", self.module.THROTTLE_RETRY_MAX),
+                               ("Wed, 21 Oct 2026 07:28:00 GMT", self.module.THROTTLE_RETRY_AFTER)):
+            self.serve(lambda request, sent=sent: Reply(status=429, headers={"Retry-After": sent}))
+            with mock.patch.object(self.module, "BACKOFF_START", 0.01), mock.patch.object(self.module, "BACKOFF_JITTER", 0.0):
+                response = self.translate(self.host(), ["Hello"])
+            self.assertEqual(response.code, "rate_limited", sent)
+            self.assertEqual(response.error["retry_after"], expected, sent)
+
+    def test_a_block_that_is_plain_does_not_cost_every_cue_in_flight_all_its_tries(self):
+        fake = self.serve(lambda request: Reply(status=429))
+        with mock.patch.object(self.module, "BACKOFF_START", 0.01), mock.patch.object(self.module, "BACKOFF_JITTER", 0.0):
+            response = self.translate(self.host(), [f"Line {index}" for index in range(30)])
+        self.assertEqual(response.code, "rate_limited")
+        # Without the shared flag: ten cues in flight times six tries.
+        self.assertLess(len(fake.requests), 2 * self.module.CONCURRENCY + 5)
+
+    def test_a_page_that_no_longer_holds_the_answer_stops_after_the_first_cues(self):
+        fake = self.serve(lambda request: Reply(body=page("no_result")))
+        response = self.translate(self.host(), [f"Line {index}" for index in range(400)])
+        self.assertEqual(response.code, "internal")
+        self.assertIn("no usable text", response.error["message"])
+        self.assertLess(len(fake.requests), self.module.REFUSAL_PROBE + 2 * self.module.CONCURRENCY + 1)
+
     def test_no_route_to_google_is_declined_as_unreachable(self):
         self.serve(lambda request: Reply(status=502))
         response = self.translate(self.host(), ["Hello"])
@@ -1006,20 +1132,21 @@ class CheckpointTests(PluginTestCase):
     def pack(self, cues, lines, target="de"):
         return self.module.pack_cues(cues, target, self.module.source_digest(lines))
 
-    def test_every_checkpoint_is_cumulative_so_the_latest_alone_is_enough(self):
+    def test_each_checkpoint_holds_only_what_finished_since_the_previous_one(self):
         self.serve()
         host = self.host()
         response = self.translate(host, [f"Line {index}" for index in range(250)], wait=60)
         self.assertTrue(response.ok, response.error)
         saved = self.checkpoints(host)
-        self.assertEqual([item["v"] for item in saved], [2, 2])
+        self.assertEqual([item["v"] for item in saved], [3, 3])
         held = [self.cues(item) for item in saved]
-        self.assertEqual([len(cues) for cues in held], [100, 200])
-        self.assertTrue(set(held[0]) < set(held[1]))
-        for key, text in held[1].items():
-            self.assertEqual(text, f"T[de]:Line {key}")
+        self.assertEqual([len(cues) for cues in held], [100, 100])
+        self.assertFalse(set(held[0]) & set(held[1]), "a cue is stored once")
+        for cues in held:
+            for key, text in cues.items():
+                self.assertEqual(text, f"T[de]:Line {key}")
 
-    def test_resuming_from_the_latest_checkpoint_alone_sends_only_the_rest(self):
+    def test_resuming_from_checkpoints_sends_only_the_rest(self):
         fake = self.serve()
         lines = [f"Line {index}" for index in range(150)]
         latest = self.pack({index: f"EARLIER {index}" for index in range(100)}, lines)
@@ -1032,19 +1159,18 @@ class CheckpointTests(PluginTestCase):
         self.assertEqual(len(fake.requests), 50)
         self.assertEqual(len(self.checkpoints(host)), 0)  # 50 new cues, below the cadence
 
-    def test_a_retry_after_a_resume_stores_everything_done_so_far(self):
+    def test_a_retry_after_a_resume_stores_only_the_new_cues(self):
         self.serve()
         host = self.host()
         lines = [f"Line {index}" for index in range(100)]
-        latest = self.pack({index: f"EARLIER {index}" for index in range(30)}, lines)
+        earlier = self.pack({index: f"EARLIER {index}" for index in range(30)}, lines)
         with mock.patch.object(self.module, "CHECKPOINT_EVERY", 50):
-            response = self.translate(host, lines, checkpoints=[latest], wait=60)
+            response = self.translate(host, lines, checkpoints=[earlier], wait=60)
         self.assertTrue(response.ok, response.error)
         held = self.cues(self.checkpoints(host)[-1])
-        self.assertEqual(held["0"], "EARLIER 0")
-        self.assertEqual(held["29"], "EARLIER 29")
-        self.assertTrue(any(text.startswith("T[de]:") for text in held.values()))
-        self.assertEqual(len(held), 80)  # the 30 resumed and the 50 that triggered the checkpoint
+        self.assertEqual(len(held), 50)  # the cues that triggered it, not the 30 that were resumed
+        self.assertFalse(any(text.startswith("EARLIER") for text in held.values()))
+        self.assertEqual(self.texts(response)[:30], [f"EARLIER {index}" for index in range(30)])
 
     def test_the_latest_of_several_checkpoints_wins_and_the_single_form_is_read(self):
         fake = self.serve()
@@ -1071,14 +1197,91 @@ class CheckpointTests(PluginTestCase):
         self.assertEqual(self.texts(response), ["FROM WRAPPER", "T[de]:b"])
         self.assertEqual(len(fake.requests), 1)
 
-    def test_a_long_job_stays_under_the_frame_cap(self):
+    def retry_request_bytes(self, lines, checkpoints):
+        """The size of the retry request the host would build: the lines and every stored checkpoint."""
+        return self.module._frame_bytes({"lines": [{"position": i, "text": t} for i, t in enumerate(lines)],
+                                         "checkpoints": checkpoints})
+
+    def test_all_the_checkpoints_of_a_long_job_stay_under_the_frame_cap_together(self):
         # Realistic text: no two cues alike, so the compression has little to work with.
         rng = random.Random(7)
         letters = "\u05d0\u05d1\u05d2\u05d3\u05d4\u05d5\u05d6\u05d7\u05d8\u05d9\u05db\u05dc\u05de\u05e0\u05e1\u05e2\u05e4\u05e6\u05e7\u05e8\u05e9\u05ea "
-        cues = {index: "".join(rng.choice(letters) for _ in range(rng.randint(15, 60))) for index in range(12000)}
-        data = self.pack(cues, ["x"])
-        self.assertLess(len(json.dumps(data)), 1024 * 1024)
-        self.assertEqual(self.cues(data), {str(key): value for key, value in cues.items()})
+        lines = ["".join(rng.choice(letters) for _ in range(rng.randint(15, 60))) for _ in range(2400)]
+        self.serve()
+        host = self.host()
+        with mock.patch.object(self.module, "CHECKPOINT_EVERY", 50):
+            response = self.translate(host, lines, wait=120)
+        self.assertTrue(response.ok, response.error)
+        saved = self.checkpoints(host)
+        self.assertEqual(len(saved), 48)
+        everything = set()
+        for item in saved:
+            keys = set(self.cues(item))
+            self.assertFalse(keys & everything)
+            everything |= keys
+        self.assertEqual(len(everything), 2400)
+        # Cumulative checkpoints would add up to about 24 times the final one. Deltas add up to it.
+        sizes = [self.module._frame_bytes(item) for item in saved]
+        self.assertLess(sum(sizes), 1.2 * (sizes[0] * len(sizes)))
+        self.assertLess(self.retry_request_bytes(lines, saved), 1024 * 1024)
+
+    def test_no_checkpoint_is_stored_that_would_push_a_retry_request_past_the_budget(self):
+        self.serve()
+        texts = [f"Line {index} of the film" for index in range(600)]
+        lines = [{"position": index, "text": text} for index, text in enumerate(texts)]
+        one = self.module._frame_bytes(self.pack({index: f"T[de]:{texts[index]}" for index in range(50)}, texts))
+        budget = self.retry_request_bytes(texts, []) + 3 * (one + self.module.CHECKPOINT_OVERHEAD_BYTES) + 100
+        host = self.host()
+        with mock.patch.object(self.module, "CHECKPOINT_EVERY", 50), mock.patch.object(
+            self.module, "REQUEST_BUDGET_BYTES", budget
+        ):
+            response = self.translate(host, lines, wait=60)
+        self.assertTrue(response.ok, response.error)
+        saved = self.checkpoints(host)
+        self.assertEqual(len(saved), 3, "it stopped storing when the budget ran out, and the job went on")
+        self.assertLessEqual(self.retry_request_bytes(texts, saved), budget)
+        self.assertEqual(self.texts(response)[-1], f"T[de]:{texts[-1]}")
+
+    def test_the_request_the_plugin_received_counts_against_the_budget(self):
+        self.serve()
+        texts = [f"Line {index}" for index in range(200)]
+        lines = [{"position": index, "text": text} for index, text in enumerate(texts)]
+        earlier = self.pack({index: f"EARLIER {index}" for index in range(100)}, texts)
+        used = self.retry_request_bytes(texts, [earlier])
+        host = self.host()
+        with mock.patch.object(self.module, "CHECKPOINT_EVERY", 20), mock.patch.object(
+            self.module, "REQUEST_BUDGET_BYTES", used + 10
+        ):
+            response = self.translate(host, lines, checkpoints=[earlier], wait=60)
+        self.assertTrue(response.ok, response.error)
+        self.assertEqual(self.checkpoints(host), [])
+
+    def test_cues_a_refused_checkpoint_held_go_into_the_next_one(self):
+        self.serve()
+        context = self.module.PluginContext
+        original = context.checkpoint_sync
+        attempts = []
+
+        def flaky(ctx, data):
+            attempts.append(data)
+            if len(attempts) == 1:
+                raise OSError("pipe")
+            return original(ctx, data)
+
+        host = self.host()
+        with mock.patch.object(context, "checkpoint_sync", flaky), mock.patch.object(
+            self.module, "CHECKPOINT_EVERY", 5
+        ):
+            response = self.translate(host, [f"Line {index}" for index in range(30)], wait=60)
+        self.assertTrue(response.ok, response.error)
+        saved = self.checkpoints(host)
+        held = {}
+        for item in saved:
+            held.update(self.cues(item))
+        # The first checkpoint never reached the host, yet its cues are in a later one.
+        self.assertEqual(set(self.cues(attempts[0])) - set(held), set())
+        self.assertGreaterEqual(len(self.cues(saved[0])), 10)
+        self.assertGreater(len(held), 20)
 
     def test_a_checkpoint_for_another_target_or_another_file_is_ignored(self):
         fake = self.serve()
@@ -1100,9 +1303,10 @@ class CheckpointTests(PluginTestCase):
         lines = [f"Line {index}" for index in range(10)]
         with mock.patch.object(self.module, "CHECKPOINT_EVERY", 5):
             self.translate(host, lines, target="he")
-        data = self.checkpoints(host)[-1]
-        self.assertEqual((data["target"], data["digest"]), ("iw", self.module.source_digest(lines)))
-        self.assertEqual(len(self.cues(data, lines, target="iw")), 10)
+        saved = self.checkpoints(host)
+        for data in saved:
+            self.assertEqual((data["target"], data["digest"]), ("iw", self.module.source_digest(lines)))
+        self.assertEqual(sum(len(self.cues(data, lines, target="iw")) for data in saved), 10)
 
     def test_the_job_keeps_heartbeating_while_the_host_stores_a_checkpoint(self):
         self.serve()
@@ -1267,9 +1471,12 @@ class ManifestTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         self.assertIn("plugins/google_translate/plugin.json", workflow)
         self.assertIn("['dependencies']['requirements']", workflow)
+        self.assertIn("--no-index --find-links plugins/google_translate/wheels --require-hashes", workflow)
         self.assertIn("-r tests/requirements-google-translate.txt", workflow)
         tests = TEST_REQUIREMENTS.read_text(encoding="utf-8").splitlines()
-        self.assertIn("bazarr-plugin-sdk @ git+https://github.com/LavX/bazarr-plugin-sdk@v0.1.0", tests)
+        self.assertIn(
+            "bazarr-plugin-sdk @ git+https://github.com/LavX/bazarr-plugin-sdk@cbd544e50a19c1b6cf322bbf30a3beea22308bf7", tests
+        )
 
     def test_requests_and_urllib3_are_pinned_to_ranges_the_lock_satisfies(self):
         import re
@@ -1304,7 +1511,7 @@ class ManifestTests(unittest.TestCase):
 
     def test_the_module_documents_what_a_retry_must_hand_back(self):
         doc = load_plugin_module().__doc__
-        for phrase in ('request["checkpoints"]', 'request["checkpoint"]', "cumulative", "cues_z"):
+        for phrase in ('request["checkpoints"]', 'request["checkpoint"]', "since the previous one", "cues_z", "missing", "partial"):
             self.assertIn(phrase, doc)
 
 

@@ -1,5 +1,5 @@
 {
-  "bundle_sha256": "af2f8710f6bbae2c709caac110467923fdcdbb4d28c883f4e81d676c87d9a879",
+  "bundle_sha256": "3ecc10ea5e1e95ac371c1d459bd175ccc5c393351468bac9c2f3bee30ec1e182",
   "dependencies": {
     "requirements": [
       {
@@ -83,7 +83,7 @@
   "entry_class": "GoogleTranslatePlugin",
   "entry_module": "google_translate",
   "files": {
-    "google_translate.py": "2c86deb3c1a6a4d6d0ca57ae401584d559ab367fcd37b087b48fe750366ef133",
+    "google_translate.py": "39ed62cfc8c8739d87fb66b3b4054bbf711a9b64b8314bc2be224ce8e41d9ef0",
     "wheels/beautifulsoup4-4.15.0-py3-none-any.whl": "d6f88de62e1d4e38ecb1077eb9724cd0eff29d2a08ca16a401e9b9e93f117cf9",
     "wheels/certifi-2026.10.23-py3-none-any.whl": "e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1",
     "wheels/charset_normalizer-3.5.2-py3-none-any.whl": "b6b751274acb69d77b3323d6b7dbaa3c7fdfc1eb829b7eb61d262f32e1af9685",

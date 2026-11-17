@@ -22,14 +22,20 @@ module docstring of `google_translate.py`.
 
 ## The bundle and its wheels
 
-The bundle carries everything its environment is built from. `plugin.json` locks the closure
+The bundle carries what its environment is built from. `plugin.json` locks the closure
 (`beautifulsoup4`, `certifi`, `charset-normalizer`, `deep-translator`, `idna`, `requests`,
 `soupsieve`, `typing-extensions`, `urllib3`) to exact versions with sha256 hashes, and
 `plugins/google_translate/wheels/` holds the wheel each one resolves to. They are all
-`py3-none-any` wheels, so the one set runs on every platform and Python 3 the host supports, and
-`python_tags` says `py3`. An install builds the environment from these files and does not need PyPI.
-`charset-normalizer` also lists its compiled wheels in the lock, so a `--require-hashes` install
-that prefers a compiled build still matches; the pure wheel is the one baked.
+`py3-none-any` wheels, so the one set fits every platform and Python 3 the host supports, and
+`python_tags` says `py3`. `charset-normalizer` also lists its compiled wheels in the lock, so a
+`--require-hashes` install that prefers a compiled build still matches; the pure wheel is the one
+baked.
+
+Today the host builds a plugin's environment with `pip install --require-hashes` against PyPI and
+does not read `wheels/`, so an install still needs PyPI. The wheels are in the bundle so that the
+host can install from them (and a seeded image can carry them) once it learns to: that is host work
+that has not landed. Until then they are verified and signed with the bundle but not used. The tests
+prove that they would work: they install the baked wheels with no index against the locked hashes.
 
 The plugin SDK is not part of the closure. The host provides it to the worker.
 
@@ -42,6 +48,19 @@ python3 -B -m sdk build-catalog
 python3 -B -m sdk validate
 ```
 
-`build-catalog` refreshes the `files` list and `bundle_sha256` of the manifest. The tests install
-the baked wheels offline against the locked hashes, so a closure that is missing a member, or a wheel
-that does not match its lock, fails there.
+`build-catalog` refreshes the `files` list and `bundle_sha256` of the manifest. `sdk validate`
+refuses a bundle whose `wheels/` holds anything but a wheel of a locked dependency, at its locked
+version, with a hash the lock lists, and a lock with a dependency that has no wheel. The tests also
+install the baked wheels offline against the locked hashes, so a closure that is missing a member
+fails there.
+
+## Results and checkpoints
+
+A cue Google gave no text for, or only some of its text, is reported in `missing` and left out of
+`lines`, and the result status is `partial`. Bazarr+ keeps the source text for those cues and records
+the job as partial. The status is `complete` only when every cue that has text to translate came back
+translated.
+
+Checkpoints are deltas: each holds only the cues finished since the previous one. Bazarr+ hands every
+stored checkpoint back in the request of a retry, and a request frame is capped at 1 MiB, so the plugin
+measures the request and stops storing checkpoints before a retry request would pass its budget.

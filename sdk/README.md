@@ -12,7 +12,7 @@ Authoring tooling for building subtitle provider plugins distributed through the
 - `python3 -B -m sdk verify --channel main|beta`: check `signed/<channel>/` with the host's verifier, the root hosts trust and `keys/catalog-signing-keys.json`. `--ignore-expiry` checks the signature and chain only.
 - `python3 -B -m sdk hash providers/<id>`: print the deterministic bundle SHA256 for a provider folder.
 - `python3 -B -m sdk build-catalog`: refresh provider and plugin file hashes and regenerate the embedded catalog. `catalog.json` carries providers only, so nothing under `plugins/` ever changes it.
-- `python3 scripts/bake_plugin_wheels.py [plugin_id ...]`: download the wheels each `plugins/<id>/plugin.json` locks (checked against the locked hashes) into `plugins/<id>/wheels/`, so the plugin's bundle carries what its environment is built from. Unlike a provider bundle, a plugin bundle may carry these wheel files; each is listed in `files` and covered by `bundle_sha256`. Run `build-catalog` afterwards.
+- `python3 scripts/bake_plugin_wheels.py [plugin_id ...]`: download the wheels each `plugins/<id>/plugin.json` locks (checked against the locked hashes) into `plugins/<id>/wheels/`, so the plugin's bundle carries what its environment is built from. Unlike a provider bundle, a plugin bundle may carry these wheel files; each is listed in `files` and covered by `bundle_sha256`, and `validate` refuses a wheel the lock does not name. Run `build-catalog` afterwards.
 - `python3 -B -m sdk runtime-matrix`: print the supported Bazarr+ Provider Hub Python runtimes and wheel tags.
 - `python3 -B -m sdk smoke-test`: run a provider against the worker-shaped search/download contract.
 

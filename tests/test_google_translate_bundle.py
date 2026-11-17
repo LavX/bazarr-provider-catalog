@@ -133,13 +133,24 @@ class BakedWheelTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             installed = {path.name.split("-")[0].lower().replace("_", "-") for path in target.glob("*.dist-info")}
             self.assertEqual(installed, set(self.requirements))
-            # The library the plugin imports is the baked one and loads from the installed closure.
+            # What the plugin imports comes from this installation, at the baked version, and not from
+            # whatever else is installed where the tests run.
             probe = subprocess.run(
-                [sys.executable, "-I", "-c", "import deep_translator, bs4, requests, importlib.metadata as m; print(m.version('deep-translator'))"],
-                capture_output=True, text=True, env={"PYTHONPATH": str(target)},
+                [
+                    sys.executable, "-I", "-c",
+                    "import sys; sys.path.insert(0, sys.argv[1])\n"
+                    "import deep_translator, bs4, requests, importlib.metadata as m\n"
+                    "print(m.version('deep-translator'))\n"
+                    "print(deep_translator.__file__, bs4.__file__, requests.__file__, sep='\\n')",
+                    str(target),
+                ],
+                capture_output=True, text=True,
             )
             self.assertEqual(probe.returncode, 0, probe.stderr)
-            self.assertEqual(probe.stdout.strip(), "1.11.4")
+            version, *paths = probe.stdout.splitlines()
+            self.assertEqual(version, "1.11.4")
+            for path in paths:
+                self.assertTrue(Path(path).resolve().is_relative_to(target.resolve()), path)
 
     def test_a_wheel_that_does_not_match_its_hash_would_not_pass_the_manifest_check(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -159,6 +170,57 @@ class BakedWheelTests(unittest.TestCase):
             with self.assertRaises(cli.CatalogError) as raised:
                 cli.validate_plugin(Path(tmp), copy, set())
             self.assertIn("undeclared file", str(raised.exception))
+
+
+class BakedWheelValidationTests(unittest.TestCase):
+    """`sdk validate` refuses a bundle whose wheels the lock does not name, whatever the plugin."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.copy = self.root / "plugins" / "google_translate"
+        shutil.copytree(PLUGIN_DIR, self.copy, ignore=shutil.ignore_patterns("__pycache__"))
+
+    def refresh_and_validate(self):
+        manifest = cli.refresh_plugin_manifest(self.copy)
+        (self.copy / "plugin.json").write_text(cli.dump_json(manifest), encoding="utf-8")
+        return cli.validate_plugin(self.root, self.copy, set())
+
+    def refused(self, fragment):
+        with self.assertRaises(cli.CatalogError) as raised:
+            self.refresh_and_validate()
+        self.assertIn(fragment, str(raised.exception))
+
+    def test_the_committed_bundle_passes(self):
+        self.refresh_and_validate()
+
+    def test_a_wheel_of_a_package_the_lock_does_not_name_is_refused(self):
+        (self.copy / "wheels" / "extra-1.0-py3-none-any.whl").write_bytes(b"x")
+        self.refused("not a locked dependency")
+
+    def test_a_wheel_of_another_version_is_refused(self):
+        wheel = next(self.copy.glob("wheels/idna-*.whl"))
+        wheel.rename(wheel.with_name("idna-9.9-py3-none-any.whl"))
+        self.refused("not the locked version")
+
+    def test_a_wheel_whose_hash_the_lock_does_not_list_is_refused(self):
+        wheel = next(self.copy.glob("wheels/idna-*.whl"))
+        wheel.write_bytes(wheel.read_bytes() + b"\0")
+        self.refused("not among the hashes locked")
+
+    def test_a_locked_dependency_without_a_wheel_is_refused(self):
+        next(self.copy.glob("wheels/idna-*.whl")).unlink()
+        self.refused("carries no wheel of it")
+
+    def test_a_file_under_wheels_that_is_not_a_wheel_is_refused(self):
+        (self.copy / "wheels" / "notes.txt").write_text("x", encoding="utf-8")
+        self.refused("not a wheel")
+        shutil.rmtree(self.copy / "wheels" / "notes.txt", ignore_errors=True)
+
+    def test_a_plugin_with_no_wheels_is_not_held_to_this(self):
+        shutil.rmtree(self.copy / "wheels")
+        self.refresh_and_validate()
 
 
 class FeedTests(unittest.TestCase):
