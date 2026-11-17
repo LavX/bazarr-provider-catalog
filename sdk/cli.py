@@ -1027,6 +1027,55 @@ def command_build_signed_feed(args):
     return 0
 
 
+def command_sign(args):
+    from . import signing
+
+    now = signing.parse_now(args.now) if args.now else signing.utc_now()
+    key = signing.private_key_from_env(args.key_env)
+    source_commit = args.source_commit
+    if source_commit is None and not args.renew:
+        source_commit = _git_head(Path(args.root).resolve())
+    result = signing.sign(
+        args.root,
+        args.channel,
+        key,
+        now=now,
+        source_commit=source_commit,
+        renew=args.renew,
+        validity_days=args.validity_days,
+    )
+    print(
+        f"signed {args.channel}: signed_version {result.signed_version}, "
+        f"key {result.signer_key_id}, expires {signing.format_time(result.expires)}"
+    )
+    return 0
+
+
+def command_verify(args):
+    from . import signing
+
+    now = signing.parse_now(args.now) if args.now else signing.utc_now()
+    result = signing.verify_files(args.root, args.channel, now=now, baked=args.ignore_expiry)
+    if not result.ok:
+        raise CatalogError(f"{args.channel}: {result.status.value}: {result.detail}")
+    print(
+        f"{args.channel} ok: signed_version {result.signed_version}, key {result.signer_key_id}, "
+        f"expires {signing.format_time(result.expires)}"
+    )
+    return 0
+
+
+def _git_head(root):
+    import subprocess
+
+    try:
+        return subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise CatalogError("could not read the current commit; pass --source-commit") from exc
+
+
 def command_smoke_test(args):
     defaults = DEFAULT_SMOKE_CONFIG if args.provider == EXPECTED_SMOKE_PROVIDER_ID else {}
     config = _load_config(args.config_file, args.config_json, args.secret, defaults=defaults)
@@ -1081,6 +1130,29 @@ def build_parser():
     feed.add_argument("--channel", required=True, choices=SIGNED_FEED_CHANNELS, help="channel the body is for")
     feed.add_argument("--output", help="write the body to this path (relative to root) instead of stdout")
     feed.set_defaults(func=command_build_signed_feed)
+
+    sign = subparsers.add_parser(
+        "sign",
+        help="sign signed/<channel>/catalog.json with the CI signing key read from an environment variable",
+    )
+    sign.add_argument("root", nargs="?", default=".", help="catalog root directory")
+    sign.add_argument("--channel", required=True, choices=SIGNED_FEED_CHANNELS, help="channel to sign")
+    sign.add_argument("--key-env", default="CATALOG_SIGNING_KEY", help="environment variable holding the PEM key")
+    sign.add_argument("--source-commit", help="commit the body is built from (default: the checkout's HEAD)")
+    sign.add_argument("--renew", action="store_true", help="restamp the current signed body, keeping its source_commit")
+    sign.add_argument("--validity-days", type=int, default=90, help="days until expiry, 1 to 366 (default 90)")
+    sign.add_argument("--now", help="signing time as YYYY-MM-DDTHH:MM:SSZ (tests and rehearsals only)")
+    sign.set_defaults(func=command_sign)
+
+    verify = subparsers.add_parser(
+        "verify",
+        help="check signed/<channel>/ with the host's verifier, the root it trusts and keys/catalog-signing-keys.json",
+    )
+    verify.add_argument("root", nargs="?", default=".", help="catalog root directory")
+    verify.add_argument("--channel", required=True, choices=SIGNED_FEED_CHANNELS, help="channel to check")
+    verify.add_argument("--ignore-expiry", action="store_true", help="check signature and chain only")
+    verify.add_argument("--now", help="verification time as YYYY-MM-DDTHH:MM:SSZ")
+    verify.set_defaults(func=command_verify)
 
     smoke = subparsers.add_parser("smoke-test", help="run the deterministic smoke provider contract")
     smoke.add_argument("root", nargs="?", default=".", help="catalog root directory")

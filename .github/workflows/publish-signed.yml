@@ -1,0 +1,198 @@
+name: Publish signed feed
+
+# Signs the plugins feed of the branch that was pushed and commits signed/<channel>/ back to it.
+#
+# The job runs in the catalog-signing environment. That environment has the project owner as its
+# required reviewer, accepts only main and beta, and holds the secret CATALOG_SIGNING_KEY (the CI
+# signing key as an unencrypted PKCS8 PEM). Nothing is signed until the owner approves the run.
+#
+# The key is handed to exactly one step, as an environment variable. sdk/signing.py reads it into
+# memory, removes the variable from its own process and never writes it anywhere, never prints it
+# and never puts it on a command line. No other step sees it, and no step runs with shell tracing.
+#
+# A push that touches only signed/** starts nothing, and a commit pushed with the default
+# GITHUB_TOKEN starts no workflow, so the sign commit cannot loop. For the same reason the run
+# starts the Pages mirror itself: the mirror's push trigger never sees the sign commit.
+#
+# Manual dispatch signs the branch it is started on. With renew set it keeps the current signed
+# body, its source_commit included, and only restamps the dates.
+
+on:
+  push:
+    branches: [main, beta]
+    paths-ignore:
+      - "signed/**"
+  workflow_dispatch:
+    inputs:
+      renew:
+        description: Restamp the current signed body with fresh dates instead of rebuilding it
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# One signing run per branch at a time. A later push queues behind a run that is waiting for
+# approval instead of cancelling it, and replaces any older queued run.
+concurrency:
+  group: publish-signed-${{ github.ref_name }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  sign:
+    name: sign ${{ github.ref_name }}
+    if: >-
+      github.repository == 'LavX/bazarr-provider-catalog'
+      && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: catalog-signing
+    permissions:
+      contents: write
+      actions: write
+    env:
+      CHANNEL: ${{ github.ref_name }}
+      RENEW: ${{ inputs.renew && 'true' || 'false' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Stand down if the branch has moved on
+        id: head
+        # The run is approved for exactly the commit it was created for (github.sha), and only code
+        # from that commit ever runs next to the key. The approval can take days. If the branch has
+        # since moved on in anything but signed/**, that push has its own run (still waiting for its
+        # own approval), so this run stands down, a renewal included. The branch is never reset to
+        # its tip, so a later unapproved push cannot get its code run with the key. A renewal also
+        # stands down when the tip's signed pair is no longer the one it would renew: restamping the
+        # old body over a newer signing would roll the channel back.
+        run: |
+          git fetch --no-tags origin "+refs/heads/${CHANNEL}:refs/remotes/origin/${CHANNEL}"
+          tip="$(git rev-parse "origin/${CHANNEL}")"
+          if [ "$tip" != "$(git rev-parse HEAD)" ] && ! git diff --quiet HEAD "$tip" -- . ':(exclude)signed'; then
+            echo "::notice::${CHANNEL} moved on to ${tip}; the run for that push signs it."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$RENEW" = "true" ] && ! git diff --quiet HEAD "$tip" -- "signed/${CHANNEL}"; then
+            echo "::notice::${CHANNEL} holds a newer signed pair than the one this renewal would restamp; nothing was signed."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          # A re-run after this run already pushed its signing commit (the Pages dispatch failed,
+          # say) must not sign again: the tip already holds this commit's signature for the channel.
+          # Only the mirror build is started again. A renewal keeps an older source_commit by design,
+          # so it is never mistaken for a repeat.
+          signed_source="$(git show "origin/${CHANNEL}:signed/${CHANNEL}/catalog.json" 2>/dev/null \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit", ""))' 2>/dev/null || true)"
+          if [ "$RENEW" != "true" ] && [ "$signed_source" = "$(git rev-parse HEAD)" ]; then
+            echo "::notice::${CHANNEL} already holds the signature for this commit; only the mirror build is started."
+            echo "sign=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "sign=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install the signing dependencies
+        if: steps.head.outputs.proceed == 'true' && steps.head.outputs.sign == 'true'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/signing-venv"
+          "$RUNNER_TEMP/signing-venv/bin/python" -m pip install --quiet --require-hashes --only-binary=:all: -r sdk/requirements-signing.txt
+          echo "SIGNING_PYTHON=$RUNNER_TEMP/signing-venv/bin/python" >> "$GITHUB_ENV"
+
+      - name: Signing tests and catalog checks
+        if: steps.head.outputs.proceed == 'true' && steps.head.outputs.sign == 'true'
+        run: |
+          "$SIGNING_PYTHON" -B -m sdk validate
+          "$SIGNING_PYTHON" -B -m unittest discover -s tests -p 'test_signing*.py'
+
+      - name: Sign
+        if: steps.head.outputs.proceed == 'true' && steps.head.outputs.sign == 'true'
+        env:
+          CATALOG_SIGNING_KEY: ${{ secrets.CATALOG_SIGNING_KEY }}
+          SOURCE_COMMIT: ${{ steps.head.outputs.commit }}
+        run: |
+          args=(sign --channel "$CHANNEL" --key-env CATALOG_SIGNING_KEY)
+          if [ "$RENEW" = "true" ]; then
+            args+=(--renew)
+          else
+            args+=(--source-commit "$SOURCE_COMMIT")
+          fi
+          "$SIGNING_PYTHON" -B -m sdk "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify the signed pair against the committed key file
+        if: steps.head.outputs.proceed == 'true' && steps.head.outputs.sign == 'true'
+        run: '"$SIGNING_PYTHON" -B -m sdk verify --channel "$CHANNEL"'
+
+      - name: Commit the signed files to the branch
+        id: push
+        if: steps.head.outputs.proceed == 'true' && steps.head.outputs.sign == 'true'
+        env:
+          SOURCE_COMMIT: ${{ steps.head.outputs.commit }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # This run's complete signed files, kept aside before the tree moves to the tip.
+          out="$RUNNER_TEMP/signed-out"
+          rm -rf "$out"
+          mkdir -p "$out"
+          cp "signed/${CHANNEL}/catalog.json" "signed/${CHANNEL}/catalog.json.sig" "$out/"
+          # The same rule as at the start: the signature covers the commit that was signed, so it
+          # may only land on a tip that differs from it in signed/** alone. A newer push that
+          # arrived during the run has its own run, and this one stands down without pushing.
+          git fetch --no-tags origin "+refs/heads/${CHANNEL}:refs/remotes/origin/${CHANNEL}"
+          if ! git diff --quiet "$SOURCE_COMMIT" "origin/${CHANNEL}" -- . ':(exclude)signed'; then
+            echo "::notice::${CHANNEL} moved on while this run was signing; nothing was pushed. The run for that push signs it."
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A renewal may only land on a tip whose signed pair is byte-identical to the one it renewed.
+          if [ "$RENEW" = "true" ] && ! git diff --quiet "$SOURCE_COMMIT" "origin/${CHANNEL}" -- "signed/${CHANNEL}"; then
+            echo "::notice::${CHANNEL} holds a newer signed pair than the one this renewal restamped; nothing was pushed."
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Take the tip, which differs from the signed commit under signed/** only, and lay this
+          # run's files over its signed/<channel>/ whole. Nothing is merged hunk by hunk, so the body
+          # and the envelope that get pushed are always the pair this run signed.
+          git reset --quiet --hard "origin/${CHANNEL}"
+          rm -rf "signed/${CHANNEL}"
+          mkdir -p "signed/${CHANNEL}"
+          cp "$out/catalog.json" "$out/catalog.json.sig" "signed/${CHANNEL}/"
+          git add -- "signed/${CHANNEL}"
+          if git diff --cached --quiet; then
+            echo "Nothing changed under signed/${CHANNEL}."
+            exit 0
+          fi
+          # The new signature has to be newer than the one it replaces, or hosts that saw the tip would
+          # refuse it as a replay.
+          version_of() {
+            python3 -c 'import json,sys; v=json.load(sys.stdin).get("signed_version"); print(v if isinstance(v, int) and not isinstance(v, bool) else "")' 2>/dev/null || true
+          }
+          # A channel's first publication has no signed file at the tip: its previous version is 0.
+          # The lookup cannot fail the step under errexit and pipefail.
+          tip_version="$({ git show "HEAD:signed/${CHANNEL}/catalog.json" 2>/dev/null || true; } | version_of || true)"
+          tip_version="${tip_version:-0}"
+          new_version="$(version_of < "signed/${CHANNEL}/catalog.json" || true)"
+          if [ -n "$new_version" ] && [ "$new_version" -le "$tip_version" ]; then
+            echo "::error::signed_version ${new_version} is not greater than the ${tip_version} on ${CHANNEL}; nothing was pushed."
+            exit 1
+          fi
+          # The exact bytes about to be committed, against the committed key file. A pair that does not
+          # verify is never pushed.
+          "$SIGNING_PYTHON" -B -m sdk verify --channel "$CHANNEL"
+          git commit --quiet -m "chore(catalog): sign ${CHANNEL}"
+          git push origin "HEAD:refs/heads/${CHANNEL}"
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Start the Pages mirror build
+        if: steps.head.outputs.proceed == 'true' && steps.push.outputs.pushed != 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages-mirror.yml --ref "$CHANNEL"
