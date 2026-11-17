@@ -129,6 +129,32 @@ class PluginManifestTests(PluginFeedTestCase):
             with self.subTest(label):
                 self.refused(changes, pattern)
 
+    def test_a_python_worker_plugin_needs_a_real_entry_point(self):
+        cases = {
+            "missing entry_module": ({"entry_module": None}, "entry_module must be a non-empty string"),
+            "missing entry_class": ({"entry_class": None}, "entry_class must be a non-empty string"),
+            "empty entry_class": ({"entry_class": ""}, "entry_class must be a non-empty string"),
+            "entry_module not a string": ({"entry_module": 7}, "entry_module must be a non-empty string"),
+            "entry_module is a path": ({"entry_module": "pkg.translator"}, "simple Python module name"),
+            "entry_module not in the bundle": ({"entry_module": "missing_module"}, "must resolve to a declared file"),
+        }
+        for label, (changes, pattern) in cases.items():
+            with self.subTest(label):
+                self.refused(changes, pattern)
+
+    def test_the_entry_point_is_required_when_the_runtime_is_the_default(self):
+        self.refused({"runtime": None, "entry_module": None}, "entry_module must be a non-empty string")
+
+    def test_a_runtime_that_is_not_a_python_worker_needs_no_entry_point(self):
+        root = self.make_root()
+        path = root / "plugins" / FIXTURE / "plugin.json"
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest["runtime"] = {"artifact": "none", "process": "external"}
+        del manifest["entry_module"], manifest["entry_class"]
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+        cli.build_plugins(root, write_manifests=True)
+        self.build_plugins(root)
+
     def test_bundle_field_refusals(self):
         cases = {
             "wrong source repo": ({"source": {"type": "github", "repo": "someone/else", "ref": "main",

@@ -669,6 +669,18 @@ def validate_plugin(root, plugin_dir, seen_ids):
     for relative in plugin_bundle_files(plugin_dir):
         if relative not in declared_files:
             raise CatalogError(f"undeclared file in plugin bundle: {plugin_id}/{relative}")
+    runtime = manifest.get("runtime") or {}
+    if (runtime.get("artifact", "python"), runtime.get("process", "worker")) == ("python", "worker"):
+        # A Python bundle run as a worker is started from its entry point, so the entry module has
+        # to be one of the bundle's files, exactly as a provider's is.
+        for field in ("entry_module", "entry_class"):
+            if not isinstance(manifest.get(field), str) or not manifest[field]:
+                raise CatalogError(f"{manifest_path} {field} must be a non-empty string")
+        if not _ENTRY_MODULE_RE.match(manifest["entry_module"]):
+            raise CatalogError(f"{manifest_path} entry_module must be a simple Python module name")
+        entry_file = safe_rel_path(f"{manifest['entry_module']}.py")
+        if entry_file not in declared_files:
+            raise CatalogError(f"{manifest_path} entry_module must resolve to a declared file: {entry_file}")
     if manifest.get("bundle_sha256") != bundle_sha256(manifest, plugin_dir):
         raise CatalogError(f"{manifest_path} bundle_sha256 is stale")
 
