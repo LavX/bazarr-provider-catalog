@@ -68,12 +68,19 @@ jobs:
         # from that commit ever runs next to the key. The approval can take days. If the branch has
         # since moved on in anything but signed/**, that push has its own run (still waiting for its
         # own approval), so this run stands down, a renewal included. The branch is never reset to
-        # its tip, so a later unapproved push cannot get its code run with the key.
+        # its tip, so a later unapproved push cannot get its code run with the key. A renewal also
+        # stands down when the tip's signed pair is no longer the one it would renew: restamping the
+        # old body over a newer signing would roll the channel back.
         run: |
           git fetch --no-tags origin "+refs/heads/${CHANNEL}:refs/remotes/origin/${CHANNEL}"
           tip="$(git rev-parse "origin/${CHANNEL}")"
           if [ "$tip" != "$(git rev-parse HEAD)" ] && ! git diff --quiet HEAD "$tip" -- . ':(exclude)signed'; then
             echo "::notice::${CHANNEL} moved on to ${tip}; the run for that push signs it."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$RENEW" = "true" ] && ! git diff --quiet HEAD "$tip" -- "signed/${CHANNEL}"; then
+            echo "::notice::${CHANNEL} holds a newer signed pair than the one this renewal would restamp; nothing was signed."
             echo "proceed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -145,6 +152,12 @@ jobs:
             echo "pushed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # A renewal may only land on a tip whose signed pair is byte-identical to the one it renewed.
+          if [ "$RENEW" = "true" ] && ! git diff --quiet "$SOURCE_COMMIT" "origin/${CHANNEL}" -- "signed/${CHANNEL}"; then
+            echo "::notice::${CHANNEL} holds a newer signed pair than the one this renewal restamped; nothing was pushed."
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           # Take the tip, which differs from the signed commit under signed/** only, and lay this
           # run's files over its signed/<channel>/ whole. Nothing is merged hunk by hunk, so the body
           # and the envelope that get pushed are always the pair this run signed.
@@ -156,6 +169,17 @@ jobs:
           if git diff --cached --quiet; then
             echo "Nothing changed under signed/${CHANNEL}."
             exit 0
+          fi
+          # The new signature has to be newer than the one it replaces, or hosts that saw the tip would
+          # refuse it as a replay.
+          version_of() {
+            python3 -c 'import json,sys; v=json.load(sys.stdin).get("signed_version"); print(v if isinstance(v, int) and not isinstance(v, bool) else "")' 2>/dev/null || true
+          }
+          tip_version="$(git show "HEAD:signed/${CHANNEL}/catalog.json" 2>/dev/null | version_of)"
+          new_version="$(version_of < "signed/${CHANNEL}/catalog.json")"
+          if [ -n "$tip_version" ] && [ -n "$new_version" ] && [ "$new_version" -le "$tip_version" ]; then
+            echo "::error::signed_version ${new_version} is not greater than the ${tip_version} on ${CHANNEL}; nothing was pushed."
+            exit 1
           fi
           # The exact bytes about to be committed, against the committed key file. A pair that does not
           # verify is never pushed.

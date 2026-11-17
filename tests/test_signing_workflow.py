@@ -249,7 +249,7 @@ class PushGuardTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("sign=true", self.output.read_text(encoding="utf-8"))
 
-    def test_a_renewal_is_never_taken_for_a_repeat(self):
+    def test_a_renewal_never_treats_a_signing_of_the_same_commit_as_a_repeat_and_stands_down(self):
         self.write_signed_body(self.source)
         self.assertEqual(self.run_step().returncode, 0)
         clone = self.output.parent / "again"
@@ -258,7 +258,9 @@ class PushGuardTests(unittest.TestCase):
         self.output.write_text("", encoding="utf-8")
         result = self.run_step("Stand down if the branch has moved on", cwd=clone, renew="true")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("sign=true", self.output.read_text(encoding="utf-8"))
+        written = self.output.read_text(encoding="utf-8")
+        self.assertIn("proceed=false", written)
+        self.assertNotIn("sign=false", written)
 
     def test_every_signing_step_is_skipped_for_a_repeat_and_the_mirror_build_still_starts(self):
         for name, text in steps()[2:]:
@@ -287,8 +289,8 @@ class PushGuardTests(unittest.TestCase):
         self.addCleanup(os.environ.pop, "TEST_ROOTS", None)
         return wrapper
 
-    @unittest.skipUnless(HAVE_CRYPTOGRAPHY, "needs the cryptography package (sdk/requirements-signing.txt)")
-    def test_a_renewal_behind_a_normal_signing_pushes_a_pair_that_verifies(self):
+    def prepare_real_repo(self):
+        """A branch holding an older signed pair made with throwaway keys; returns what the runs need."""
         def raw(key):
             return key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
 
@@ -319,28 +321,85 @@ class PushGuardTests(unittest.TestCase):
         self.git(self.work, "push", "-q", "origin", "HEAD:refs/heads/beta")
         self.source = self.git(self.work, "rev-parse", "HEAD")
 
-        def checkout(name):
-            clone = self.output.parent / name
-            self.git(self.output.parent, "clone", "-q", str(self.origin), str(clone))
-            self.git(clone, "checkout", "-q", "--detach", self.source)
-            return clone
+        return roots, ci_key, verifier, now
 
+    def checkout(self, name):
+        clone = self.output.parent / name
+        self.git(self.output.parent, "clone", "-q", str(self.origin), str(clone))
+        self.git(clone, "checkout", "-q", "--detach", self.source)
+        return clone
+
+    @unittest.skipUnless(HAVE_CRYPTOGRAPHY, "needs the cryptography package (sdk/requirements-signing.txt)")
+    def test_a_renewal_behind_a_normal_signing_stands_down_and_leaves_the_newer_pair(self):
+        roots, ci_key, verifier, now = self.prepare_real_repo()
         # Both runs were created for this commit. The normal signing pushes first.
-        normal, renewal = checkout("normal"), checkout("renewal")
+        normal, renewal = self.checkout("normal"), self.checkout("renewal")
         signing.sign(normal, "beta", ci_key, now=now - timedelta(days=2), source_commit=self.source, roots=roots)
         self.assertEqual(self.run_step(cwd=normal, signing_python=verifier).returncode, 0)
+        pushed = self.tip()
+        # The renewal restamps the old body from its own checkout. Landing it would roll the channel back.
         signing.sign(renewal, "beta", ci_key, now=now - timedelta(hours=1), renew=True, roots=roots)
         self.output.write_text("", encoding="utf-8")
-        result = self.run_step(cwd=renewal, signing_python=verifier)
+        result = self.run_step(cwd=renewal, renew="true", signing_python=verifier)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        written = self.output.read_text(encoding="utf-8")
+        self.assertIn("pushed=false", written)
+        self.assertNotIn("pushed=true", written)
+        self.assertEqual(self.tip(), pushed)
+        landed = self.checkout("landed")
+        self.git(landed, "checkout", "-q", "--detach", "origin/beta")
+        for name in ("catalog.json", "catalog.json.sig"):
+            self.assertEqual((landed / "signed/beta" / name).read_bytes(), (normal / "signed/beta" / name).read_bytes())
+        self.assertEqual(json.loads((landed / "signed/beta/catalog.json").read_text())["source_commit"], self.source)
+        self.assertTrue(signing.verify_files(landed, "beta", now=now, roots=roots).ok)
+        # The mirror build is gated on the step not having stood down.
+        self.assertIn("steps.push.outputs.pushed != 'false'", dict(steps())["Start the Pages mirror build"])
+
+    @unittest.skipUnless(HAVE_CRYPTOGRAPHY, "needs the cryptography package (sdk/requirements-signing.txt)")
+    def test_a_renewal_on_a_tip_it_renewed_lands_a_pair_that_verifies(self):
+        roots, ci_key, verifier, now = self.prepare_real_repo()
+        renewal = self.checkout("renewal")
+        signing.sign(renewal, "beta", ci_key, now=now - timedelta(hours=1), renew=True, roots=roots)
+        self.output.write_text("", encoding="utf-8")
+        result = self.run_step(cwd=renewal, renew="true", signing_python=verifier)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("pushed=true", self.output.read_text(encoding="utf-8"))
-
-        # What landed is exactly the renewal's pair, whole, and the host's verifier accepts it.
-        landed = checkout("landed")
+        landed = self.checkout("landed")
         self.git(landed, "checkout", "-q", "--detach", "origin/beta")
         for name in ("catalog.json", "catalog.json.sig"):
             self.assertEqual((landed / "signed/beta" / name).read_bytes(), (renewal / "signed/beta" / name).read_bytes())
         self.assertTrue(signing.verify_files(landed, "beta", now=now, roots=roots).ok)
+
+    @unittest.skipUnless(HAVE_CRYPTOGRAPHY, "needs the cryptography package (sdk/requirements-signing.txt)")
+    def test_a_renewal_that_finds_a_newer_pair_at_the_start_never_signs(self):
+        roots, ci_key, verifier, now = self.prepare_real_repo()
+        normal, renewal = self.checkout("normal"), self.checkout("renewal")
+        signing.sign(normal, "beta", ci_key, now=now - timedelta(days=2), source_commit=self.source, roots=roots)
+        self.assertEqual(self.run_step(cwd=normal, signing_python=verifier).returncode, 0)
+        guard = "Stand down if the branch has moved on"
+        for renew, expected in (("true", "proceed=false"), ("false", "proceed=true")):
+            self.output.write_text("", encoding="utf-8")
+            result = self.run_step(guard, cwd=renewal, renew=renew)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(expected, self.output.read_text(encoding="utf-8"), renew)
+
+    def test_a_signing_that_is_not_newer_than_the_tip_is_never_pushed(self):
+        self.commit_file(self.other, "signed/beta/catalog.json", '{"signed_version": 10}\n', "chore(catalog): sign beta")
+        self.commit_file(self.other, "signed/beta/catalog.json.sig", "sig\n", "sig")
+        self.git(self.other, "push", "-q", "origin", "HEAD:refs/heads/beta")
+        before = self.tip()
+        for version in (9, 10):
+            (self.work / "signed/beta/catalog.json").write_text('{"signed_version": %d}\n' % version, encoding="utf-8")
+            result = self.run_step()
+            self.assertNotEqual(result.returncode, 0, version)
+            self.assertIn("not greater", result.stderr + result.stdout)
+            self.assertEqual(self.tip(), before)
+            self.git(self.work, "reset", "-q", "--hard", self.source)
+            (self.work / "signed/beta").mkdir(parents=True, exist_ok=True)
+            (self.work / "signed/beta/catalog.json.sig").write_text("signed sig\n", encoding="utf-8")
+        (self.work / "signed/beta/catalog.json").write_text('{"signed_version": 11}\n', encoding="utf-8")
+        self.assertEqual(self.run_step().returncode, 0)
+        self.assertNotEqual(self.tip(), before)
 
     def test_a_pair_that_does_not_verify_is_never_pushed(self):
         failing = self.output.parent / "verify-fails.sh"
