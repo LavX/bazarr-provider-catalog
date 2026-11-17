@@ -111,7 +111,10 @@ jobs:
         run: '"$RUNNER_TEMP/signing-venv/bin/python" -B -m sdk verify --channel "$CHANNEL"'
 
       - name: Commit the signed files to the branch
+        id: push
         if: steps.head.outputs.proceed == 'true'
+        env:
+          SOURCE_COMMIT: ${{ steps.head.outputs.commit }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -121,14 +124,23 @@ jobs:
             exit 0
           fi
           git commit --quiet -m "chore(catalog): sign ${CHANNEL}"
-          # Only signed/** can differ from the commit that was signed, so this replays the sign
-          # commit onto the newer tip without running anything from it.
+          # The same rule as at the start: the signature covers the commit that was signed, so it
+          # may only land on a tip that differs from it in signed/** alone. A newer push that
+          # arrived during the run has its own run, and this one stands down without pushing.
           git fetch --no-tags origin "+refs/heads/${CHANNEL}:refs/remotes/origin/${CHANNEL}"
+          if ! git diff --quiet "$SOURCE_COMMIT" "origin/${CHANNEL}" -- . ':(exclude)signed'; then
+            echo "::notice::${CHANNEL} moved on while this run was signing; nothing was pushed. The run for that push signs it."
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Only signed/** can differ, so this replays the sign commit onto the tip without running
+          # anything from it.
           git rebase --quiet "origin/${CHANNEL}"
           git push origin "HEAD:refs/heads/${CHANNEL}"
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
 
       - name: Start the Pages mirror build
-        if: steps.head.outputs.proceed == 'true'
+        if: steps.head.outputs.proceed == 'true' && steps.push.outputs.pushed != 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run pages-mirror.yml --ref "$CHANNEL"

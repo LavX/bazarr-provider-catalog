@@ -1,6 +1,9 @@
 """The publish workflow keeps the key in one step, runs in the protected environment and cannot loop."""
 
+import os
 import re
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -88,6 +91,75 @@ class PublishWorkflowTests(unittest.TestCase):
         for pin in ("cryptography==", "cffi==", "pycparser=="):
             self.assertIn(pin, text)
         self.assertEqual(len(re.findall(r"--hash=sha256:[0-9a-f]{64}", text)), len(re.findall(r"--hash=", text)))
+
+
+class PushGuardTests(unittest.TestCase):
+    """Runs the workflow's commit step against real repositories standing in for origin."""
+
+    def git(self, cwd, *args):
+        return subprocess.run(
+            ["git", "-c", "init.defaultBranch=beta", *args], cwd=cwd, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    def commit_file(self, repo, path, text, message):
+        target = Path(repo) / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+        self.git(repo, "add", path)
+        self.git(repo, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", message)
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        base = Path(tmp.name)
+        self.origin = base / "origin.git"
+        self.git(base, "init", "-q", "--bare", str(self.origin))
+        self.work = base / "work"
+        self.git(base, "clone", "-q", str(self.origin), str(self.work))
+        self.commit_file(self.work, "README.md", "one\n", "first")
+        self.git(self.work, "push", "-q", "origin", "HEAD:refs/heads/beta")
+        self.source = self.git(self.work, "rev-parse", "HEAD")
+        self.other = base / "other"
+        self.git(base, "clone", "-q", str(self.origin), str(self.other))
+        (self.work / "signed" / "beta").mkdir(parents=True)
+        (self.work / "signed" / "beta" / "catalog.json").write_text("signed\n", encoding="utf-8")
+        self.output = base / "github_output"
+        self.output.write_text("", encoding="utf-8")
+
+    def run_step(self):
+        script = dict(steps())["Commit the signed files to the branch"].split("run: |\n", 1)[1]
+        script = "\n".join(line[10:] for line in script.splitlines())
+        env = {**os.environ, "CHANNEL": "beta", "SOURCE_COMMIT": self.source, "GITHUB_OUTPUT": str(self.output)}
+        return subprocess.run(["bash", "-e", "-c", script], cwd=self.work, env=env, capture_output=True, text=True)
+
+    def tip(self):
+        return self.git(self.origin, "rev-parse", "refs/heads/beta")
+
+    def test_a_non_signed_push_during_the_run_stands_down_without_pushing(self):
+        self.commit_file(self.other, "providers/new.txt", "newer\n", "feat: newer push")
+        self.git(self.other, "push", "-q", "origin", "HEAD:refs/heads/beta")
+        newer = self.tip()
+        result = self.run_step()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.tip(), newer)
+        self.assertIn("pushed=false", self.output.read_text(encoding="utf-8"))
+
+    def test_a_signed_only_commit_on_the_tip_is_rebased_across(self):
+        self.commit_file(self.other, "signed/main/catalog.json", "other channel\n", "chore(catalog): sign main")
+        self.git(self.other, "push", "-q", "origin", "HEAD:refs/heads/beta")
+        result = self.run_step()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("pushed=true", self.output.read_text(encoding="utf-8"))
+        log = self.git(self.origin, "log", "--format=%s", "refs/heads/beta")
+        self.assertEqual(log.splitlines()[:2], ["chore(catalog): sign beta", "chore(catalog): sign main"])
+
+    def test_an_unmoved_branch_gets_the_sign_commit(self):
+        result = self.run_step()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.git(self.origin, "log", "--format=%s", "-1", "refs/heads/beta"), "chore(catalog): sign beta")
+
+    def test_the_mirror_build_is_not_started_after_a_stand_down(self):
+        self.assertIn("steps.push.outputs.pushed != 'false'", dict(steps())["Start the Pages mirror build"])
 
 
 if __name__ == "__main__":
