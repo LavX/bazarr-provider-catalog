@@ -158,6 +158,43 @@ class PluginManifestTests(PluginFeedTestCase):
             with self.subTest(label):
                 self.refused(changes, pattern)
 
+    def test_dependency_names_and_versions_follow_the_hosts_rule(self):
+        digest = ["sha256:" + "a" * 64]
+        names = ("requests[socks]", "pkg;python_version<'3'", "git+https://example.org/p.git", "pkg\n", "pkg name",
+                 "-r", "../pkg", "pkg/sub", "")
+        for name in names:
+            with self.subTest(name=name):
+                self.refused(
+                    {"dependencies": {"requirements": [{"name": name, "version": "1.0", "hashes": digest}]}},
+                    "unsafe name",
+                )
+        versions = ("", "==1.0", ">=1.0", "1.*", "1.0 ", "1.0\n", "1.0;os_name=='nt'", "1.0/x", " 1.0")
+        for version in versions:
+            with self.subTest(version=version):
+                self.refused(
+                    {"dependencies": {"requirements": [{"name": "pkg", "version": version, "hashes": digest}]}},
+                    "must be pinned to an exact version",
+                )
+
+    def test_names_and_versions_the_host_accepts_are_accepted(self):
+        digest = ["sha256:" + "a" * 64]
+        for name, version in (("Pkg_name-1.x", "1.0"), ("pkg", "2026.1.0+local"), ("pkg", "1!2.0~rc1"), ("p", "1.0.post1")):
+            with self.subTest(name=name, version=version):
+                root = self.make_root()
+                path = root / "plugins" / FIXTURE / "plugin.json"
+                manifest = json.loads(path.read_text(encoding="utf-8"))
+                manifest["dependencies"] = {"requirements": [{"name": name, "version": version, "hashes": digest}]}
+                path.write_text(json.dumps(manifest), encoding="utf-8")
+                cli.build_plugins(root, write_manifests=True)
+                self.build_plugins(root)
+
+    def test_provider_dependencies_use_the_same_rule(self):
+        with self.assertRaisesRegex(cli.CatalogError, "unsafe name"):
+            cli.validate_dependency_lock(
+                "provider.json",
+                {"requirements": [{"name": "requests[socks]", "version": "2.0", "hashes": ["sha256:" + "a" * 64]}]},
+            )
+
     def test_a_dependency_with_a_hash_per_wheel_is_accepted(self):
         requirement = {"name": "cryptography", "version": "46.0.0",
                        "hashes": ["sha256:" + "a" * 64, "sha256:" + "b" * 64, "sha256:" + "c" * 64]}

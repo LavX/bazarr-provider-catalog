@@ -31,6 +31,10 @@ SmokeHub deterministic subtitle.
 """
 _HEX_SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 _HEX_COMMIT_RE = re.compile(r"^[a-f0-9]{40}$")
+# The host's dependency rules (provider_hub/manifest.py): a bare distribution name, so no extras such
+# as requests[socks], no markers and no URLs, and an exact version.
+_DEPENDENCY_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+_DEPENDENCY_VERSION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.!+~-]*")
 _PROVIDER_ID_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 _CONFIG_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _ENTRY_MODULE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -177,10 +181,10 @@ def validate_dependency_lock(manifest_path, dependencies):
         name = requirement.get("name")
         version = requirement.get("version")
         hashes = requirement.get("hashes")
-        if not isinstance(name, str) or not name or any(token in name for token in ("/", "\\", ";")):
-            raise CatalogError(f"{manifest_path} dependency has unsafe name")
-        if not isinstance(version, str) or not version or any(token in version for token in ("<", ">", "=", "*")):
-            raise CatalogError(f"{manifest_path} dependency {name} must be pinned")
+        if not isinstance(name, str) or not _DEPENDENCY_NAME_RE.fullmatch(name):
+            raise CatalogError(f"{manifest_path} dependency has unsafe name: {name!r}")
+        if not isinstance(version, str) or not _DEPENDENCY_VERSION_RE.fullmatch(version):
+            raise CatalogError(f"{manifest_path} dependency {name} must be pinned to an exact version")
         if not isinstance(hashes, list) or not hashes:
             raise CatalogError(f"{manifest_path} dependency {name} needs hashes")
         for digest in hashes:
