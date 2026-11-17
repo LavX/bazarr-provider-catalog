@@ -1,4 +1,4 @@
-"""The re-sign calendar: renewal at 30 days, alarm at 14, and never before the first signed file exists."""
+"""The re-sign calendar: renewal at 45 days, alarm at 14, and never before the first signed file exists."""
 
 import base64
 import contextlib
@@ -37,10 +37,11 @@ class AssessTests(unittest.TestCase):
     def test_the_state_follows_the_days_left(self):
         for days, state, request, alarm in (
             (89, resign.VALID, False, False),
-            (45, resign.VALID, False, False),
-            (30.5, resign.VALID, False, False),
+            (60, resign.VALID, False, False),
+            (45.5, resign.VALID, False, False),
+            (45, resign.RENEWAL_DUE, True, False),
+            (44, resign.RENEWAL_DUE, True, False),
             (30, resign.RENEWAL_DUE, True, False),
-            (29, resign.RENEWAL_DUE, True, False),
             (15, resign.RENEWAL_DUE, True, False),
             (14.5, resign.RENEWAL_DUE, True, False),
             (14, resign.ALARM, True, True),
@@ -83,10 +84,15 @@ class AssessTests(unittest.TestCase):
                 self.assertTrue(near.alarm)
 
     def test_the_policy_numbers(self):
-        self.assertEqual(resign.RENEW_WITHIN_DAYS, 30)
+        self.assertEqual(resign.RENEW_WITHIN_DAYS, 45)
         self.assertEqual(resign.ALARM_WITHIN_DAYS, 14)
-        # 90 days of signature, renewed at 30 days left: about every 60 days.
-        self.assertEqual(signing_validity() - resign.RENEW_WITHIN_DAYS, 60)
+        self.assertEqual(resign.REMINDER_DAYS, (30, 14))
+        # 90 days of signature, renewed at 45 days left: about every 45 days, so a sign commit (repository
+        # activity) lands well inside the 60 days after which GitHub turns a schedule off, and the quiet alarm
+        # fires before that cut-off.
+        self.assertEqual(signing_validity() - resign.RENEW_WITHIN_DAYS, 45)
+        self.assertLess(signing_validity() - resign.RENEW_WITHIN_DAYS, 60)
+        self.assertLess(resign.QUIET_ALARM_DAYS, 60)
 
     def test_the_reminder_dates_are_thirty_and_fourteen_days_before_expiry(self):
         expires = datetime(2027, 3, 1, 6, 17, tzinfo=timezone.utc)
@@ -121,8 +127,35 @@ class ActiveRunTests(unittest.TestCase):
 
     def test_an_unreadable_list_is_unknown_not_empty(self):
         self.assertIsNone(resign.active_channels(None))
-        with self.assertRaises(cli.CatalogError):
-            resign.active_channels({"status": "waiting"})
+        self.assertIsNone(resign.active_channels({"status": "waiting"}))
+        self.assertEqual(resign.active_channels([]), set())
+
+
+class LoadRunsTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = Path(tmp.name) / "runs"
+
+    def load(self, text):
+        self.path.write_text(text, encoding="utf-8")
+        return resign.load_runs(self.path)
+
+    def test_a_json_list_and_json_lines_both_read(self):
+        run = {"status": "waiting", "headBranch": "beta", "event": "workflow_dispatch"}
+        self.assertEqual(self.load(json.dumps([run, run])), [run, run])
+        self.assertEqual(self.load(json.dumps(run) + "\n" + json.dumps(run) + "\n"), [run, run])
+
+    def test_a_file_with_no_run_is_an_empty_list_and_a_missing_one_is_unknown(self):
+        self.assertEqual(self.load(""), [])
+        self.assertEqual(self.load("[]"), [])
+        self.assertIsNone(resign.load_runs(self.path.with_name("missing")))
+        self.assertIsNone(resign.load_runs(None))
+
+    def test_a_cut_off_or_wrong_file_is_unknown(self):
+        self.assertIsNone(self.load('{"status": "wa'))
+        self.assertIsNone(self.load('[{"status": "waiting"}'))
+        self.assertIsNone(self.load('{"status": "waiting"}\n{"status'))
 
 
 class CheckTests(unittest.TestCase):
@@ -170,8 +203,8 @@ class CheckTests(unittest.TestCase):
         _, _, _, values = self.outputs(runs=[])
         self.assertEqual(values, {"request": "beta", "alarm": "false"})
 
-    def test_a_fixture_expiring_in_29_days_requests_a_renewal(self):
-        self.put("beta", body_expiring_in(29))
+    def test_a_fixture_expiring_in_44_days_requests_a_renewal(self):
+        self.put("beta", body_expiring_in(44))
         code, out, err, values = self.outputs("--fail-on-alarm", runs=[])
         self.assertEqual(code, 0, err)
         self.assertEqual(values, {"request": "beta", "alarm": "false"})
@@ -190,7 +223,8 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(code, 0)
 
     def test_the_fixtures_at_45_30_14_and_0_days(self):
-        for days, request, alarm in ((45, "", "false"), (30, "beta", "false"), (14, "beta", "true"), (0, "beta", "true")):
+        for days, request, alarm in ((50, "", "false"), (45, "beta", "false"), (30, "beta", "false"),
+                                     (14, "beta", "true"), (0, "beta", "true")):
             with self.subTest(days=days):
                 self.put("beta", body_expiring_in(days))
                 _, _, _, values = self.outputs(runs=[])
@@ -232,10 +266,10 @@ class CheckTests(unittest.TestCase):
 class GitRefTests(unittest.TestCase):
     """The check job reads each channel's file from its own branch of one checkout."""
 
-    def git(self, *args, cwd=None):
+    def git(self, *args, env=None):
         return subprocess.run(
             ["git", "-c", "init.defaultBranch=main", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
-            cwd=cwd or self.repo, check=True, capture_output=True, text=True,
+            cwd=self.repo, check=True, capture_output=True, text=True, env={**os.environ, **(env or {})},
         ).stdout
 
     def setUp(self):
@@ -245,25 +279,41 @@ class GitRefTests(unittest.TestCase):
         self.git("init", "-q")
         (self.repo / "README.md").write_text("one\n", encoding="utf-8")
         self.git("add", ".")
-        self.git("commit", "-q", "-m", "first")
+        self.commit("first", NOW - timedelta(days=100))
 
-    def branch_with_signed_file(self, channel, body):
+    def commit(self, message, when):
+        stamp = when.strftime("%Y-%m-%dT%H:%M:%S+0000")
+        self.git("commit", "-q", "-m", message, env={"GIT_AUTHOR_DATE": stamp, "GIT_COMMITTER_DATE": stamp})
+
+    def branch_with_signed_file(self, channel, body, when=None):
         self.git("checkout", "-q", "-B", channel)
         path = self.repo / "signed" / channel / "catalog.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(body)
         self.git("add", ".")
-        self.git("commit", "-q", "-m", f"chore(catalog): sign {channel}")
+        self.commit(f"chore(catalog): sign {channel}", when or NOW - timedelta(days=1))
         self.git("checkout", "-q", "main")
 
-    def test_a_branch_without_a_signed_file_and_a_missing_branch_are_both_absent(self):
+    def test_a_branch_without_a_signed_file_is_absent(self):
+        self.git("branch", "beta")
         self.assertIsNone(resign.read_signed_body(self.repo, "main", git_ref_prefix=""))
-        self.assertIsNone(resign.read_signed_body(self.repo, "beta", git_ref_prefix=""))
         found = resign.check(self.repo, ("main", "beta"), now=NOW, runs=[], git_ref_prefix="")
         self.assertEqual([item.state for item in found], [resign.ABSENT, resign.ABSENT])
         self.assertFalse(any(item.alarm or item.request for item in found))
 
+    def test_a_branch_that_does_not_exist_is_an_error_and_not_never_signed(self):
+        with self.assertRaises(cli.CatalogError):
+            resign.read_signed_body(self.repo, "beta", git_ref_prefix="")
+        with self.assertRaises(cli.CatalogError):
+            resign.read_signed_body(self.repo, "main", git_ref_prefix="origin/")
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cli.main(["check-expiry", str(self.repo), "--git-ref-prefix", "origin/", "--now", NOW.strftime(STAMP)])
+        self.assertEqual(code, 1)
+        self.assertIn("error:", err.getvalue())
+
     def test_a_signed_file_on_one_branch_is_judged_without_touching_the_other(self):
+        self.git("branch", "beta")
         self.branch_with_signed_file("beta", body_expiring_in(20))
         found = {item.channel: item for item in resign.check(self.repo, ("main", "beta"), now=NOW, runs=[], git_ref_prefix="")}
         self.assertEqual(found["main"].state, resign.ABSENT)
@@ -277,6 +327,45 @@ class GitRefTests(unittest.TestCase):
         self.git("update-ref", "refs/remotes/origin/beta", "beta")
         body = resign.read_signed_body(self.repo, "beta", git_ref_prefix="origin/")
         self.assertEqual(json.loads(body)["channel"], "beta")
+
+    def run_check(self, *args):
+        out, err = io.StringIO(), io.StringIO()
+        outputs = self.repo.parent / (self.repo.name + "-outputs")
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cli.main(["check-expiry", str(self.repo), "--git-ref-prefix", "", "--now", NOW.strftime(STAMP),
+                             "--outputs-file", str(outputs), "--fail-on-alarm", *args])
+        values = dict(line.split("=", 1) for line in outputs.read_text(encoding="utf-8").splitlines())
+        return code, out.getvalue(), err.getvalue(), values
+
+    def test_a_quiet_repository_alarms_before_the_sixty_day_cut_off_once_something_is_signed(self):
+        self.branch_with_signed_file("beta", body_expiring_in(80), when=NOW - timedelta(days=51))
+        self.git("checkout", "-q", "-B", "main", "beta")
+        code, out, err, values = self.run_check()
+        self.assertEqual(code, 1)
+        self.assertEqual(values["alarm"], "true")
+        self.assertIn("no commit for 51 days", err)
+        self.assertIn("51.0 days ago", out)
+
+    def test_activity_inside_fifty_days_does_not_alarm(self):
+        self.branch_with_signed_file("beta", body_expiring_in(80), when=NOW - timedelta(days=49))
+        self.git("checkout", "-q", "-B", "main", "beta")
+        code, _, err, values = self.run_check()
+        self.assertEqual((code, values["alarm"], err), (0, "false", ""))
+
+    def test_a_quiet_repository_with_nothing_signed_yet_does_not_alarm(self):
+        self.git("branch", "beta")
+        code, out, err, values = self.run_check()
+        self.assertEqual((code, values, err), (0, {"request": "", "alarm": "false"}, ""))
+        self.assertNotIn("days ago", out)
+
+    def test_the_newest_commit_on_either_branch_counts(self):
+        self.branch_with_signed_file("beta", body_expiring_in(80), when=NOW - timedelta(days=70))
+        self.git("checkout", "-q", "main")
+        (self.repo / "other.txt").write_text("x\n", encoding="utf-8")
+        self.git("add", ".")
+        self.commit("later", NOW - timedelta(days=2))
+        code, _, _, values = self.run_check()
+        self.assertEqual((code, values["alarm"]), (0, "false"))
 
 
 @unittest.skipUnless(HAVE_CRYPTOGRAPHY, "needs the cryptography package (sdk/requirements-signing.txt)")
@@ -314,11 +403,11 @@ class RenewalRoundTripTests(unittest.TestCase):
         body = (self.root / "signed/beta/catalog.json").read_bytes()
         return resign.assess("beta", body, now=self.signed_at + timedelta(days=days_after_signing), run=run)
 
-    def test_a_signature_is_valid_for_90_days_and_due_for_renewal_from_day_60(self):
+    def test_a_signature_is_valid_for_90_days_and_due_for_renewal_from_day_45(self):
         body = json.loads((self.root / "signed/beta/catalog.json").read_text(encoding="utf-8"))
         self.assertEqual(body["expires"], (self.signed_at + timedelta(days=90)).strftime(STAMP))
-        self.assertEqual(self.assess(59).state, resign.VALID)
-        self.assertEqual(self.assess(60).state, resign.RENEWAL_DUE)
+        self.assertEqual(self.assess(44).state, resign.VALID)
+        self.assertEqual(self.assess(45).state, resign.RENEWAL_DUE)
         self.assertEqual(self.assess(77).state, resign.ALARM)
 
     def test_the_renewal_the_check_asks_for_keeps_the_body_and_starts_a_new_90_days(self):
@@ -355,7 +444,7 @@ class RenewalRoundTripTests(unittest.TestCase):
         renew_by, alarm_by = resign.reminder_dates(expires)
         self.assertIn(
             f"calendar: add two reminders outside GitHub, on {renew_by.isoformat()} (30 days before expiry) "
-            f"and {alarm_by.isoformat()} (14 days before expiry)",
+            f"and {alarm_by.isoformat()} (14 days before expiry), both UTC dates",
             out.getvalue(),
         )
         self.assertEqual((expires.date() - renew_by).days, 30)

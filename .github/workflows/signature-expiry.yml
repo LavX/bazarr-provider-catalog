@@ -1,0 +1,104 @@
+name: Check signature expiry
+
+# Reads when each channel's signed feed expires, asks for a renewal in good time and fails when the
+# end is close. It signs nothing and holds no key: no environment, no secret, no signing dependency.
+#
+# At 45 days left it starts a renewal run of publish-signed.yml (a dispatch with renew set) for the
+# channel. That run waits for the owner's approval like any other signing run. Nothing new is started
+# for a channel that already has a publish or renewal run waiting, queued or running. If the list of
+# those runs cannot be read whole, nothing is started that day.
+#
+# At 14 days left, or when a signature has expired, the job fails, and it keeps failing daily until a
+# fresh signature lands. It also fails when no commit has landed on the signed branches for 50 days.
+# A channel with no signed file yet is skipped.
+#
+# GitHub turns scheduled workflows off in a public repository after 60 days without activity. Three
+# things keep this one running: the sign commit of each renewal is activity and lands about every 45
+# days, the job enables its own workflow through the API on every run, and the 50 day alarm above
+# fires ten days before the cut-off. A schedule runs only from the default branch, and this check lives
+# in its own file so that a disabled schedule never touches the publish workflow.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: signature-expiry
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    name: check signature expiry
+    if: github.repository == 'LavX/bazarr-provider-catalog'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Fetch both channels
+        run: git fetch --no-tags --depth=1 origin "+refs/heads/main:refs/remotes/origin/main" "+refs/heads/beta:refs/remotes/origin/beta"
+
+      - name: Keep the schedule enabled
+        # Enabling a workflow that is already enabled changes nothing and counts as activity. A failure
+        # here is reported but never stops the check.
+        run: |
+          for workflow in signature-expiry.yml publish-signed.yml; do
+            gh workflow enable "$workflow" || echo "::warning::Could not enable ${workflow}."
+          done
+
+      - name: List the publish runs that are not finished
+        # Only waiting, pending, queued, requested and running runs of the signing workflow, every page.
+        # The file is written only when every query succeeded, so an incomplete list reads as unknown and
+        # nothing is requested.
+        run: |
+          rm -f "$RUNNER_TEMP/runs.jsonl"
+          : > "$RUNNER_TEMP/runs.part"
+          complete=true
+          for status in waiting pending queued requested in_progress; do
+            gh api --paginate "repos/${GH_REPO}/actions/workflows/publish-signed.yml/runs?status=${status}&per_page=100" \
+              --jq '.workflow_runs[] | {status: .status, headBranch: .head_branch, event: .event}' >> "$RUNNER_TEMP/runs.part" \
+              || complete=false
+          done
+          if [ "$complete" = "true" ]; then
+            mv "$RUNNER_TEMP/runs.part" "$RUNNER_TEMP/runs.jsonl"
+          else
+            echo "::warning::The list of signing runs is incomplete, so no renewal is requested today."
+          fi
+
+      - name: Read when each signature runs out
+        id: expiry
+        run: python3 -B -m sdk check-expiry --git-ref-prefix origin/ --runs "$RUNNER_TEMP/runs.jsonl" --outputs-file "$GITHUB_OUTPUT" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Request a renewal
+        # A renewal keeps the published body and restamps the dates. It waits for the owner's approval.
+        if: steps.expiry.outputs.request != ''
+        env:
+          CHANNELS: ${{ steps.expiry.outputs.request }}
+        run: |
+          status=0
+          for channel in $CHANNELS; do
+            gh workflow run publish-signed.yml --ref "$channel" -f renew=true || status=1
+          done
+          exit "$status"
+
+      - name: Fail while a signature or the schedule is at risk
+        # Fails daily from 14 days before expiry until a fresh signature lands, and when the repository
+        # has been quiet for 50 days. The step above this one has already printed the reason.
+        if: steps.expiry.outputs.alarm == 'true'
+        run: |
+          echo "::error::A signature is within 14 days of its end or has expired, a signed file cannot be read, or the repository has been quiet for 50 days. See the check's summary. Approve the waiting renewal run, or start one with renew set."
+          exit 1

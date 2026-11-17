@@ -25,23 +25,11 @@ WORKFLOW = (ROOT / ".github/workflows/publish-signed.yml").read_text(encoding="u
 MIRROR = (ROOT / ".github/workflows/pages-mirror.yml").read_text(encoding="utf-8")
 
 
-SIGN_JOB, CHECK_JOB = WORKFLOW.split("\n  check:\n", 1)
-
-
-def split_steps(job):
-    block = job.split("    steps:\n", 1)[1]
+def steps():
+    """The workflow's steps as (name, text), split on the list markers of the steps block."""
+    block = WORKFLOW.split("    steps:\n", 1)[1]
     parts = re.split(r"(?m)^      - ", block)[1:]
     return [(re.search(r"name: (.*)", part).group(1) if "name:" in part else "uses", part) for part in parts]
-
-
-def steps():
-    """The signing job's steps as (name, text), split on the list markers of the steps block."""
-    return split_steps(SIGN_JOB)
-
-
-def check_steps():
-    """The scheduled check job's steps."""
-    return split_steps(CHECK_JOB)
 
 
 class PublishWorkflowTests(unittest.TestCase):
@@ -49,8 +37,7 @@ class PublishWorkflowTests(unittest.TestCase):
         self.assertIn("branches: [main, beta]", WORKFLOW)
         self.assertIn("github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta'", WORKFLOW)
         self.assertNotIn("pull_request", WORKFLOW)
-        # The scheduled check runs on the default branch. It never takes the signing job's branch gate.
-        self.assertIn("github.event_name != 'schedule'", SIGN_JOB)
+        self.assertNotIn("schedule:", WORKFLOW)
 
     def test_the_job_waits_in_the_signing_environment(self):
         self.assertRegex(WORKFLOW, r"(?m)^    environment: catalog-signing$")
@@ -119,7 +106,7 @@ class PublishWorkflowTests(unittest.TestCase):
         self.assertIn("-r sdk/requirements-signing.txt", WORKFLOW)
 
     def test_the_run_signs_one_channel_at_a_time_and_never_cancels_a_waiting_run(self):
-        self.assertIn("publish-signed-${{ github.event_name == 'schedule' && 'check' || github.ref_name }}", WORKFLOW)
+        self.assertIn("group: publish-signed-${{ github.ref_name }}", WORKFLOW)
         self.assertIn("cancel-in-progress: false", WORKFLOW)
 
     def test_the_dependencies_are_installed_from_the_hash_pinned_file(self):
@@ -128,77 +115,6 @@ class PublishWorkflowTests(unittest.TestCase):
         for pin in ("cryptography==", "cffi==", "pycparser=="):
             self.assertIn(pin, text)
         self.assertEqual(len(re.findall(r"--hash=sha256:[0-9a-f]{64}", text)), len(re.findall(r"--hash=", text)))
-
-
-class ScheduledCheckTests(unittest.TestCase):
-    """The daily check reads expiry, asks for renewals and fails near the end. It never signs."""
-
-    def test_there_is_one_daily_schedule_and_the_manual_dispatch_is_untouched(self):
-        self.assertEqual(len(re.findall(r"(?m)^  schedule:$", WORKFLOW)), 1)
-        crons = re.findall(r'- cron: "(.*)"', WORKFLOW)
-        self.assertEqual(len(crons), 1)
-        minute, hour, day, month, weekday = crons[0].split()
-        self.assertTrue(minute.isdigit() and hour.isdigit(), "once a day, at a fixed time")
-        self.assertEqual((day, month, weekday), ("*", "*", "*"))
-        self.assertIn("renew:", WORKFLOW)
-
-    def test_the_check_holds_no_key_and_never_waits_for_the_environment(self):
-        self.assertNotRegex(CHECK_JOB, r"(?m)^    environment:")
-        for forbidden in ("secrets.", "CATALOG_SIGNING_KEY", "--key-env", "sdk sign", "git push", "git commit", "requirements-signing"):
-            self.assertNotIn(forbidden, CHECK_JOB, forbidden)
-        self.assertIn("github.event_name == 'schedule'", CHECK_JOB)
-        self.assertIn("github.repository == 'LavX/bazarr-provider-catalog'", CHECK_JOB)
-        # It is the only job that runs on the schedule, and the signing job is not.
-        self.assertNotIn("github.event_name == 'schedule'", SIGN_JOB.split("\njobs:\n", 1)[1])
-
-    def test_the_check_may_start_a_run_but_not_write_the_repository(self):
-        permissions = CHECK_JOB.split("    permissions:\n", 1)[1].split("    env:", 1)[0]
-        self.assertEqual(re.findall(r"(\w+): (\w+)", permissions), [("contents", "read"), ("actions", "write")])
-
-    def test_the_scheduled_run_asks_for_a_renewal_not_a_new_signing(self):
-        request = dict(check_steps())["Request a renewal"]
-        self.assertIn('gh workflow run publish-signed.yml --ref "$channel" -f renew=true', request)
-        # Only the channels the check named, and only when it named any.
-        self.assertIn("steps.expiry.outputs.request != ''", request)
-        self.assertIn("CHANNELS: ${{ steps.expiry.outputs.request }}", request)
-
-    def test_a_renewal_dispatch_reaches_the_renew_path_with_its_stand_down_rules(self):
-        # The dispatch starts the signing job with renew set. That job restamps the published body and
-        # stands down when the branch moved on or already holds a newer signed pair.
-        self.assertIn("RENEW: ${{ inputs.renew && 'true' || 'false' }}", SIGN_JOB)
-        sign = dict(steps())["Sign"]
-        self.assertIn('if [ "$RENEW" = "true" ]; then', sign)
-        self.assertIn("args+=(--renew)", sign)
-        guard = dict(steps())["Stand down if the branch has moved on"]
-        self.assertIn('if [ "$RENEW" = "true" ] && ! git diff --quiet HEAD "$tip" -- "signed/${CHANNEL}"', guard)
-        push = dict(steps())["Commit the signed files to the branch"]
-        self.assertIn('if [ "$RENEW" = "true" ] && ! git diff --quiet "$SOURCE_COMMIT" "origin/${CHANNEL}" -- "signed/${CHANNEL}"', push)
-
-    def test_the_check_reads_both_channels_without_running_their_code(self):
-        fetch = dict(check_steps())["Fetch both channels"]
-        self.assertIn("refs/remotes/origin/main", fetch)
-        self.assertIn("refs/remotes/origin/beta", fetch)
-        read = dict(check_steps())["Read when each signature runs out"]
-        self.assertIn("python3 -B -m sdk check-expiry --git-ref-prefix origin/", read)
-        self.assertIn('--runs "$RUNNER_TEMP/runs.json"', read)
-        self.assertIn('--outputs-file "$GITHUB_OUTPUT"', read)
-        self.assertIn('tee -a "$GITHUB_STEP_SUMMARY"', read)
-        for name, text in check_steps():
-            for forbidden in ("git checkout", "git merge", "git pull", "git switch", "git rebase", "git reset"):
-                self.assertNotIn(forbidden, text, name)
-
-    def test_the_run_list_covers_this_workflow_and_a_failed_read_starts_nothing(self):
-        listing = dict(check_steps())["List the publish runs that are not finished"]
-        self.assertIn("gh run list --workflow publish-signed.yml", listing)
-        self.assertIn("--json status,headBranch,event", listing)
-        self.assertIn("||", listing)
-
-    def test_the_alarm_step_comes_after_the_request_and_fails_the_job(self):
-        names = [name for name, _ in check_steps()]
-        self.assertLess(names.index("Request a renewal"), names.index("Fail while a signature is close to its end"))
-        alarm = dict(check_steps())["Fail while a signature is close to its end"]
-        self.assertIn("steps.expiry.outputs.alarm == 'true'", alarm)
-        self.assertIn("exit 1", alarm)
 
 
 class PushGuardTests(unittest.TestCase):

@@ -3,14 +3,16 @@
 A signature lasts 90 days (``signing.DEFAULT_VALIDITY_DAYS``). A daily check reads ``expires`` of
 each channel's signed body and decides, from the time left:
 
-- more than 30 days: nothing to do;
-- 30 days or fewer: ask for a renewal, unless a publish or renewal run for that channel is
+- more than 45 days: nothing to do;
+- 45 days or fewer: ask for a renewal, unless a publish or renewal run for that channel is
   already waiting for approval or running (the check only reports then);
 - 14 days or fewer, or already expired: alarm. The check job fails, which GitHub e-mails, and it
   keeps failing daily until a fresh signature lands.
 
 A renewal restamps the signed body that is already published (``sdk sign --renew``), so a routine
-re-sign arrives about every 60 days.
+re-sign arrives about every 45 days. That is well inside the 60 days after which GitHub turns the
+scheduled check off for a repository with no activity, because the sign commit is the activity. The
+check also raises the alarm itself when the repository has been quiet for 50 days.
 
 A channel that has no signed file yet is skipped. Nothing was ever signed for it, so no host can
 hold a signature of it that runs out, and there is nothing to renew. A signed file that exists but
@@ -31,8 +33,13 @@ from . import cli
 from .signing import BODY_NAME, SIGNED_DIR, TIMESTAMP_FORMAT
 
 # Days left at or below which a renewal is requested, and at or below which the check fails.
-RENEW_WITHIN_DAYS = 30
+RENEW_WITHIN_DAYS = 45
 ALARM_WITHIN_DAYS = 14
+# The two calendar entries the owner keeps outside GitHub, in days before expiry.
+REMINDER_DAYS = (30, 14)
+# GitHub turns scheduled workflows off in a public repository after 60 days without activity. The check
+# fails once the newest commit of a signed channel is this old, ten days before that.
+QUIET_ALARM_DAYS = 50
 
 # What a channel can be in, in the order of increasing urgency.
 ABSENT = "absent"
@@ -73,11 +80,9 @@ class Assessment:
 
 
 def reminder_dates(expires):
-    """The two calendar days the owner notes outside GitHub, as dates: 30 and 14 days before ``expires``."""
-    return (
-        (expires - timedelta(days=RENEW_WITHIN_DAYS)).date(),
-        (expires - timedelta(days=ALARM_WITHIN_DAYS)).date(),
-    )
+    """The two calendar days (UTC) the owner notes outside GitHub: 30 and 14 days before ``expires``."""
+    first, second = REMINDER_DAYS
+    return ((expires - timedelta(days=first)).date(), (expires - timedelta(days=second)).date())
 
 
 def _expires_of(body):
@@ -116,13 +121,12 @@ def assess(channel, body_bytes, *, now, run=NO_RUN):
 def active_channels(runs):
     """Branches that have a publish or renewal run waiting for approval, queued or running.
 
-    ``runs`` is ``gh run list --json status,headBranch,event`` of the publish workflow. ``None``
-    means the list could not be fetched, and then nobody can say, so it returns None.
+    ``runs`` is the list of unfinished runs of the publish workflow (``status``, ``headBranch`` and
+    ``event`` of each). ``None``, or anything that is not a list, means the list could not be
+    fetched whole, and then nobody can say, so it returns None.
     """
-    if runs is None:
-        return None
     if not isinstance(runs, list):
-        raise cli.CatalogError("the run list must be a JSON list")
+        return None
     active = set()
     for run in runs:
         if not isinstance(run, dict):
@@ -135,28 +139,64 @@ def active_channels(runs):
     return active
 
 
+def load_runs(path):
+    """The run list in ``path``, or None when it is missing or not whole.
+
+    The file is a JSON list, or one JSON object per line (what a paginated listing writes). A file that
+    exists and holds no run is an empty list: nothing is waiting. Anything unreadable is None.
+    """
+    if not path:
+        return None
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        if text.lstrip().startswith("["):
+            runs = json.loads(text)
+            return runs if isinstance(runs, list) else None
+        runs = [json.loads(line) for line in text.splitlines() if line.strip()]
+    except ValueError:
+        return None
+    return runs
+
+
+def _git(root, *args):
+    try:
+        return subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        detail = exc.stderr.decode("utf-8", "replace").strip() if isinstance(exc, subprocess.CalledProcessError) else str(exc)
+        raise cli.CatalogError(f"git {' '.join(args)} failed: {detail}") from exc
+
+
 def read_signed_body(root, channel, *, git_ref_prefix=None):
-    """The channel's signed body as bytes, or None when the file does not exist.
+    """The channel's signed body as bytes, or None when the channel has no signed file.
 
     With ``git_ref_prefix`` (for example ``origin/``) the file is read from that branch of the
-    checkout instead of the working tree, so one job can look at every channel.
+    checkout instead of the working tree, so one job can look at every channel. A branch that does
+    not exist is an error, not "never signed": a wrong prefix or a failed fetch must not pass quietly.
     """
     relative = f"{SIGNED_DIR}/{channel}/{BODY_NAME}"
     if git_ref_prefix is None:
         path = Path(root) / relative
         return path.read_bytes() if path.is_file() else None
     ref = f"{git_ref_prefix}{channel}"
-    try:
-        exists = subprocess.run(
-            ["git", "-C", str(root), "cat-file", "-e", f"{ref}:{relative}"], capture_output=True
-        ).returncode == 0
-        if not exists:
-            return None
-        return subprocess.run(
-            ["git", "-C", str(root), "show", f"{ref}:{relative}"], check=True, capture_output=True
-        ).stdout
-    except (OSError, subprocess.CalledProcessError) as exc:
-        raise cli.CatalogError(f"cannot read {relative} from {ref}: {exc}") from exc
+    _git(root, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    if not _git(root, "ls-tree", "--name-only", ref, "--", relative).strip():
+        return None
+    return _git(root, "show", f"{ref}:{relative}")
+
+
+def quiet_days(root, channels, *, now, git_ref_prefix=""):
+    """Days since the newest commit on any of the channels' branches, or None when there is no such branch."""
+    newest = None
+    for channel in channels:
+        ref = f"{git_ref_prefix}{channel}"
+        out = _git(root, "log", "-1", "--format=%ct", ref).decode().strip()
+        if out:
+            stamp = datetime.fromtimestamp(int(out), tz=timezone.utc)
+            newest = stamp if newest is None or stamp > newest else newest
+    return None if newest is None else (now - newest).total_seconds() / 86400
 
 
 def render(assessments):
