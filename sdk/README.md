@@ -6,9 +6,10 @@ Authoring tooling for building subtitle provider plugins distributed through the
 
 ## Commands
 
-- `python3 -B -m sdk validate`: validate `catalog.json`, manifests, file hashes, bundle hashes, and dependency locks. It also checks every catalog manifest with the released-host validators vendored in `sdk/released_hosts/`.
+- `python3 -B -m sdk validate`: validate `catalog.json`, manifests, file hashes, bundle hashes, and dependency locks. It also checks every catalog manifest with the released-host validators vendored in `sdk/released_hosts/`. Every `plugins/<id>/plugin.json` is validated against the schema 2 rules of the 2.8 host. Released hosts never read `plugins/`, so the released-host check covers providers only.
+- `python3 -B -m sdk build-signed-feed --channel main|beta`: print the unsigned body of `signed/<channel>/catalog.json`: the providers of `catalog.json` plus the `plugins/` entries sorted by id, without the four fields a signing run stamps (`signed_version`, `not_before`, `expires`, `source_commit`). The same tree always gives the same bytes. `--output PATH` writes the body to a file instead.
 - `python3 -B -m sdk hash providers/<id>`: print the deterministic bundle SHA256 for a provider folder.
-- `python3 -B -m sdk build-catalog`: refresh provider file hashes and regenerate the embedded catalog.
+- `python3 -B -m sdk build-catalog`: refresh provider and plugin file hashes and regenerate the embedded catalog. `catalog.json` carries providers only, so nothing under `plugins/` ever changes it.
 - `python3 -B -m sdk runtime-matrix`: print the supported Bazarr+ Provider Hub Python runtimes and wheel tags.
 - `python3 -B -m sdk smoke-test`: run a provider against the worker-shaped search/download contract.
 

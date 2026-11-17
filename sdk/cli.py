@@ -31,6 +31,10 @@ SmokeHub deterministic subtitle.
 """
 _HEX_SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 _HEX_COMMIT_RE = re.compile(r"^[a-f0-9]{40}$")
+# The host's dependency rules (provider_hub/manifest.py): a bare distribution name, so no extras such
+# as requests[socks], no markers and no URLs, and an exact version.
+_DEPENDENCY_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+_DEPENDENCY_VERSION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.!+~-]*")
 _PROVIDER_ID_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 _CONFIG_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _ENTRY_MODULE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -67,6 +71,48 @@ SCHEMA_2_ONLY_FIELDS = frozenset({
     "id", "kind", "kind_api", "min_host_version", "platforms", "runtime", "settings",
     "settings_version", "requires", "provides", "extends", "permissions", "endpoints", "login",
 })
+
+
+# Schema 2 plugins live under plugins/<id>/plugin.json. Released hosts never read that
+# directory: only the signed feed of a 2.8 or later host carries these entries.
+PLUGIN_SCHEMA_VERSION = 2
+PLUGIN_MANIFEST_FILE = "plugin.json"
+# The host writes provider.json into every bundle it stages, so a bundle cannot carry one.
+RESERVED_BUNDLE_FILE = "provider.json"
+SIGNED_FEED_SCHEMA_VERSION = 2
+SIGNED_FEED_CHANNELS = ("main", "beta")
+_PLUGIN_ID_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
+_PLUGIN_KIND_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
+_PLUGIN_KIND_API_RE = re.compile(r"^bazarr\.(?P<kind>[a-z][a-z0-9_]*)\.v[1-9][0-9]*$")
+_CAPABILITY_RE = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*\.v[1-9][0-9]*$")
+_SETTING_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_ENDPOINT_RE = re.compile(
+    r"^(?P<scheme>https|http)://"
+    r"(?P<host>(?=.{1,253}:)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63})"
+    r":(?P<port>[1-9][0-9]{0,4})$"
+)
+_SEMVER_RE = re.compile(
+    r"^v?(?P<major>0|[1-9][0-9]*)\.(?P<minor>0|[1-9][0-9]*)\.(?P<patch>0|[1-9][0-9]*)"
+    r"(?:-(?P<prerelease>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"(?:\+(?P<build>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
+)
+_BUNDLE_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.!+~-]*$")
+_PYTHON_TAG_RE = re.compile(r"^(?:cp3[0-9]{1,2}|py3)$")
+PLUGIN_PLATFORMS = frozenset({
+    "any", "linux-x86_64", "linux-aarch64", "linux-armv7l", "linux-i686",
+    "linux-musl-x86_64", "linux-musl-aarch64", "windows-x86_64", "macos-x86_64", "macos-arm64",
+})
+PLUGIN_RUNTIMES = frozenset({
+    ("python", "worker"), ("archive", "worker"), ("archive", "daemon"), ("oci", "daemon"), ("none", "external"),
+})
+PLUGIN_PERMISSIONS = frozenset({"network", "media_read", "data_dir", "binaries", "docker", "interactive_login"})
+PLUGIN_LOGIN_KEYS = frozenset({"argv", "flow", "paths"})
+PLUGIN_LOGIN_FLOWS = frozenset({"device_code", "paste_code"})
+PLUGIN_SETTING_TYPES = frozenset({
+    "text", "secret", "number", "integer", "toggle", "choice", "list", "key_list", "orderable_list", "options",
+})
+PLUGIN_SECRET_FLAG_TYPES = frozenset({"text", "secret", "key_list"})
+PLUGIN_BACKEND_HOST_FIELDS = frozenset({"model", "price_input_per_million", "price_output_per_million"})
 
 
 class CatalogError(Exception):
@@ -135,10 +181,10 @@ def validate_dependency_lock(manifest_path, dependencies):
         name = requirement.get("name")
         version = requirement.get("version")
         hashes = requirement.get("hashes")
-        if not isinstance(name, str) or not name or any(token in name for token in ("/", "\\", ";")):
-            raise CatalogError(f"{manifest_path} dependency has unsafe name")
-        if not isinstance(version, str) or not version or any(token in version for token in ("<", ">", "=", "*")):
-            raise CatalogError(f"{manifest_path} dependency {name} must be pinned")
+        if not isinstance(name, str) or not _DEPENDENCY_NAME_RE.fullmatch(name):
+            raise CatalogError(f"{manifest_path} dependency has unsafe name: {name!r}")
+        if not isinstance(version, str) or not _DEPENDENCY_VERSION_RE.fullmatch(version):
+            raise CatalogError(f"{manifest_path} dependency {name} must be pinned to an exact version")
         if not isinstance(hashes, list) or not hashes:
             raise CatalogError(f"{manifest_path} dependency {name} needs hashes")
         for digest in hashes:
@@ -328,7 +374,359 @@ def validate_catalog(root):
     errors = released_hosts.released_host_errors([item["manifest"] for item in catalog["providers"]])
     if errors:
         raise CatalogError("released hosts cannot load these providers entries:\n  " + "\n  ".join(errors))
+    # plugins/ is read by 2.8 hosts only, so the released-host check above never sees it.
+    build_plugins(root, taken_ids=provider_ids(catalog))
     return catalog
+
+
+def _plugin_text(where, value, field):
+    if not isinstance(value, str) or not value.strip():
+        raise CatalogError(f"{where} {field} must be a non-empty string")
+    return value
+
+
+def _plugin_string_list(where, value, field):
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise CatalogError(f"{where} {field} must be a list of strings")
+    if len(set(value)) != len(value):
+        raise CatalogError(f"{where} {field} must not repeat a value")
+    return list(value)
+
+
+def _plugin_capabilities(where, value, field):
+    items = _plugin_string_list(where, value, field)
+    for item in items:
+        if not _CAPABILITY_RE.match(item):
+            raise CatalogError(f"{where} {field} entry {item!r} must look like name.v1")
+    return items
+
+
+def _plugin_endpoints(where, value, field):
+    items = _plugin_string_list(where, value, field)
+    for item in items:
+        match = _ENDPOINT_RE.match(item)
+        if not match or int(match.group("port")) > 65535:
+            raise CatalogError(
+                f"{where} {field} entry {item!r} must be an origin written as scheme://host:port, "
+                "such as https://api.example.org:443"
+            )
+    return items
+
+
+def _plugin_field_list(where, fields, label, host_keys=frozenset()):
+    if not isinstance(fields, list):
+        raise CatalogError(f"{where} {label} must be a list")
+    seen = set()
+    for index, item in enumerate(fields):
+        if not isinstance(item, dict):
+            raise CatalogError(f"{where} {label}[{index}] must be an object")
+        key = item.get("key")
+        if not isinstance(key, str) or not _SETTING_KEY_RE.match(key):
+            raise CatalogError(f"{where} {label}[{index}].key is invalid")
+        if key in seen:
+            raise CatalogError(f"{where} settings field {key} is declared twice")
+        seen.add(key)
+        if item.get("type") not in PLUGIN_SETTING_TYPES:
+            raise CatalogError(f"{where} settings field {key} has an unsupported type")
+        if item.get("secret") is True and item.get("type") not in PLUGIN_SECRET_FLAG_TYPES:
+            raise CatalogError(f"{where} settings field {key} is marked secret, which only a text or key list field can be")
+        if key in host_keys and (
+            item.get("type") == "secret" or item.get("secret") is True or item.get("destination") is True
+        ):
+            raise CatalogError(
+                f"{where} settings field {key} is kept by the host as a plain value and cannot be a secret or an address"
+            )
+
+
+def _validate_plugin_settings(where, manifest):
+    settings = manifest.get("settings")
+    settings_version = manifest.get("settings_version")
+    if settings is None:
+        if settings_version is not None:
+            raise CatalogError(f"{where} settings_version is set but there are no settings")
+        return
+    if not isinstance(settings, dict):
+        raise CatalogError(f"{where} settings must be an object")
+    if isinstance(settings_version, bool) or not isinstance(settings_version, int) or settings_version < 1:
+        raise CatalogError(f"{where} settings_version must be a positive integer when settings are declared")
+    _plugin_field_list(where, settings.get("fields"), "settings.fields")
+    types = settings.get("backend_types")
+    if types is None:
+        return
+    if not isinstance(types, dict):
+        raise CatalogError(f"{where} settings.backend_types must be an object")
+    for type_id in sorted(types):
+        definition = types[type_id]
+        if not isinstance(type_id, str) or not _SETTING_KEY_RE.match(type_id) or not isinstance(definition, dict):
+            raise CatalogError(f"{where} settings.backend_types.{type_id} must be an object under a type id")
+        _plugin_endpoints(where, definition.get("endpoints"), f"settings.backend_types.{type_id}.endpoints")
+        _plugin_field_list(
+            where, definition.get("fields") or [], f"settings.backend_types.{type_id}.fields",
+            host_keys=PLUGIN_BACKEND_HOST_FIELDS,
+        )
+
+
+def _validate_plugin_login(where, manifest, permissions):
+    if "login" not in manifest:
+        return
+    login = manifest["login"]
+    if not isinstance(login, dict):
+        raise CatalogError(f"{where} login must be an object with argv, flow and paths")
+    unknown = sorted(str(key) for key in login if key not in PLUGIN_LOGIN_KEYS)
+    if unknown:
+        raise CatalogError(f"{where} login names an unknown key: {', '.join(unknown)}")
+    if not PLUGIN_LOGIN_KEYS <= set(login):
+        raise CatalogError(f"{where} login must name argv, flow and paths")
+    if not isinstance(login["flow"], str) or login["flow"] not in PLUGIN_LOGIN_FLOWS:
+        raise CatalogError(f"{where} login.flow must be one of device_code or paste_code")
+    argv = login["argv"]
+    if (
+        not isinstance(argv, list) or not 1 <= len(argv) <= 64
+        or not all(isinstance(arg, str) and arg and "\x00" not in arg for arg in argv)
+    ):
+        raise CatalogError(f"{where} login.argv must be a list of 1 to 64 non-empty strings without NUL bytes")
+    paths = login["paths"]
+    if not isinstance(paths, list) or not paths:
+        raise CatalogError(f"{where} login.paths must be a non-empty list of relative paths")
+    for path in paths:
+        if (
+            not isinstance(path, str) or path.startswith("/") or "\\" in path
+            or any(part in ("", "..") for part in path.split("/"))
+        ):
+            raise CatalogError(f"{where} login.paths entry {path!r} must be a relative POSIX path with no empty or '..' segment")
+    if "interactive_login" not in permissions:
+        raise CatalogError(f"{where} login needs the interactive_login permission")
+
+
+def validate_plugin_envelope(where, manifest):
+    """Check a plugin manifest's envelope the way the 2.8 host's manifest parser does."""
+    if manifest.get("schema_version") != PLUGIN_SCHEMA_VERSION:
+        raise CatalogError(f"{where} schema_version must be {PLUGIN_SCHEMA_VERSION}")
+    plugin_id = _plugin_text(where, manifest.get("id"), "id")
+    if not _PLUGIN_ID_RE.match(plugin_id):
+        raise CatalogError(f"{where} id must use lowercase plugin id syntax")
+    legacy_id = manifest.get("provider_id")
+    if legacy_id is not None and legacy_id != plugin_id:
+        raise CatalogError(f"{where} provider_id, when present, must equal id")
+    kind = _plugin_text(where, manifest.get("kind"), "kind")
+    if not _PLUGIN_KIND_RE.match(kind):
+        raise CatalogError(f"{where} kind must use lowercase kind syntax")
+    if kind == "subtitle_provider":
+        raise CatalogError(f"{where} is a subtitle provider: providers belong under providers/, not plugins/")
+    kind_api = _plugin_text(where, manifest.get("kind_api"), "kind_api")
+    api_match = _PLUGIN_KIND_API_RE.match(kind_api)
+    if not api_match:
+        raise CatalogError(f"{where} kind_api must look like bazarr.<kind>.v<major>")
+    if api_match.group("kind") != kind:
+        raise CatalogError(f"{where} kind_api {kind_api} does not belong to kind {kind}")
+    _plugin_text(where, manifest.get("name"), "name")
+    version = _plugin_text(where, manifest.get("version"), "version")
+    if not _BUNDLE_VERSION_RE.match(version) or version in (".", ".."):
+        raise CatalogError(
+            f"{where} version must be a safe identifier (letters, digits, '.', '_', '-', '+', '!', '~')"
+        )
+    min_host_version = manifest.get("min_host_version")
+    if min_host_version is not None:
+        if not isinstance(min_host_version, str) or not _SEMVER_RE.match(min_host_version):
+            raise CatalogError(f"{where} min_host_version must be a semantic version such as 2.8.0")
+
+    runtime = manifest.get("runtime")
+    if runtime is None:
+        artifact, process = "python", "worker"
+    else:
+        if not isinstance(runtime, dict):
+            raise CatalogError(f"{where} runtime must be an object")
+        artifact = _plugin_text(where, runtime.get("artifact"), "runtime.artifact")
+        process = _plugin_text(where, runtime.get("process"), "runtime.process")
+        if (artifact, process) not in PLUGIN_RUNTIMES:
+            raise CatalogError(f"{where} runtime {artifact} run as {process} is not a supported combination")
+
+    _validate_plugin_settings(where, manifest)
+    provides = _plugin_capabilities(where, manifest.get("provides"), "provides")
+    if any(item.startswith("host.") for item in provides):
+        raise CatalogError(f"{where} a plugin cannot provide a host capability")
+    _plugin_capabilities(where, manifest.get("requires"), "requires")
+
+    extends = manifest.get("extends")
+    if extends is not None:
+        if not isinstance(extends, dict):
+            raise CatalogError(f"{where} extends must be an object with id and capability")
+        extends_id = _plugin_text(where, extends.get("id"), "extends.id")
+        if not _PLUGIN_ID_RE.match(extends_id):
+            raise CatalogError(f"{where} extends.id must be a plugin id")
+        capability = _plugin_text(where, extends.get("capability"), "extends.capability")
+        if not _CAPABILITY_RE.match(capability) or capability.startswith("host."):
+            raise CatalogError(f"{where} extends.capability must be a plugin capability such as ai_translator.backend.v1")
+        if extends_id == plugin_id:
+            raise CatalogError(f"{where} a plugin cannot extend itself")
+
+    permissions = _plugin_string_list(where, manifest.get("permissions"), "permissions")
+    unknown = sorted(set(permissions) - PLUGIN_PERMISSIONS)
+    if unknown:
+        raise CatalogError(f"{where} permissions names an unknown permission: {', '.join(unknown)}")
+
+    platforms = manifest.get("platforms")
+    if platforms is None:
+        platforms = ["any"]
+    else:
+        platforms = _plugin_string_list(where, platforms, "platforms")
+        if not platforms:
+            raise CatalogError(f"{where} platforms must not be empty")
+        unknown = sorted(set(platforms) - PLUGIN_PLATFORMS)
+        if unknown:
+            raise CatalogError(f"{where} platforms names an unknown platform: {', '.join(unknown)}")
+        if "any" in platforms and len(platforms) > 1:
+            raise CatalogError(f"{where} platforms lists 'any' together with specific platforms")
+    if artifact == "archive" and "any" in platforms:
+        raise CatalogError(
+            f"{where} runtime {artifact} run as {process} ships a native build per platform, "
+            "so platforms must name the platforms it is built for, not any"
+        )
+    if artifact == "oci" and "docker" not in permissions:
+        raise CatalogError(
+            f"{where} runtime {artifact} run as {process} starts a managed container, so permissions must include docker"
+        )
+    _validate_plugin_login(where, manifest, permissions)
+    _plugin_endpoints(where, manifest.get("endpoints"), "endpoints")
+    for tag in _plugin_string_list(where, manifest.get("python_tags"), "python_tags"):
+        if not _PYTHON_TAG_RE.match(tag):
+            raise CatalogError(f"{where} python_tags entry {tag!r} must be a tag such as cp314 or py3")
+
+
+def discover_plugin_dirs(root):
+    plugins_root = root / "plugins"
+    if not plugins_root.is_dir():
+        return []
+    found = []
+    for path in sorted(plugins_root.iterdir()):
+        if path.name == "__pycache__":
+            continue
+        if not path.is_dir() or path.is_symlink():
+            raise CatalogError(f"unexpected entry in plugins/: {path.name}")
+        if not (path / PLUGIN_MANIFEST_FILE).is_file():
+            raise CatalogError(f"plugins/{path.name} has no {PLUGIN_MANIFEST_FILE}")
+        found.append(path)
+    return found
+
+
+def plugin_bundle_files(plugin_dir):
+    """The files a plugin bundle carries: everything beside the manifest, as POSIX paths."""
+    files = []
+    for path in sorted(plugin_dir.rglob("*")):
+        if "__pycache__" in path.parts:
+            continue
+        if path.is_symlink():
+            raise CatalogError(f"symlink not allowed: {path}")
+        if not path.is_file():
+            continue
+        relative = path.relative_to(plugin_dir).as_posix()
+        if relative == PLUGIN_MANIFEST_FILE:
+            continue
+        files.append(relative)
+    return files
+
+
+def refresh_plugin_manifest(plugin_dir):
+    manifest = read_json(plugin_dir / PLUGIN_MANIFEST_FILE)
+    if not isinstance(manifest, dict):
+        raise CatalogError(f"{plugin_dir / PLUGIN_MANIFEST_FILE} must be an object")
+    manifest["files"] = {rel: file_sha256(plugin_dir / rel) for rel in plugin_bundle_files(plugin_dir)}
+    manifest["bundle_sha256"] = bundle_sha256(manifest, plugin_dir)
+    return manifest
+
+
+def validate_plugin(root, plugin_dir, seen_ids):
+    manifest_path = plugin_dir / PLUGIN_MANIFEST_FILE
+    manifest = read_json(manifest_path)
+    if not isinstance(manifest, dict):
+        raise CatalogError(f"{manifest_path} must be an object")
+    validate_plugin_envelope(manifest_path, manifest)
+    plugin_id = manifest["id"]
+    if plugin_dir.name != plugin_id:
+        raise CatalogError(f"{manifest_path} id must match its directory name {plugin_dir.name}")
+    if plugin_id in seen_ids:
+        raise CatalogError(f"duplicate plugin or provider id: {plugin_id}")
+    seen_ids.add(plugin_id)
+
+    files = manifest.get("files")
+    if not isinstance(files, dict) or not files:
+        raise CatalogError(f"{manifest_path} files must be a non-empty object")
+    declared_files = set()
+    for relative_path, expected in files.items():
+        safe_path = safe_rel_path(relative_path, allow_python=False)
+        if safe_path in (RESERVED_BUNDLE_FILE, PLUGIN_MANIFEST_FILE):
+            raise CatalogError(f"{manifest_path} files must not list {safe_path}")
+        declared_files.add(safe_path)
+        file_path = plugin_dir / safe_path
+        if file_path.is_symlink():
+            raise CatalogError(f"symlink not allowed: {file_path}")
+        if not file_path.is_file():
+            raise CatalogError(f"missing declared file: {file_path}")
+        if expected != file_sha256(file_path):
+            raise CatalogError(f"sha mismatch for {safe_path}")
+    for relative in plugin_bundle_files(plugin_dir):
+        if relative not in declared_files:
+            raise CatalogError(f"undeclared file in plugin bundle: {plugin_id}/{relative}")
+    if manifest.get("bundle_sha256") != bundle_sha256(manifest, plugin_dir):
+        raise CatalogError(f"{manifest_path} bundle_sha256 is stale")
+
+    source = manifest.get("source")
+    if not isinstance(source, dict) or source.get("type") != "github":
+        raise CatalogError(f"{manifest_path} source.type must be github")
+    if source.get("repo") != "LavX/bazarr-provider-catalog":
+        raise CatalogError(f"{manifest_path} source.repo must be LavX/bazarr-provider-catalog")
+    if source.get("ref") != "main":
+        raise CatalogError(f"{manifest_path} source.ref must be main")
+    if not isinstance(source.get("commit"), str) or not _HEX_COMMIT_RE.match(source["commit"]):
+        raise CatalogError(f"{manifest_path} source.commit must be a 40 char SHA placeholder or commit")
+    expected_path = plugin_dir.relative_to(root).as_posix()
+    if safe_rel_path(source.get("path"), allow_python=False) != expected_path:
+        raise CatalogError(f"{manifest_path} source.path must be {expected_path}")
+
+    dependencies = manifest.get("dependencies", {})
+    validate_dependency_lock(manifest_path, dependencies)
+    return manifest
+
+
+def build_plugins(root, taken_ids=(), write_manifests=False):
+    """The validated plugin manifests, sorted by id. Nothing here touches catalog.json."""
+    root = Path(root).resolve()
+    seen_ids = set(taken_ids)
+    manifests = []
+    for plugin_dir in discover_plugin_dirs(root):
+        if write_manifests:
+            (plugin_dir / PLUGIN_MANIFEST_FILE).write_text(dump_json(refresh_plugin_manifest(plugin_dir)), encoding="utf-8")
+        manifests.append(validate_plugin(root, plugin_dir, seen_ids))
+    manifests.sort(key=lambda item: item["id"])
+    return manifests
+
+
+def provider_ids(catalog):
+    return {item["manifest"]["provider_id"] for item in catalog["providers"]}
+
+
+def build_signed_feed(root, channel):
+    """The unsigned body of signed/<channel>/catalog.json.
+
+    The four fields a signing run stamps (signed_version, not_before, expires and
+    source_commit) are left out. The providers are the ones catalog.json carries, so the
+    two feeds cannot drift, and the plugins come sorted by id. The same tree always gives
+    the same body.
+    """
+    if channel not in SIGNED_FEED_CHANNELS:
+        raise CatalogError(f"channel must be one of {', '.join(SIGNED_FEED_CHANNELS)}")
+    root = Path(root).resolve()
+    catalog = build_catalog(root)
+    plugins = build_plugins(root, taken_ids=provider_ids(catalog))
+    return {
+        "schema_version": SIGNED_FEED_SCHEMA_VERSION,
+        "name": CATALOG_NAME,
+        "channel": channel,
+        "providers": catalog["providers"],
+        "plugins": [{"manifest": manifest} for manifest in plugins],
+    }
 
 
 def load_provider_class(provider_dir, manifest):
@@ -584,6 +982,8 @@ def command_hash(args):
 def command_build_catalog(args):
     root = Path(args.root).resolve()
     catalog = build_catalog(root, write_manifests=not args.stdout)
+    # Refresh and check plugins/ as well. They never enter catalog.json.
+    build_plugins(root, taken_ids=provider_ids(catalog), write_manifests=not args.stdout)
     output = dump_json(catalog)
     if args.stdout:
         print(output, end="")
@@ -597,6 +997,21 @@ def command_build_catalog(args):
         except ValueError:
             display_path = output_path
         print(f"wrote {display_path}")
+    return 0
+
+
+def command_build_signed_feed(args):
+    root = Path(args.root).resolve()
+    output = dump_json(build_signed_feed(root, args.channel))
+    if not args.output:
+        print(output, end="")
+        return 0
+    output_path = Path(args.output)
+    if not output_path.is_absolute():
+        output_path = root / output_path
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(output, encoding="utf-8")
+    print(f"wrote {args.output}")
     return 0
 
 
@@ -645,6 +1060,15 @@ def build_parser():
     build.add_argument("--output", default="catalog.json", help="output path relative to root")
     build.add_argument("--stdout", action="store_true", help="write generated catalog to stdout")
     build.set_defaults(func=command_build_catalog)
+
+    feed = subparsers.add_parser(
+        "build-signed-feed",
+        help="build the unsigned body of signed/<channel>/catalog.json from providers/ and plugins/",
+    )
+    feed.add_argument("root", nargs="?", default=".", help="catalog root directory")
+    feed.add_argument("--channel", required=True, choices=SIGNED_FEED_CHANNELS, help="channel the body is for")
+    feed.add_argument("--output", help="write the body to this path (relative to root) instead of stdout")
+    feed.set_defaults(func=command_build_signed_feed)
 
     smoke = subparsers.add_parser("smoke-test", help="run the deterministic smoke provider contract")
     smoke.add_argument("root", nargs="?", default=".", help="catalog root directory")
