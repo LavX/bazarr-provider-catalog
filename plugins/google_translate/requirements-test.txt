@@ -1,1 +1,0 @@
-bazarr-plugin-sdk @ git+https://github.com/LavX/bazarr-plugin-sdk@v0.1.0

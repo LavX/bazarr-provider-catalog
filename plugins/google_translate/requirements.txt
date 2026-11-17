@@ -1,5 +1,0 @@
-deep-translator==1.11.4
-# The plugin reads its answer through requests and urllib3 and ends a stalled read at the
-# socket, which relies on urllib3 2.x. plugin.json locks the exact versions with hashes.
-requests>=2.32,<3
-urllib3>=2.2,<3

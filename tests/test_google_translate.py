@@ -19,6 +19,8 @@ from bazarr_plugin_sdk.testing import LoopbackHost, run_conformance
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_DIR = ROOT / "plugins" / "google_translate"
 FIXTURES = ROOT / "tests" / "fixtures"
+TEST_REQUIREMENTS = ROOT / "tests" / "requirements-google-translate.txt"
+PLUGIN_NOTES = ROOT / "docs" / "plugin-notes" / "google_translate.md"
 KIND = "bazarr.translator.v1"
 
 
@@ -1234,7 +1236,7 @@ class ManifestTests(unittest.TestCase):
         self.assertTrue((PLUGIN_DIR / f"{self.manifest['entry_module']}.py").is_file())
 
     def test_the_library_is_pinned_exactly(self):
-        lines = (PLUGIN_DIR / "requirements.txt").read_text(encoding="utf-8").splitlines()
+        lines = TEST_REQUIREMENTS.read_text(encoding="utf-8").splitlines()
         self.assertIn("deep-translator==1.11.4", lines)
         import importlib.metadata
 
@@ -1265,15 +1267,15 @@ class ManifestTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         self.assertIn("plugins/google_translate/plugin.json", workflow)
         self.assertIn("['dependencies']['requirements']", workflow)
-        self.assertNotIn("-r plugins/google_translate/requirements.txt", workflow)
-        tests = (PLUGIN_DIR / "requirements-test.txt").read_text(encoding="utf-8").split()
-        self.assertEqual(tests, ["bazarr-plugin-sdk", "@", "git+https://github.com/LavX/bazarr-plugin-sdk@v0.1.0"])
+        self.assertIn("-r tests/requirements-google-translate.txt", workflow)
+        tests = TEST_REQUIREMENTS.read_text(encoding="utf-8").splitlines()
+        self.assertIn("bazarr-plugin-sdk @ git+https://github.com/LavX/bazarr-plugin-sdk@v0.1.0", tests)
 
     def test_requests_and_urllib3_are_pinned_to_ranges_the_lock_satisfies(self):
         import re
 
         lines = [
-            line for line in (PLUGIN_DIR / "requirements.txt").read_text(encoding="utf-8").splitlines()
+            line for line in TEST_REQUIREMENTS.read_text(encoding="utf-8").splitlines()
             if line and not line.startswith("#")
         ]
         locked = {item["name"]: item["version"] for item in self.manifest["dependencies"]["requirements"]}
@@ -1296,7 +1298,7 @@ class ManifestTests(unittest.TestCase):
 
     def test_the_second_origin_is_declared_but_reserved_and_says_so(self):
         self.assertIn("https://translate.googleapis.com:443", self.manifest["endpoints"])
-        readme = (PLUGIN_DIR / "README.md").read_text(encoding="utf-8")
+        readme = PLUGIN_NOTES.read_text(encoding="utf-8")
         self.assertIn("translate.googleapis.com", readme)
         self.assertIn("reserved", readme)
 

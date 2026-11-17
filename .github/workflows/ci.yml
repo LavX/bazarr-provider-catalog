@@ -44,7 +44,7 @@ jobs:
         # plugin SDK: a tagged release of LavX/bazarr-plugin-sdk, which is not on PyPI.
         run: |
           python3 -m pip install --quiet $(python3 -c "import json;print(' '.join(f\"{r['name']}=={r['version']}\" for r in json.load(open('plugins/google_translate/plugin.json'))['dependencies']['requirements']))")
-          python3 -m pip install --quiet -r plugins/google_translate/requirements-test.txt
+          python3 -m pip install --quiet -r tests/requirements-google-translate.txt
       - name: Run test suite
         run: python3 -B -m unittest discover -s tests
 
