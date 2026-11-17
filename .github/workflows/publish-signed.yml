@@ -62,20 +62,20 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Use the branch as it is now
+      - name: Stand down if the branch has moved on
         id: head
-        # The approval can take days. If the branch has moved on with anything but sign commits,
-        # that push has its own run and signs the newer tree, so this run stands down.
+        # The run is approved for exactly the commit it was created for (github.sha), and only code
+        # from that commit ever runs next to the key. The approval can take days. If the branch has
+        # since moved on in anything but signed/**, that push has its own run (still waiting for its
+        # own approval), so this run stands down, a renewal included. The branch is never reset to
+        # its tip, so a later unapproved push cannot get its code run with the key.
         run: |
           git fetch --no-tags origin "+refs/heads/${CHANNEL}:refs/remotes/origin/${CHANNEL}"
           tip="$(git rev-parse "origin/${CHANNEL}")"
-          if [ "$tip" != "$(git rev-parse HEAD)" ]; then
-            if [ "$RENEW" != "true" ] && ! git diff --quiet HEAD "$tip" -- . ':(exclude)signed'; then
-              echo "::notice::${CHANNEL} moved on to ${tip}; the run for that push signs it."
-              echo "proceed=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            git reset --hard "$tip"
+          if [ "$tip" != "$(git rev-parse HEAD)" ] && ! git diff --quiet HEAD "$tip" -- . ':(exclude)signed'; then
+            echo "::notice::${CHANNEL} moved on to ${tip}; the run for that push signs it."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           echo "proceed=true" >> "$GITHUB_OUTPUT"
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
@@ -121,6 +121,10 @@ jobs:
             exit 0
           fi
           git commit --quiet -m "chore(catalog): sign ${CHANNEL}"
+          # Only signed/** can differ from the commit that was signed, so this replays the sign
+          # commit onto the newer tip without running anything from it.
+          git fetch --no-tags origin "+refs/heads/${CHANNEL}:refs/remotes/origin/${CHANNEL}"
+          git rebase --quiet "origin/${CHANNEL}"
           git push origin "HEAD:refs/heads/${CHANNEL}"
 
       - name: Start the Pages mirror build

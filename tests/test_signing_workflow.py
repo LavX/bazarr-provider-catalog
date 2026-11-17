@@ -60,6 +60,24 @@ class PublishWorkflowTests(unittest.TestCase):
         self.assertIn("actions: write", WORKFLOW)
         self.assertIn("GH_TOKEN: ${{ github.token }}", WORKFLOW)
 
+    def test_only_code_from_the_approved_commit_runs_next_to_the_key(self):
+        # The checkout is the commit the run was created for: no ref override, and the branch is
+        # never reset or checked out to a later tip before the signing step.
+        checkout = steps()[0][1]
+        self.assertNotIn("ref:", checkout)
+        for forbidden in ("git reset", "git checkout", "git merge", "git pull", "git switch"):
+            self.assertNotIn(forbidden, WORKFLOW, forbidden)
+        # A moved branch stands down in every mode, renewals included.
+        guard = dict(steps())["Stand down if the branch has moved on"]
+        self.assertNotIn("RENEW", guard)
+        self.assertIn("proceed=false", guard)
+        self.assertIn(":(exclude)signed", guard)
+        # Everything after the guard runs only when it let the run proceed, and the install and the
+        # tool come from the checkout.
+        for name, text in steps()[2:]:
+            self.assertIn("steps.head.outputs.proceed == 'true'", text, name)
+        self.assertIn("-r sdk/requirements-signing.txt", WORKFLOW)
+
     def test_the_run_signs_one_channel_at_a_time_and_never_cancels_a_waiting_run(self):
         self.assertIn("group: publish-signed-${{ github.ref_name }}", WORKFLOW)
         self.assertIn("cancel-in-progress: false", WORKFLOW)

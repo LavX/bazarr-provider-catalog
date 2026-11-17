@@ -32,25 +32,33 @@ class CommittedSigningTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(public).hexdigest()[:16], ROOT_KEY_ID)
         self.assertEqual(host_signing.key_id(public), ROOT_KEY_ID)
 
-    def test_the_key_file_is_signed_by_the_root_and_lists_the_ci_key(self):
+    def test_the_key_file_is_signed_by_the_root_and_lists_a_usable_ci_key(self):
+        # parse_key_file refuses a file the trusted root did not sign, so any revocation it
+        # returns is authenticated. Revocations are allowed; at least one listed key must survive.
         key_file = signing.parse_key_file(signing.read_key_file(ROOT))
         self.assertEqual(key_file.root_key_id, ROOT_KEY_ID)
-        self.assertIn(CI_KEY_ID, [key.key_id for key in key_file.keys])
-        self.assertEqual(key_file.revocations, ())
-        self.assertNotIn(ROOT_KEY_ID, [key.key_id for key in key_file.keys])
+        revoked = {item.key_id for item in key_file.revocations}
+        listed = [key.key_id for key in key_file.keys]
+        self.assertTrue(set(listed) - revoked, "every listed signing key is revoked")
+        self.assertNotIn(ROOT_KEY_ID, listed)
 
     def test_the_key_file_matches_the_public_records_of_both_keys(self):
         document = json.loads((ROOT / signing.KEY_FILE_PATH).read_text(encoding="utf-8"))
-        entry = next(item for item in document["keys"] if item["key_id"] == CI_KEY_ID)
-        self.assertEqual(signing.key_id(base64.b64decode(entry["public_key"])), CI_KEY_ID)
-        self.assertEqual(entry["algorithm"], "ed25519")
+        entries = {item["key_id"]: item for item in document["keys"]}
+        self.assertIn(CI_KEY_ID, entries, "the key made on 2026-11-17 is listed")
+        for key_id, entry in entries.items():
+            self.assertEqual(signing.key_id(base64.b64decode(entry["public_key"])), key_id)
+            self.assertEqual(entry["algorithm"], "ed25519")
 
     def test_the_key_file_holds_no_private_material(self):
         self.assertIsNone(PRIVATE_KEY_MARKER.search((ROOT / signing.KEY_FILE_PATH).read_bytes()))
         self.assertIsNone(PRIVATE_KEY_MARKER.search((ROOT / "sdk" / "signing.py").read_bytes()))
 
     def test_every_committed_signed_pair_verifies_against_the_committed_key_file(self):
-        # Signature and chain only: a pair may outlive its window until the next signing run.
+        # An existing pair is checked separately from the mandatory verification of newly signed
+        # output (sdk sign and the workflow's verify step). Signature and chain only: a pair may
+        # outlive its window until the next signing run. After the root revokes the key that signed
+        # a pair, the pair reads as revoked until a new signing replaces it, and that is allowed.
         found = 0
         for channel in CHANNELS:
             body_path, envelope_path = signing.signed_paths(ROOT, channel)
@@ -59,8 +67,12 @@ class CommittedSigningTests(unittest.TestCase):
             found += 1
             with self.subTest(channel=channel):
                 result = signing.verify_files(ROOT, channel, now=datetime.now(timezone.utc), baked=True)
-                self.assertTrue(result.ok, f"{result.status.value}: {result.detail}")
-                self.assertEqual(result.signer_key_id, CI_KEY_ID)
+                if result.status.value == "revoked_key":
+                    key_file = signing.parse_key_file(signing.read_key_file(ROOT))
+                    self.assertIn(result.signer_key_id, {item.key_id for item in key_file.revocations})
+                else:
+                    self.assertTrue(result.ok, f"{result.status.value}: {result.detail}")
+                    self.assertIn(result.signer_key_id, {key.key_id for key in signing.parse_key_file(signing.read_key_file(ROOT)).keys})
                 body = json.loads(body_path.read_text(encoding="utf-8"))
                 self.assertEqual(body["channel"], channel)
                 self.assertRegex(body["source_commit"], r"^[a-f0-9]{40}$")

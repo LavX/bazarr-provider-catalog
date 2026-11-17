@@ -161,6 +161,18 @@ class SignAndVerifyTests(SigningTestCase):
         with self.assertRaisesRegex(cli.CatalogError, "is revoked"):
             self.sign(now=NOW + timedelta(days=1))
 
+    def test_a_pair_signed_by_a_revoked_key_can_be_replaced_by_a_new_key(self):
+        self.sign()
+        replacement = Ed25519PrivateKey.generate()
+        self.write_key_file(key_file_for(self.root_key, [self.ci_key, replacement], revoked=[self.ci_key], version=2))
+        self.assertEqual(self.verify().status.value, "revoked_key")
+        result = signing.sign(
+            self.root, "beta", replacement, now=NOW + timedelta(days=1), source_commit=COMMIT, roots=self.roots
+        )
+        self.assertTrue(result.ok)
+        self.assertEqual(result.signer_key_id, signing.key_id(raw_public(replacement)))
+        self.assertTrue(self.verify(now=NOW + timedelta(days=1)).ok)
+
     def test_a_key_the_file_does_not_list_is_refused_and_nothing_is_written(self):
         stranger = Ed25519PrivateKey.generate()
         with self.assertRaisesRegex(cli.CatalogError, "is not listed"):
