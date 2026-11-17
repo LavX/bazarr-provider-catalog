@@ -13,6 +13,7 @@ from sdk import cli
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = "fixture_translator"
+FIXTURE_DIR = ROOT / "tests" / "fixtures" / "plugins" / FIXTURE
 IGNORE = shutil.ignore_patterns("__pycache__")
 
 
@@ -22,7 +23,7 @@ class PluginFeedTestCase(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
         shutil.copytree(ROOT / "providers/smoke", root / "providers/smoke", ignore=IGNORE)
-        shutil.copytree(ROOT / "plugins" / FIXTURE, root / "plugins" / FIXTURE, ignore=IGNORE)
+        shutil.copytree(FIXTURE_DIR, root / "plugins" / FIXTURE, ignore=IGNORE)
         return root
 
     def provider_ids(self, root):
@@ -46,9 +47,12 @@ class PluginFeedTestCase(unittest.TestCase):
 
 
 class PluginManifestTests(PluginFeedTestCase):
-    def test_the_checked_in_catalog_validates_with_the_fixture_plugin(self):
-        self.assertTrue((ROOT / "plugins" / FIXTURE / "plugin.json").is_file())
+    def test_the_checked_in_catalog_validates(self):
         cli.validate_catalog(ROOT)
+
+    def test_the_fixture_plugin_is_valid(self):
+        self.assertTrue((FIXTURE_DIR / "plugin.json").is_file())
+        self.assertEqual([item["id"] for item in self.build_plugins(self.make_root())], [FIXTURE])
 
     def test_a_valid_translator_manifest_is_accepted(self):
         manifests = self.build_plugins(self.make_root())
@@ -326,6 +330,15 @@ class LegacyCatalogTests(PluginFeedTestCase):
 
 
 class SignedFeedBodyTests(PluginFeedTestCase):
+    def test_the_fixture_is_never_published_from_the_repo(self):
+        self.assertFalse((ROOT / "plugins" / FIXTURE).exists())
+        self.assertNotIn(FIXTURE, (ROOT / "catalog.json").read_text(encoding="utf-8"))
+        self.assertNotIn(FIXTURE, cli.dump_json(cli.build_catalog(ROOT)))
+        for channel in cli.SIGNED_FEED_CHANNELS:
+            body = cli.build_signed_feed(ROOT, channel)
+            self.assertNotIn(FIXTURE, cli.dump_json(body))
+            self.assertNotIn(FIXTURE, [item["manifest"].get("id") for item in body["plugins"]])
+
     def add_plugin(self, root, plugin_id):
         shutil.copytree(root / "plugins" / FIXTURE, root / "plugins" / plugin_id, ignore=IGNORE)
         path = root / "plugins" / plugin_id / "plugin.json"

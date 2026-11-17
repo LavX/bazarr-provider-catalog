@@ -1,5 +1,5 @@
 {
-  "bundle_sha256": "7c11b1231b4bb865eb387215ed06a9240b8dbd51000f44aa49499cda6971f1c2",
+  "bundle_sha256": "1992ac10ef50774f9b9eedab07d28be1c835a78e7464452244bd6374ed8eef88",
   "dependencies": {
     "requirements": []
   },
@@ -10,12 +10,12 @@
   "entry_class": "FixtureTranslator",
   "entry_module": "translator",
   "files": {
-    "translator.py": "2543b6535e575fcc5a76052ace96d729411bad831d064044b4d6595632fb4026"
+    "translator.py": "3c1e77dc8f07886da75d7f888d89e1ea9d61c94328604ba60d9113dc6d2ce104"
   },
   "id": "fixture_translator",
   "kind": "translator",
   "kind_api": "bazarr.translator.v1",
-  "min_host_version": "99.0.0",
+  "min_host_version": "2.8.0",
   "name": "Fixture translator",
   "permissions": [
     "network"
