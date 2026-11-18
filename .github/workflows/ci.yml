@@ -38,6 +38,14 @@ jobs:
         # The signing tests check the committed key file and any committed signed pair with the host's verifier.
         run: |
           python3 -m pip install --quiet --require-hashes --only-binary=:all: -r sdk/requirements-signing.txt
+      - name: Install plugin test dependencies
+        # The translator plugin's tests run against the closure its manifest locks, installed from the
+        # wheels baked into its bundle with the locked hashes and no index, plus the plugin SDK: a
+        # release of LavX/bazarr-plugin-sdk (tag v0.1.0, pinned here by its commit), which is not on PyPI.
+        run: |
+          python3 -c "import json;[print(r['name'] + '==' + r['version'] + ' ' + ' '.join('--hash=' + h for h in r['hashes'])) for r in json.load(open('plugins/google_translate/plugin.json'))['dependencies']['requirements']]" > "$RUNNER_TEMP/google-translate-closure.txt"
+          python3 -m pip install --quiet --no-index --find-links plugins/google_translate/wheels --require-hashes --only-binary=:all: -r "$RUNNER_TEMP/google-translate-closure.txt"
+          python3 -m pip install --quiet -r tests/requirements-google-translate.txt
       - name: Run test suite
         run: python3 -B -m unittest discover -s tests
 

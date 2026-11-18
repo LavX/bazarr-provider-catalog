@@ -699,7 +699,51 @@ def validate_plugin(root, plugin_dir, seen_ids):
 
     dependencies = manifest.get("dependencies", {})
     validate_dependency_lock(manifest_path, dependencies)
+    validate_baked_wheels(manifest_path, plugin_dir, declared_files, dependencies)
     return manifest
+
+
+def _wheel_identity(filename):
+    """(normalized distribution name, version) from a wheel file name, or None when it is not one."""
+    if not filename.endswith(".whl"):
+        return None
+    parts = filename[:-4].split("-")
+    if len(parts) not in (5, 6) or not all(parts):
+        return None
+    return re.sub(r"[-_.]+", "-", parts[0]).lower(), parts[1].replace("_", "-")
+
+
+def validate_baked_wheels(manifest_path, plugin_dir, declared_files, dependencies):
+    """A plugin bundle that carries wheels carries exactly the ones its dependency lock names.
+
+    Every file under ``wheels/`` is a wheel of a locked dependency, at the locked version, with a sha256 the
+    lock lists, and every locked dependency has one. A wheel the lock does not name would be signed and
+    served with the bundle, so it is refused here.
+    """
+    baked = sorted(path for path in declared_files if path == "wheels" or path.startswith("wheels/"))
+    if not baked:
+        return
+    locked = {}
+    for requirement in dependencies.get("requirements", []):
+        key = re.sub(r"[-_.]+", "-", requirement["name"]).lower()
+        locked[key] = requirement
+    covered = set()
+    for relative in baked:
+        filename = relative.removeprefix("wheels/")
+        identity = _wheel_identity(filename) if "/" not in filename else None
+        if identity is None:
+            raise CatalogError(f"{manifest_path} {relative} is not a wheel directly under wheels/")
+        requirement = locked.get(identity[0])
+        if requirement is None:
+            raise CatalogError(f"{manifest_path} {relative} is not a locked dependency")
+        if identity[1] != requirement["version"]:
+            raise CatalogError(f"{manifest_path} {relative} is not the locked version {requirement['version']}")
+        if f"sha256:{file_sha256(plugin_dir / relative)}" not in {digest.lower() for digest in requirement["hashes"]}:
+            raise CatalogError(f"{manifest_path} {relative} is not among the hashes locked for {requirement['name']}")
+        covered.add(identity[0])
+    missing = sorted(set(locked) - covered)
+    if missing:
+        raise CatalogError(f"{manifest_path} locks {', '.join(missing)} but wheels/ carries no wheel of it")
 
 
 def build_plugins(root, taken_ids=(), write_manifests=False):
