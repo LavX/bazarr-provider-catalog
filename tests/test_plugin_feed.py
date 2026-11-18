@@ -502,5 +502,131 @@ class SignedFeedBodyTests(PluginFeedTestCase):
         self.assertEqual(result.stdout, b"")
 
 
+class RevocationTests(PluginFeedTestCase):
+    def write(self, root, data):
+        text = data if isinstance(data, str) else json.dumps(data)
+        (root / cli.REVOCATIONS_FILE).write_text(text, encoding="utf-8")
+
+    def refused(self, data, pattern):
+        root = self.make_root()
+        cli.build_catalog(root, write_manifests=True)
+        (root / "catalog.json").write_text(cli.dump_json(cli.build_catalog(root)), encoding="utf-8")
+        cli.validate_catalog(root)
+        self.write(root, data)
+        with self.assertRaisesRegex(cli.CatalogError, pattern):
+            cli.build_signed_feed(root, "main")
+        with self.assertRaisesRegex(cli.CatalogError, pattern):
+            cli.validate_catalog(root)
+
+    def test_the_checked_in_tree_publishes_no_field_unless_it_has_a_list(self):
+        has_list = (ROOT / cli.REVOCATIONS_FILE).is_file()
+        for channel in cli.SIGNED_FEED_CHANNELS:
+            self.assertEqual("revocations" in cli.build_signed_feed(ROOT, channel), has_list)
+
+    def test_a_missing_file_gives_no_field_and_no_crash(self):
+        root = self.make_root()
+        self.assertIsNone(cli.load_revocations(root))
+        for channel in cli.SIGNED_FEED_CHANNELS:
+            self.assertNotIn("revocations", cli.build_signed_feed(root, channel))
+
+    def test_the_body_carries_the_list_whenever_the_file_has_entries(self):
+        root = self.make_root()
+        entries = [{"id": "example", "version": "1.2.0", "reason": "It sends credentials.",
+                    "revoked_at": "2026-12-01T00:00:00Z"}, {"id": "retired_plugin"}]
+        self.write(root, entries)
+        for channel in cli.SIGNED_FEED_CHANNELS:
+            body = cli.build_signed_feed(root, channel)
+            self.assertEqual(body["revocations"], sorted(entries, key=lambda item: item["id"]))
+            self.assertEqual(set(body), {"schema_version", "name", "channel", "providers", "plugins", "revocations"})
+
+    def test_an_empty_list_is_published_as_an_empty_list(self):
+        root = self.make_root()
+        self.write(root, [])
+        self.assertEqual(cli.build_signed_feed(root, "main")["revocations"], [])
+
+    def test_entries_are_sorted_by_id_then_version_with_no_version_first(self):
+        root = self.make_root()
+        self.write(root, [
+            {"id": "zeta"}, {"id": "alpha", "version": "2.0.0"}, {"id": "alpha", "version": "1.10.0"},
+            {"id": "alpha"}, {"id": "beta_one", "version": "1"},
+        ])
+        order = [(item["id"], item.get("version")) for item in cli.build_signed_feed(root, "main")["revocations"]]
+        self.assertEqual(order, [("alpha", None), ("alpha", "1.10.0"), ("alpha", "2.0.0"), ("beta_one", "1"), ("zeta", None)])
+
+    def test_the_bytes_do_not_depend_on_the_order_in_the_file(self):
+        entries = [{"id": "alpha", "version": "1.0.0"}, {"id": "alpha"}, {"id": "gamma", "reason": "x y"}]
+        outputs = []
+        for ordering in (entries, list(reversed(entries))):
+            root = self.make_root()
+            self.write(root, ordering)
+            outputs.append(cli.dump_json(cli.build_signed_feed(root, "beta")))
+        self.assertEqual(outputs[0], outputs[1])
+
+    def test_a_reason_has_its_whitespace_collapsed(self):
+        root = self.make_root()
+        self.write(root, [{"id": "example", "reason": "  It   sends\n\tcredentials.  "}])
+        self.assertEqual(cli.load_revocations(root), [{"id": "example", "reason": "It sends credentials."}])
+
+    def test_a_reason_of_exactly_the_limit_is_accepted(self):
+        root = self.make_root()
+        self.write(root, [{"id": "example", "reason": "r" * 300}])
+        self.assertEqual(len(cli.load_revocations(root)[0]["reason"]), 300)
+
+    def test_every_refusal(self):
+        cases = {
+            "not an array": ({"revocations": []}, "must be a JSON array"),
+            "broken json": ("[", "invalid JSON"),
+            "entry not an object": (["example"], "must be an object"),
+            "too many entries": ([{"id": f"plugin_{n}"} for n in range(2001)], "at most 2000"),
+            "unknown field": ([{"id": "example", "note": "x"}], "fields a host does not know: note"),
+            "missing id": ([{"version": "1"}], "id is required"),
+            "null id": ([{"id": None}], "must not be null"),
+            "bad id": ([{"id": "Example"}], "id is required and must look like a plugin id"),
+            "short id": ([{"id": "x"}], "id is required"),
+            "id not text": ([{"id": 7}], "must be text"),
+            "null version": ([{"id": "example", "version": None}], "must not be null"),
+            "empty version": ([{"id": "example", "version": ""}], "version must be text"),
+            "blank version": ([{"id": "example", "version": "  "}], "version must be text"),
+            "padded version": ([{"id": "example", "version": " 1.0"}], "version must be text"),
+            "numeric version": ([{"id": "example", "version": 1}], "must be text"),
+            "long version": ([{"id": "example", "version": "1" * 65}], "version is longer than 64"),
+            "null reason": ([{"id": "example", "reason": None}], "must not be null"),
+            "blank reason": ([{"id": "example", "reason": " \n "}], "reason must not be blank"),
+            "long reason": ([{"id": "example", "reason": "r" * 301}], "reason is longer than 300"),
+            "reason not text": ([{"id": "example", "reason": ["x"]}], "must be text"),
+            "null revoked_at": ([{"id": "example", "revoked_at": None}], "must not be null"),
+            "revoked_at with a date only": ([{"id": "example", "revoked_at": "2026-12-01"}], "revoked_at must look like"),
+            "revoked_at with an offset": ([{"id": "example", "revoked_at": "2026-12-01T00:00:00+00:00"}], "revoked_at must look like"),
+            "revoked_at that is no date": ([{"id": "example", "revoked_at": "2026-13-45T00:00:00Z"}], "revoked_at must look like"),
+            "duplicate entry": ([{"id": "example", "version": "1"}, {"id": "example", "version": "1"}], "twice"),
+            "duplicate whole-plugin entry": ([{"id": "example"}, {"id": "example"}], "twice"),
+        }
+        for name, (data, pattern) in cases.items():
+            with self.subTest(name):
+                self.refused(data, pattern)
+
+    def test_two_versions_and_a_whole_plugin_entry_of_one_plugin_are_not_duplicates(self):
+        root = self.make_root()
+        self.write(root, [{"id": "example"}, {"id": "example", "version": "1"}, {"id": "example", "version": "2"}])
+        self.assertEqual(len(cli.load_revocations(root)), 3)
+
+    def test_the_legacy_catalog_ignores_the_list(self):
+        root = self.make_root()
+        before = cli.dump_json(cli.build_catalog(root))
+        self.write(root, [{"id": "example"}])
+        self.assertEqual(cli.dump_json(cli.build_catalog(root)), before)
+        self.assertNotIn("revocations", before)
+
+    def test_the_command_prints_the_list(self):
+        root = self.make_root()
+        self.write(root, [{"id": "example", "version": "1.0.0"}])
+        result = subprocess.run(
+            [sys.executable, "-B", "-m", "sdk", "build-signed-feed", str(root), "--channel", "main"],
+            cwd=ROOT, capture_output=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["revocations"], [{"id": "example", "version": "1.0.0"}])
+
+
 if __name__ == "__main__":
     unittest.main()
