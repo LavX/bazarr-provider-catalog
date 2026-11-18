@@ -27,7 +27,10 @@ branch that cannot be found.
 
 To decide whether a run is already on its way, the check asks GitHub for the signing workflow's
 waiting, pending, queued, requested and running runs, every page of each. If any of those queries
-fails, the list is incomplete and the check starts nothing that day, so it cannot start a duplicate.
+fails, the list is incomplete and the check starts nothing that day, so it cannot start a duplicate. The
+statuses are asked in the order a run moves through them (requested, pending, queued, waiting, running),
+so a run approved between two queries is still seen, and the whole listing is read twice: if the run ids
+differ between the two reads, the list counts as incomplete too.
 The alarm still works from the signed files alone.
 
 Two behaviours to know about:

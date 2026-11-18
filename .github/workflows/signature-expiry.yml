@@ -54,23 +54,27 @@ jobs:
         run: git fetch --no-tags --depth=1 origin "+refs/heads/main:refs/remotes/origin/main" "+refs/heads/beta:refs/remotes/origin/beta"
 
       - name: List the publish runs that are not finished
-        # Only requested, queued, pending, running and waiting runs of the signing workflow, every page, asked in the
-        # order a run moves through them so that one that moves on between two queries is seen by the later one.
-        # The file is written only when every query succeeded, so an incomplete list reads as unknown and
-        # nothing is requested.
+        # Only requested, pending, queued, waiting and running runs of the signing workflow, every page. A run
+        # moves from the earlier of these to the later ones (and then finishes), so asking in that order cannot
+        # miss one that moves on between two queries: it is seen in the earlier state or, already moved, in the
+        # later one. The whole listing is done twice, and if the set of run ids differs between the two reads
+        # something changed under it. The list the check reads exists only when every query succeeded and the
+        # two reads agree, so otherwise it reads as unknown and nothing is requested.
         run: |
           rm -f "$RUNNER_TEMP/runs.jsonl"
-          : > "$RUNNER_TEMP/runs.part"
-          complete=true
-          for status in requested queued pending in_progress waiting; do
-            gh api --paginate "repos/${GH_REPO}/actions/workflows/publish-signed.yml/runs?status=${status}&per_page=100" \
-              --jq '.workflow_runs[] | {status: .status, headBranch: .head_branch, event: .event}' >> "$RUNNER_TEMP/runs.part" \
-              || complete=false
-          done
-          if [ "$complete" = "true" ]; then
-            mv "$RUNNER_TEMP/runs.part" "$RUNNER_TEMP/runs.jsonl"
+          list_pass() {
+            : > "$1"
+            for status in requested pending queued waiting in_progress; do
+              gh api --paginate "repos/${GH_REPO}/actions/workflows/publish-signed.yml/runs?status=${status}&per_page=100" \
+                --jq '.workflow_runs[] | {id: .id, status: .status, headBranch: .head_branch, event: .event}' >> "$1" || return 1
+            done
+          }
+          ids_of() { grep -o '"id":[0-9]*' "$1" | sort -u || true; }
+          if list_pass "$RUNNER_TEMP/runs.first" && list_pass "$RUNNER_TEMP/runs.second" \
+              && [ "$(ids_of "$RUNNER_TEMP/runs.first")" = "$(ids_of "$RUNNER_TEMP/runs.second")" ]; then
+            mv "$RUNNER_TEMP/runs.second" "$RUNNER_TEMP/runs.jsonl"
           else
-            echo "::warning::The list of signing runs is incomplete, so no renewal is requested today."
+            echo "::warning::The list of signing runs is incomplete or changed while it was read, so no renewal is requested today."
           fi
 
       - name: Read when each signature runs out

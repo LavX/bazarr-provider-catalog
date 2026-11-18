@@ -1,5 +1,6 @@
 """The daily expiry check: its own workflow, no key, complete run listing, and a renewal that takes the renew path."""
 
+import json
 import os
 import re
 import stat
@@ -65,7 +66,7 @@ class RunListTests(unittest.TestCase):
     def test_it_queries_only_unfinished_runs_of_the_signing_workflow_with_every_page(self):
         listing = step("List the publish runs that are not finished")
         # In the order a run moves through them, so one that moves on between two queries is seen by the later one.
-        self.assertIn("for status in requested queued pending in_progress waiting; do", listing)
+        self.assertIn("for status in requested pending queued waiting in_progress; do", listing)
         self.assertIn("actions/workflows/publish-signed.yml/runs?status=${status}&per_page=100", listing)
         self.assertIn("gh api --paginate", listing)
         self.assertNotIn("gh run list", listing)
@@ -74,10 +75,9 @@ class RunListTests(unittest.TestCase):
 
     def test_an_incomplete_query_leaves_no_file_so_nothing_is_requested(self):
         listing = step("List the publish runs that are not finished")
-        self.assertIn("|| complete=false", listing)
-        self.assertIn('if [ "$complete" = "true" ]; then', listing)
-        # The list the check reads exists only after every query succeeded.
-        self.assertIn('mv "$RUNNER_TEMP/runs.part" "$RUNNER_TEMP/runs.jsonl"', listing)
+        self.assertIn('>> "$1" || return 1', listing)
+        # The list the check reads exists only after every query succeeded and the two reads agreed.
+        self.assertIn('mv "$RUNNER_TEMP/runs.second" "$RUNNER_TEMP/runs.jsonl"', listing)
         self.assertIn('rm -f "$RUNNER_TEMP/runs.jsonl"', listing)
         self.assertLess(listing.index('rm -f "$RUNNER_TEMP/runs.jsonl"'), listing.index("gh api"))
         read = step("Read when each signature runs out")
@@ -94,9 +94,13 @@ class RunListTests(unittest.TestCase):
 
 
 class RunListScriptTests(unittest.TestCase):
-    """Runs the listing step with a stand-in for gh."""
+    """Runs the listing step with a stand-in for gh that keeps a small state of its own."""
 
-    def run_step(self, fail_on=None):
+    ORDER = ("requested", "pending", "queued", "waiting", "in_progress")
+
+    def run_step(self, fail_on=None, move_after=None, appear_after=None):
+        """``move_after``: run 7 waits for approval for that many gh calls, then runs.
+        ``appear_after``: run 9 starts waiting after that many calls. ``fail_on``: a status whose query fails."""
         script = step("List the publish runs that are not finished").split("run: |\n", 1)[1]
         script = "\n".join(line[10:] for line in script.splitlines())
         tmp = tempfile.TemporaryDirectory()
@@ -107,9 +111,19 @@ class RunListScriptTests(unittest.TestCase):
         gh.write_text(
             "#!/bin/sh\n"
             'echo "$@" >> "$CALLS"\n'
+            'n=$(wc -l < "$CALLS")\n'
             'case "$*" in *"status=$FAIL_ON&"*) echo boom >&2; exit 1;; esac\n'
-            # One run per query, as --paginate with --jq prints it.
-            "echo '{\"status\":\"waiting\",\"headBranch\":\"beta\",\"event\":\"workflow_dispatch\"}'\n",
+            'status=$(echo "$*" | sed -n "s/.*status=\\([a-z_]*\\)&.*/\\1/p")\n'
+            # Run 7 is waiting for approval for MOVE_AFTER calls and then runs.
+            'if [ -n "$MOVE_AFTER" ]; then\n'
+            '  if [ "$n" -le "$MOVE_AFTER" ]; then now=waiting; else now=in_progress; fi\n'
+            '  [ "$status" = "$now" ] && echo "{\\"id\\":7,\\"status\\":\\"$now\\",\\"headBranch\\":\\"beta\\",\\"event\\":\\"workflow_dispatch\\"}"\n'
+            "fi\n"
+            # Run 9 shows up as waiting after APPEAR_AFTER calls.
+            'if [ -n "$APPEAR_AFTER" ] && [ "$n" -gt "$APPEAR_AFTER" ] && [ "$status" = waiting ]; then\n'
+            '  echo \'{"id":9,"status":"waiting","headBranch":"main","event":"push"}\'\n'
+            "fi\n"
+            "exit 0\n",
             encoding="utf-8",
         )
         gh.chmod(gh.stat().st_mode | stat.S_IXUSR)
@@ -117,26 +131,65 @@ class RunListScriptTests(unittest.TestCase):
         env = {
             **os.environ, "PATH": f"{base / 'bin'}:{os.environ['PATH']}", "RUNNER_TEMP": str(base / "runner"),
             "GH_REPO": "LavX/bazarr-provider-catalog", "CALLS": str(base / "calls"), "FAIL_ON": fail_on or "none",
+            "MOVE_AFTER": "" if move_after is None else str(move_after),
+            "APPEAR_AFTER": "" if appear_after is None else str(appear_after),
         }
         result = subprocess.run(["bash", "-eo", "pipefail", "-c", script], env=env, capture_output=True, text=True)
         calls = (base / "calls").read_text(encoding="utf-8").splitlines()
         return result, base / "runner" / "runs.jsonl", calls
 
-    def test_every_unfinished_status_is_queried_and_the_results_are_kept(self):
+    def ids(self, runs):
+        # A run that moves on during the read can show under two statuses, which is the same run.
+        return sorted({json.loads(line)["id"] for line in runs.read_text(encoding="utf-8").splitlines()})
+
+    def test_every_unfinished_status_is_queried_in_lifecycle_order_and_the_whole_listing_is_read_twice(self):
         result, runs, calls = self.run_step()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(len(calls), 5)
-        for status in ("waiting", "pending", "queued", "requested", "in_progress"):
-            self.assertTrue(any(f"status={status}&" in call and "--paginate" in call for call in calls), status)
-        self.assertEqual(len(runs.read_text(encoding="utf-8").splitlines()), 5)
+        self.assertEqual(len(calls), 10)
+        statuses = [re.search(r"status=([a-z_]+)&", call).group(1) for call in calls]
+        self.assertEqual(statuses, list(self.ORDER) * 2)
+        for call in calls:
+            self.assertIn("--paginate", call)
+        self.assertEqual(runs.read_text(encoding="utf-8"), "")
+
+    def test_the_order_cannot_miss_a_run_that_is_approved_between_two_queries(self):
+        # Model of the property, on the order the workflow really uses: a run moves from waiting to running
+        # after k queries. It must show in some query for every k.
+        listing = step("List the publish runs that are not finished")
+        order = re.search(r"for status in ([a-z_ ]+); do", listing).group(1).split()
+        self.assertEqual(order, list(self.ORDER))
+        for k in range(len(order) + 1):
+            seen = [status for index, status in enumerate(order, start=1)
+                    if status == ("waiting" if index <= k else "in_progress")]
+            self.assertTrue(seen, f"a run approved after {k} queries is missed")
+        # The reverse order, which an earlier version used, does miss one.
+        reverse = list(reversed(order))
+        misses = [k for k in range(len(reverse) + 1)
+                  if not [s for index, s in enumerate(reverse, start=1) if s == ("waiting" if index <= k else "in_progress")]]
+        self.assertTrue(misses)
+
+    def test_a_run_approved_at_any_moment_of_the_listing_is_in_the_list(self):
+        for moved_after in range(0, 12):
+            result, runs, calls = self.run_step(move_after=moved_after)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(runs.exists(), moved_after)
+            self.assertEqual(self.ids(runs), [7], moved_after)
+
+    def test_a_run_that_appears_or_disappears_between_the_two_reads_leaves_no_list(self):
+        result, runs, calls = self.run_step(appear_after=5)  # run 9 shows only in the second read
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(runs.exists())
+        self.assertIn("changed while it was read", result.stdout)
+        self.assertEqual(len(calls), 10)
+        result, runs, _ = self.run_step(appear_after=0)  # in both reads: stable
+        self.assertEqual(self.ids(runs), [9])
 
     def test_one_failed_query_leaves_no_list_at_all(self):
-        for status in ("waiting", "in_progress"):
+        for status in ("waiting", "in_progress", "requested"):
             result, runs, calls = self.run_step(fail_on=status)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse(runs.exists(), status)
             self.assertIn("incomplete", result.stdout)
-            self.assertEqual(len(calls), 5, "the other statuses are still asked")
 
 
 class RenewalTests(unittest.TestCase):
