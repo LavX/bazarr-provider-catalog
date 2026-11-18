@@ -56,8 +56,6 @@ RUN_UNKNOWN = "unknown"
 
 # Workflow runs that count as "already on its way". Only completed runs do not.
 _FINISHED = "completed"
-# Runs the check itself belongs to never count: a scheduled run is the check.
-_IGNORED_EVENTS = frozenset({"schedule"})
 
 
 @dataclass(frozen=True)
@@ -131,7 +129,7 @@ def active_channels(runs):
     for run in runs:
         if not isinstance(run, dict):
             continue
-        if run.get("status") == _FINISHED or run.get("event") in _IGNORED_EVENTS:
+        if run.get("status") == _FINISHED:
             continue
         branch = run.get("headBranch")
         if isinstance(branch, str):

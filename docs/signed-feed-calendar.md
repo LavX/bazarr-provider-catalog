@@ -44,12 +44,18 @@ From 14 days before expiry the check job fails every day until a fresh signature
 it, approve the waiting renewal run, or start one (Actions, Publish signed feed, Run workflow,
 `renew` ticked, on the branch that is due).
 
-GitHub sends the failure mail of a scheduled workflow to the person who last changed its `cron`
-line in the workflow file, if that person receives Actions notifications. Do not rely on the
-default. In the notification settings of the account that should be told (Settings, Notifications,
-System, Actions), turn on notifications for failed workflows, and keep the `cron` line of
-`signature-expiry.yml` changed by that account, or watch the repository with Actions selected. Then
-trigger the workflow once by hand (Run workflow) and check that a failure mail would arrive.
+GitHub sends the failure mail of a scheduled workflow to one person: the user who last changed the
+`cron` line in the workflow file, or, if the workflow was disabled and enabled again, the user who
+enabled it. Nobody else is told. So:
+
+- Keep the `cron` line of `signature-expiry.yml` last changed by the account that should be told, and
+  let nobody else (a bot included) disable and re-enable the workflow.
+- In that account's notification settings (Settings, Notifications, System, Actions), turn on
+  notifications for failed workflows.
+- To check who a scheduled run would notify, look at the actor of one:
+  `gh api "repos/LavX/bazarr-provider-catalog/actions/workflows/signature-expiry.yml/runs?event=schedule&per_page=5" --jq '.workflow_runs[] | [.created_at, .actor.login, .triggering_actor.login]'`.
+  A manual run proves nothing about this, because it notifies whoever started it, and a healthy
+  check does not fail on a manual run anyway.
 
 ## GitHub's 60 day switch-off
 
@@ -59,17 +65,32 @@ renewal cadence has to stay clear of that cut-off, so:
 - A renewal is requested at 45 days left. The sign commit of each renewal is repository activity and
   lands about 45 days after the one before it, well inside 60 days. It cannot land sooner than the
   owner approves the run.
-- Every run of the check enables its own workflow and `publish-signed.yml` through the API, which
-  does nothing to an enabled workflow and resets the inactivity timer.
 - The check fails when the newest commit on the signed branches is 50 days old, ten days before the
-  cut-off. It does this only once something has been signed.
+  cut-off. It does this only once something has been signed. GitHub does not say whether a commit on
+  a branch other than the default one counts as activity, so treat the alarm as a margin and not as
+  proof.
 - The check lives in its own workflow file, so a disabled schedule never affects the publish
   workflow.
-- A schedule runs only from the default branch, so it starts working once this workflow has reached
-  it.
 
-If the check does get switched off anyway, nothing reports it. That is why the owner also keeps two
+The check does not enable or disable any workflow itself. Re-enabling from inside a job is a known
+way around the inactivity policy, it would move the failure mail to the bot that did it, and it
+would undo a deliberate disable of the publish workflow.
+
+One gap is left: before the first signing there is no signature to run out, so the 50 day alarm is
+off. A repository with no commit for 60 days in that stretch loses its schedule without a word. The
+first signing ends the gap, so sign soon after the check is on `main`, or keep the repository
+active until then.
+
+If the check is switched off anyway, nothing reports it. That is why the owner also keeps two
 calendar entries outside GitHub.
+
+## Rollout
+
+The check does nothing until it is on the default branch: a schedule, and a manual run, start only
+from `main`, and `sdk/resign.py` and the `check-expiry` command have to be there too. Until this
+workflow reaches `main`, a signed `beta` can age with no renewal request and no alarm, and only the
+printed calendar dates protect it. Promote `beta` to `main` with this check, then run it once by
+hand (Run workflow) and read its summary table.
 
 ## Calendar entries outside GitHub
 

@@ -12,11 +12,12 @@ name: Check signature expiry
 # fresh signature lands. It also fails when no commit has landed on the signed branches for 50 days.
 # A channel with no signed file yet is skipped.
 #
-# GitHub turns scheduled workflows off in a public repository after 60 days without activity. Three
+# GitHub turns scheduled workflows off in a public repository after 60 days without activity. Two
 # things keep this one running: the sign commit of each renewal is activity and lands about every 45
-# days, the job enables its own workflow through the API on every run, and the 50 day alarm above
-# fires ten days before the cut-off. A schedule runs only from the default branch, and this check lives
-# in its own file so that a disabled schedule never touches the publish workflow.
+# days, and the job fails when the signed branches have had no commit for 50 days, ten days before the
+# cut-off. Before the first signing there is no signature to run out and the 50 day alarm is off, so
+# that stretch is not covered. A schedule runs only from the default branch, and this check lives in its
+# own file so that a disabled schedule never touches the publish workflow.
 
 on:
   schedule:
@@ -52,23 +53,16 @@ jobs:
       - name: Fetch both channels
         run: git fetch --no-tags --depth=1 origin "+refs/heads/main:refs/remotes/origin/main" "+refs/heads/beta:refs/remotes/origin/beta"
 
-      - name: Keep the schedule enabled
-        # Enabling a workflow that is already enabled changes nothing and counts as activity. A failure
-        # here is reported but never stops the check.
-        run: |
-          for workflow in signature-expiry.yml publish-signed.yml; do
-            gh workflow enable "$workflow" || echo "::warning::Could not enable ${workflow}."
-          done
-
       - name: List the publish runs that are not finished
-        # Only waiting, pending, queued, requested and running runs of the signing workflow, every page.
+        # Only requested, queued, pending, running and waiting runs of the signing workflow, every page, asked in the
+        # order a run moves through them so that one that moves on between two queries is seen by the later one.
         # The file is written only when every query succeeded, so an incomplete list reads as unknown and
         # nothing is requested.
         run: |
           rm -f "$RUNNER_TEMP/runs.jsonl"
           : > "$RUNNER_TEMP/runs.part"
           complete=true
-          for status in waiting pending queued requested in_progress; do
+          for status in requested queued pending in_progress waiting; do
             gh api --paginate "repos/${GH_REPO}/actions/workflows/publish-signed.yml/runs?status=${status}&per_page=100" \
               --jq '.workflow_runs[] | {status: .status, headBranch: .head_branch, event: .event}' >> "$RUNNER_TEMP/runs.part" \
               || complete=false

@@ -1049,6 +1049,7 @@ def command_sign(args):
         f"key {result.signer_key_id}, expires {signing.format_time(result.expires)}"
     )
     renew_by, alarm_by = resign.reminder_dates(result.expires)
+    print()
     print(
         f"calendar: add two reminders outside GitHub, on {renew_by.isoformat()} "
         f"({resign.REMINDER_DAYS[0]} days before expiry) and {alarm_by.isoformat()} "
@@ -1075,7 +1076,7 @@ def command_check_expiry(args):
     if signed and args.git_ref_prefix is not None:
         quiet = resign.quiet_days(root, channels, now=now, git_ref_prefix=args.git_ref_prefix)
         if quiet is not None:
-            print(f"newest commit on the signed branches: {quiet:.1f} days ago (alarm at {resign.QUIET_ALARM_DAYS})")
+            print(f"\nNewest commit on the signed branches: {quiet:.1f} days ago (alarm at {resign.QUIET_ALARM_DAYS}).")
             if quiet >= resign.QUIET_ALARM_DAYS:
                 problems.append(
                     f"the repository has had no commit for {quiet:.0f} days; GitHub turns scheduled workflows "

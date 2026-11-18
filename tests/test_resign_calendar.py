@@ -115,11 +115,9 @@ class ActiveRunTests(unittest.TestCase):
         ]
         self.assertEqual(resign.active_channels(runs), {"beta", "main", "feature"})
 
-    def test_finished_runs_and_the_scheduled_check_itself_do_not(self):
+    def test_finished_runs_and_runs_without_a_branch_do_not(self):
         runs = [
             {"status": "completed", "headBranch": "beta", "event": "push"},
-            {"status": "in_progress", "headBranch": "main", "event": "schedule"},
-            {"status": "waiting", "headBranch": "beta", "event": "schedule"},
             "junk",
             {"status": "waiting", "event": "push"},
         ]

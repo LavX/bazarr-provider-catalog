@@ -49,21 +49,23 @@ class ScheduleTests(unittest.TestCase):
         self.assertIn("group: signature-expiry", CHECK)
         self.assertNotIn("signature-expiry", PUBLISH)
 
-    def test_it_keeps_its_own_schedule_and_the_publish_workflow_enabled_before_anything_can_fail(self):
-        names = [name for name, _ in steps()]
-        keep = step("Keep the schedule enabled")
-        self.assertIn('gh workflow enable "$workflow"', keep)
-        self.assertIn("signature-expiry.yml", keep)
-        self.assertIn("publish-signed.yml", keep)
-        self.assertIn("||", keep, "a failure to enable is reported and does not stop the check")
-        self.assertLess(names.index("Keep the schedule enabled"), names.index("Read when each signature runs out"))
-        self.assertLess(names.index("Keep the schedule enabled"), names.index("Fail while a signature or the schedule is at risk"))
+    def test_it_does_not_enable_or_disable_any_workflow(self):
+        # Re-enabling a workflow from inside a job hides the inactivity switch-off, reroutes failure mail to the
+        # bot and undoes a deliberate disable of the publish workflow. The check does none of it.
+        self.assertNotIn("gh workflow enable", CHECK)
+        self.assertNotIn("gh workflow disable", CHECK)
+        self.assertNotIn("/enable", CHECK)
+        self.assertNotIn("Keep the schedule enabled", CHECK)
+        self.assertNotIn("circumvent", CHECK.lower())
+        self.assertIn("sign commit", CHECK)
+        self.assertIn("50 days", CHECK)
 
 
 class RunListTests(unittest.TestCase):
     def test_it_queries_only_unfinished_runs_of_the_signing_workflow_with_every_page(self):
         listing = step("List the publish runs that are not finished")
-        self.assertIn("for status in waiting pending queued requested in_progress; do", listing)
+        # In the order a run moves through them, so one that moves on between two queries is seen by the later one.
+        self.assertIn("for status in requested queued pending in_progress waiting; do", listing)
         self.assertIn("actions/workflows/publish-signed.yml/runs?status=${status}&per_page=100", listing)
         self.assertIn("gh api --paginate", listing)
         self.assertNotIn("gh run list", listing)
@@ -106,7 +108,7 @@ class RunListScriptTests(unittest.TestCase):
             "#!/bin/sh\n"
             'echo "$@" >> "$CALLS"\n'
             'case "$*" in *"status=$FAIL_ON&"*) echo boom >&2; exit 1;; esac\n'
-            # Two pages of one run each, as --paginate with --jq prints them.
+            # One run per query, as --paginate with --jq prints it.
             "echo '{\"status\":\"waiting\",\"headBranch\":\"beta\",\"event\":\"workflow_dispatch\"}'\n",
             encoding="utf-8",
         )
