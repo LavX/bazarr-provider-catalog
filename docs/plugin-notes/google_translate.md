@@ -16,9 +16,10 @@ The manifest declares two origins:
 
 ## Checkpoints
 
-The plugin stores cumulative checkpoints and expects them back in `request["checkpoints"]` (a
-list, oldest first) or `request["checkpoint"]` (the latest). The format and the rules are in the
-module docstring of `google_translate.py`.
+Each checkpoint is a delta: it holds only the cues finished since the previous one. Full
+resumption therefore needs all the stored checkpoints, handed back in `request["checkpoints"]` (a
+list, oldest first). The single `request["checkpoint"]` form carries one delta, so only the cues in
+that one resume. The format and the rules are in the module docstring of `google_translate.py`.
 
 ## The bundle and its wheels
 

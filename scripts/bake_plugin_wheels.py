@@ -3,8 +3,9 @@
 
 ``plugin.json`` locks every dependency to an exact version with sha256 hashes. This script downloads
 the wheels those hashes name from PyPI and writes them beside the plugin's code, so the bundle carries
-what its environment is built from and an install does not depend on PyPI. A downloaded file whose
-digest is not in the lock is refused.
+what its environment is built from. A host that installs from the bundle then does not need PyPI.
+Bazarr+ does not do that yet: it still installs the locked requirements from PyPI. A downloaded file
+whose digest is not in the lock is refused.
 
 For a dependency whose lock names a pure ``py3-none-any`` wheel, only that wheel is baked: it runs
 everywhere. For one that has none, every wheel the lock names is baked, one per platform and Python.
