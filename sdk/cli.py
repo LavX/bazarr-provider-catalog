@@ -7,11 +7,12 @@ import json
 import os
 import re
 import sys
+import unicodedata
 import zipfile
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 
-from . import released_hosts
+from . import host_revocation, released_hosts
 
 SCHEMA_VERSION = 1
 CATALOG_NAME = "Bazarr Provider Catalog"
@@ -89,7 +90,7 @@ REVOCATIONS_MAX_ENTRIES = 2000
 REVOCATION_MAX_VERSION = 64
 REVOCATION_MAX_REASON = 300
 REVOCATION_FIELDS = frozenset({"id", "version", "reason", "revoked_at"})
-_REVOCATION_TIMESTAMP_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$", re.ASCII)
+_REVOCATION_TIMESTAMP_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", re.ASCII)
 _PLUGIN_ID_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 _PLUGIN_KIND_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 _PLUGIN_KIND_API_RE = re.compile(r"^bazarr\.(?P<kind>[a-z][a-z0-9_]*)\.v[1-9][0-9]*$")
@@ -387,6 +388,7 @@ def validate_catalog(root):
     build_plugins(root, taken_ids=provider_ids(catalog))
     # The revocation list rides in the signed feed only, but a bad entry would make every host refuse it.
     load_revocations(root)
+    check_revocations_not_lost(root)
     return catalog
 
 
@@ -774,6 +776,13 @@ def provider_ids(catalog):
     return {item["manifest"]["provider_id"] for item in catalog["providers"]}
 
 
+def _refuse_control_characters(label, text):
+    """Control characters (NUL, escapes, line breaks, tabs) and lone surrogates have no place in a version or a reason."""
+    for char in text:
+        if unicodedata.category(char) in ("Cc", "Cs"):
+            raise CatalogError(f"{label} must not hold control characters or lone surrogates (found U+{ord(char):04X})")
+
+
 def _revocation_entry(where, item):
     if not isinstance(item, dict):
         raise CatalogError(f"{where} must be an object")
@@ -786,17 +795,20 @@ def _revocation_entry(where, item):
         if not isinstance(value, str):
             raise CatalogError(f"{where} {name} must be text")
     plugin_id = item.get("id")
-    if plugin_id is None or not _PROVIDER_ID_RE.match(plugin_id):
+    # fullmatch, never match: "$" also matches before a trailing newline, and the host refuses such an id.
+    if plugin_id is None or not _PROVIDER_ID_RE.fullmatch(plugin_id):
         raise CatalogError(f"{where} id is required and must look like a plugin id")
     entry = {"id": plugin_id}
     if "version" in item:
         version = item["version"]
+        _refuse_control_characters(f"{where} version", version)
         if not version.strip() or version != " ".join(version.split()):
             raise CatalogError(f"{where} version must be text with no blank or padding, or be left out to revoke every release")
         if len(version) > REVOCATION_MAX_VERSION:
             raise CatalogError(f"{where} version is longer than {REVOCATION_MAX_VERSION} characters")
         entry["version"] = version
     if "reason" in item:
+        _refuse_control_characters(f"{where} reason", item["reason"])
         reason = " ".join(item["reason"].split())
         if not reason:
             raise CatalogError(f"{where} reason must not be blank, leave the field out instead")
@@ -806,7 +818,7 @@ def _revocation_entry(where, item):
     if "revoked_at" in item:
         stamp = item["revoked_at"]
         try:
-            valid = bool(_REVOCATION_TIMESTAMP_RE.match(stamp)) and datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ")
+            valid = bool(_REVOCATION_TIMESTAMP_RE.fullmatch(stamp)) and datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ")
         except ValueError:
             valid = False
         if not valid:
@@ -840,7 +852,41 @@ def load_revocations(root):
             raise CatalogError(f"{REVOCATIONS_FILE} lists {entry['id']} {entry.get('version', '(every release)')} twice")
         seen.add(key)
     entries.sort(key=lambda entry: (entry["id"], "version" in entry, entry.get("version", "")))
+    check_host_reads(entries)
     return entries
+
+
+def check_revocations_not_lost(root):
+    """Fail when the tree has no revocations.json but a committed signed body carries a non-empty list.
+
+    validate does not know which branch it runs on, so it looks at the signed body of every channel
+    in the tree. A signing run would refuse the same tree, but this fails the pull request first.
+    Lifting every entry on purpose is a revocations.json that holds [].
+    """
+    root = Path(root).resolve()
+    if (root / REVOCATIONS_FILE).is_file():
+        return
+    for channel in SIGNED_FEED_CHANNELS:
+        body_path = root / "signed" / channel / "catalog.json"
+        if not body_path.is_file():
+            continue
+        held = read_json(body_path)
+        held = held.get("revocations") if isinstance(held, dict) else None
+        if isinstance(held, list) and held:
+            raise CatalogError(
+                f"signed/{channel}/catalog.json carries {len(held)} revocation(s) but {REVOCATIONS_FILE} is missing: "
+                f"restore it, or set it to [] to lift every entry on purpose"
+            )
+
+
+def check_host_reads(entries):
+    """Run the list through the vendored copy of the host's parser: whatever it refuses, the feed must not carry."""
+    try:
+        parsed = host_revocation.parse(entries)
+    except host_revocation.RevocationFormatError as exc:
+        raise CatalogError(f"a host would refuse the revocation list: {exc}") from exc
+    if entries is not None and [item.as_record() for item in parsed] != entries:
+        raise CatalogError("a host would read the revocation list differently from how it is written")
 
 
 def build_signed_feed(root, channel):

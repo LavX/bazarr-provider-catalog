@@ -275,6 +275,23 @@ class RevocationSigningTests(SigningTestCase):
             self.sign(now=NOW + timedelta(days=1))
         self.assertEqual(signing.signed_paths(self.root, "beta")[0].read_bytes(), signed)
 
+    def test_a_renewal_refuses_a_body_the_host_would_refuse(self):
+        self.sign()
+        body_path = signing.signed_paths(self.root, "beta")[0]
+        body = json.loads(body_path.read_text(encoding="utf-8"))
+        body["revocations"] = [{"id": "Example\n"}]
+        body_path.write_text(json.dumps(body), encoding="utf-8")
+        with self.assertRaisesRegex(cli.CatalogError, "a host would refuse the revocation list"):
+            self.sign(now=NOW + timedelta(days=60), renew=True, source_commit=None)
+
+    def test_a_new_signing_runs_the_host_parser_over_the_stamped_body(self):
+        self.write_list([{"id": "example"}])
+        with mock.patch.object(cli, "check_host_reads", side_effect=cli.CatalogError("refused")) as check:
+            with self.assertRaisesRegex(cli.CatalogError, "refused"):
+                self.sign()
+        self.assertEqual(check.call_args_list[-1].args[0], [{"id": "example"}])
+        self.assertFalse((self.root / "signed").exists())
+
     def test_the_other_channel_is_not_held_to_this_channels_list(self):
         self.write_list([{"id": "example"}])
         self.sign("beta")

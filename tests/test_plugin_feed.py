@@ -562,10 +562,52 @@ class RevocationTests(PluginFeedTestCase):
             outputs.append(cli.dump_json(cli.build_signed_feed(root, "beta")))
         self.assertEqual(outputs[0], outputs[1])
 
-    def test_a_reason_has_its_whitespace_collapsed(self):
+    def test_a_reason_has_its_spaces_collapsed(self):
         root = self.make_root()
-        self.write(root, [{"id": "example", "reason": "  It   sends\n\tcredentials.  "}])
+        self.write(root, [{"id": "example", "reason": "  It   sends   credentials.  "}])
         self.assertEqual(cli.load_revocations(root), [{"id": "example", "reason": "It sends credentials."}])
+
+    def test_the_limits_are_accepted_exactly_at_the_boundary(self):
+        root = self.make_root()
+        self.write(root, [{"id": "a" * 64, "version": "9" * 64, "reason": "r" * 300, "revoked_at": "2026-02-28T23:59:59Z"}])
+        self.assertEqual(len(cli.load_revocations(root)), 1)
+        self.write(root, [{"id": "ab"}, {"id": "a" + "_" * 63}])
+        self.assertEqual(len(cli.load_revocations(root)), 2)
+        self.write(root, [{"id": f"plugin_{number}"} for number in range(2000)])
+        self.assertEqual(len(cli.load_revocations(root)), 2000)
+        self.assertEqual(len(cli.build_signed_feed(root, "beta")["revocations"]), 2000)
+
+    def test_non_ascii_text_is_accepted_in_a_version_and_a_reason(self):
+        root = self.make_root()
+        self.write(root, [{"id": "example", "version": "1.0-\u00e9", "reason": "Hib\u00e1s adatk\u00fcld\u00e9s"}])
+        self.assertEqual(len(cli.load_revocations(root)), 1)
+
+    def test_validate_fails_when_the_file_is_missing_but_a_signed_body_carries_a_list(self):
+        root = self.make_root()
+        cli.build_catalog(root, write_manifests=True)
+        (root / "catalog.json").write_text(cli.dump_json(cli.build_catalog(root)), encoding="utf-8")
+        for channel in cli.SIGNED_FEED_CHANNELS:
+            with self.subTest(channel):
+                body_path = root / "signed" / channel / "catalog.json"
+                body_path.parent.mkdir(parents=True, exist_ok=True)
+                body_path.write_text(json.dumps({"channel": channel, "revocations": [{"id": "example"}]}), encoding="utf-8")
+                with self.assertRaisesRegex(cli.CatalogError, f"signed/{channel}/catalog.json carries 1 revocation"):
+                    cli.validate_catalog(root)
+                self.write(root, [])  # lifting on purpose is written down
+                cli.validate_catalog(root)
+                (root / cli.REVOCATIONS_FILE).unlink()
+                body_path.write_text(json.dumps({"channel": channel, "revocations": []}), encoding="utf-8")
+                cli.validate_catalog(root)  # a signed body without entries asks for nothing
+                body_path.unlink()
+
+    def test_validate_is_quiet_when_there_is_no_signed_body_and_no_file(self):
+        root = self.make_root()
+        cli.build_catalog(root, write_manifests=True)
+        (root / "catalog.json").write_text(cli.dump_json(cli.build_catalog(root)), encoding="utf-8")
+        cli.validate_catalog(root)
+
+    def test_the_committed_tree_does_not_lose_a_published_list(self):
+        cli.check_revocations_not_lost(ROOT)
 
     def test_a_reason_of_exactly_the_limit_is_accepted(self):
         root = self.make_root()
@@ -582,6 +624,23 @@ class RevocationTests(PluginFeedTestCase):
             "missing id": ([{"version": "1"}], "id is required"),
             "null id": ([{"id": None}], "must not be null"),
             "bad id": ([{"id": "Example"}], "id is required and must look like a plugin id"),
+            "id with a trailing newline": ([{"id": "example\n"}], "id is required and must look like a plugin id"),
+            "id with a leading space": ([{"id": " example"}], "id is required and must look like a plugin id"),
+            "id with a trailing space": ([{"id": "example "}], "id is required and must look like a plugin id"),
+            "id with a trailing tab": ([{"id": "example\t"}], "id is required and must look like a plugin id"),
+            "id with a control character": ([{"id": "exam\x00ple"}], "id is required and must look like a plugin id"),
+            "id with an escape": ([{"id": "example\x1b"}], "id is required and must look like a plugin id"),
+            "id of 65 characters": ([{"id": "a" * 65}], "id is required and must look like a plugin id"),
+            "version with a NUL": ([{"id": "example", "version": "1.0\x00"}], "control characters"),
+            "version with a newline": ([{"id": "example", "version": "1.0\n"}], "control characters"),
+            "version with an escape": ([{"id": "example", "version": "1\x1b[0m"}], "control characters"),
+            "version with a DEL": ([{"id": "example", "version": "1\x7f"}], "control characters"),
+            "version with a lone surrogate": ([{"id": "example", "version": "1\ud800"}], "control characters"),
+            "reason with a NUL": ([{"id": "example", "reason": "bad\x00 reason"}], "control characters"),
+            "reason with a newline": ([{"id": "example", "reason": "bad\nreason"}], "control characters"),
+            "reason with a tab": ([{"id": "example", "reason": "bad\treason"}], "control characters"),
+            "reason with a lone surrogate": ([{"id": "example", "reason": "bad \udfff reason"}], "control characters"),
+            "revoked_at with a trailing newline": ([{"id": "example", "revoked_at": "2026-12-01T00:00:00Z\n"}], "revoked_at must look like"),
             "short id": ([{"id": "x"}], "id is required"),
             "id not text": ([{"id": 7}], "must be text"),
             "null version": ([{"id": "example", "version": None}], "must not be null"),
@@ -591,7 +650,7 @@ class RevocationTests(PluginFeedTestCase):
             "numeric version": ([{"id": "example", "version": 1}], "must be text"),
             "long version": ([{"id": "example", "version": "1" * 65}], "version is longer than 64"),
             "null reason": ([{"id": "example", "reason": None}], "must not be null"),
-            "blank reason": ([{"id": "example", "reason": " \n "}], "reason must not be blank"),
+            "blank reason": ([{"id": "example", "reason": "   "}], "reason must not be blank"),
             "long reason": ([{"id": "example", "reason": "r" * 301}], "reason is longer than 300"),
             "reason not text": ([{"id": "example", "reason": ["x"]}], "must be text"),
             "null revoked_at": ([{"id": "example", "revoked_at": None}], "must not be null"),

@@ -280,6 +280,7 @@ def sign(root, channel, private_key, *, now, source_commit=None, renew=False,
         source_commit=source_commit,
         previous_version=_current_version(root, channel),
     )
+    cli.check_host_reads(_loads_body(data).get("revocations"))
     envelope = sign_bytes(data, private_key)
     result = verify_pair(data, envelope, key_file, channel=channel, now=now, roots=roots)
     if not result.ok or result.signer_key_id != signer:
