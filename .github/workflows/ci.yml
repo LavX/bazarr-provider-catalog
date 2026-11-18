@@ -63,3 +63,28 @@ jobs:
         run: |
           python3 scripts/expand_wheel_hashes.py --strict
           git diff --exit-code -- providers plugins
+
+  host-revocation-drift:
+    name: revocation parser matches the host
+    # sdk/host_revocation.py is an excerpt of the host's parser. Check it against the host source at the
+    # commit recorded in sdk/host_revocation.json, read-only, from the public repo.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Read the pinned host commit
+        id: pin
+        run: echo "commit=$(python3 -c "import json;print(json.load(open('sdk/host_revocation.json'))['bazarr_commit'])")" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: LavX/bazarr
+          ref: ${{ steps.pin.outputs.commit }}
+          path: host-bazarr
+          sparse-checkout: bazarr/provider_hub
+          persist-credentials: false
+      - name: Compare the vendored parser with the host source
+        env:
+          BAZARR_PROVIDER_HUB_DIR: ${{ github.workspace }}/host-bazarr/bazarr/provider_hub
+        run: python3 -B -m unittest -v tests.test_host_revocation

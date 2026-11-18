@@ -220,6 +220,23 @@ def _current_version(root, channel):
     return version if isinstance(version, int) and not isinstance(version, bool) else None
 
 
+def _refuse_dropped_revocations(body_path, new_body, channel):
+    """A channel that published revocations never silently publishes a body without the field.
+
+    Lifting every entry is allowed, but it is written down: keep revocations.json as an empty
+    array. Losing the file, or building from a tree that never had it, would otherwise lift
+    every revocation on the next signing without anyone choosing that.
+    """
+    if not body_path.is_file() or "revocations" in new_body:
+        return
+    held = _loads_body(body_path.read_bytes()).get("revocations")
+    if isinstance(held, list) and held:
+        raise cli.CatalogError(
+            f"the signed {channel} body carries {len(held)} revocation(s) and the new body has no revocations "
+            f"field: restore {cli.REVOCATIONS_FILE}, or set it to [] to lift every entry on purpose"
+        )
+
+
 def sign(root, channel, private_key, *, now, source_commit=None, renew=False,
          validity_days=DEFAULT_VALIDITY_DAYS, roots=None):
     """Sign a channel's feed and write the pair. Nothing is written unless the host verifier accepts it.
@@ -255,6 +272,7 @@ def sign(root, channel, private_key, *, now, source_commit=None, renew=False,
         if source_commit is None:
             raise cli.CatalogError("signing needs --source-commit, the commit the body is built from")
         body = cli.build_signed_feed(root, channel)
+        _refuse_dropped_revocations(body_path, body, channel)
     data = stamp(
         body,
         now=now,
@@ -262,6 +280,7 @@ def sign(root, channel, private_key, *, now, source_commit=None, renew=False,
         source_commit=source_commit,
         previous_version=_current_version(root, channel),
     )
+    cli.check_host_reads(_loads_body(data).get("revocations"))
     envelope = sign_bytes(data, private_key)
     result = verify_pair(data, envelope, key_file, channel=channel, now=now, roots=roots)
     if not result.ok or result.signer_key_id != signer:

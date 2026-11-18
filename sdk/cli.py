@@ -7,10 +7,12 @@ import json
 import os
 import re
 import sys
+import unicodedata
 import zipfile
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 
-from . import released_hosts
+from . import host_revocation, released_hosts
 
 SCHEMA_VERSION = 1
 CATALOG_NAME = "Bazarr Provider Catalog"
@@ -81,6 +83,14 @@ PLUGIN_MANIFEST_FILE = "plugin.json"
 RESERVED_BUNDLE_FILE = "provider.json"
 SIGNED_FEED_SCHEMA_VERSION = 2
 SIGNED_FEED_CHANNELS = ("main", "beta")
+# The revocation list of a branch: a JSON array of entries, read at the repo root. The signed feed
+# carries it as the top-level "revocations" field, in the form the host's parser accepts.
+REVOCATIONS_FILE = "revocations.json"
+REVOCATIONS_MAX_ENTRIES = 2000
+REVOCATION_MAX_VERSION = 64
+REVOCATION_MAX_REASON = 300
+REVOCATION_FIELDS = frozenset({"id", "version", "reason", "revoked_at"})
+_REVOCATION_TIMESTAMP_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", re.ASCII)
 _PLUGIN_ID_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 _PLUGIN_KIND_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 _PLUGIN_KIND_API_RE = re.compile(r"^bazarr\.(?P<kind>[a-z][a-z0-9_]*)\.v[1-9][0-9]*$")
@@ -376,6 +386,9 @@ def validate_catalog(root):
         raise CatalogError("released hosts cannot load these providers entries:\n  " + "\n  ".join(errors))
     # plugins/ is read by 2.8 hosts only, so the released-host check above never sees it.
     build_plugins(root, taken_ids=provider_ids(catalog))
+    # The revocation list rides in the signed feed only, but a bad entry would make every host refuse it.
+    load_revocations(root)
+    check_revocations_not_lost(root)
     return catalog
 
 
@@ -763,26 +776,146 @@ def provider_ids(catalog):
     return {item["manifest"]["provider_id"] for item in catalog["providers"]}
 
 
+def _refuse_control_characters(label, text, categories=("Cc", "Cs")):
+    """Control characters (NUL, escapes, line breaks, tabs) and lone surrogates have no place in a version or a reason."""
+    for char in text:
+        if unicodedata.category(char) in categories:
+            raise CatalogError(f"{label} must not hold control characters or lone surrogates (found U+{ord(char):04X})")
+
+
+def _revocation_entry(where, item):
+    if not isinstance(item, dict):
+        raise CatalogError(f"{where} must be an object")
+    unknown = sorted(str(name) for name in item if name not in REVOCATION_FIELDS)
+    if unknown:
+        raise CatalogError(f"{where} has fields a host does not know: {', '.join(unknown)}")
+    for name, value in item.items():
+        if value is None:
+            raise CatalogError(f"{where} {name} must not be null, leave the field out instead")
+        if not isinstance(value, str):
+            raise CatalogError(f"{where} {name} must be text")
+    plugin_id = item.get("id")
+    # fullmatch, never match: "$" also matches before a trailing newline, and the host refuses such an id.
+    if plugin_id is None or not _PROVIDER_ID_RE.fullmatch(plugin_id):
+        raise CatalogError(f"{where} id is required and must look like a plugin id")
+    entry = {"id": plugin_id}
+    if "version" in item:
+        version = item["version"]
+        # A version also takes no format characters (zero-width space, joiners, bidi marks): they
+        # make two releases look alike and never match the release a person meant.
+        _refuse_control_characters(f"{where} version", version, ("Cc", "Cs", "Cf"))
+        if not version.strip() or version != " ".join(version.split()):
+            raise CatalogError(f"{where} version must be text with no blank or padding, or be left out to revoke every release")
+        if len(version) > REVOCATION_MAX_VERSION:
+            raise CatalogError(f"{where} version is longer than {REVOCATION_MAX_VERSION} characters")
+        entry["version"] = version
+    if "reason" in item:
+        _refuse_control_characters(f"{where} reason", item["reason"])
+        reason = " ".join(item["reason"].split())
+        if not reason:
+            raise CatalogError(f"{where} reason must not be blank, leave the field out instead")
+        if len(reason) > REVOCATION_MAX_REASON:
+            raise CatalogError(f"{where} reason is longer than {REVOCATION_MAX_REASON} characters, put the point first and shorten it")
+        entry["reason"] = reason
+    if "revoked_at" in item:
+        stamp = item["revoked_at"]
+        try:
+            valid = bool(_REVOCATION_TIMESTAMP_RE.fullmatch(stamp)) and datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            valid = False
+        if not valid:
+            raise CatalogError(f"{where} revoked_at must look like 2026-12-31T00:00:00Z")
+        entry["revoked_at"] = stamp
+    return entry
+
+
+def load_revocations(root):
+    """The revocation list the tree carries, as the entries the signed feed publishes, or None.
+
+    None means the tree has no revocations.json, so the feed carries no field. A file that holds
+    an empty array is a list on purpose: the feed then carries ``"revocations": []``. Entries are
+    sorted by id, then by version with an entry that has no version first, so a tree gives one
+    list. Any entry that breaks the host's rules fails the build, because the host refuses a
+    whole catalog over one bad entry.
+    """
+    path = Path(root).resolve() / REVOCATIONS_FILE
+    if not path.is_file():
+        return None
+    data = read_json(path)
+    if not isinstance(data, list):
+        raise CatalogError(f"{REVOCATIONS_FILE} must be a JSON array of entries")
+    if len(data) > REVOCATIONS_MAX_ENTRIES:
+        raise CatalogError(f"{REVOCATIONS_FILE} holds at most {REVOCATIONS_MAX_ENTRIES} entries")
+    entries = [_revocation_entry(f"{REVOCATIONS_FILE} entry {index}", item) for index, item in enumerate(data)]
+    seen = set()
+    for entry in entries:
+        key = (entry["id"], entry.get("version"))
+        if key in seen:
+            raise CatalogError(f"{REVOCATIONS_FILE} lists {entry['id']} {entry.get('version', '(every release)')} twice")
+        seen.add(key)
+    entries.sort(key=lambda entry: (entry["id"], "version" in entry, entry.get("version", "")))
+    check_host_reads(entries)
+    return entries
+
+
+def check_revocations_not_lost(root):
+    """Fail when the tree has no revocations.json but a committed signed body carries a non-empty list.
+
+    validate does not know which branch it runs on, so it looks at the signed body of every channel
+    in the tree. A signing run would refuse the same tree, but this fails the pull request first.
+    Lifting every entry on purpose is a revocations.json that holds [].
+    """
+    root = Path(root).resolve()
+    if (root / REVOCATIONS_FILE).is_file():
+        return
+    for channel in SIGNED_FEED_CHANNELS:
+        body_path = root / "signed" / channel / "catalog.json"
+        if not body_path.is_file():
+            continue
+        held = read_json(body_path)
+        held = held.get("revocations") if isinstance(held, dict) else None
+        if isinstance(held, list) and held:
+            raise CatalogError(
+                f"signed/{channel}/catalog.json carries {len(held)} revocation(s) but {REVOCATIONS_FILE} is missing: "
+                f"restore it, or set it to [] to lift every entry on purpose"
+            )
+
+
+def check_host_reads(entries):
+    """Run the list through the vendored copy of the host's parser: whatever it refuses, the feed must not carry."""
+    try:
+        parsed = host_revocation.parse(entries)
+    except host_revocation.RevocationFormatError as exc:
+        raise CatalogError(f"a host would refuse the revocation list: {exc}") from exc
+    if entries is not None and [item.as_record() for item in parsed] != entries:
+        raise CatalogError("a host would read the revocation list differently from how it is written")
+
+
 def build_signed_feed(root, channel):
     """The unsigned body of signed/<channel>/catalog.json.
 
     The four fields a signing run stamps (signed_version, not_before, expires and
     source_commit) are left out. The providers are the ones catalog.json carries, so the
     two feeds cannot drift, and the plugins come sorted by id. The same tree always gives
-    the same body.
+    the same body. When the tree has a revocations.json the body also carries its entries as
+    "revocations"; without one the field is left out.
     """
     if channel not in SIGNED_FEED_CHANNELS:
         raise CatalogError(f"channel must be one of {', '.join(SIGNED_FEED_CHANNELS)}")
     root = Path(root).resolve()
     catalog = build_catalog(root)
     plugins = build_plugins(root, taken_ids=provider_ids(catalog))
-    return {
+    body = {
         "schema_version": SIGNED_FEED_SCHEMA_VERSION,
         "name": CATALOG_NAME,
         "channel": channel,
         "providers": catalog["providers"],
         "plugins": [{"manifest": manifest} for manifest in plugins],
     }
+    revocations = load_revocations(root)
+    if revocations is not None:
+        body["revocations"] = revocations
+    return body
 
 
 def load_provider_class(provider_dir, manifest):
