@@ -245,6 +245,58 @@ class SourceCommitTests(SigningTestCase):
             self.sign(now=NOW + timedelta(days=1), renew=True, source_commit=OTHER_COMMIT)
 
 
+class RevocationSigningTests(SigningTestCase):
+    def write_list(self, data):
+        (self.root / cli.REVOCATIONS_FILE).write_text(json.dumps(data), encoding="utf-8")
+
+    def test_a_signed_body_carries_the_list_and_passes_the_host_verifier(self):
+        self.write_list([{"id": "example", "version": "1.0.0"}, {"id": "alpha"}])
+        self.assertTrue(self.sign().ok)
+        self.assertEqual(self.body()["revocations"], [{"id": "alpha"}, {"id": "example", "version": "1.0.0"}])
+        self.assertTrue(self.verify().ok)
+
+    def test_a_tree_without_a_list_signs_a_body_without_the_field(self):
+        self.sign()
+        self.assertNotIn("revocations", self.body())
+
+    def test_a_renewal_keeps_the_list_even_when_the_tree_lost_the_file(self):
+        self.write_list([{"id": "example"}])
+        self.sign()
+        (self.root / cli.REVOCATIONS_FILE).unlink()
+        self.sign(now=NOW + timedelta(days=60), renew=True, source_commit=None)
+        self.assertEqual(self.body()["revocations"], [{"id": "example"}])
+
+    def test_a_channel_that_published_a_list_never_drops_the_field_by_accident(self):
+        self.write_list([{"id": "example"}])
+        self.sign()
+        signed = signing.signed_paths(self.root, "beta")[0].read_bytes()
+        (self.root / cli.REVOCATIONS_FILE).unlink()
+        with self.assertRaisesRegex(cli.CatalogError, "carries 1 revocation"):
+            self.sign(now=NOW + timedelta(days=1))
+        self.assertEqual(signing.signed_paths(self.root, "beta")[0].read_bytes(), signed)
+
+    def test_the_other_channel_is_not_held_to_this_channels_list(self):
+        self.write_list([{"id": "example"}])
+        self.sign("beta")
+        (self.root / cli.REVOCATIONS_FILE).unlink()
+        self.assertTrue(self.sign("main").ok)
+        self.assertNotIn("revocations", self.body("main"))
+
+    def test_lifting_every_entry_on_purpose_is_allowed(self):
+        self.write_list([{"id": "example"}])
+        self.sign()
+        self.write_list([])
+        self.sign(now=NOW + timedelta(days=1))
+        self.assertEqual(self.body()["revocations"], [])
+        self.assertTrue(self.verify(now=NOW + timedelta(days=1)).ok)
+
+    def test_an_empty_or_absent_list_may_stay_absent(self):
+        self.write_list([])
+        self.sign()
+        (self.root / cli.REVOCATIONS_FILE).unlink()
+        self.assertTrue(self.sign(now=NOW + timedelta(days=1)).ok)
+
+
 class KeyHandlingTests(SigningTestCase):
     def run_cli(self, *argv, env=None):
         out, err = io.StringIO(), io.StringIO()
