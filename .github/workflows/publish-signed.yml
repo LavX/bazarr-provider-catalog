@@ -111,6 +111,7 @@ jobs:
         run: |
           "$SIGNING_PYTHON" -B -m sdk validate
           "$SIGNING_PYTHON" -B -m unittest discover -s tests -p 'test_signing*.py'
+          "$SIGNING_PYTHON" -B -m unittest discover -s tests -p 'test_host_revocation.py'
 
       - name: Sign
         if: steps.head.outputs.proceed == 'true' && steps.head.outputs.sign == 'true'

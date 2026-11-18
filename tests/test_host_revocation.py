@@ -10,12 +10,17 @@ from pathlib import Path
 from sdk import cli, host_revocation, released_hosts
 
 ROOT = Path(__file__).resolve().parents[1]
+HUB_NOTE = "set BAZARR_PROVIDER_HUB_DIR to a bazarr/provider_hub checkout"
 META = json.loads((ROOT / "sdk" / "host_revocation.json").read_text(encoding="utf-8"))
 
 
 def definitions(source):
-    """Top-level assignments, classes and functions of a module by name, each with its exact source text."""
+    """Top-level assignments, classes and functions of a module by name, each with its exact source text.
+
+    A decorated definition starts at its first decorator, so ``@dataclass`` is part of ``Revocation``.
+    """
     tree = ast.parse(source)
+    lines = source.splitlines()
     found = {}
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
@@ -24,7 +29,8 @@ def definitions(source):
             name = node.targets[0].id
         else:
             continue
-        found[name] = ast.get_source_segment(source, node)
+        start = min([node.lineno] + [decorator.lineno for decorator in getattr(node, "decorator_list", [])])
+        found[name] = "\n".join(lines[start - 1:node.end_lineno])
     return found
 
 
@@ -37,15 +43,25 @@ class VendoredParserTests(unittest.TestCase):
         lines = vendored.decode("utf-8").splitlines()
         self.assertTrue(all(line.startswith("#") for line in lines[:META["notice_lines"]]))
 
-    @unittest.skipUnless(os.environ.get("BAZARR_PROVIDER_HUB_DIR"), "set BAZARR_PROVIDER_HUB_DIR to a bazarr/provider_hub checkout")
+    def host_source(self):
+        return (Path(os.environ["BAZARR_PROVIDER_HUB_DIR"]) / "revocation.py").read_text(encoding="utf-8")
+
+    def test_the_decorator_is_part_of_the_compared_definition(self):
+        mine = definitions((ROOT / "sdk" / "host_revocation.py").read_text(encoding="utf-8"))
+        self.assertTrue(mine["Revocation"].startswith("@dataclass(frozen=True)\nclass Revocation"))
+
+    @unittest.skipUnless(os.environ.get("BAZARR_PROVIDER_HUB_DIR"), HUB_NOTE)
     def test_every_vendored_definition_matches_the_host_checkout(self):
-        host = (Path(os.environ["BAZARR_PROVIDER_HUB_DIR"]) / "revocation.py").read_bytes()
-        self.assertEqual(released_hosts.git_blob_id(host), META["source_blob"])
-        host_definitions = definitions(host.decode("utf-8"))
+        host_definitions = definitions(self.host_source())
         mine = definitions((ROOT / "sdk" / "host_revocation.py").read_text(encoding="utf-8"))
         for name in META["definitions"]:
             with self.subTest(name):
                 self.assertEqual(mine[name], host_definitions[name])
+
+    @unittest.skipUnless(os.environ.get("BAZARR_PROVIDER_HUB_DIR"), HUB_NOTE)
+    def test_the_host_file_is_the_one_that_was_vendored(self):
+        # Fails on any change of the host file, the parser or not. The test above says whether the parser moved.
+        self.assertEqual(released_hosts.git_blob_id(self.host_source().encode("utf-8")), META["source_blob"])
 
 
 class BuilderAgainstHostParserTests(unittest.TestCase):

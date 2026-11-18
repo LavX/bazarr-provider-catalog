@@ -776,10 +776,10 @@ def provider_ids(catalog):
     return {item["manifest"]["provider_id"] for item in catalog["providers"]}
 
 
-def _refuse_control_characters(label, text):
+def _refuse_control_characters(label, text, categories=("Cc", "Cs")):
     """Control characters (NUL, escapes, line breaks, tabs) and lone surrogates have no place in a version or a reason."""
     for char in text:
-        if unicodedata.category(char) in ("Cc", "Cs"):
+        if unicodedata.category(char) in categories:
             raise CatalogError(f"{label} must not hold control characters or lone surrogates (found U+{ord(char):04X})")
 
 
@@ -801,7 +801,9 @@ def _revocation_entry(where, item):
     entry = {"id": plugin_id}
     if "version" in item:
         version = item["version"]
-        _refuse_control_characters(f"{where} version", version)
+        # A version also takes no format characters (zero-width space, joiners, bidi marks): they
+        # make two releases look alike and never match the release a person meant.
+        _refuse_control_characters(f"{where} version", version, ("Cc", "Cs", "Cf"))
         if not version.strip() or version != " ".join(version.split()):
             raise CatalogError(f"{where} version must be text with no blank or padding, or be left out to revoke every release")
         if len(version) > REVOCATION_MAX_VERSION:

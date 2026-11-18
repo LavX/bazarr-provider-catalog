@@ -286,10 +286,19 @@ class RevocationSigningTests(SigningTestCase):
 
     def test_a_new_signing_runs_the_host_parser_over_the_stamped_body(self):
         self.write_list([{"id": "example"}])
-        with mock.patch.object(cli, "check_host_reads", side_effect=cli.CatalogError("refused")) as check:
-            with self.assertRaisesRegex(cli.CatalogError, "refused"):
+        real = cli.check_host_reads
+        calls = []
+
+        def second_call_fails(entries):
+            calls.append(entries)
+            if len(calls) == 1:
+                return real(entries)  # the builder's own check lets the list through
+            raise cli.CatalogError("refused at signing")
+
+        with mock.patch.object(cli, "check_host_reads", side_effect=second_call_fails):
+            with self.assertRaisesRegex(cli.CatalogError, "refused at signing"):
                 self.sign()
-        self.assertEqual(check.call_args_list[-1].args[0], [{"id": "example"}])
+        self.assertEqual(calls, [[{"id": "example"}], [{"id": "example"}]])
         self.assertFalse((self.root / "signed").exists())
 
     def test_the_other_channel_is_not_held_to_this_channels_list(self):

@@ -105,6 +105,20 @@ class PublishWorkflowTests(unittest.TestCase):
             self.assertIn("steps.head.outputs.proceed == 'true'", text, name)
         self.assertIn("-r sdk/requirements-signing.txt", WORKFLOW)
 
+    def test_the_signing_tests_include_the_revocation_parser_check(self):
+        step = dict(steps())["Signing tests and catalog checks"]
+        self.assertIn("-p 'test_signing*.py'", step)
+        self.assertIn("-p 'test_host_revocation.py'", step)
+        self.assertLess(step.index("test_host_revocation.py"), WORKFLOW.index("name: Sign\n"))
+
+    def test_ci_checks_the_vendored_parser_against_the_pinned_host_commit(self):
+        ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertIn("repository: LavX/bazarr", ci)
+        self.assertIn("ref: ${{ steps.pin.outputs.commit }}", ci)
+        self.assertIn("sdk/host_revocation.json", ci)
+        self.assertIn("BAZARR_PROVIDER_HUB_DIR: ${{ github.workspace }}/host-bazarr/bazarr/provider_hub", ci)
+        self.assertIn("tests.test_host_revocation", ci)
+
     def test_the_run_signs_one_channel_at_a_time_and_never_cancels_a_waiting_run(self):
         self.assertIn("group: publish-signed-${{ github.ref_name }}", WORKFLOW)
         self.assertIn("cancel-in-progress: false", WORKFLOW)
