@@ -1072,7 +1072,7 @@ def command_build_signed_feed(args):
 
 
 def command_sign(args):
-    from . import signing
+    from . import resign, signing
 
     now = signing.parse_now(args.now) if args.now else signing.utc_now()
     key = signing.private_key_from_env(args.key_env)
@@ -1092,7 +1092,46 @@ def command_sign(args):
         f"signed {args.channel}: signed_version {result.signed_version}, "
         f"key {result.signer_key_id}, expires {signing.format_time(result.expires)}"
     )
+    renew_by, alarm_by = resign.reminder_dates(result.expires)
+    print()
+    print(
+        f"calendar: add two reminders outside GitHub, on {renew_by.isoformat()} "
+        f"({resign.REMINDER_DAYS[0]} days before expiry) and {alarm_by.isoformat()} "
+        f"({resign.REMINDER_DAYS[1]} days before expiry), both UTC dates"
+    )
     return 0
+
+
+def command_check_expiry(args):
+    from . import resign, signing
+
+    now = signing.parse_now(args.now) if args.now else signing.utc_now()
+    channels = args.channel or SIGNED_FEED_CHANNELS
+    root = Path(args.root).resolve()
+    assessments = resign.check(
+        root, channels, now=now, runs=resign.load_runs(args.runs), git_ref_prefix=args.git_ref_prefix
+    )
+    print(resign.render(assessments), end="")
+    request = " ".join(item.channel for item in assessments if item.request)
+    problems = [f"{item.channel}: {item.detail}" for item in assessments if item.alarm]
+    # GitHub turns scheduled workflows off after 60 days without repository activity. That only matters
+    # once something is signed, because only a signature can run out.
+    signed = [item for item in assessments if item.state != resign.ABSENT]
+    if signed and args.git_ref_prefix is not None:
+        quiet = resign.quiet_days(root, channels, now=now, git_ref_prefix=args.git_ref_prefix)
+        if quiet is not None:
+            print(f"\nNewest commit on the signed branches: {quiet:.1f} days ago (alarm at {resign.QUIET_ALARM_DAYS}).")
+            if quiet >= resign.QUIET_ALARM_DAYS:
+                problems.append(
+                    f"the repository has had no commit for {quiet:.0f} days; GitHub turns scheduled workflows "
+                    "off after 60 days without activity"
+                )
+    for problem in problems:
+        print(f"::error::{problem}", file=sys.stderr)
+    if args.outputs_file:
+        with Path(args.outputs_file).open("a", encoding="utf-8") as handle:
+            handle.write(f"request={request}\nalarm={'true' if problems else 'false'}\n")
+    return 1 if problems and args.fail_on_alarm else 0
 
 
 def command_verify(args):
@@ -1187,6 +1226,19 @@ def build_parser():
     sign.add_argument("--validity-days", type=int, default=90, help="days until expiry, 1 to 366 (default 90)")
     sign.add_argument("--now", help="signing time as YYYY-MM-DDTHH:MM:SSZ (tests and rehearsals only)")
     sign.set_defaults(func=command_sign)
+
+    check_expiry = subparsers.add_parser(
+        "check-expiry",
+        help="read the expiry of each channel's signed body and decide whether to request a renewal or raise the alarm",
+    )
+    check_expiry.add_argument("root", nargs="?", default=".", help="catalog root directory")
+    check_expiry.add_argument("--channel", action="append", choices=SIGNED_FEED_CHANNELS, help="channel to check (default: all)")
+    check_expiry.add_argument("--git-ref-prefix", help="read signed/<channel>/ from <prefix><channel> of the checkout, such as origin/")
+    check_expiry.add_argument("--runs", help="the publish workflow's unfinished runs (status, headBranch, event) as a JSON list or JSON lines; missing or unreadable means unknown")
+    check_expiry.add_argument("--now", help="the time to judge at, as YYYY-MM-DDTHH:MM:SSZ (tests and rehearsals only)")
+    check_expiry.add_argument("--outputs-file", help="append request=<channels> and alarm=<true|false> here (GITHUB_OUTPUT)")
+    check_expiry.add_argument("--fail-on-alarm", action="store_true", help="exit 1 while any channel is in the alarm window")
+    check_expiry.set_defaults(func=command_check_expiry)
 
     verify = subparsers.add_parser(
         "verify",
