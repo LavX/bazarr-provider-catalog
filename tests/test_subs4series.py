@@ -370,7 +370,7 @@ class Subs4SeriesParserTests(unittest.TestCase):
             "Showname S01E05 - 1080p": (1, (5,)),
             "Showname S01E05 - 2 Parts": (1, (5,)),
             "Showname S01E05 DDP5.1": (1, (5,)),
-            "Showname S01E05-07": (1, (5,)),
+            "Showname S01E05-07": (1, (5, 6, 7)),
         }
         for release, expected in cases.items():
             with self.subTest(release=release):
@@ -387,6 +387,48 @@ class Subs4SeriesParserTests(unittest.TestCase):
         for release, expected in cases.items():
             with self.subTest(release=release):
                 self.assertEqual(self.mod._season_episodes(release), expected)
+
+    def test_season_episodes_read_the_forms_seen_across_the_site(self):
+        # Each form is copied from a live season listing, with the show's name replaced.
+        cases = {
+            # Episode 0 or 1 with a word run into the number.
+            "Showname S01E0Preview - - 720p HDTV DD5 1 x264": (1, (0,)),
+            "Showname (2010) S01E0season DVDRip": (1, (0,)),
+            "Showname S01E01The One With The Roommate": (1, (1,)),
+            # Season and episodes run together.
+            "Showname S0405 The One With The Girlfriend {1080p}": (4, (5,)),
+            "Showname S04E0102 HDTV x264": (4, (1, 2)),
+            "Showname S04E01E02 720p HDTV": (4, (1, 2)),
+            # An "x" between season and episode, with an "s" before it or a multiplication sign.
+            "Showname s1x05_GR": (1, (5,)),
+            "Showname 1\u00d702 The Second Episode HDTV": (1, (2,)),
+            "Showname S2xEP01 hdtv xvid": (2, (1,)),
+            # Ranges whose last number has no marker of its own.
+            "Showname S1x12-22 {GR} (2005 - 2006)": (1, tuple(range(12, 23))),
+            "Showname S04E01-4 - - 720 web-dl": (4, (1, 2, 3, 4)),
+            "Showname Season 4 ep 1-11 720p HDTV": (4, tuple(range(1, 12))),
+            "Showname S04E13-14 - Part (2 & 3) - HDTV": (4, (13, 14)),
+            "Showname 4x13&14 - Part2_GR": (4, (13, 14)),
+            # A miniseries names no season.
+            "Showname E05 2001 1080p BluRay DD5 1 x264-GRP": (None, (5,)),
+            "Showname part5 [2001] 720p BRRip x264": (None, (5,)),
+            "Showname - Episodes 1-10 {GR} (2001)": (None, tuple(range(1, 11))),
+            "Showname 1-5 episodes BDRip x264": (None, (1, 2, 3, 4, 5)),
+            "Showname 2001 E01-10 HDDVD x264": (None, tuple(range(1, 11))),
+            # No episode in a resolution.
+            "Showname S02E720p WEB-DL - - 720p Web-dl": (None, ()),
+            "Showname S01E1080p": (None, ()),
+        }
+        for release, expected in cases.items():
+            with self.subTest(release=release):
+                self.assertEqual(self.mod._season_episodes(release), expected)
+
+    def test_derive_matches_scores_a_miniseries_episode_without_its_season(self):
+        video = {"series": "Showname", "season": 1, "episode": 5}
+        item = {"release_info": "Showname E05 2001 1080p BluRay"}
+        self.assertEqual(set(self.mod.derive_matches(video, item)), {"series", "episode"})
+        self.assertEqual(self.mod.compute_score(video, item), 95)
+        self.assertNotIn("episode", self.mod.derive_matches({**video, "episode": 6}, item))
 
     def test_season_episodes_take_no_run_from_a_word_ending_in_e(self):
         # The "e" closing "The" is no episode marker: this is episode 1 alone.
@@ -453,6 +495,18 @@ class Subs4SeriesParserTests(unittest.TestCase):
 
     def test_pack_holds_only_its_own_episodes(self):
         holds = self.mod.pack_holds
+        # Ranges and wholes the site's listings use.
+        self.assertTrue(holds("Showname Season 1 Episodes 13-22 Dvd", 1, 15))
+        self.assertFalse(holds("Showname Season 1 Episodes 13-22 Dvd", 1, 5))
+        self.assertTrue(holds("Showname S1x01-11 {GR}", 1, 11))
+        self.assertFalse(holds("Showname S1x01-11 {GR}", 1, 12))
+        self.assertTrue(holds("Showname S04E60-81 - Complete Season - SUBrip", 4, 5))
+        self.assertTrue(holds("Showname S01E HDTV 720p", 1, 9))
+        # A miniseries pack names no season and is read as the season searched.
+        self.assertTrue(holds("Showname - Episodes 1-10 {GR} (2001)", 1, 10))
+        self.assertFalse(holds("Showname - Episodes 1-10 {GR} (2001)", 1, 11))
+        self.assertTrue(holds("Showname (All Episodes) 720p BRRip", 1, 7))
+        self.assertFalse(holds("Showname E05 2001 1080p", 1, 5))
         self.assertTrue(holds("Showname S01 1080p BluRay", 1, 15))
         self.assertTrue(holds("Showname S01E0 - - 1080p-GRP", 1, 15))
         self.assertTrue(holds("Showname S01-S03", 2, 4))
