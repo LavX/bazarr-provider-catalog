@@ -376,6 +376,27 @@ class Subs4SeriesParserTests(unittest.TestCase):
             with self.subTest(release=release):
                 self.assertEqual(self.mod._season_episodes(release), expected)
 
+    def test_season_episodes_read_the_episode_word_and_episode_ranges(self):
+        cases = {
+            "Showname S01 Episode 5": (1, (5,)),
+            "Showname S01 Episode24,25": (1, (24, 25)),
+            "Showname S01E05-E06": (1, (5, 6)),
+            "Showname S01E01-E10 720p": (1, tuple(range(1, 11))),
+            "Showname Season 2 Episode 01-Episode 04": (2, (1, 2, 3, 4)),
+        }
+        for release, expected in cases.items():
+            with self.subTest(release=release):
+                self.assertEqual(self.mod._season_episodes(release), expected)
+
+    def test_season_episodes_take_no_run_from_a_word_ending_in_e(self):
+        # The "e" closing "The" is no episode marker: this is episode 1 alone.
+        self.assertEqual(self.mod._season_episodes("Showname S02E01 The 1-2 Punch"), (2, (1,)))
+        self.assertEqual(self.mod._season_episodes("Showname S02E01 Volume 1-2"), (2, (1,)))
+        self.assertNotIn(
+            "episode",
+            self.mod.derive_matches({"series": "Showname", "season": 2, "episode": 2}, {"release_info": "Showname S02E01 The 1-2 Punch"}),
+        )
+
     def test_derive_matches_counts_a_double_episode_for_both_episodes(self):
         video = {"series": "Showname", "season": 1}
         release = {"release_info": "Showname S01E24-25 - Finale (2) - HDTV"}
@@ -660,6 +681,17 @@ class Subs4SeriesParserTests(unittest.TestCase):
             with self.subTest(episode=episode):
                 member = self.mod.extract_download(stream.getvalue(), {**payload, "episode": episode})["member"]
                 self.assertEqual(member, "Showname.S01E24-25.HDTV.srt")
+
+    def test_extract_download_pins_members_named_with_season_and_episode_words(self):
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("Showname Season1-Episode01 HDTV.srt", "1\nsub\n")
+            archive.writestr("Showname Season1-Episode02 DVDRip.srt", "1\nsub\n")
+            archive.writestr("Showname Season1-Episode03 HDTV.srt", "1\nsub\n")
+        payload = {"season": 1, "episode": 1, "release_info": "Showname Season 1 DVDRip"}
+        self.assertEqual(self.mod.extract_download(stream.getvalue(), payload)["member"], "Showname Season1-Episode01 HDTV.srt")
+        # An episode the pack lacks: no other episode's member is pinned.
+        self.assertNotIn("member", self.mod.extract_download(stream.getvalue(), {**payload, "episode": 4}))
 
     def test_extract_download_rar_defers_to_host_episode_path(self):
         # RAR is not stdlib-listable: always fall back to the host episode path.
