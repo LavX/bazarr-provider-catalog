@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import re
 import threading
 import time
 import unittest
@@ -38,12 +39,43 @@ OFFICE_SUGGESTIONS_HTML = b"""<select name="Mov_sel">
 </select>"""
 OFFICE_2024_EPISODE_URL = "https://www.subs4series.com/tv-series/the-office-/s2361cdce2f/season-1/episode-1"
 OFFICE_2005_EPISODE_URL = "https://www.subs4series.com/tv-series/the-office/s4fcba70b44/season-1/episode-1"
+OFFICE_2005_LISTING_URL = "https://www.subs4series.com/tv-series/the-office/s4fcba70b44/season-1"
 
 
 def _episode_html_of_year(year):
     """The episode fixture with its header year (Game of Thrones (2011)) swapped for another."""
     assert EPISODE_HTML.count(b"</u> (2011)") == 1
     return EPISODE_HTML.replace(b"</u> (2011)", f"</u> ({year})".encode("ascii"))
+
+# A season listing (/season-N) holds every subtitle of the season, season packs included.
+EMPTY_LISTING_HTML = b"<html><body></body></html>"
+
+
+def _is_season_listing(url):
+    return bool(re.search(r"/season-\d+(?:/p-\d+)?$", url))
+
+
+def _listing_row(release, slug):
+    return (
+        '<div class=" seeDark"><table><tr>'
+        '<td><img src="//www.subs4series.com/images/el.gif" alt="Greek"></td>'
+        f"<td><B>{release}</B></td>"
+        f'<td><a href="/greek-subtitles/{slug}/x"><img src="dl_icon.png"></a></td>'
+        "</tr></table></div>"
+    )
+
+
+def _listing_html(rows, last_page=None):
+    """A season listing page of (release, slug) rows; last_page adds the site's p-N links."""
+    body = "".join(_listing_row(release, slug) for release, slug in rows)
+    if last_page:
+        links = "".join(
+            f'<a href="/tv-series/showname/s20a8bc7f2d/season-1/p-{page}" class="pg_page">{page + 1}</a>'
+            for page in range(1, last_page + 1)
+        )
+        body += f'<div class="pg_pagination"><span class="pg_page active">1</span>{links}</div>'
+    return f"<html><body>{body}</body></html>".encode("utf-8")
+
 
 # Two-step getSub flow: the detail page only links to the getSub page; the reCAPTCHA gate
 # and the real POST form live on that getSub page (not on the detail page).
@@ -306,25 +338,215 @@ class Subs4SeriesParserTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_provider_module()
 
-    def test_episode_markers_read_the_release_name_forms_the_site_uses(self):
+    def test_season_episodes_read_the_release_name_forms_the_site_uses(self):
         cases = {
-            "Breaking Bad S01E02 720p": (1, 2),
-            "The Office 2x01 - Pilot": (2, 1),
+            "Showname S01E02 720p": (1, (2,)),
+            "Showname 2x01 - Pilot": (2, (1,)),
             # Both seen live, where they used to score 75 instead of 100.
-            "The office(BBC) S02-Ep01": (2, 1),
-            "Breaking Bad Season 1 Episode 01 - Pilot-gre": (1, 1),
-            "Lost S03 E10 HDTV": (3, 10),
-            "Lost S3.Ep.10": (3, 10),
-            "Lost season 3 ep 10": (3, 10),
+            "Showname(BBC) S02-Ep01": (2, (1,)),
+            "Showname Season 1 Episode 01 - Pilot-gre": (1, (1,)),
+            "Showname S03 E10 HDTV": (3, (10,)),
+            "Showname S3.Ep.10": (3, (10,)),
+            "Showname season 3 ep 10": (3, (10,)),
+            # Seen live on a season 1 listing.
+            "Showname Season1-Episode12": (1, (12,)),
+            "Showname S01E24-25 - Finale (2) - HDTV": (1, (24, 25)),
+            "Showname Season1-Episode24,25-part2,3": (1, (24, 25)),
+            "Showname 3x17-18": (3, (17, 18)),
+            "Showname S01E0 -  - 1080p-GRP": (1, (0,)),
         }
         for release, expected in cases.items():
             with self.subTest(release=release):
-                self.assertEqual(self.mod._episode_markers(self.mod._normalize(release)), expected)
+                self.assertEqual(self.mod._season_episodes(release), expected)
 
-    def test_episode_markers_ignore_numbers_that_are_not_an_episode(self):
-        for release in ("Breaking Bad 1080p x264 DDP5 1", "Breaking Bad Season 1 Complete", "Seasons 1080p", "Sons 2 Ep"):
+    def test_season_episodes_ignore_numbers_that_are_not_an_episode(self):
+        for release in ("Showname 1080p x264 DDP5 1", "Showname Season 1 Complete", "Seasons 1080p", "Sons 2 Ep"):
             with self.subTest(release=release):
-                self.assertEqual(self.mod._episode_markers(self.mod._normalize(release)), (None, None))
+                self.assertEqual(self.mod._season_episodes(release), (None, ()))
+
+    def test_season_episodes_take_no_second_episode_from_other_numbers(self):
+        cases = {
+            "Showname S01E05-720p": (1, (5,)),
+            "Showname S01E05 - 1080p": (1, (5,)),
+            "Showname S01E05 - 2 Parts": (1, (5,)),
+            "Showname S01E05 DDP5.1": (1, (5,)),
+            "Showname S01E05-07": (1, (5, 6, 7)),
+        }
+        for release, expected in cases.items():
+            with self.subTest(release=release):
+                self.assertEqual(self.mod._season_episodes(release), expected)
+
+    def test_season_episodes_read_the_episode_word_and_episode_ranges(self):
+        cases = {
+            "Showname S01 Episode 5": (1, (5,)),
+            "Showname S01 Episode24,25": (1, (24, 25)),
+            "Showname S01E05-E06": (1, (5, 6)),
+            "Showname S01E01-E10 720p": (1, tuple(range(1, 11))),
+            "Showname Season 2 Episode 01-Episode 04": (2, (1, 2, 3, 4)),
+        }
+        for release, expected in cases.items():
+            with self.subTest(release=release):
+                self.assertEqual(self.mod._season_episodes(release), expected)
+
+    def test_season_episodes_read_the_forms_seen_across_the_site(self):
+        # Each form is copied from a live season listing, with the show's name replaced.
+        cases = {
+            # Episode 0 or 1 with a word run into the number.
+            "Showname S01E0Preview - - 720p HDTV DD5 1 x264": (1, (0,)),
+            "Showname (2010) S01E0season DVDRip": (1, (0,)),
+            "Showname S01E01The One With The Roommate": (1, (1,)),
+            # Season and episodes run together.
+            "Showname S0405 The One With The Girlfriend {1080p}": (4, (5,)),
+            "Showname S04E0102 HDTV x264": (4, (1, 2)),
+            "Showname S04E01E02 720p HDTV": (4, (1, 2)),
+            # An "x" between season and episode, with an "s" before it or a multiplication sign.
+            "Showname s1x05_GR": (1, (5,)),
+            "Showname 1\u00d702 The Second Episode HDTV": (1, (2,)),
+            "Showname S2xEP01 hdtv xvid": (2, (1,)),
+            # Ranges whose last number has no marker of its own.
+            "Showname S1x12-22 {GR} (2005 - 2006)": (1, tuple(range(12, 23))),
+            "Showname S04E01-4 - - 720 web-dl": (4, (1, 2, 3, 4)),
+            "Showname Season 4 ep 1-11 720p HDTV": (4, tuple(range(1, 12))),
+            "Showname S04E13-14 - Part (2 & 3) - HDTV": (4, (13, 14)),
+            "Showname 4x13&14 - Part2_GR": (4, (13, 14)),
+            # A miniseries names no season.
+            "Showname E05 2001 1080p BluRay DD5 1 x264-GRP": (None, (5,)),
+            "Showname part5 [2001] 720p BRRip x264": (None, (5,)),
+            "Showname - Episodes 1-10 {GR} (2001)": (None, tuple(range(1, 11))),
+            "Showname 1-5 episodes BDRip x264": (None, (1, 2, 3, 4, 5)),
+            "Showname 2001 E01-10 HDDVD x264": (None, tuple(range(1, 11))),
+            # No episode in a resolution.
+            "Showname S02E720p WEB-DL - - 720p Web-dl": (None, ()),
+            "Showname S01E1080p": (None, ()),
+        }
+        for release, expected in cases.items():
+            with self.subTest(release=release):
+                self.assertEqual(self.mod._season_episodes(release), expected)
+
+    def test_derive_matches_scores_a_miniseries_episode_without_its_season(self):
+        video = {"series": "Showname", "season": 1, "episode": 5}
+        item = {"release_info": "Showname E05 2001 1080p BluRay"}
+        self.assertEqual(set(self.mod.derive_matches(video, item)), {"series", "episode"})
+        self.assertEqual(self.mod.compute_score(video, item), 95)
+        self.assertNotIn("episode", self.mod.derive_matches({**video, "episode": 6}, item))
+
+    def test_season_episodes_read_repeated_markers_and_chains(self):
+        cases = {
+            "Showname S01E01-S01E10 720p": (1, tuple(range(1, 11))),
+            "Showname 1x01-1x10 DVDRip": (1, tuple(range(1, 11))),
+            "Showname S01E05,06,07 HDTV": (1, (5, 6, 7)),
+            "Showname S01E05-06-07 HDTV": (1, (5, 6, 7)),
+            "Showname S01E05-E06-E07 HDTV": (1, (5, 6, 7)),
+            # A chain stops at a number that does not follow; a later season is no range.
+            "Showname S01E05-06-09 HDTV": (1, (5, 6)),
+            "Showname S01E05-S02E03": (1, (5,)),
+        }
+        for release, expected in cases.items():
+            with self.subTest(release=release):
+                self.assertEqual(self.mod._season_episodes(release), expected)
+
+    def test_pack_seasons_take_no_last_season_from_codec_or_audio_numbers(self):
+        cases = {
+            "Showname S01-10bit HEVC": {1},
+            "Showname S02-5.1 WEB": {2},
+            "Showname S01-2ch AAC": {1},
+            "Showname.S01-03.720p.BluRay": {1, 2, 3},
+            "Showname S01-S03 5.1": {1, 2, 3},
+        }
+        for release, expected in cases.items():
+            with self.subTest(release=release):
+                self.assertEqual(self.mod.pack_seasons(release), expected)
+
+    def test_season_episodes_take_no_run_from_a_word_ending_in_e(self):
+        # The "e" closing "The" is no episode marker: this is episode 1 alone.
+        self.assertEqual(self.mod._season_episodes("Showname S02E01 The 1-2 Punch"), (2, (1,)))
+        self.assertEqual(self.mod._season_episodes("Showname S02E01 Volume 1-2"), (2, (1,)))
+        self.assertNotIn(
+            "episode",
+            self.mod.derive_matches({"series": "Showname", "season": 2, "episode": 2}, {"release_info": "Showname S02E01 The 1-2 Punch"}),
+        )
+
+    def test_derive_matches_counts_a_double_episode_for_both_episodes(self):
+        video = {"series": "Showname", "season": 1}
+        release = {"release_info": "Showname S01E24-25 - Finale (2) - HDTV"}
+        for episode in (24, 25):
+            with self.subTest(episode=episode):
+                self.assertTrue({"series", "season", "episode"}.issubset(self.mod.derive_matches({**video, "episode": episode}, release)))
+        self.assertNotIn("episode", self.mod.derive_matches({**video, "episode": 26}, release))
+        self.assertNotIn("season", self.mod.derive_matches({**video, "season": 2, "episode": 25}, release))
+
+    def test_derive_matches_reads_the_season_and_episode_words_without_spaces(self):
+        matches = self.mod.derive_matches(
+            {"series": "Showname", "season": 1, "episode": 12}, {"release_info": "Showname Season1-Episode12"}
+        )
+        self.assertTrue({"series", "season", "episode"}.issubset(matches))
+
+    def test_pack_seasons_reads_the_season_pack_names_the_site_uses(self):
+        cases = {
+            # The first three seen live on a season 1 listing in November 2026.
+            "Showname S01 1080p BluRay x264-GRP": {1},
+            "Showname S01E0 -  - 1080p-GRP": {1},
+            "Showname S01 DVDRip XviD-ABC [GR]": {1},
+            "Showname Season 1 Complete": {1},
+            "Showname Season1 DVDRip": {1},
+            "Showname S01-S03 720p": {1, 2, 3},
+            "Showname S01E01 - Pilot - HDTV": set(),
+            "Showname S01E24-25 - Finale (2) - HDTV": set(),
+            "Showname Season1-Episode12": set(),
+            "Showname 3x17 {GR} [hdtv-xyz]": set(),
+            "Showname S01 E05": set(),
+            "Showname 1080p x264 DTS": set(),
+            "Showname Season 02 720p": {2},
+            "Showname S2 WEB-DL": {2},
+            "Seasons 1080p": set(),
+            "Showname Complete Series": set(),
+            "Showname S01E05 Season Finale": set(),
+            "Showname 5.1 Surround": set(),
+            # A name that gives an episode is no pack, whichever way it writes it.
+            "Showname S01 Episode 5": set(),
+            "Showname S01 Episode24,25": set(),
+            "Showname Season 1 - 05": set(),
+            "Showname S01 - 05": set(),
+            # Ranges of seasons, and of episodes, which hold only their own episodes.
+            "Showname S01-03 1080p": {1, 2, 3},
+            "Showname S1 - S3": {1, 2, 3},
+            "Showname Season 1-3": {1, 2, 3},
+            "Showname Seasons 1 - 3 Complete": {1, 2, 3},
+            "Showname Seasons 1 to 2": {1, 2},
+            "Showname S01E01-E10 720p": {1},
+            "Showname S01-1080p": {1},
+        }
+        for release, expected in cases.items():
+            with self.subTest(release=release):
+                self.assertEqual(self.mod.pack_seasons(release), expected)
+
+    def test_pack_holds_only_its_own_episodes(self):
+        holds = self.mod.pack_holds
+        # Ranges and wholes the site's listings use.
+        self.assertTrue(holds("Showname Season 1 Episodes 13-22 Dvd", 1, 15))
+        self.assertFalse(holds("Showname Season 1 Episodes 13-22 Dvd", 1, 5))
+        self.assertTrue(holds("Showname S1x01-11 {GR}", 1, 11))
+        self.assertFalse(holds("Showname S1x01-11 {GR}", 1, 12))
+        self.assertTrue(holds("Showname S04E60-81 - Complete Season - SUBrip", 4, 5))
+        self.assertTrue(holds("Showname S01E HDTV 720p", 1, 9))
+        # A miniseries pack names no season and is read as the season searched.
+        self.assertTrue(holds("Showname - Episodes 1-10 {GR} (2001)", 1, 10))
+        self.assertFalse(holds("Showname - Episodes 1-10 {GR} (2001)", 1, 11))
+        self.assertTrue(holds("Showname (All Episodes) 720p BRRip", 1, 7))
+        self.assertFalse(holds("Showname E05 2001 1080p", 1, 5))
+        self.assertTrue(holds("Showname S01 1080p BluRay", 1, 15))
+        self.assertTrue(holds("Showname S01E0 - - 1080p-GRP", 1, 15))
+        self.assertTrue(holds("Showname S01-S03", 2, 4))
+        self.assertTrue(holds("Showname S01E01-E10 720p", 1, 10))
+        self.assertFalse(holds("Showname S01E01-E10 720p", 1, 11))
+        self.assertFalse(holds("Showname S01 1080p BluRay", 2, 1))
+        self.assertFalse(holds("Showname S01E05 HDTV", 1, 5))
+
+    def test_listing_pages_to_read_keeps_the_last_page_past_the_cap(self):
+        self.assertEqual(self.mod._listing_pages_to_read(_listing_html([])), [])
+        self.assertEqual(self.mod._listing_pages_to_read(_listing_html([], last_page=1)), [1])
+        self.assertEqual(self.mod._listing_pages_to_read(_listing_html([], last_page=4)), [1, 2, 3, 4])
+        self.assertEqual(self.mod._listing_pages_to_read(_listing_html([], last_page=9)), [1, 2, 3, 9])
 
     def test_parse_suggestions_extracts_show_paths(self):
         rows = self.mod.parse_suggestions(SUGGESTIONS_HTML)
@@ -531,6 +753,96 @@ class Subs4SeriesParserTests(unittest.TestCase):
         self.assertNotIn("member", payload)
         self.assertEqual(payload["episode"], 2)
 
+    def test_extract_download_reads_the_ep_form_of_a_season_pack(self):
+        # The members of a live "S01E0" pack, named "S01 EP01" to "S01 EP25".
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            for number in range(1, 26):
+                archive.writestr(f"Showname S01 EP{number:02d} 1080p BluRay DTS x264-GRP.srt", f"1\r\nepisode {number}\r\n")
+        payload = {"season": 1, "episode": 1, "release_info": "Showname S01E0 - - 1080p-GRP"}
+
+        self.assertEqual(
+            self.mod.extract_download(stream.getvalue(), payload)["member"],
+            "Showname S01 EP01 1080p BluRay DTS x264-GRP.srt",
+        )
+        payload["episode"] = 12
+        self.assertEqual(
+            self.mod.extract_download(stream.getvalue(), payload)["member"],
+            "Showname S01 EP12 1080p BluRay DTS x264-GRP.srt",
+        )
+        # Episode 26 is not in the pack: defer, and the host fails the download.
+        payload["episode"] = 26
+        self.assertNotIn("member", self.mod.extract_download(stream.getvalue(), payload))
+
+    def test_extract_download_pins_a_double_episode_member_for_either_episode(self):
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("Showname.S01E23.HDTV.srt", "1\nsub\n")
+            archive.writestr("Showname.S01E24-25.HDTV.srt", "1\nsub\n")
+            archive.writestr("Showname.S02E25.HDTV.srt", "1\nsub\n")
+        payload = {"season": 1, "release_info": "Showname S01 HDTV"}
+        for episode in (24, 25):
+            with self.subTest(episode=episode):
+                member = self.mod.extract_download(stream.getvalue(), {**payload, "episode": episode})["member"]
+                self.assertEqual(member, "Showname.S01E24-25.HDTV.srt")
+
+    def test_extract_download_pins_members_named_with_season_and_episode_words(self):
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("Showname Season1-Episode01 HDTV.srt", "1\nsub\n")
+            archive.writestr("Showname Season1-Episode02 DVDRip.srt", "1\nsub\n")
+            archive.writestr("Showname Season1-Episode03 HDTV.srt", "1\nsub\n")
+        payload = {"season": 1, "episode": 1, "release_info": "Showname Season 1 DVDRip"}
+        self.assertEqual(self.mod.extract_download(stream.getvalue(), payload)["member"], "Showname Season1-Episode01 HDTV.srt")
+        # An episode the pack lacks: no other episode's member is pinned.
+        self.assertNotIn("member", self.mod.extract_download(stream.getvalue(), {**payload, "episode": 4}))
+
+    def test_extract_download_reads_a_member_episode_from_its_file_name_before_its_folder(self):
+        # The folder names the whole range; each file names its own episode.
+        stream = io.BytesIO()
+        folder = "Showname.S01E01-E10.1080p.WEB"
+        with zipfile.ZipFile(stream, "w") as archive:
+            for number in range(1, 11):
+                archive.writestr(f"{folder}/Showname.S01E{number:02d}.1080p.WEB.srt", "1\nsub\n")
+        payload = {"season": 1, "episode": 3, "release_info": "Showname S01E01-E10 1080p WEB"}
+        self.assertEqual(self.mod.extract_download(stream.getvalue(), payload)["member"], f"{folder}/Showname.S01E03.1080p.WEB.srt")
+        # A folder alone still gives the episode when its files name none.
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("Showname.S01E03.720p/subtitle.srt", "1\nsub\n")
+            archive.writestr("Showname.S01E04.720p/subtitle.srt", "1\nsub\n")
+        self.assertEqual(self.mod.extract_download(stream.getvalue(), payload)["member"], "Showname.S01E03.720p/subtitle.srt")
+
+    def test_extract_download_fails_a_season_pack_without_the_episode(self):
+        payload = {"season": 1, "episode": 7, "season_pack": True, "release_info": "Showname S01 - The Pilot"}
+        # A single subtitle is no pack.
+        with self.assertRaisesRegex(ValueError, "single subtitle.*S01E07"):
+            self.mod.extract_download(b"1\n00:00:01,000 --> 00:00:02,000\nHello\n", payload)
+        # A zip whose only member names another episode.
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("Showname.S01E01.HDTV.srt", "1\nsub\n")
+        with self.assertRaisesRegex(ValueError, "no subtitle for S01E07"):
+            self.mod.extract_download(stream.getvalue(), payload)
+        # The same subtitle is fine when it is not offered as a pack.
+        self.assertIn("archive_b64", self.mod.extract_download(stream.getvalue(), {**payload, "season_pack": False}))
+
+    def test_extract_download_passes_a_season_pack_that_holds_the_episode_or_cannot_tell(self):
+        payload = {"season": 1, "episode": 7, "season_pack": True, "release_info": "Showname S01 1080p"}
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            for number in (6, 7, 8):
+                archive.writestr(f"Showname.S01E{number:02d}.srt", "1\nsub\n")
+        self.assertEqual(self.mod.extract_download(stream.getvalue(), payload)["member"], "Showname.S01E07.srt")
+        # Members without any episode marker: the host picks by episode.
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("subtitle-a.srt", "1\nsub\n")
+            archive.writestr("subtitle-b.srt", "1\nsub\n")
+        self.assertEqual(self.mod.extract_download(stream.getvalue(), payload)["episode"], 7)
+        # A RAR cannot be listed here.
+        self.assertEqual(self.mod.extract_download(b"Rar!\x1a\x07\x00" + b"\x00" * 32, payload)["episode"], 7)
+
     def test_extract_download_rar_defers_to_host_episode_path(self):
         # RAR is not stdlib-listable: always fall back to the host episode path.
         body = b"Rar!\x1a\x07\x00" + b"\x00" * 32
@@ -555,12 +867,17 @@ class Subs4SeriesProviderTests(unittest.TestCase):
             "https://www.subs4series.com/search_report.php?search=Game+of+Thrones&searchType=1": SUGGESTIONS_HTML,
             "https://www.subs4series.com/tv-series/game-of-thrones/s8985ffc551/season-1/episode-1": EPISODE_HTML,
             "https://www.subs4series.com/tv-series/game-of-thrones-2011/s1111111111/season-1/episode-1": EPISODE_HTML,
+            # Both shows are of the video's year, so both season listings are read for packs.
+            "https://www.subs4series.com/tv-series/game-of-thrones/s8985ffc551/season-1": EMPTY_LISTING_HTML,
+            "https://www.subs4series.com/tv-series/game-of-thrones-2011/s1111111111/season-1": EMPTY_LISTING_HTML,
         }
 
         def stub(url, timeout=15, referer=None, config=None):
             del timeout, referer, config
             calls.append(url)
             if url not in responses:
+                if _is_season_listing(url):
+                    return EMPTY_LISTING_HTML
                 raise AssertionError(f"unexpected URL: {url}")
             return responses[url]
 
@@ -615,6 +932,8 @@ class Subs4SeriesProviderTests(unittest.TestCase):
             del timeout, referer, config
             calls.append(url)
             if url not in responses:
+                if _is_season_listing(url):
+                    return EMPTY_LISTING_HTML
                 raise AssertionError(f"unexpected URL: {url}")
             if isinstance(responses[url], Exception):
                 raise responses[url]
@@ -631,7 +950,8 @@ class Subs4SeriesProviderTests(unittest.TestCase):
             {OFFICE_2024_EPISODE_URL: _episode_html_of_year(2024), OFFICE_2005_EPISODE_URL: _episode_html_of_year(2005)},
         )
 
-        self.assertEqual(calls[1:], [OFFICE_2024_EPISODE_URL, OFFICE_2005_EPISODE_URL])
+        # Only the chosen show's season listing is read for packs.
+        self.assertEqual(calls[1:], [OFFICE_2024_EPISODE_URL, OFFICE_2005_EPISODE_URL, OFFICE_2005_LISTING_URL])
         self.assertTrue(results)
         self.assertEqual({item["provider_payload"]["page_link"] for item in results}, {OFFICE_2005_EPISODE_URL})
 
@@ -676,7 +996,12 @@ class Subs4SeriesProviderTests(unittest.TestCase):
             {OFFICE_2024_EPISODE_URL: not_found, OFFICE_2005_EPISODE_URL: _episode_html_of_year(2005)},
         )
 
-        self.assertEqual(calls[1:], [OFFICE_2024_EPISODE_URL, OFFICE_2005_EPISODE_URL])
+        # With a video year the 2024 show's season listing is read too, for packs and for its
+        # year, which then leaves it out.
+        office_2024_listing = OFFICE_2024_EPISODE_URL.rsplit("/episode-", 1)[0]
+        self.assertEqual(
+            calls[1:], [OFFICE_2024_EPISODE_URL, OFFICE_2005_EPISODE_URL, office_2024_listing, OFFICE_2005_LISTING_URL]
+        )
         self.assertTrue(results)
         self.assertEqual({item["provider_payload"]["page_link"] for item in results}, {OFFICE_2005_EPISODE_URL})
 
@@ -694,8 +1019,39 @@ class Subs4SeriesProviderTests(unittest.TestCase):
 
         self.assertEqual({item["provider_payload"]["page_link"] for item in results}, {OFFICE_2005_EPISODE_URL})
 
+    def test_search_without_a_year_leaves_out_a_same_title_show_without_the_episode(self):
+        missing = urllib.error.HTTPError(OFFICE_2024_EPISODE_URL, 404, "Not Found", {}, None)
+        self.addCleanup(missing.close)
+        results, calls = self._same_title_search(
+            {}, {OFFICE_2024_EPISODE_URL: missing, OFFICE_2005_EPISODE_URL: _episode_html_of_year(2005)}
+        )
+
+        # Nothing tells the shows apart, and the 2005 show has the episode: the 2024 show's
+        # listing is not read, so none of its packs are offered.
+        self.assertEqual(calls[1:], [OFFICE_2024_EPISODE_URL, OFFICE_2005_EPISODE_URL, OFFICE_2005_LISTING_URL])
+        self.assertEqual({item["provider_payload"]["page_link"] for item in results}, {OFFICE_2005_EPISODE_URL})
+
+    def test_search_keeps_the_other_show_when_a_season_listing_fails(self):
+        missing = urllib.error.HTTPError(OFFICE_2024_EPISODE_URL, 404, "Not Found", {}, None)
+        office_2024_listing = OFFICE_2024_EPISODE_URL.rsplit("/episode-", 1)[0]
+        unavailable = urllib.error.HTTPError(office_2024_listing, 500, "Server Error", {}, None)
+        self.addCleanup(missing.close)
+        self.addCleanup(unavailable.close)
+        with self.assertLogs(self.mod.logger, "WARNING"):
+            results, _calls = self._same_title_search(
+                {"year": 2005},
+                {
+                    OFFICE_2024_EPISODE_URL: missing,
+                    office_2024_listing: unavailable,
+                    OFFICE_2005_EPISODE_URL: _episode_html_of_year(2005),
+                },
+            )
+
+        self.assertEqual({item["provider_payload"]["page_link"] for item in results}, {OFFICE_2005_EPISODE_URL})
+
     def test_search_still_raises_errors_other_than_404(self):
         unavailable = urllib.error.HTTPError(OFFICE_2024_EPISODE_URL, 503, "Service Unavailable", {}, None)
+        self.addCleanup(unavailable.close)
 
         with self.assertRaises(urllib.error.HTTPError):
             self._same_title_search(
@@ -807,7 +1163,7 @@ class Subs4SeriesProviderTests(unittest.TestCase):
             return suggestions_html
 
         provider._http_get = stub
-        return provider._find_show_paths({"kind": "episode", **video}, {}), calls
+        return [path for path, _exact in provider._find_shows({"kind": "episode", **video}, {})], calls
 
     def test_find_show_paths_takes_a_site_title_with_a_country_qualifier(self):
         html = b'<select name="Mov_sel"><option value="/tv-series/shameless-us/s8a71806125">Shameless (US)</option></select>'
@@ -866,6 +1222,8 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         def stub(url, timeout=15, referer=None, config=None):
             del timeout, referer, config
             if url not in responses:
+                if _is_season_listing(url):
+                    return EMPTY_LISTING_HTML
                 raise AssertionError(f"unexpected URL: {url}")
             return responses[url]
 
@@ -889,6 +1247,8 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         def stub(url, timeout=15, referer=None, config=None):
             del timeout, referer, config
             if url not in responses:
+                if _is_season_listing(url):
+                    return EMPTY_LISTING_HTML
                 raise AssertionError(f"unexpected URL: {url}")
             return responses[url]
 
@@ -987,6 +1347,8 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         def stub(url, timeout=15, referer=None, config=None):
             del timeout, referer, config
             if url not in responses:
+                if _is_season_listing(url):
+                    return EMPTY_LISTING_HTML
                 raise AssertionError(f"unexpected URL: {url}")
             return responses[url]
 
@@ -1015,6 +1377,204 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         self.assertIn("series", self.mod.derive_matches(video, item, show_matched=True))
         self.assertEqual(self.mod.compute_score(video, item), 40)
         self.assertEqual(self.mod.compute_score(video, item, show_matched=True), 100)
+
+    SHOWNAME_SUGGESTIONS_HTML = b'<select name="Mov_sel"><option value="/tv-series/showname/s20a8bc7f2d">Showname</option></select>'
+    SHOWNAME_EPISODE_URL = "https://www.subs4series.com/tv-series/showname/s20a8bc7f2d/season-1/episode-1"
+    SHOWNAME_LISTING_URL = "https://www.subs4series.com/tv-series/showname/s20a8bc7f2d/season-1"
+
+    def _showname_search(self, listing_pages, episode_rows=(("Showname S01E01 - Pilot - HDTV", "sae63f4455"),), episode_page=None, episode=1):
+        """Search Showname S01E<episode>; episode_page, when given, replaces the episode page (a body or an error)."""
+        provider = self.mod.Subs4SeriesProvider()
+        calls = []
+        episode_url = self.SHOWNAME_EPISODE_URL.replace("/episode-1", f"/episode-{episode}")
+        responses = {
+            "https://www.subs4series.com/search_report.php?search=Showname&searchType=1": self.SHOWNAME_SUGGESTIONS_HTML,
+            episode_url: _listing_html(episode_rows) if episode_page is None else episode_page,
+            **listing_pages,
+        }
+
+        def stub(url, timeout=15, referer=None, config=None):
+            del timeout, referer, config
+            calls.append(url)
+            if url not in responses:
+                raise AssertionError(f"unexpected URL: {url}")
+            if isinstance(responses[url], Exception):
+                raise responses[url]
+            return responses[url]
+
+        provider._http_get = stub
+        video = {"kind": "episode", "series": "Showname", "season": 1, "episode": episode, "release_group": "GRP", "source": "Blu-Ray"}
+        results = provider.search(video, [{"alpha3": "ell", "alpha2": "el"}], {})
+        return {item["release_info"]: item for item in results}, calls
+
+    def test_search_reads_the_season_listing_when_the_episode_has_no_page(self):
+        # Nobody filed a subtitle under episode 7, so its page is a 404, but a pack holds it.
+        missing = urllib.error.HTTPError(self.SHOWNAME_EPISODE_URL.replace("/episode-1", "/episode-7"), 404, "Not Found", {}, None)
+        self.addCleanup(missing.close)
+        results, calls = self._showname_search(
+            {
+                self.SHOWNAME_LISTING_URL: _listing_html(
+                    [("Showname S01 1080p BluRay x264-GRP", "s5dcc7874d4"), ("Showname S01E03 HDTV", "s3")]
+                )
+            },
+            episode_page=missing,
+            episode=7,
+        )
+
+        # The listing is read once, for the show's year and for its packs.
+        self.assertEqual(calls[1:], [self.SHOWNAME_EPISODE_URL.replace("/episode-1", "/episode-7"), self.SHOWNAME_LISTING_URL])
+        self.assertEqual(set(results), {"Showname S01 1080p BluRay x264-GRP"})
+        pack = results["Showname S01 1080p BluRay x264-GRP"]
+        self.assertTrue(pack["provider_payload"]["season_pack"])
+        self.assertEqual(pack["provider_payload"]["episode"], 7)
+        self.assertEqual(pack["score"], 100)
+
+    def test_search_returns_nothing_when_neither_the_episode_nor_the_season_has_a_page(self):
+        missing_episode = urllib.error.HTTPError(self.SHOWNAME_EPISODE_URL, 404, "Not Found", {}, None)
+        missing_season = urllib.error.HTTPError(self.SHOWNAME_LISTING_URL, 404, "Not Found", {}, None)
+        self.addCleanup(missing_episode.close)
+        self.addCleanup(missing_season.close)
+        results, calls = self._showname_search({self.SHOWNAME_LISTING_URL: missing_season}, episode_page=missing_episode)
+
+        self.assertEqual(results, {})
+        self.assertEqual(calls[1:], [self.SHOWNAME_EPISODE_URL, self.SHOWNAME_LISTING_URL])
+
+    def test_search_skips_a_partial_pack_without_the_episode(self):
+        results, _calls = self._showname_search(
+            {
+                self.SHOWNAME_LISTING_URL: _listing_html(
+                    [("Showname S01E01-E10 720p WEB", "sa"), ("Showname S01E11-E20 720p WEB", "sb")]
+                )
+            },
+            episode_rows=(),
+            episode=15,
+        )
+
+        self.assertEqual(set(results), {"Showname S01E11-E20 720p WEB"})
+
+    def test_search_raises_a_block_on_the_season_listing(self):
+        for error in (
+            self.mod.CloudflareBlockedError("subs4series hit a Cloudflare block"),
+            self.mod.ServiceUnavailable("subs4series Anubis stage=request budget_exhausted"),
+        ):
+            with self.subTest(error=type(error).__name__), self.assertRaises(type(error)):
+                self._showname_search({self.SHOWNAME_LISTING_URL: error})
+
+    def test_search_raises_a_429_on_the_season_listing_as_throttled(self):
+        too_many = urllib.error.HTTPError(self.SHOWNAME_LISTING_URL, 429, "Too Many Requests", {}, None)
+        self.addCleanup(too_many.close)
+        with self.assertRaises(self.mod.APIThrottled):
+            self._showname_search({self.SHOWNAME_LISTING_URL: too_many})
+
+    def test_search_waits_the_request_delay_before_the_fallback_listing(self):
+        missing = urllib.error.HTTPError(self.SHOWNAME_EPISODE_URL, 404, "Not Found", {}, None)
+        self.addCleanup(missing.close)
+        events = []
+        real_sleep = self.mod._sleep
+        self.mod._sleep = lambda config: events.append("sleep")
+        self.addCleanup(setattr, self.mod, "_sleep", real_sleep)
+        provider = self.mod.Subs4SeriesProvider()
+        responses = {
+            "https://www.subs4series.com/search_report.php?search=Showname&searchType=1": self.SHOWNAME_SUGGESTIONS_HTML,
+            self.SHOWNAME_EPISODE_URL: missing,
+            self.SHOWNAME_LISTING_URL: _listing_html([]),
+        }
+
+        def stub(url, timeout=15, referer=None, config=None):
+            del timeout, referer, config
+            events.append(url)
+            if isinstance(responses[url], Exception):
+                raise responses[url]
+            return responses[url]
+
+        provider._http_get = stub
+        provider.search({"kind": "episode", "series": "Showname", "season": 1, "episode": 1}, [{"alpha3": "ell", "alpha2": "el"}], {})
+
+        listing_at = events.index(self.SHOWNAME_LISTING_URL)
+        self.assertEqual(events[listing_at - 1], "sleep")
+        self.assertEqual(events[listing_at - 2], self.SHOWNAME_EPISODE_URL)
+
+    def test_search_keeps_the_episode_results_when_the_listing_fails_otherwise(self):
+        unavailable = urllib.error.HTTPError(self.SHOWNAME_LISTING_URL, 503, "Service Unavailable", {}, None)
+        with self.assertLogs(self.mod.logger, "WARNING"):
+            results, _calls = self._showname_search({self.SHOWNAME_LISTING_URL: unavailable})
+
+        self.assertEqual(set(results), {"Showname S01E01 - Pilot - HDTV"})
+
+    def test_search_adds_the_season_packs_from_the_season_listing(self):
+        # Season 1 as listed live: packs filed under episode 0 and under no episode (both
+        # on the last page) and under episode 24 (first page), among other episodes' subtitles.
+        results, calls = self._showname_search({
+            self.SHOWNAME_LISTING_URL: _listing_html(
+                [
+                    ("Showname S01E24-25 - Finale (2) - HDTV", "sb737b0abb"),
+                    ("Showname S01 DVDRip XviD-ABC [GR]", "s18386e2803"),
+                    ("Showname 3x17 {GR} [hdtv-xyz]", "sdb36752571"),
+                ],
+                last_page=1,
+            ),
+            f"{self.SHOWNAME_LISTING_URL}/p-1": _listing_html(
+                [
+                    ("Showname S01E01 - Pilot - HDTV", "sae63f4455"),
+                    ("Showname S01E0 -  - 1080p-GRP", "saf95977f9"),
+                    ("Showname S01 1080p BluRay x264-GRP", "s5dcc7874d4"),
+                ]
+            ),
+        })
+
+        self.assertEqual(calls[1:], [self.SHOWNAME_EPISODE_URL, self.SHOWNAME_LISTING_URL, f"{self.SHOWNAME_LISTING_URL}/p-1"])
+        self.assertEqual(
+            set(results),
+            {
+                "Showname S01E01 - Pilot - HDTV",
+                "Showname S01 DVDRip XviD-ABC [GR]",
+                "Showname S01E0 - - 1080p-GRP",
+                "Showname S01 1080p BluRay x264-GRP",
+            },
+        )
+        episode = results["Showname S01E01 - Pilot - HDTV"]
+        self.assertNotIn("season_pack", episode["provider_payload"])
+        self.assertEqual(episode["provider_payload"]["page_link"], self.SHOWNAME_EPISODE_URL)
+        pack = results["Showname S01 1080p BluRay x264-GRP"]
+        self.assertEqual(set(pack["matches"]), {"series", "season", "episode", "release_group", "source"})
+        self.assertEqual(pack["score"], 100)
+        # The host takes episode 1 out of the pack, so the payload names it, not the site's 0.
+        self.assertEqual(pack["provider_payload"]["season"], 1)
+        self.assertEqual(pack["provider_payload"]["episode"], 1)
+        self.assertIs(pack["provider_payload"]["season_pack"], True)
+        self.assertEqual(pack["provider_payload"]["page_link"], self.SHOWNAME_LISTING_URL)
+        self.assertIn(".s01e01.", pack["filename"])
+        self.assertEqual(results["Showname S01E0 - - 1080p-GRP"]["score"], 100)
+
+    def test_search_marks_a_pack_filed_under_the_episode_itself(self):
+        results, _calls = self._showname_search(
+            {self.SHOWNAME_LISTING_URL: EMPTY_LISTING_HTML},
+            episode_rows=(("Showname S01 DVDRip XviD-ABC [GR]", "s18386e2803"),),
+        )
+
+        pack = results["Showname S01 DVDRip XviD-ABC [GR]"]
+        self.assertIs(pack["provider_payload"]["season_pack"], True)
+        self.assertIn("season", pack["matches"])
+        self.assertIn("episode", pack["matches"])
+
+    def test_search_keeps_the_episode_subtitles_when_the_season_listing_fails(self):
+        unavailable = urllib.error.HTTPError(self.SHOWNAME_LISTING_URL, 503, "Service Unavailable", {}, io.BytesIO())
+
+        with self.assertLogs(self.mod.logger, "WARNING"):
+            results, _calls = self._showname_search({self.SHOWNAME_LISTING_URL: unavailable})
+
+        self.assertEqual(set(results), {"Showname S01E01 - Pilot - HDTV"})
+
+    def test_extract_download_takes_the_episode_out_of_a_season_pack(self):
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            for number in range(1, 4):
+                archive.writestr(f"Showname.S01E{number:02d}.1080p.BluRay.x264-GRP.srt", f"1\r\nepisode {number}\r\n")
+        payload = {"season": 1, "episode": 2, "season_pack": True, "release_info": "Showname S01 1080p BluRay x264-GRP"}
+
+        result = self.mod.extract_download(stream.getvalue(), payload)
+
+        self.assertEqual(result["member"], "Showname.S01E02.1080p.BluRay.x264-GRP.srt")
 
     def test_search_rejects_movies(self):
         provider = self.mod.Subs4SeriesProvider()
@@ -1266,8 +1826,8 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         )
         solved_calls = []
 
-        def fake_solve(active_scraper, challenge_url, original_url, timeout, deadline=None):
-            solved_calls.append((active_scraper, challenge_url, original_url, timeout, deadline - time.monotonic()))
+        def fake_solve(active_scraper, challenge_url, timeout, deadline=None):
+            solved_calls.append((active_scraper, challenge_url, timeout, deadline - time.monotonic()))
             return {"techaro.lol-anubis-auth": "ok"}
 
         with patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), patch.object(
@@ -1293,11 +1853,7 @@ class Subs4SeriesProviderTests(unittest.TestCase):
             "https://www.subs4series.com/.within.website/?redir=/search_report.php",
         )
         # The solve gets the call's 60 s budget, not a fresh one.
-        self.assertTrue(55 < solved_calls[0][4] <= self.mod.SITE_CALL_BUDGET_SECONDS)
-        self.assertEqual(
-            solved_calls[0][2],
-            "https://www.subs4series.com/search_report.php?search=Game+of+Thrones&searchType=1",
-        )
+        self.assertTrue(55 < solved_calls[0][3] <= self.mod.SITE_CALL_BUDGET_SECONDS)
 
     def test_http_get_solves_anubis_body_before_retrying_original_url(self):
         provider = self.mod.Subs4SeriesProvider()
@@ -1318,8 +1874,8 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         )
         solved_calls = []
 
-        def fake_solve(active_scraper, challenge_url, original_url, timeout, deadline=None):
-            solved_calls.append((active_scraper, challenge_url, original_url, timeout, deadline - time.monotonic()))
+        def fake_solve(active_scraper, challenge_url, timeout, deadline=None):
+            solved_calls.append((active_scraper, challenge_url, timeout, deadline - time.monotonic()))
             return {"techaro.lol-anubis-auth": "ok"}
 
         with patch.object(self.mod.cloudscraper, "create_scraper", return_value=scraper), patch.object(
@@ -1336,10 +1892,6 @@ class Subs4SeriesProviderTests(unittest.TestCase):
             solved_calls[0][1],
             "https://www.subs4series.com/search_report.php?search=Game+of+Thrones&searchType=1",
         )
-        self.assertEqual(
-            solved_calls[0][2],
-            "https://www.subs4series.com/search_report.php?search=Game+of+Thrones&searchType=1",
-        )
 
     def test_anubis_proof_of_work_stops_at_the_call_budget(self):
         page = FakeScraperResponse(
@@ -1350,7 +1902,7 @@ class Subs4SeriesProviderTests(unittest.TestCase):
 
         with self.assertRaisesRegex(self.mod.ServiceUnavailable, "proof_of_work"):
             self.mod.solve_anubis_challenge(
-                session, "https://www.subs4series.com/.within.website/?redir=/", "https://www.subs4series.com/", deadline=started + 0.2
+                session, "https://www.subs4series.com/.within.website/?redir=/", deadline=started + 0.2
             )
 
         self.assertLess(time.monotonic() - started, 5)
@@ -1364,7 +1916,7 @@ class Subs4SeriesProviderTests(unittest.TestCase):
 
         with patch.object(self.mod.time, "sleep", side_effect=sleeps.append):
             with self.assertRaisesRegex(self.mod.ServiceUnavailable, "pass_submit"):
-                self.mod.solve_anubis_challenge(session, "https://www.subs4series.com/.within.website/?redir=/", "https://www.subs4series.com/")
+                self.mod.solve_anubis_challenge(session, "https://www.subs4series.com/.within.website/?redir=/")
 
         self.assertEqual(sleeps, [])
         self.assertEqual(len(session.calls), 1)
@@ -1376,7 +1928,7 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         session = _AnubisSession([page, FakeScraperResponse(200, {}, b"ok")])
 
         self.mod.solve_anubis_challenge(
-            session, "https://www.subs4series.com/.within.website/?redir=/", "https://www.subs4series.com/", deadline=time.monotonic() + 3
+            session, "https://www.subs4series.com/.within.website/?redir=/", deadline=time.monotonic() + 3
         )
 
         self.assertEqual(len(session.calls), 2)
