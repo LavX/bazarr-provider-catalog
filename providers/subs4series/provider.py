@@ -104,10 +104,17 @@ _EPISODE_RUN_RE = re.compile(
 # The most episodes one "E01-E10" range is read as covering.
 MAX_EPISODE_RANGE = 50
 _LISTING_PAGE_RE = re.compile(r"/season-\d+/p-(?P<page>\d+)(?=[\"'/?#])", re.I)
-# A season pack's name: "S01" or "Season 1" with no episode, or "S01-S03" for several seasons.
-# Both run on _normalize()d text.
-_SEASON_RANGE_RE = re.compile(r"\bs0*(?P<first>\d{1,2}) s0*(?P<last>\d{1,2})\b", re.I)
-_SEASON_ONLY_RE = re.compile(r"\b(?:s|season ?)0*(?P<season>\d{1,2})\b", re.I)
+# A season pack's name: "S01" or "Season 1" with no episode, or a range of seasons. The ranges
+# run on the raw lowercased name, since "S01-03" is a range and "Season 1 - 05" an episode:
+# "S01-S03", "S01-03", "S1 - S3", "Season 1-3" and "Seasons 1 - 3".
+_SEASON_RANGE_RES = (
+    re.compile(r"(?<![a-z0-9])s0*(?P<first>\d{1,2})(?:-s?|\s*-\s*s)0*(?P<last>\d{1,2})(?![\dp])"),
+    re.compile(r"(?<![a-z0-9])season ?0*(?P<first>\d{1,2})-0*(?P<last>\d{1,2})(?![\dp])"),
+    re.compile(r"(?<![a-z0-9])seasons ?0*(?P<first>\d{1,2})\s*(?:-|to|&|and)\s*0*(?P<last>\d{1,2})(?![\dp])"),
+)
+# A lone season on _normalize()d text. A number right after it is an episode, "Season 1 - 05",
+# while "S01 720p" or "S01 1080p" is still a pack.
+_SEASON_ONLY_RE = re.compile(r"\b(?:s|season ?)0*(?P<season>\d{1,2})\b(?! (?:episode |ep |e )?\d{1,3}\b)", re.I)
 _META_REFRESH_RE = re.compile(
     r"""<meta\s+http-equiv=["']refresh["']\s+content=["'](?P<delay>\d+);\s*url=(?P<url>[^"']+)["']""",
     re.I,
@@ -604,17 +611,28 @@ class Subs4SeriesProvider:
         requested = {language for language in requested if language in SUPPORTED_LANGUAGES}
         if not requested:
             return []
+        season = _safe_int(video.get("season"))
+        episode = _safe_int(video.get("episode"))
         pages = []
+        listings = {}
         for show_path, exact_title in self._find_shows(video, config or {}):
             episode_url = _episode_url(show_path, video)
             if not episode_url:
                 continue
             _sleep(config)
-            body = self._episode_page(episode_url, config)
+            body = self._page_unless_missing(episode_url, config)
+            if body is not None:
+                text = _decode(body)
+                pages.append((episode_url, _series_year_from_page(text), parse_episode_page(text), exact_title, show_path))
+                continue
+            # No subtitle is filed under this episode yet, but a season pack can still hold it.
+            # The season listing's header gives the show's year, as the episode page's does.
+            listing_url = _season_url(show_path, season)
+            body = self._page_unless_missing(listing_url, config) if listing_url else None
             if body is None:
                 continue
-            text = _decode(body)
-            pages.append((episode_url, _series_year_from_page(text), parse_episode_page(text), exact_title, show_path))
+            listings[show_path] = text = _decode(body)
+            pages.append((listing_url, _series_year_from_page(text), [], exact_title, show_path))
         results = []
         seen = set()
 
@@ -627,50 +645,58 @@ class Subs4SeriesProvider:
             seen.add(key)
             results.append(self._result(video, item, page_link, season_pack=season_pack))
 
-        season = _safe_int(video.get("season"))
         selected = _select_pages(pages, video.get("year"))
         for episode_url, _year, items, _exact, _show_path in selected:
             for item in items:
                 # The site can file a pack under one of its episodes.
-                add(item, episode_url, season_pack=season in pack_seasons(item["release_info"]))
+                add(item, episode_url, season_pack=pack_holds(item["release_info"], season, episode))
         # An episode page lists only the subtitles filed under that episode. The other season
         # packs are on the season listing; the host takes the episode out of the pack.
         for _url, _year, _items, _exact, show_path in selected:
-            listing_url, items = self._season_packs(show_path, season, config)
+            listing_url, items = self._season_packs(show_path, season, episode, config, listings.get(show_path))
             for item in items:
                 add(item, listing_url, season_pack=True)
         return sorted(results, key=lambda result: result["score"], reverse=True)
 
-    def _season_packs(self, show_path, season, config):
-        """(listing_url, rows) for the season packs on a show's season listing.
+    def _season_packs(self, show_path, season, episode, config, first_page=None):
+        """(listing_url, rows) for the season packs on a show's season listing that hold the episode.
 
-        The episode's own subtitles are already found, so a listing the site will not serve
-        costs only the packs: it is logged, not raised.
+        first_page is the listing's first page when the search already read it. The episode's
+        own subtitles are already found, so a listing page the site will not serve costs only
+        the packs: it is logged, not raised. A block, throttle or spent time budget is raised,
+        so the host backs off instead of calling again.
         """
         listing_url = _season_url(show_path, season)
         if not listing_url:
             return listing_url, []
         packs = []
         try:
-            _sleep(config)
-            text = _decode(self._http_get(listing_url, referer=BASE_URL, config=config))
-            packs.extend(_season_pack_rows(text, season))
-            for page in _listing_pages_to_read(text):
+            if first_page is None:
+                _sleep(config)
+                first_page = _decode(self._http_get(listing_url, referer=BASE_URL, config=config))
+            packs.extend(_season_pack_rows(first_page, season, episode))
+            for page in _listing_pages_to_read(first_page):
                 _sleep(config)
                 page_url = f"{listing_url}/p-{page}"
-                packs.extend(_season_pack_rows(_decode(self._http_get(page_url, referer=listing_url, config=config)), season))
+                page_text = _decode(self._http_get(page_url, referer=listing_url, config=config))
+                packs.extend(_season_pack_rows(page_text, season, episode))
+        except (APIThrottled, CloudflareBlockedError, ServiceUnavailable):
+            raise
         except Exception as error:
             if _http_status(error) != 404:
                 logger.warning(
                     "subs4series could not read the season listing %s for season packs: %s", listing_url, error
                 )
+            close = getattr(error, "close", None)
+            if close is not None:
+                close()
         return listing_url, packs
 
-    def _episode_page(self, episode_url, config):
+    def _page_unless_missing(self, url, config):
         # Shows that share a title ("The Office" 2005 and 2024) need not share seasons: a 404
-        # means this one lacks the episode, and the next show path may still have it.
+        # means this one lacks the episode or season, and the next show path may still have it.
         try:
-            return self._http_get(episode_url, referer=BASE_URL, config=config)
+            return self._http_get(url, referer=BASE_URL, config=config)
         except Exception as error:
             if _http_status(error) == 404:
                 close = getattr(error, "close", None)
@@ -1314,22 +1340,37 @@ def pack_seasons(release):
     """The seasons a season-pack release name covers, or an empty set for any other name.
 
     "Showname S01 1080p BluRay x264-GRP" and "Showname S01E0 - - 1080p-GRP" (the site's
-    episode 0) are packs of season 1, "Showname S01-S03" of seasons 1 to 3. A name with an
-    episode, such as "Showname S01E24-25" or "Showname Season1-Episode12", is not a pack.
+    episode 0) are packs of season 1, "Showname S01-S03" of seasons 1 to 3, and
+    "Showname S01E01-E10" a pack of part of season 1. A name with one or two episodes, such
+    as "Showname S01E24-25", "Showname Season1-Episode12" or "Showname Season 1 - 05", is
+    not a pack.
     """
     season, episodes = _season_episodes(release)
     if season is not None:
-        return {season} if episodes == (0,) else set()
-    normalized = _normalize(release)
-    seasons = _SEASON_RANGE_RE.search(normalized)
-    if seasons and int(seasons.group("first")) < int(seasons.group("last")):
-        return set(range(int(seasons.group("first")), int(seasons.group("last")) + 1))
-    single = _SEASON_ONLY_RE.search(normalized)
+        return {season} if episodes == (0,) or len(episodes) > 2 else set()
+    text = (_coerce_text(release) or "").lower()
+    for pattern in _SEASON_RANGE_RES:
+        seasons = pattern.search(text)
+        if seasons and int(seasons.group("first")) < int(seasons.group("last")):
+            return set(range(int(seasons.group("first")), int(seasons.group("last")) + 1))
+    single = _SEASON_ONLY_RE.search(_normalize(release))
     return {int(single.group("season"))} if single else set()
 
 
-def _season_pack_rows(text, season):
-    return [item for item in parse_episode_page(text) if season in pack_seasons(item["release_info"])]
+def pack_holds(release, season, episode):
+    """True when a release name is a season pack that holds that episode of that season.
+
+    A pack of a whole season holds every episode. A range such as "S01E01-E10" holds only
+    its own episodes.
+    """
+    if season not in pack_seasons(release):
+        return False
+    pack_season, episodes = _season_episodes(release)
+    return pack_season is None or episodes == (0,) or episode in episodes
+
+
+def _season_pack_rows(text, season, episode):
+    return [item for item in parse_episode_page(text) if pack_holds(item["release_info"], season, episode)]
 
 
 def _pages_for_year(pages, video_year):
