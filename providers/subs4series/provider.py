@@ -87,17 +87,22 @@ _FORM_RE = re.compile(r"<form\b[^>]*>", re.I | re.S)
 _WS_RE = re.compile(r"\s+")
 _NON_ALNUM_RE = re.compile(r"[\W_]+", re.UNICODE)
 # These run on _normalize()d text, where punctuation is a space: "S02-Ep01" reads "s02 ep01".
-_SXXEXX_RE = re.compile(r"\bs0*(?P<season>\d{1,2}) ?ep? ?0*(?P<episode>\d{1,3})\b", re.I)
+_SXXEXX_RE = re.compile(r"\bs0*(?P<season>\d{1,2}) ?(?:episode|ep|e) ?0*(?P<episode>\d{1,3})\b", re.I)
 _X_EPISODE_RE = re.compile(r"\b0*(?P<season>\d{1,2})x0*(?P<episode>\d{1,3})\b", re.I)
 # "Season 1 Episode 01", and "Season1-Episode12" as the site's older uploads write it.
 _SEASON_EPISODE_WORDS_RE = re.compile(
     r"\bseason ?0*(?P<season>\d{1,2}) (?:episode|ep) ?0*(?P<episode>\d{1,3})\b", re.I
 )
-# The second episode of a double episode, "S01E24-25" or "Episode24,25". This one runs on the
-# raw lowercased name: normalized, "S01E05 720p" would read like a double episode too.
-_DOUBLE_EPISODE_RE = re.compile(
-    r"(?:e|ep|episode|x)[\s._]*0*(?P<first>\d{1,3})\s*[-,&]\s*(?:e|ep|episode)?[\s._]*0*(?P<last>\d{1,3})(?!\d)"
+# The rest of a double episode, "S01E24-25" or "Episode24,25", or of an episode range,
+# "S01E01-E10". This one runs on the raw lowercased name: normalized, "S01E05 720p" would read
+# like a double episode too. The marker must start a word or follow the season number, so
+# the "e" closing "The" in "S02E01 The 1-2 Punch" is no episode marker.
+_EPISODE_RUN_RE = re.compile(
+    r"(?:(?<![a-z])(?:episode|ep|e)|(?<=\d)(?:e|x))[\s._]*0*(?P<first>\d{1,3})\s*[-,&]\s*"
+    r"(?P<marker>(?:episode|ep|e)[\s._]*)?0*(?P<last>\d{1,3})(?!\d)"
 )
+# The most episodes one "E01-E10" range is read as covering.
+MAX_EPISODE_RANGE = 50
 _LISTING_PAGE_RE = re.compile(r"/season-\d+/p-(?P<page>\d+)(?=[\"'/?#])", re.I)
 # A season pack's name: "S01" or "Season 1" with no episode, or "S01-S03" for several seasons.
 # Both run on _normalize()d text.
@@ -495,8 +500,9 @@ def _member_matches_episode(name, season, episode):
         return True
     if re.search(rf"(?<![a-z0-9]){season}x0*{episode}(?!\d)", text):
         return True
-    # The second episode of a double episode, "S01E24-25".
-    if _season_episodes(name) == (season, (episode - 1, episode)):
+    # Every other form the release names use too: "Season1-Episode01", "S01E24-25".
+    name_season, name_episodes = _season_episodes(name)
+    if name_season == season and episode in name_episodes:
         return True
     # Whole-token NNN form (e.g. S07E20 written as "720"): compare against delimited tokens
     # so "720" never matches inside "720p" and "264" never matches "x264".
@@ -507,6 +513,8 @@ def _member_matches_episode(name, season, episode):
 def _member_has_episode_marker(name):
     text = (name or "").lower()
     if re.search(r"s\d{1,2}[\s._-]*e(?:p[\s._-]*)?\d{1,3}", text) or re.search(r"(?<!\d)\d{1,2}x\d{1,3}", text):
+        return True
+    if _season_episodes(name)[0] is not None:
         return True
     return any(token.isdigit() and len(token) == 3 for token in _tokens(name))
 
@@ -1637,18 +1645,30 @@ def _normalize_release_group(value):
 def _season_episodes(name):
     """(season, episodes) of a release or file name, or (None, ()) without an episode marker.
 
-    A double episode gives both: "S01E24-25" is (1, (24, 25)).
+    A double episode gives both: "S01E24-25" is (1, (24, 25)). A range whose last number
+    carries its own marker gives every episode: "S01E01-E10" is (1, (1, ..., 10)).
     """
     normalized = _normalize(name)
     for pattern in (_SXXEXX_RE, _X_EPISODE_RE, _SEASON_EPISODE_WORDS_RE):
         match = pattern.search(normalized)
         if match:
             season, episode = int(match.group("season")), int(match.group("episode"))
-            for double in _DOUBLE_EPISODE_RE.finditer((_coerce_text(name) or "").lower()):
-                if int(double.group("first")) == episode and int(double.group("last")) == episode + 1:
-                    return season, (episode, episode + 1)
-            return season, (episode,)
+            return season, _episode_run(name, episode)
     return None, ()
+
+
+def _episode_run(name, episode):
+    """The episodes a name gives from its first one: (episode,), or more for "E24-25"."""
+    for run in _EPISODE_RUN_RE.finditer((_coerce_text(name) or "").lower()):
+        if int(run.group("first")) != episode:
+            continue
+        last = int(run.group("last"))
+        if last == episode + 1:
+            return episode, last
+        # Without its own marker the last number could be anything: "S01E05-720p", "E05 - 2".
+        if run.group("marker") and episode < last <= episode + MAX_EPISODE_RANGE:
+            return tuple(range(episode, last + 1))
+    return (episode,)
 
 
 def _matches_token(value, normalized_text):
