@@ -984,7 +984,7 @@ class TranslateTests(PluginTestCase):
         self.assertEqual(response.code, "declined")
         self.assertEqual(response.error["reason"], "server_unreachable")
         # The probe plus the requests that were already in flight when it was reached.
-        self.assertLess(len(fake.requests), self.module.REFUSAL_PROBE + 2 * self.module.CONCURRENCY + 1)
+        self.assertLessEqual(len(fake.requests), self.module.REFUSAL_PROBE + self.module.CONCURRENCY - 1)
 
     def test_one_cue_with_text_stops_the_early_decline(self):
         def behaviour(request):
@@ -993,6 +993,32 @@ class TranslateTests(PluginTestCase):
         fake = self.serve(behaviour)
         response = self.translate(self.host(), [f"Line {index}" for index in range(60)])
         self.assertTrue(response.ok, response.error)
+        self.assertEqual(len(fake.requests), 60)
+
+    def test_early_decline_waits_for_a_translation_already_in_flight(self):
+        release_translation = threading.Event()
+        original_progress = self.module.PluginContext.progress
+
+        def behaviour(request):
+            if request["q"] != "Line 3":
+                return Reply(status=404)
+            if not release_translation.wait(timeout=10):
+                return Reply(status=504)
+            return translated(request)
+
+        def progress(context, done, total, *args):
+            # Hold the successful reply until the plugin has processed a full probe of refusals.
+            if done >= self.module.REFUSAL_PROBE:
+                release_translation.set()
+            return original_progress(context, done, total, *args)
+
+        fake = self.serve(behaviour)
+        with mock.patch.object(self.module.PluginContext, "progress", progress):
+            response = self.translate(self.host(), [f"Line {index}" for index in range(60)])
+
+        self.assertTrue(response.ok, response.error)
+        self.assertEqual(response.value["status"], "partial")
+        self.assertEqual(response.value["lines"], [{"position": 3, "text": "T[de]:Line 3"}])
         self.assertEqual(len(fake.requests), 60)
 
     def test_the_same_holds_when_earlier_cues_were_resumed(self):
