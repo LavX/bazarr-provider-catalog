@@ -665,6 +665,7 @@
             "key": "provider_order",
             "label": "Provider order",
             "max": null,
+            "max_items": 20,
             "min": null,
             "required": false,
             "secret": false,
