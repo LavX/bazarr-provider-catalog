@@ -459,7 +459,7 @@ def _plugin_field_list(where, fields, label, host_keys=frozenset(), *, allow_con
         if not allow_constraints:
             raise CatalogError(f"{name} is only supported on translator connection fields")
         condition = item["forbidden_if"]
-        if (item["type"] not in {"list", "orderable_list"} or item.get("secret") is True
+        if (item["type"] != "list" or item.get("secret") is True
                 or not isinstance(condition, dict) or set(condition) != {"key", "equals"}
                 or not isinstance(condition["key"], str) or not isinstance(condition["equals"], str)
                 or not condition["equals"].strip()):

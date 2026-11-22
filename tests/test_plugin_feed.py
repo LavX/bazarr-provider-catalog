@@ -78,6 +78,13 @@ class PluginManifestTests(PluginFeedTestCase):
                     "fields": [], "backend_types": {"sample": {"fields": fields}}}
                 self.refused({"settings_version": 1, "settings": settings}, "forbidden_if")
 
+    def test_a_reorder_only_field_cannot_declare_forbidden_if(self):
+        fields = [{"key": "mode", "type": "choice", "choices": ["auto"]},
+                  {"key": "selection", "type": "orderable_list", "items": ["sample"],
+                   "forbidden_if": {"key": "mode", "equals": "auto"}}]
+        settings = {"fields": [], "backend_types": {"sample": {"fields": fields}}}
+        self.refused({"settings_version": 1, "settings": settings}, "forbidden_if")
+
     def test_a_plugin_with_no_optional_fields_is_accepted(self):
         optional = (
             "min_host_version", "runtime", "platforms", "permissions", "endpoints", "provides",
