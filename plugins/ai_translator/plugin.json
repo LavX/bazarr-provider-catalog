@@ -1,0 +1,837 @@
+{
+  "bundle_sha256": "e3ccd1c706c6335685cc20a3817e837ee2e96efe7703e9278b8cd5b321925091",
+  "dependencies": {
+    "requirements": [
+      {
+        "hashes": [
+          "sha256:f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0"
+        ],
+        "name": "annotated-types",
+        "version": "0.8.0"
+      },
+      {
+        "hashes": [
+          "sha256:c66ae634e0b8228396b801741beb3294326d4b6102f7bba4041c0dfb58c29026"
+        ],
+        "name": "anyio",
+        "version": "4.16.0"
+      },
+      {
+        "hashes": [
+          "sha256:7422df25243767b9877031a2248cb14d09ddac9beee846f4cef3d5c9191d488f"
+        ],
+        "name": "certifi",
+        "version": "2026.11.20"
+      },
+      {
+        "hashes": [
+          "sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86"
+        ],
+        "name": "h11",
+        "version": "0.16.0"
+      },
+      {
+        "hashes": [
+          "sha256:2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55"
+        ],
+        "name": "httpcore",
+        "version": "1.0.9"
+      },
+      {
+        "hashes": [
+          "sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad"
+        ],
+        "name": "httpx",
+        "version": "0.28.1"
+      },
+      {
+        "hashes": [
+          "sha256:ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c"
+        ],
+        "name": "idna",
+        "version": "3.20"
+      },
+      {
+        "hashes": [
+          "sha256:a1c50afd8d3fbbaf47a4873bc890dcb3c15da96f5c020327977d844d8731a2d4"
+        ],
+        "name": "jsonpath-python",
+        "version": "1.1.6"
+      },
+      {
+        "hashes": [
+          "sha256:e15835357a6bf56357244d50efc8830e0ac9fcc7c158f34570be4ecac2de867a"
+        ],
+        "name": "lavx-ai-subtitle-translator",
+        "version": "2.2.0rc2"
+      },
+      {
+        "hashes": [
+          "sha256:8306466ca560021269de8fec445cd081dd1959b811b0e57d2bcefbf2aa75a76f"
+        ],
+        "name": "openrouter",
+        "version": "1.1.133"
+      },
+      {
+        "hashes": [
+          "sha256:e561593fccf61e8a20fc46dfc2dfe075b8be7d0188df33f221ad1f0139180f9d"
+        ],
+        "name": "pydantic",
+        "version": "2.12.5"
+      },
+      {
+        "hashes": [
+          "sha256:0177272f88ab8312479336e1d777f6b124537d47f2123f89cb37e0accea97f90",
+          "sha256:01a3d0ab748ee531f4ea6c3e48ad9dac84ddba4b0d82291f87248f2f9de8d740",
+          "sha256:070259a8818988b9a84a449a2a7337c7f430a22acc0859c6b110aa7212a6d9c0",
+          "sha256:0cbaad15cb0c90aa221d43c00e77bb33c93e8d36e0bf74760cd00e732d10a6a0",
+          "sha256:112e305c3314f40c93998e567879e887a3160bb8689ef3d2c04b6cc62c33ac34",
+          "sha256:1962293292865bca8e54702b08a4f26da73adc83dd1fcf26fbc875b35d81c815",
+          "sha256:1d1d9764366c73f996edd17abb6d9d7649a7eb690006ab6adbda117717099b14",
+          "sha256:22f0fb8c1c583a3b6f24df2470833b40207e907b90c928cc8d3594b76f874375",
+          "sha256:25e1c2af0fce638d5f1988b686f3b3ea8cd7de5f244ca147c777769e798a9cd1",
+          "sha256:3f37a19d7ebcdd20b96485056ba9e8b304e27d9904d233d7b1015db320e51f0a",
+          "sha256:406bf18d345822d6c21366031003612b9c77b3e29ffdb0f612367352aab7d586",
+          "sha256:79ec52ec461e99e13791ec6508c722742ad745571f234ea6255bed38c6480f11",
+          "sha256:8e7c86f27c585ef37c35e56a96363ab8de4e549a95512445b85c96d3e2f7c1bf",
+          "sha256:915c3d10f81bec3a74fbd4faebe8391013ba61e5a1a8d48c4455b923bdda7858",
+          "sha256:941103c9be18ac8daf7b7adca8228f8ed6bb7a1849020f643b3a14d15b1924d9",
+          "sha256:bfea2a5f0b4d8d43adf9d7b8bf019fb46fdd10a2e5cde477fbcb9d1fa08c68e1",
+          "sha256:c23e27686783f60290e36827f9c626e63154b82b116d7fe9adba1fda36da706c",
+          "sha256:e56ba91f47764cc14f1daacd723e3e82d1a89d783f0f5afe9c364b8bb491ccdb",
+          "sha256:e96cea19e34778f8d59fe40775a7a574d95816eb150850a85a7a4c8f4b94ac69",
+          "sha256:eceb81a8d74f9267ef4081e246ffd6d129da5d87e37a77c9bde550cb04870c1c",
+          "sha256:f41a7489d32336dbf2199c8c0a215390a751c5b014c2c1c5366e817202e9cdf7"
+        ],
+        "name": "pydantic-core",
+        "version": "2.41.5"
+      },
+      {
+        "hashes": [
+          "sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8"
+        ],
+        "name": "typing-extensions",
+        "version": "4.16.0"
+      },
+      {
+        "hashes": [
+          "sha256:bc210535442b39e1bf2805e0c7a17dfd6a4ace760c84c7f7d16245d23a6b1c39"
+        ],
+        "name": "typing-inspection",
+        "version": "0.4.5"
+      },
+      {
+        "hashes": [
+          "sha256:0a10eec6e13ef16b627fabed9a5f2ba61a62b1c67f327305f4e7e412a70b4aec"
+        ],
+        "name": "tzdata",
+        "version": "2026.6"
+      }
+    ]
+  },
+  "description": "Translate subtitles with OpenRouter, Google Gemini, or an OpenAI-compatible server.",
+  "endpoints": [
+    "https://generativelanguage.googleapis.com:443",
+    "https://openrouter.ai:443"
+  ],
+  "entry_class": "BuiltinTranslatorPlugin",
+  "entry_module": "ai_translator",
+  "files": {
+    "ai_translator.py": "1d4573a365ea9800a668776dbfb899c0a0e60cc8bc88a620f7c24c55cc4a89b3"
+  },
+  "id": "ai_translator",
+  "kind": "translator",
+  "kind_api": "bazarr.translator.v1",
+  "min_host_version": "2.8.0-rc1",
+  "name": "AI Subtitle Translator",
+  "permissions": [
+    "network"
+  ],
+  "platforms": [
+    "linux-aarch64",
+    "linux-musl-aarch64",
+    "linux-musl-x86_64",
+    "linux-x86_64",
+    "macos-arm64",
+    "macos-x86_64",
+    "windows-x86_64"
+  ],
+  "python_tags": [
+    "cp312",
+    "cp313",
+    "cp314"
+  ],
+  "runtime": {
+    "artifact": "python",
+    "process": "worker"
+  },
+  "schema_version": 2,
+  "settings": {
+    "backend_types": {
+      "gemini": {
+        "endpoints": [
+          "https://generativelanguage.googleapis.com:443"
+        ],
+        "fields": [
+          {
+            "choices": [],
+            "default": null,
+            "destination": false,
+            "group": null,
+            "help": "Several keys rotate when one is limited. Keys from one Google Cloud project share its limits.",
+            "help_url": "https://aistudio.google.com/apikey",
+            "key": "api_keys",
+            "label": "API keys",
+            "max": null,
+            "min": null,
+            "required": true,
+            "secret": true,
+            "type": "key_list"
+          },
+          {
+            "choices": [],
+            "default": null,
+            "destination": false,
+            "group": null,
+            "help": "Optional. Give keys from the same project the same name, in the order of the keys.",
+            "help_url": null,
+            "key": "key_projects",
+            "label": "Project of each key",
+            "max": null,
+            "min": null,
+            "required": false,
+            "secret": false,
+            "type": "list"
+          },
+          {
+            "choices": [],
+            "default": "gemini-3.6-flash",
+            "destination": false,
+            "group": null,
+            "help": null,
+            "help_url": null,
+            "key": "model",
+            "label": "Model",
+            "max": null,
+            "min": null,
+            "required": false,
+            "secret": false,
+            "type": "options"
+          },
+          {
+            "choices": [
+              {
+                "label": "Disabled",
+                "value": "disabled"
+              },
+              {
+                "label": "Low",
+                "value": "low"
+              },
+              {
+                "label": "Medium",
+                "value": "medium"
+              },
+              {
+                "label": "High",
+                "value": "high"
+              }
+            ],
+            "default": "disabled",
+            "destination": false,
+            "group": null,
+            "help": "Gemini 3 and 2.5 Pro always think; Disabled uses their lowest level.",
+            "help_url": null,
+            "key": "reasoning",
+            "label": "Thinking",
+            "max": null,
+            "min": null,
+            "required": false,
+            "secret": false,
+            "type": "choice"
+          },
+          {
+            "choices": [],
+            "default": 0.3,
+            "destination": false,
+            "group": null,
+            "help": null,
+            "help_url": null,
+            "key": "temperature",
+            "label": "Temperature",
+            "max": 2,
+            "min": 0,
+            "required": false,
+            "secret": false,
+            "type": "number"
+          },
+          {
+            "choices": [],
+            "default": 300,
+            "destination": false,
+            "group": null,
+            "help": null,
+            "help_url": null,
+            "key": "batch_size",
+            "label": "Lines per request",
+            "max": 500,
+            "min": 10,
+            "required": false,
+            "secret": false,
+            "type": "integer"
+          },
+          {
+            "choices": [],
+            "default": 0.0,
+            "destination": false,
+            "group": null,
+            "help": "0 for the free tier. A set price makes the budget hold each request's worst case.",
+            "help_url": null,
+            "key": "price_input_per_million",
+            "label": "Input price (USD per 1M tokens)",
+            "max": 100000,
+            "min": 0,
+            "required": false,
+            "secret": false,
+            "type": "number"
+          },
+          {
+            "choices": [],
+            "default": 0.0,
+            "destination": false,
+            "group": null,
+            "help": null,
+            "help_url": null,
+            "key": "price_output_per_million",
+            "label": "Output price (USD per 1M tokens)",
+            "max": 100000,
+            "min": 0,
+            "required": false,
+            "secret": false,
+            "type": "number"
+          }
+        ],
+        "label": "Google Gemini"
+      },
+      "openai_compatible": {
+        "endpoints": [],
+        "fields": [
+          {
+            "choices": [
+              {
+                "label": "OpenAI",
+                "sets": {
+                  "base_url": "https://api.openai.com/v1",
+                  "parallel_batches": 4
+                },
+                "value": "openai"
+              },
+              {
+                "label": "LM Studio",
+                "sets": {
+                  "base_url": "http://localhost:1234/v1",
+                  "parallel_batches": 1
+                },
+                "value": "lmstudio"
+              },
+              {
+                "label": "Ollama",
+                "sets": {
+                  "base_url": "http://localhost:11434/v1",
+                  "parallel_batches": 1
+                },
+                "value": "ollama"
+              },
+              {
+                "label": "Custom",
+                "sets": {
+                  "base_url": "",
+                  "parallel_batches": 1
+                },
+                "value": "custom"
+              }
+            ],
+            "default": "custom",
+            "destination": false,
+            "group": null,
+            "help": "Fills in the address and the request details that server expects.",
+            "help_url": null,
+            "key": "preset",
+            "label": "Server",
+            "max": null,
+            "min": null,
+            "required": false,
+            "secret": false,
+            "type": "choice"
+          },
+          {
+            "choices": [],
+            "default": null,
+            "destination": true,
+            "group": null,
+            "help": "Inside a container, localhost is the container itself: for a server on your machine use its LAN address or host.docker.internal.",
+            "help_url": null,
+            "key": "base_url",
+            "label": "Server address",
+            "max": null,
+            "min": null,
+            "required": true,
+            "secret": false,
+            "type": "text"
+          },
+          {
+            "choices": [],
+            "default": null,
+            "destination": false,
+            "group": null,
+            "help": "Only if the server asks for one. LM Studio and Ollama need none.",
+            "help_url": null,
+            "key": "api_key",
+            "label": "API key",
+            "max": null,
+            "min": null,
+            "required": false,
+            "secret": true,
+            "type": "secret"
+          },
+          {
+            "choices": [],
+            "default": null,
+            "destination": false,
+            "group": null,
+            "help": "Pick one the server has loaded, or type its id.",
+            "help_url": null,
+            "key": "model",
+            "label": "Model",
+            "max": null,
+            "min": null,
+            "required": true,
+            "secret": false,
+            "type": "options"
+          },
+          {
+            "choices": [],
+            "default": 0.3,
+            "destination": false,
+            "group": null,
+            "help": null,
+            "help_url": null,
+            "key": "temperature",
+            "label": "Temperature",
+            "max": 2,
+            "min": 0,
+            "required": false,
+            "secret": false,
+            "type": "number"
+          },
+          {
+            "choices": [],
+            "default": 100,
+            "destination": false,
+            "group": null,
+            "help": "Local models often have a small context window: lower this if replies come back cut short.",
+            "help_url": null,
+            "key": "batch_size",
+            "label": "Lines per request",
+            "max": 500,
+            "min": 10,
+            "required": false,
+            "secret": false,
+            "type": "integer"
+          },
+          {
+            "choices": [],
+            "default": 1,
+            "destination": false,
+            "group": null,
+            "help": "A local server usually answers one request at a time.",
+            "help_url": null,
+            "key": "parallel_batches",
+            "label": "Requests in parallel",
+            "max": 10,
+            "min": 1,
+            "required": false,
+            "secret": false,
+            "type": "integer"
+          },
+          {
+            "choices": [],
+            "default": 8000,
+            "destination": false,
+            "group": null,
+            "help": "0 sends no budget.",
+            "help_url": null,
+            "key": "max_tokens",
+            "label": "Output budget per request",
+            "max": 200000,
+            "min": 0,
+            "required": false,
+            "secret": false,
+            "type": "integer"
+          },
+          {
+            "choices": [],
+            "default": 0.0,
+            "destination": false,
+            "group": null,
+            "help": "0 for a free or local server. A set price makes the budget hold each request's worst case.",
+            "help_url": null,
+            "key": "price_input_per_million",
+            "label": "Input price (USD per 1M tokens)",
+            "max": 100000,
+            "min": 0,
+            "required": false,
+            "secret": false,
+            "type": "number"
+          },
+          {
+            "choices": [],
+            "default": 0.0,
+            "destination": false,
+            "group": null,
+            "help": null,
+            "help_url": null,
+            "key": "price_output_per_million",
+            "label": "Output price (USD per 1M tokens)",
+            "max": 100000,
+            "min": 0,
+            "required": false,
+            "secret": false,
+            "type": "number"
+          }
+        ],
+        "label": "OpenAI-compatible server"
+      },
+      "openrouter": {
+        "endpoints": [
+          "https://openrouter.ai:443"
+        ],
+        "fields": [
+          {
+            "choices": [],
+            "default": null,
+            "destination": false,
+            "group": null,
+            "help": null,
+            "help_url": "https://openrouter.ai/keys",
+            "key": "api_key",
+            "label": "API key",
+            "max": null,
+            "min": null,
+            "required": true,
+            "secret": true,
+            "type": "secret"
+          },
+          {
+            "choices": [],
+            "default": "google/gemini-2.5-flash-lite",
+            "destination": false,
+            "group": null,
+            "help": null,
+            "help_url": null,
+            "key": "model",
+            "label": "Model",
+            "max": null,
+            "min": null,
+            "required": false,
+            "secret": false,
+            "type": "options"
+          },
+          {
+            "choices": [],
+            "default": 0.3,
+            "destination": false,
+            "group": null,
+            "help": null,
+            "help_url": null,
+            "key": "temperature",
+            "label": "Temperature",
+            "max": 2,
+            "min": 0,
+            "required": false,
+            "secret": false,
+            "type": "number"
+          },
+          {
+            "choices": [
+              {
+                "label": "disabled",
+                "value": "disabled"
+              },
+              {
+                "label": "minimal",
+                "value": "minimal"
+              },
+              {
+                "label": "low",
+                "value": "low"
+              },
+              {
+                "label": "medium",
+                "value": "medium"
+              },
+              {
+                "label": "high",
+                "value": "high"
+              },
+              {
+                "label": "xhigh",
+                "value": "xhigh"
+              }
+            ],
+            "default": "disabled",
+            "destination": false,
+            "group": null,
+            "help": null,
+            "help_url": null,
+            "key": "reasoning",
+            "label": "Reasoning",
+            "max": null,
+            "min": null,
+            "required": false,
+            "secret": false,
+            "type": "choice"
+          },
+          {
+            "choices": [
+              {
+                "label": "default",
+                "value": "default"
+              },
+              {
+                "label": "throughput",
+                "value": "throughput"
+              },
+              {
+                "label": "price",
+                "value": "price"
+              },
+              {
+                "label": "latency",
+                "value": "latency"
+              },
+              {
+                "label": "nitro",
+                "value": "nitro"
+              },
+              {
+                "label": "floor",
+                "value": "floor"
+              },
+              {
+                "label": "smartfast",
+                "value": "smartfast"
+              }
+            ],
+            "default": "throughput",
+            "destination": false,
+            "group": null,
+            "help": null,
+            "help_url": null,
+            "key": "routing",
+            "label": "Provider routing",
+            "max": null,
+            "min": null,
+            "required": false,
+            "secret": false,
+            "type": "choice"
+          },
+          {
+            "choices": [],
+            "default": null,
+            "destination": false,
+            "group": "SmartFast",
+            "help": "A JSON object, for example {\"maxPromptPrice\": 0.05}. Empty keeps the defaults.",
+            "help_url": null,
+            "key": "smart_fast",
+            "label": "SmartFast policy",
+            "max": null,
+            "min": null,
+            "required": false,
+            "secret": false,
+            "show_if": {
+              "equals": "smartfast",
+              "key": "routing"
+            },
+            "type": "text"
+          },
+          {
+            "choices": [],
+            "default": null,
+            "destination": false,
+            "group": "Providers",
+            "help": "Enter providers in the order you want OpenRouter to try them.",
+            "help_url": null,
+            "key": "provider_order",
+            "label": "Provider order",
+            "max": null,
+            "min": null,
+            "required": false,
+            "secret": false,
+            "type": "list"
+          },
+          {
+            "choices": [],
+            "default": null,
+            "destination": false,
+            "group": "Providers",
+            "help": null,
+            "help_url": null,
+            "key": "only",
+            "label": "Only these providers",
+            "max": null,
+            "min": null,
+            "required": false,
+            "secret": false,
+            "type": "list"
+          },
+          {
+            "choices": [],
+            "default": null,
+            "destination": false,
+            "group": "Providers",
+            "help": null,
+            "help_url": null,
+            "key": "ignore",
+            "label": "Never these providers",
+            "max": null,
+            "min": null,
+            "required": false,
+            "secret": false,
+            "type": "list"
+          },
+          {
+            "choices": [],
+            "default": true,
+            "destination": false,
+            "group": "Providers",
+            "help": null,
+            "help_url": null,
+            "key": "allow_fallbacks",
+            "label": "Allow fallback providers",
+            "max": null,
+            "min": null,
+            "required": false,
+            "secret": false,
+            "type": "toggle"
+          },
+          {
+            "choices": [],
+            "default": false,
+            "destination": false,
+            "group": "Providers",
+            "help": "Many free models retain data, so this can leave no provider for them.",
+            "help_url": null,
+            "key": "deny_data_collection",
+            "label": "Avoid providers that store or train on your data",
+            "max": null,
+            "min": null,
+            "required": false,
+            "secret": false,
+            "type": "toggle"
+          },
+          {
+            "choices": [
+              {
+                "label": "default",
+                "value": "default"
+              },
+              {
+                "label": "flex",
+                "value": "flex"
+              },
+              {
+                "label": "priority",
+                "value": "priority"
+              }
+            ],
+            "default": null,
+            "destination": false,
+            "group": null,
+            "help": null,
+            "help_url": null,
+            "key": "service_tier",
+            "label": "Service tier",
+            "max": null,
+            "min": null,
+            "required": false,
+            "secret": false,
+            "type": "choice"
+          },
+          {
+            "choices": [],
+            "default": 4,
+            "destination": false,
+            "group": null,
+            "help": null,
+            "help_url": null,
+            "key": "parallel_batches",
+            "label": "Requests in parallel",
+            "max": 10,
+            "min": 1,
+            "required": false,
+            "secret": false,
+            "type": "integer"
+          },
+          {
+            "choices": [],
+            "default": 8000,
+            "destination": false,
+            "group": null,
+            "help": "0 sends no budget.",
+            "help_url": null,
+            "key": "max_tokens",
+            "label": "Output budget per request",
+            "max": 200000,
+            "min": 0,
+            "required": false,
+            "secret": false,
+            "type": "integer"
+          }
+        ],
+        "label": "OpenRouter"
+      }
+    },
+    "fields": [
+      {
+        "choices": [],
+        "default": 120,
+        "destination": false,
+        "group": null,
+        "help": null,
+        "help_url": null,
+        "key": "request_timeout",
+        "label": "Seconds to wait for one request",
+        "max": 900,
+        "min": 30,
+        "required": false,
+        "secret": false,
+        "type": "integer"
+      },
+      {
+        "choices": [],
+        "default": 3,
+        "destination": false,
+        "group": null,
+        "help": null,
+        "help_url": null,
+        "key": "max_retries",
+        "label": "Retries of one batch",
+        "max": 6,
+        "min": 0,
+        "required": false,
+        "secret": false,
+        "type": "integer"
+      }
+    ]
+  },
+  "settings_version": 1,
+  "source": {
+    "commit": "0000000000000000000000000000000000000000",
+    "path": "plugins/ai_translator",
+    "ref": "main",
+    "repo": "LavX/bazarr-provider-catalog",
+    "type": "github"
+  },
+  "version": "2.2.0rc2"
+}
