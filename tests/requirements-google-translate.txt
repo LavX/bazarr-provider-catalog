@@ -1,0 +1,9 @@
+# What the Google Translate plugin's tests install. The runtime closure is locked, with hashes and
+# baked wheels, in plugins/google_translate/plugin.json and plugins/google_translate/wheels/.
+deep-translator==1.11.4
+# The plugin reads its answer through requests and urllib3 and ends a stalled read at the
+# socket, which relies on urllib3 2.x.
+requests>=2.32,<3
+urllib3>=2.2,<3
+# v0.1.0, by its commit
+bazarr-plugin-sdk @ git+https://github.com/LavX/bazarr-plugin-sdk@cbd544e50a19c1b6cf322bbf30a3beea22308bf7

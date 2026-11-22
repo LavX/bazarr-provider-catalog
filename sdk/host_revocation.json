@@ -1,0 +1,21 @@
+{
+  "bazarr_commit": "5e07a2b27b7604791bb810b7cc5b54a9ebfdb261",
+  "definitions": [
+    "MAX_ENTRIES",
+    "MAX_REASON",
+    "_MAX_VERSION",
+    "_ID_RE",
+    "_TIMESTAMP_RE",
+    "_ENTRY_FIELDS",
+    "RevocationFormatError",
+    "Revocation",
+    "_text",
+    "_has_text",
+    "parse_entry",
+    "parse"
+  ],
+  "notice_lines": 3,
+  "source_blob": "a5e298eca1ba0f9ee14ad9f10e934d321336f967",
+  "source_path": "bazarr/provider_hub/revocation.py",
+  "vendored_blob": "b247f34c3a145e9dbd14cd20e2ce510778629ec1"
+}

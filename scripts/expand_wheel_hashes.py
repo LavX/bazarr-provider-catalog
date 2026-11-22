@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Expand provider.json dependency hashes to cover the Bazarr+ worker runtime matrix.
+"""Expand provider.json and plugin.json dependency hashes to cover the Bazarr+ worker runtime matrix.
 
 Matrix: CPython 3.12/3.13/3.14 (cp312/cp313/cp314 + abi3) on manylinux glibc
 x86_64 and aarch64, plus pure py3-none-any wheels. Pulls authoritative wheel
@@ -93,7 +93,9 @@ def main(root=".", strict=False):
     expanded = {}
     gaps = {}
     fetch_failures = {}
-    for manifest_path in sorted(glob.glob(os.path.join(root, "providers", "*", "provider.json"))):
+    manifest_paths = glob.glob(os.path.join(root, "providers", "*", "provider.json"))
+    manifest_paths += glob.glob(os.path.join(root, "plugins", "*", "plugin.json"))
+    for manifest_path in sorted(manifest_paths):
         manifest = json.load(open(manifest_path))
         requirements = manifest.get("dependencies", {}).get("requirements", [])
         touched = False
@@ -123,7 +125,7 @@ def main(root=".", strict=False):
             json.dump(manifest, open(manifest_path, "w"), indent=2, sort_keys=True)
             open(manifest_path, "a").write("\n")
             changed.append(os.path.basename(os.path.dirname(manifest_path)))
-    print("providers changed: {}".format(len(changed)))
+    print("manifests changed: {}".format(len(changed)))
     for name, (before, after) in sorted(expanded.items()):
         print("  {}: {} -> {}".format(name, before, after))
     if gaps:

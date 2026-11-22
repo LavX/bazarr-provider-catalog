@@ -6,9 +6,14 @@ Authoring tooling for building subtitle provider plugins distributed through the
 
 ## Commands
 
-- `python3 -B -m sdk validate`: validate `catalog.json`, manifests, file hashes, bundle hashes, and dependency locks. It also checks every catalog manifest with the released-host validators vendored in `sdk/released_hosts/`.
+- `python3 -B -m sdk validate`: validate `catalog.json`, manifests, file hashes, bundle hashes, dependency locks and `revocations.json` (including that a branch which has signed a list still has the file). It also checks every catalog manifest with the released-host validators vendored in `sdk/released_hosts/`. Every `plugins/<id>/plugin.json` is validated against the schema 2 rules of the 2.8 host. Released hosts never read `plugins/`, so the released-host check covers providers only.
+- `python3 -B -m sdk build-signed-feed --channel main|beta`: print the unsigned body of `signed/<channel>/catalog.json`: the providers of `catalog.json` plus the `plugins/` entries sorted by id, without the four fields a signing run stamps (`signed_version`, `not_before`, `expires`, `source_commit`). The same tree always gives the same bytes. A `revocations.json` at the root adds the `revocations` field (see Revocations). `--output PATH` writes the body to a file instead.
+- `python3 -B -m sdk sign --channel main|beta`: build the unsigned body, stamp `signed_version` (the signing time in Unix seconds), `not_before`, `expires` (90 days later by default, at most 366 with `--validity-days`) and `source_commit` (the commit it was built from), sign the exact bytes with the CI signing key and write `signed/<channel>/catalog.json` and `catalog.json.sig`. The key is read from the environment variable named by `--key-env` (default `CATALOG_SIGNING_KEY`) as an unencrypted PKCS8 PEM, is never written anywhere and is removed from the process once read. Nothing is written unless the host's verifier accepts the result with the key file and the root it trusts. `--renew` keeps the current signed body, `source_commit` included, and only restamps the dates. It needs `sdk/requirements-signing.txt` (`pip install --require-hashes --only-binary=:all: -r sdk/requirements-signing.txt`). The publish workflow runs this in the `catalog-signing` environment, after the owner approves the run.
+- `python3 -B -m sdk verify --channel main|beta`: check `signed/<channel>/` with the host's verifier, the root hosts trust and `keys/catalog-signing-keys.json`. `--ignore-expiry` checks the signature and chain only.
+- `python3 -B -m sdk check-expiry`: read `expires` of each channel's signed body and say which channels are due for a renewal (45 days left or fewer) and whether anything is in the alarm window (14 days left or fewer, an expired or unreadable signed file, or, with `--git-ref-prefix`, no commit on the signed branches for 50 days once something is signed). `--git-ref-prefix origin/` reads each channel from its own branch of one checkout and fails when a branch is missing, `--runs FILE` takes the unfinished runs of the signing workflow as a JSON list or JSON lines (a channel with a run already waiting or running is not asked again; a missing or incomplete file starts nothing), `--outputs-file` appends `request=<channels>` and `alarm=<true|false>`, and `--fail-on-alarm` exits 1 in the alarm window. A channel with no signed file is skipped. The daily `signature-expiry.yml` workflow runs this and starts a renewal run for each requested channel. See `docs/signed-feed-calendar.md`.
 - `python3 -B -m sdk hash providers/<id>`: print the deterministic bundle SHA256 for a provider folder.
-- `python3 -B -m sdk build-catalog`: refresh provider file hashes and regenerate the embedded catalog.
+- `python3 -B -m sdk build-catalog`: refresh provider and plugin file hashes and regenerate the embedded catalog. `catalog.json` carries providers only, so nothing under `plugins/` ever changes it.
+- `python3 scripts/bake_plugin_wheels.py [plugin_id ...]`: download the wheels each `plugins/<id>/plugin.json` locks (checked against the locked hashes) into `plugins/<id>/wheels/`, so the plugin's bundle carries what its environment is built from. Unlike a provider bundle, a plugin bundle may carry these wheel files; each is listed in `files` and covered by `bundle_sha256`, and `validate` refuses a wheel the lock does not name. Run `build-catalog` afterwards.
 - `python3 -B -m sdk runtime-matrix`: print the supported Bazarr+ Provider Hub Python runtimes and wheel tags.
 - `python3 -B -m sdk smoke-test`: run a provider against the worker-shaped search/download contract.
 
@@ -20,6 +25,32 @@ python3 -B -m sdk smoke-test --provider smokehub --config-json '{"profile_name":
 SMOKE_TOKEN=secret python3 -B -m sdk smoke-test --secret api_token=SMOKE_TOKEN
 python3 -B -m sdk smoke-test --provider myprovider --config-file fixtures/config.json --video-fixture fixtures/movie.json --language eng --skip-download
 ```
+
+## Revocations
+
+A branch can withdraw plugins or single releases from hosts that have already seen them. The list lives in `revocations.json` at the repo root of that branch, as a JSON array, and `python3 -B -m sdk build-signed-feed` copies it into the signed body as the top-level `revocations` field. `catalog.json` never carries it, so hosts that read only `catalog.json` are not affected.
+
+```json
+[
+  {"id": "example", "version": "1.2.0", "reason": "It sends credentials to the wrong host.", "revoked_at": "2026-12-01T00:00:00Z"},
+  {"id": "retired_plugin"}
+]
+```
+
+- `id` (required): the plugin id, matching `^[a-z][a-z0-9_]{1,63}$`.
+- `version` (optional): one release, 1 to 64 characters, with no blank, padding, control or Unicode format characters (a zero-width space, for one). Leave it out to revoke every release of the plugin. Never `null` and never `""`.
+- `reason` (optional): text for people, at most 300 characters, with runs of spaces collapsed and no control characters (line breaks and tabs included). A host puts the reason into one sentence of at most 200 characters and shows roughly the first 80 characters of it, so put the point first.
+- `revoked_at` (optional): `YYYY-MM-DDTHH:MM:SSZ`, in UTC.
+- No other fields, no `null` values, no repeated `id` and `version` pair, at most 2000 entries. The builder sorts by `id`, then `version` (an entry without a version first), so a tree always gives the same bytes.
+
+`sdk validate` and the build refuse any entry that breaks these rules, because a host refuses the whole catalog over one bad entry. The builder also runs the list through `sdk/host_revocation.py`, a vendored copy of the host's parser (`tests/test_host_revocation.py` checks that it has not drifted: against the host source at the commit pinned in `sdk/host_revocation.json` when the environment variable `BAZARR_PROVIDER_HUB_DIR` points at a `bazarr/provider_hub` checkout, which the `host-revocation-drift` job in CI does, and against its own recorded hash otherwise), and `sign` runs it over the stamped body, so nothing a host would refuse gets signed. `sdk validate` also fails when `revocations.json` is missing but `signed/main/catalog.json` or `signed/beta/catalog.json` in the tree carries a non-empty list. With no `revocations.json` the body has no `revocations` field. A file that holds `[]` publishes `"revocations": []`.
+
+The list is replaced by each signing run of the branch and a renewal (`sign --renew`) keeps it. A branch that has signed a non-empty list will not sign a body without the field: if the file goes missing, the run fails. To lift every entry on purpose, set the file to `[]`. To lift one, delete its entry. Hosts drop an entry only when a newer signed catalog of that channel no longer lists it.
+
+Two things to know when editing the list:
+
+- Hosts enforce the union of the `main` and `beta` lists. Lifting an entry means removing it on every branch that carries it, and promoting `beta` to `main` by merge copies the file with it.
+- A host matches versions by its own normalisation: `1.0`, `1.0.0` and `v1.0.0` are one release. The duplicate check here is exact, so do not list two spellings of one release.
 
 ## Provider Contract
 

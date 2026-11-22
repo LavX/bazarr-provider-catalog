@@ -26,7 +26,7 @@ jobs:
       - name: catalog.json is up to date
         run: |
           python3 -B -m sdk build-catalog
-          git diff --exit-code -- catalog.json providers
+          git diff --exit-code -- catalog.json providers plugins
       - name: Install pinned provider test dependencies
         # The ai-cloudscraper, smokehub and SubCentral tests import real modules.
         # Pin to the versions locked in the manifests (derived here, single source of
@@ -34,6 +34,18 @@ jobs:
         # cannot break or silently shift the build.
         run: |
           python3 -m pip install --quiet $(python3 -c "import glob,json;names={'ai-cloudscraper','humanfriendly','ua-generator'};v={r['name']:r['version'] for p in sorted(glob.glob('providers/*/provider.json')) for r in json.load(open(p)).get('dependencies',{}).get('requirements',[]) if r['name'] in names};print(' '.join(sorted(f'{n}=={ver}' for n,ver in v.items())))")
+      - name: Install the pinned signing dependencies
+        # The signing tests check the committed key file and any committed signed pair with the host's verifier.
+        run: |
+          python3 -m pip install --quiet --require-hashes --only-binary=:all: -r sdk/requirements-signing.txt
+      - name: Install plugin test dependencies
+        # The translator plugin's tests run against the closure its manifest locks, installed from the
+        # wheels baked into its bundle with the locked hashes and no index, plus the plugin SDK: a
+        # release of LavX/bazarr-plugin-sdk (tag v0.1.0, pinned here by its commit), which is not on PyPI.
+        run: |
+          python3 -c "import json;[print(r['name'] + '==' + r['version'] + ' ' + ' '.join('--hash=' + h for h in r['hashes'])) for r in json.load(open('plugins/google_translate/plugin.json'))['dependencies']['requirements']]" > "$RUNNER_TEMP/google-translate-closure.txt"
+          python3 -m pip install --quiet --no-index --find-links plugins/google_translate/wheels --require-hashes --only-binary=:all: -r "$RUNNER_TEMP/google-translate-closure.txt"
+          python3 -m pip install --quiet -r tests/requirements-google-translate.txt
       - name: Run test suite
         run: python3 -B -m unittest discover -s tests
 
@@ -50,4 +62,29 @@ jobs:
         # silently passing on an empty (no-drift) diff.
         run: |
           python3 scripts/expand_wheel_hashes.py --strict
-          git diff --exit-code -- providers
+          git diff --exit-code -- providers plugins
+
+  host-revocation-drift:
+    name: revocation parser matches the host
+    # sdk/host_revocation.py is an excerpt of the host's parser. Check it against the host source at the
+    # commit recorded in sdk/host_revocation.json, read-only, from the public repo.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Read the pinned host commit
+        id: pin
+        run: echo "commit=$(python3 -c "import json;print(json.load(open('sdk/host_revocation.json'))['bazarr_commit'])")" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: LavX/bazarr
+          ref: ${{ steps.pin.outputs.commit }}
+          path: host-bazarr
+          sparse-checkout: bazarr/provider_hub
+          persist-credentials: false
+      - name: Compare the vendored parser with the host source
+        env:
+          BAZARR_PROVIDER_HUB_DIR: ${{ github.workspace }}/host-bazarr/bazarr/provider_hub
+        run: python3 -B -m unittest -v tests.test_host_revocation

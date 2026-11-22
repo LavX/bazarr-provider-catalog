@@ -111,6 +111,7 @@ Browser-style providers generate a current desktop User-Agent once per provider 
 ## Layout
 
 - `catalog.json`: embedded Provider Hub V1 catalog manifest. This is the file Bazarr+ fetches.
+- `revocations.json`: optional list of plugins and releases to withdraw from hosts, copied into the signed feed as `revocations`. Each branch has its own. See [sdk/README.md](sdk/README.md#revocations).
 - `providers/addic7ed/`: uses Addic7ed movie and episode subtitle listings with login or cookie authentication.
 - `providers/animekalesi/`: scrapes AnimeKalesi Turkish anime episode subtitle pages.
 - `providers/animesubinfo/`: scrapes AnimeSub.info Polish anime movie and episode subtitles.
@@ -176,6 +177,7 @@ Browser-style providers generate a current desktop User-Agent once per provider 
 - `providers/whisperai/`: generates subtitles through a configured Whisper web service after extracting local audio with ffmpeg.
 - `providers/yifysubtitles/`: scrapes YIFYSubtitles movie subtitle pages and ZIP downloads.
 - `providers/zimuku/`: scrapes Zimuku / srtku.com for Chinese and English movie and episode subtitles, with native Yunsuo image verification and optional helper settings.
+- `plugins/google_translate/`: the Google Translate translator plugin (kind `bazarr.translator.v1`): its code, a locked dependency closure and the wheels that closure resolves to. It is not in `catalog.json`: translator plugins are published through the signed feed's `plugins` list, not the `providers` list this file embeds. See `docs/plugin-notes/google_translate.md`.
 - `sdk/`: standalone authoring tools and templates, see the [SDK reference](sdk/README.md).
 - `providers/titulky/`: scrapes Titulky.com Czech and Slovak movie and episode subtitle listings and archive downloads.
 - `tests/`: catalog validation tests. The released-host tests load vendored copies of Bazarr's `manifest.py` and `migration.py` from `sdk/released_hosts/` and import the snapshot script from `scripts/`.
@@ -207,7 +209,7 @@ Use [`providers/smoke/`](providers/smoke/) for the manifest reference and [`prov
 
 ```bash
 python3 -B -m sdk build-catalog   # regenerate catalog.json from all provider manifests
-python3 -B -m sdk validate        # validate manifests, hashes, schema
+python3 -B -m sdk validate        # validate manifests, hashes, schema, revocations.json
 python3 -B -m sdk runtime-matrix  # print supported Bazarr+ Python runtimes
 python3 -B -m sdk smoke-test      # exercise a provider against the worker contract
 python3 -B -m unittest discover -s tests
