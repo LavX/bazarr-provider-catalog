@@ -60,11 +60,23 @@ class PluginManifestTests(PluginFeedTestCase):
         self.assertEqual(manifests[0]["kind_api"], "bazarr.translator.v1")
 
     def test_forbidden_if_has_to_name_a_declared_choice_value(self):
-        for condition in (None, {"key": "unknown", "equals": "auto"}, {"key": "mode", "equals": "typo"}):
-            with self.subTest(condition=condition):
-                fields = [{"key": "mode", "type": "choice", "choices": ["manual", "auto"]},
+        cases = (
+            (None, ["auto"], "connection"),
+            ({"key": "unknown", "equals": "auto"}, ["auto"], "connection"),
+            ({"key": "mode", "equals": "typo"}, ["auto"], "connection"),
+            ({"key": "mode", "equals": ""}, ["auto", ""], "connection"),
+            ({"key": "mode", "equals": "auto"}, ["auto", None], "connection"),
+            ({"key": "mode", "equals": "auto"}, ["auto", {"value": "manual", "label": []}], "connection"),
+            ({"key": "mode", "equals": "auto"}, ["auto", {"value": "auto"}], "connection"),
+            ({"key": "mode", "equals": "auto"}, ["auto"], "engine"),
+        )
+        for condition, choices, scope in cases:
+            with self.subTest(condition=condition, choices=choices, scope=scope):
+                fields = [{"key": "mode", "type": "choice", "choices": choices},
                           {"key": "selection", "type": "list", "forbidden_if": condition}]
-                self.refused({"settings_version": 1, "settings": {"fields": fields}}, "forbidden_if")
+                settings = {"fields": fields} if scope == "engine" else {
+                    "fields": [], "backend_types": {"sample": {"fields": fields}}}
+                self.refused({"settings_version": 1, "settings": settings}, "forbidden_if")
 
     def test_a_plugin_with_no_optional_fields_is_accepted(self):
         optional = (
@@ -400,6 +412,14 @@ class LegacyCatalogTests(PluginFeedTestCase):
 
 
 class SignedFeedBodyTests(PluginFeedTestCase):
+    def test_the_ai_translator_feed_declares_the_smartfast_order_constraint(self):
+        body = cli.build_signed_feed(ROOT, "beta")
+        manifest = next(item["manifest"] for item in body["plugins"] if item["manifest"]["id"] == "ai_translator")
+        fields = manifest["settings"]["backend_types"]["openrouter"]["fields"]
+        order = next(field for field in fields if field["key"] == "provider_order")
+        self.assertEqual(order["forbidden_if"], {"key": "routing", "equals": "smartfast"})
+        self.assertEqual(order["max_items"], 20)
+
     def test_the_fixture_is_never_published_from_the_repo(self):
         self.assertFalse((ROOT / "plugins" / FIXTURE).exists())
         self.assertNotIn(FIXTURE, (ROOT / "catalog.json").read_text(encoding="utf-8"))
