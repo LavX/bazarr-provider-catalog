@@ -85,6 +85,38 @@ class PluginManifestTests(PluginFeedTestCase):
         settings = {"fields": [], "backend_types": {"sample": {"fields": fields}}}
         self.refused({"settings_version": 1, "settings": settings}, "forbidden_if")
 
+    def test_forbidden_if_requires_a_list_that_can_be_cleared(self):
+        cases = (
+            ({}, True),
+            ({"required": False, "default": None, "max_items": 20, "min": None, "choices": []}, True),
+            ({"required": None, "default": [], "min": 0, "min_items": 0, "minItems": 0, "max_items": 0, "items": []}, True),
+            ({"required": True}, False),
+            ({"default": ["fixed"]}, False),
+            ({"default": ""}, False),
+            ({"min": 1}, False),
+            ({"min_items": 1}, False),
+            ({"minItems": 1}, False),
+            ({"max_items": -1}, False),
+            ({"const": ["fixed"]}, False),
+            ({"enum": [["fixed"]]}, False),
+            ({"items": ["fixed"]}, False),
+            ({"choices": ["fixed"]}, False),
+        )
+        manifest = json.loads((FIXTURE_DIR / "plugin.json").read_text(encoding="utf-8"))
+        for attrs, clearable in cases:
+            with self.subTest(attrs=attrs):
+                target = {"key": "selection", "type": "list", "forbidden_if": {"key": "mode", "equals": "auto"}, **attrs}
+                fields = [{"key": "mode", "type": "choice", "choices": ["auto"]}, target]
+                manifest["settings"] = {"fields": [], "backend_types": {"sample": {"fields": fields}}}
+                if clearable:
+                    cli.validate_plugin_envelope(FIXTURE_DIR, manifest)
+                else:
+                    with self.assertRaisesRegex(cli.CatalogError, "forbidden_if.*clearable"):
+                        cli.validate_plugin_envelope(FIXTURE_DIR, manifest)
+
+                del target["forbidden_if"]
+                cli.validate_plugin_envelope(FIXTURE_DIR, manifest)
+
     def test_a_plugin_with_no_optional_fields_is_accepted(self):
         optional = (
             "min_host_version", "runtime", "platforms", "permissions", "endpoints", "provides",
