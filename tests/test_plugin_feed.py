@@ -59,6 +59,64 @@ class PluginManifestTests(PluginFeedTestCase):
         self.assertEqual([item["id"] for item in manifests], [FIXTURE])
         self.assertEqual(manifests[0]["kind_api"], "bazarr.translator.v1")
 
+    def test_forbidden_if_has_to_name_a_declared_choice_value(self):
+        cases = (
+            (None, ["auto"], "connection"),
+            ({"key": "unknown", "equals": "auto"}, ["auto"], "connection"),
+            ({"key": "mode", "equals": "typo"}, ["auto"], "connection"),
+            ({"key": "mode", "equals": ""}, ["auto", ""], "connection"),
+            ({"key": "mode", "equals": "auto"}, ["auto", None], "connection"),
+            ({"key": "mode", "equals": "auto"}, ["auto", {"value": "manual", "label": []}], "connection"),
+            ({"key": "mode", "equals": "auto"}, ["auto", {"value": "auto"}], "connection"),
+            ({"key": "mode", "equals": "auto"}, ["auto"], "engine"),
+        )
+        for condition, choices, scope in cases:
+            with self.subTest(condition=condition, choices=choices, scope=scope):
+                fields = [{"key": "mode", "type": "choice", "choices": choices},
+                          {"key": "selection", "type": "list", "forbidden_if": condition}]
+                settings = {"fields": fields} if scope == "engine" else {
+                    "fields": [], "backend_types": {"sample": {"fields": fields}}}
+                self.refused({"settings_version": 1, "settings": settings}, "forbidden_if")
+
+    def test_a_reorder_only_field_cannot_declare_forbidden_if(self):
+        fields = [{"key": "mode", "type": "choice", "choices": ["auto"]},
+                  {"key": "selection", "type": "orderable_list", "items": ["sample"],
+                   "forbidden_if": {"key": "mode", "equals": "auto"}}]
+        settings = {"fields": [], "backend_types": {"sample": {"fields": fields}}}
+        self.refused({"settings_version": 1, "settings": settings}, "forbidden_if")
+
+    def test_forbidden_if_requires_a_list_that_can_be_cleared(self):
+        cases = (
+            ({}, True),
+            ({"required": False, "default": None, "max_items": 20, "min": None, "choices": []}, True),
+            ({"required": None, "default": [], "min": 0, "min_items": 0, "minItems": 0, "max_items": 0, "items": []}, True),
+            ({"required": True}, False),
+            ({"default": ["fixed"]}, False),
+            ({"default": ""}, False),
+            ({"min": 1}, False),
+            ({"min_items": 1}, False),
+            ({"minItems": 1}, False),
+            ({"max_items": -1}, False),
+            ({"const": ["fixed"]}, False),
+            ({"enum": [["fixed"]]}, False),
+            ({"items": ["fixed"]}, False),
+            ({"choices": ["fixed"]}, False),
+        )
+        manifest = json.loads((FIXTURE_DIR / "plugin.json").read_text(encoding="utf-8"))
+        for attrs, clearable in cases:
+            with self.subTest(attrs=attrs):
+                target = {"key": "selection", "type": "list", "forbidden_if": {"key": "mode", "equals": "auto"}, **attrs}
+                fields = [{"key": "mode", "type": "choice", "choices": ["auto"]}, target]
+                manifest["settings"] = {"fields": [], "backend_types": {"sample": {"fields": fields}}}
+                if clearable:
+                    cli.validate_plugin_envelope(FIXTURE_DIR, manifest)
+                else:
+                    with self.assertRaisesRegex(cli.CatalogError, "forbidden_if.*clearable"):
+                        cli.validate_plugin_envelope(FIXTURE_DIR, manifest)
+
+                del target["forbidden_if"]
+                cli.validate_plugin_envelope(FIXTURE_DIR, manifest)
+
     def test_a_plugin_with_no_optional_fields_is_accepted(self):
         optional = (
             "min_host_version", "runtime", "platforms", "permissions", "endpoints", "provides",
@@ -393,6 +451,14 @@ class LegacyCatalogTests(PluginFeedTestCase):
 
 
 class SignedFeedBodyTests(PluginFeedTestCase):
+    def test_the_ai_translator_feed_declares_the_smartfast_order_constraint(self):
+        body = cli.build_signed_feed(ROOT, "beta")
+        manifest = next(item["manifest"] for item in body["plugins"] if item["manifest"]["id"] == "ai_translator")
+        fields = manifest["settings"]["backend_types"]["openrouter"]["fields"]
+        order = next(field for field in fields if field["key"] == "provider_order")
+        self.assertEqual(order["forbidden_if"], {"key": "routing", "equals": "smartfast"})
+        self.assertEqual(order["max_items"], 20)
+
     def test_the_fixture_is_never_published_from_the_repo(self):
         self.assertFalse((ROOT / "plugins" / FIXTURE).exists())
         self.assertNotIn(FIXTURE, (ROOT / "catalog.json").read_text(encoding="utf-8"))

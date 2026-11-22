@@ -17,6 +17,8 @@ Authoring tooling for building subtitle provider plugins distributed through the
 - `python3 -B -m sdk runtime-matrix`: print the supported Bazarr+ Provider Hub Python runtimes and wheel tags.
 - `python3 -B -m sdk smoke-test`: run a provider against the worker-shaped search/download contract.
 
+In a schema 2 translator's connection fields, `forbidden_if` on an optional public `list` names a nonempty choice value in the same field list. The list may omit `default` or set it to `null` or `[]`. Its item limits must allow zero entries, and it cannot declare fixed values. For example, `{"key": "routing", "equals": "smartfast"}` requires an empty list when the effective routing value is `smartfast`. Bazarr applies the rule to merged settings and defaults when creating, editing, or enabling a connection.
+
 Useful smoke-test inputs:
 
 ```bash
