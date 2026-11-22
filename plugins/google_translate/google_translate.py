@@ -849,7 +849,8 @@ class GoogleTranslatePlugin(TranslatorPlugin):
 
         try:
             while (pending or running) and failure is None:
-                while pending and len(running) < CONCURRENCY:
+                # Once the probe fills without text, wait for the active cues before asking for more.
+                while pending and len(running) < CONCURRENCY and (produced or answered < REFUSAL_PROBE):
                     index = pending.popleft()
                     running[loop.run_in_executor(_pool(), _translate_cue, texts[index], target, stop, throttled)] = index
                 ready, _ = await asyncio.wait(running, timeout=beat, return_when=asyncio.FIRST_COMPLETED)
@@ -878,10 +879,9 @@ class GoogleTranslatePlugin(TranslatorPlugin):
                         unsaved[index] = cue.text
                     if len(unsaved) >= next_store and not stored_out:
                         await store()
-                if failure is None and answered >= REFUSAL_PROBE and produced == 0:
-                    # The first cues all came back with no text and none was translated. Either the route is
-                    # closed to us (every one refused with an HTTP 4xx) or the page no longer holds the answer
-                    # where the library looks. There is no use asking for the rest.
+                if failure is None and answered >= REFUSAL_PROBE and produced == 0 and not running:
+                    # Every dispatched cue came back without text. If every cue was refused, the route is
+                    # closed to us. Otherwise the library found no usable text.
                     failure = _Refused() if refused == answered else _NoText()
                 ctx.progress(finished, total, f"translated {finished} of {total} cues")
         finally:
