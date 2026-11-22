@@ -659,8 +659,12 @@
             "choices": [],
             "default": null,
             "destination": false,
+            "forbidden_if": {
+              "equals": "smartfast",
+              "key": "routing"
+            },
             "group": "Providers",
-            "help": "Enter providers in the order you want OpenRouter to try them.",
+            "help": "Enter providers in the order you want OpenRouter to try them. Clear the list before switching to SmartFast.",
             "help_url": null,
             "key": "provider_order",
             "label": "Provider order",

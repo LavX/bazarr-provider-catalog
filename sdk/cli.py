@@ -451,6 +451,21 @@ def _plugin_field_list(where, fields, label, host_keys=frozenset()):
             raise CatalogError(
                 f"{where} settings field {key} is kept by the host as a plain value and cannot be a secret or an address"
             )
+    declared = {item["key"]: item for item in fields}
+    for item in fields:
+        if "forbidden_if" not in item:
+            continue
+        condition = item["forbidden_if"]
+        if (item["type"] not in {"list", "orderable_list"} or item.get("secret") is True
+                or not isinstance(condition, dict) or set(condition) != {"key", "equals"}
+                or not isinstance(condition["key"], str) or not isinstance(condition["equals"], str)):
+            raise CatalogError(f"{where} {label}.{item['key']}.forbidden_if needs a public list, key and equals")
+        controller = declared.get(condition["key"], {})
+        choices = controller.get("choices")
+        if (controller.get("type") != "choice" or not isinstance(choices, list)
+                or not any((choice.get("value") if isinstance(choice, dict) else choice) == condition["equals"]
+                           for choice in choices)):
+            raise CatalogError(f"{where} {label}.{item['key']}.forbidden_if must name a declared choice value")
 
 
 def _validate_plugin_settings(where, manifest):

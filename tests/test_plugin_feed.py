@@ -59,6 +59,13 @@ class PluginManifestTests(PluginFeedTestCase):
         self.assertEqual([item["id"] for item in manifests], [FIXTURE])
         self.assertEqual(manifests[0]["kind_api"], "bazarr.translator.v1")
 
+    def test_forbidden_if_has_to_name_a_declared_choice_value(self):
+        for condition in (None, {"key": "unknown", "equals": "auto"}, {"key": "mode", "equals": "typo"}):
+            with self.subTest(condition=condition):
+                fields = [{"key": "mode", "type": "choice", "choices": ["manual", "auto"]},
+                          {"key": "selection", "type": "list", "forbidden_if": condition}]
+                self.refused({"settings_version": 1, "settings": {"fields": fields}}, "forbidden_if")
+
     def test_a_plugin_with_no_optional_fields_is_accepted(self):
         optional = (
             "min_host_version", "runtime", "platforms", "permissions", "endpoints", "provides",
