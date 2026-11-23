@@ -520,6 +520,24 @@ class Subs4SeriesParserTests(unittest.TestCase):
             with self.subTest(release=release):
                 self.assertEqual(self.mod.pack_seasons(release), expected)
 
+    def test_season_episodes_read_an_episode_written_before_its_season(self):
+        for release, expected in (
+            ("Showname-13-(SEASON 2)", (2, (13,))),
+            ("Showname-12-(SEASON 2)_GR", (2, (12,))),
+            ("Showname 11-Season2", (2, (11,))),
+            ("Showname-7(Season 2)", (2, (7,))),
+            ("Showname 7-Season2(proper)", (2, (7,))),
+            # No "-" or "(": a title ending in a number, a year, or a season finale.
+            ("Showname 24 Season 1 Complete", (None, ())),
+            ("Showname 2005 Season 1 720p BluRay", (None, ())),
+            ("Showname S01E06 - TS-19 [Season Finale]", (1, (6,))),
+        ):
+            with self.subTest(release=release):
+                self.assertEqual(self.mod._season_episodes(release), expected)
+        self.assertEqual(self.mod.pack_seasons("Showname-13-(SEASON 2)"), set())
+        self.assertFalse(self.mod.pack_holds("Showname-13-(SEASON 2)", 2, 4))
+        self.assertEqual(self.mod.pack_seasons("Showname 24 Season 1 Complete"), {1})
+
     def test_pack_holds_only_its_own_episodes(self):
         holds = self.mod.pack_holds
         # Ranges and wholes the site's listings use.
@@ -527,7 +545,14 @@ class Subs4SeriesParserTests(unittest.TestCase):
         self.assertFalse(holds("Showname Season 1 Episodes 13-22 Dvd", 1, 5))
         self.assertTrue(holds("Showname S1x01-11 {GR}", 1, 11))
         self.assertFalse(holds("Showname S1x01-11 {GR}", 1, 12))
-        self.assertTrue(holds("Showname S04E60-81 - Complete Season - SUBrip", 4, 5))
+        # A range in the show's absolute numbering has no file for the season's episode 5,
+        # whatever its name says.
+        self.assertFalse(holds("Showname S04E60-81 - Complete Season - SUBrip", 4, 5))
+        self.assertTrue(holds("Showname S04E60-81 - Complete Season - SUBrip", 4, 60))
+        # An episode count is no range: the whole of season 2.
+        self.assertTrue(holds("Showname Season 2 10 Episodes", 2, 5))
+        self.assertTrue(holds("Showname Season 2 10 Episodes", 2, 1))
+        self.assertFalse(holds("Showname Season 2 10 Episodes", 1, 5))
         self.assertTrue(holds("Showname S01E HDTV 720p", 1, 9))
         # A miniseries pack names no season and is read as the season searched.
         self.assertTrue(holds("Showname - Episodes 1-10 {GR} (2001)", 1, 10))
@@ -813,35 +838,70 @@ class Subs4SeriesParserTests(unittest.TestCase):
             archive.writestr("Showname.S01E04.720p/subtitle.srt", "1\nsub\n")
         self.assertEqual(self.mod.extract_download(stream.getvalue(), payload)["member"], "Showname.S01E03.720p/subtitle.srt")
 
-    def test_extract_download_fails_a_season_pack_without_the_episode(self):
+    def _pack_zip(self, *names):
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            for name in names:
+                archive.writestr(name, "1\nsub\n")
+        return stream.getvalue()
+
+    def _pick(self, members, release_info, episode, season=1):
+        provider = self.mod.Subs4SeriesProvider()
+        payload = {"season": season, "episode": episode, "season_pack": True, "release_info": release_info}
+        decision = provider.select_archive_member(payload, {"alpha3": "ell"}, list(members), {})
+        return decision["decision"], decision["member"]
+
+    def test_extract_download_hands_a_season_pack_to_the_host_to_list(self):
         payload = {"season": 1, "episode": 7, "season_pack": True, "release_info": "Showname S01 - The Pilot"}
         # A single subtitle is no pack.
         with self.assertRaisesRegex(ValueError, "single subtitle.*S01E07"):
             self.mod.extract_download(b"1\n00:00:01,000 --> 00:00:02,000\nHello\n", payload)
-        # A zip whose only member names another episode.
-        stream = io.BytesIO()
-        with zipfile.ZipFile(stream, "w") as archive:
-            archive.writestr("Showname.S01E01.HDTV.srt", "1\nsub\n")
-        with self.assertRaisesRegex(ValueError, "no subtitle for S01E07"):
-            self.mod.extract_download(stream.getvalue(), payload)
-        # The same subtitle is fine when it is not offered as a pack.
-        self.assertIn("archive_b64", self.mod.extract_download(stream.getvalue(), {**payload, "season_pack": False}))
+        # Zip and rar alike go back with select_member, the season and the episode.
+        for body in (self._pack_zip("Showname.S01E07.srt"), b"Rar!\x1a\x07\x00" + b"\x00" * 32):
+            result = self.mod.extract_download(body, payload)
+            self.assertEqual(base64.b64decode(result["archive_b64"]), body)
+            self.assertIs(result["select_member"], True)
+            self.assertEqual((result["season"], result["episode"]), (1, 7))
+            self.assertNotIn("member", result)
+        # The same single subtitle is fine when it is not offered as a pack.
+        self.assertIn("content_b64", self.mod.extract_download(b"1\n00:00:01,000 --> 00:00:02,000\nHello\n", {"episode": 7}))
 
-    def test_extract_download_passes_a_season_pack_that_holds_the_episode_or_cannot_tell(self):
-        payload = {"season": 1, "episode": 7, "season_pack": True, "release_info": "Showname S01 1080p"}
-        stream = io.BytesIO()
-        with zipfile.ZipFile(stream, "w") as archive:
-            for number in (6, 7, 8):
-                archive.writestr(f"Showname.S01E{number:02d}.srt", "1\nsub\n")
-        self.assertEqual(self.mod.extract_download(stream.getvalue(), payload)["member"], "Showname.S01E07.srt")
-        # Members without any episode marker: the host picks by episode.
-        stream = io.BytesIO()
-        with zipfile.ZipFile(stream, "w") as archive:
-            archive.writestr("subtitle-a.srt", "1\nsub\n")
-            archive.writestr("subtitle-b.srt", "1\nsub\n")
-        self.assertEqual(self.mod.extract_download(stream.getvalue(), payload)["episode"], 7)
-        # A RAR cannot be listed here.
-        self.assertEqual(self.mod.extract_download(b"Rar!\x1a\x07\x00" + b"\x00" * 32, payload)["episode"], 7)
+    def test_select_archive_member_pins_the_episode_of_a_season_pack(self):
+        members = [f"Showname.S01E{number:02d}.1080p.srt" for number in (6, 7, 8)]
+        self.assertEqual(self._pick(members, "Showname S01 1080p", 7), ("pin", "Showname.S01E07.1080p.srt"))
+        # Several releases of the episode: the one closest to the release name.
+        members = ["Showname.S01E07.HDTV.XviD-ABC.srt", "Showname.S01E07.1080p.BluRay-GRP.srt", "Showname.S01E08.HDTV.srt"]
+        self.assertEqual(self._pick(members, "Showname S01 1080p BluRay-GRP", 7), ("pin", "Showname.S01E07.1080p.BluRay-GRP.srt"))
+
+    def test_select_archive_member_rejects_a_season_pack_without_the_episode(self):
+        # Members naming other episodes.
+        self.assertEqual(self._pick(["Showname.S01E01.srt", "__MACOSX/._x.srt"], "Showname S01 - The Pilot", 7), ("reject", None))
+        # One subtitle naming no episode is one episode's subtitle, not the season's.
+        self.assertEqual(self._pick(["Showname S01 - The Pilot.srt"], "Showname S01 - The Pilot", 7), ("reject", None))
+        self.assertEqual(self._pick([], "Showname S01", 7), ("reject", None))
+        # Several members naming no episode: the host picks by episode.
+        self.assertEqual(self._pick(["subtitle-a.srt", "subtitle-b.srt"], "Showname S01 1080p", 7), ("defer", None))
+
+    def test_select_archive_member_takes_a_season_pack_member_named_by_episode_alone(self):
+        members = [f"Showname.Episode.{number}.srt" for number in range(1, 6)]
+        # A miniseries pack and a pack of one season.
+        self.assertEqual(self._pick(members, "Showname - Episodes 1-5 {GR}", 3), ("pin", "Showname.Episode.3.srt"))
+        self.assertEqual(self._pick(members, "Showname S01 DVDRip", 3), ("pin", "Showname.Episode.3.srt"))
+        self.assertEqual(self._pick(members, "Showname S01 DVDRip", 9), ("reject", None))
+        # In a pack of several seasons, the folder gives the season.
+        members = [f"Showname.S0{season}/Showname.E{number:02d}.srt" for season in (1, 2) for number in (1, 2, 3)]
+        self.assertEqual(self._pick(members, "Showname S01-S02", 2, season=2), ("pin", "Showname.S02/Showname.E02.srt"))
+
+    def test_select_archive_member_never_defers_a_pack_of_several_seasons(self):
+        # The host would pick by episode alone, and could take season 1's episode 5.
+        self.assertEqual(self._pick(["subtitle-a.srt", "subtitle-b.srt"], "Showname S01-S02", 5, season=2), ("reject", None))
+        members = ["Showname.S01E05.srt", "Showname.S02E05.srt"]
+        self.assertEqual(self._pick(members, "Showname S01-S02", 5, season=2), ("pin", "Showname.S02E05.srt"))
+
+    def test_member_episode_is_read_from_the_folder_past_a_codec_number(self):
+        # "H.264" in the file name names no episode, so the folder's episode counts.
+        self.assertTrue(self.mod._member_matches_episode("Showname.S01E03.720p/Showname.H.264.srt", 1, 3))
+        self.assertFalse(self.mod._member_matches_episode("Showname.S01E03.720p/Showname.H.264.srt", 1, 4))
 
     def test_extract_download_rar_defers_to_host_episode_path(self):
         # RAR is not stdlib-listable: always fall back to the host episode path.
@@ -1004,6 +1064,27 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         )
         self.assertTrue(results)
         self.assertEqual({item["provider_payload"]["page_link"] for item in results}, {OFFICE_2005_EPISODE_URL})
+
+    def test_search_leaves_out_a_same_title_show_without_the_episode_of_no_near_year(self):
+        missing = urllib.error.HTTPError(OFFICE_2024_EPISODE_URL, 404, "Not Found", {}, None)
+        self.addCleanup(missing.close)
+        office_2024_listing = OFFICE_2024_EPISODE_URL.rsplit("/episode-", 1)[0]
+        results, _calls = self._same_title_search(
+            {"year": 2015},
+            {
+                OFFICE_2024_EPISODE_URL: missing,
+                office_2024_listing: _listing_html([("The Office S01 1080p WEB-GRP", "s2024pack")]).replace(
+                    b"<body>", b"<body><table><tr><td id='dates_header_br'>The Office (2024)</td></tr></table>"
+                ),
+                OFFICE_2005_EPISODE_URL: _episode_html_of_year(2005),
+            },
+        )
+
+        # Neither show is the video's year. The 2005 show has the episode and is kept as
+        # before; the 2024 show's pack is not offered.
+        self.assertTrue(results)
+        self.assertEqual({item["provider_payload"]["page_link"] for item in results}, {OFFICE_2005_EPISODE_URL})
+        self.assertNotIn("The Office S01 1080p WEB-GRP", {item["release_info"] for item in results})
 
     def test_search_skips_a_requests_404_too(self):
         class _Response:
@@ -1452,19 +1533,30 @@ class Subs4SeriesProviderTests(unittest.TestCase):
 
         self.assertEqual(set(results), {"Showname S01E11-E20 720p WEB"})
 
-    def test_search_raises_a_block_on_the_season_listing(self):
+    def test_search_raises_a_block_on_the_season_listing_when_it_found_nothing(self):
         for error in (
             self.mod.CloudflareBlockedError("subs4series hit a Cloudflare block"),
             self.mod.ServiceUnavailable("subs4series Anubis stage=request budget_exhausted"),
         ):
             with self.subTest(error=type(error).__name__), self.assertRaises(type(error)):
-                self._showname_search({self.SHOWNAME_LISTING_URL: error})
+                self._showname_search({self.SHOWNAME_LISTING_URL: error}, episode_rows=())
 
     def test_search_raises_a_429_on_the_season_listing_as_throttled(self):
         too_many = urllib.error.HTTPError(self.SHOWNAME_LISTING_URL, 429, "Too Many Requests", {}, None)
         self.addCleanup(too_many.close)
         with self.assertRaises(self.mod.APIThrottled):
-            self._showname_search({self.SHOWNAME_LISTING_URL: too_many})
+            self._showname_search({self.SHOWNAME_LISTING_URL: too_many}, episode_rows=())
+
+    def test_search_keeps_what_it_found_when_a_later_listing_page_is_blocked(self):
+        too_many = urllib.error.HTTPError(f"{self.SHOWNAME_LISTING_URL}/p-1", 429, "Too Many Requests", {}, None)
+        self.addCleanup(too_many.close)
+        for error in (too_many, self.mod.CloudflareBlockedError("subs4series hit a Cloudflare block")):
+            with self.subTest(error=type(error).__name__), self.assertLogs(self.mod.logger, "WARNING"):
+                results, _calls = self._showname_search({
+                    self.SHOWNAME_LISTING_URL: _listing_html([("Showname S01 1080p BluRay x264-GRP", "s5")], last_page=1),
+                    f"{self.SHOWNAME_LISTING_URL}/p-1": error,
+                })
+                self.assertEqual(set(results), {"Showname S01E01 - Pilot - HDTV"})
 
     def test_search_waits_the_request_delay_before_the_fallback_listing(self):
         missing = urllib.error.HTTPError(self.SHOWNAME_EPISODE_URL, 404, "Not Found", {}, None)
@@ -1546,16 +1638,19 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         self.assertIn(".s01e01.", pack["filename"])
         self.assertEqual(results["Showname S01E0 - - 1080p-GRP"]["score"], 100)
 
-    def test_search_marks_a_pack_filed_under_the_episode_itself(self):
+    def test_search_scores_a_pack_filed_under_the_episode_itself_but_downloads_it_as_the_episode(self):
         results, _calls = self._showname_search(
             {self.SHOWNAME_LISTING_URL: EMPTY_LISTING_HTML},
             episode_rows=(("Showname S01 DVDRip XviD-ABC [GR]", "s18386e2803"),),
         )
 
         pack = results["Showname S01 DVDRip XviD-ABC [GR]"]
-        self.assertIs(pack["provider_payload"]["season_pack"], True)
         self.assertIn("season", pack["matches"])
         self.assertIn("episode", pack["matches"])
+        # Filed under the episode, such a name is as often that episode's own subtitle.
+        self.assertNotIn("season_pack", pack["provider_payload"])
+        subtitle = b"1\n00:00:01,000 --> 00:00:02,000\nHello\n"
+        self.assertIn("content_b64", self.mod.extract_download(subtitle, pack["provider_payload"]))
 
     def test_search_keeps_the_episode_subtitles_when_the_season_listing_fails(self):
         unavailable = urllib.error.HTTPError(self.SHOWNAME_LISTING_URL, 503, "Service Unavailable", {}, io.BytesIO())
@@ -1573,8 +1668,11 @@ class Subs4SeriesProviderTests(unittest.TestCase):
         payload = {"season": 1, "episode": 2, "season_pack": True, "release_info": "Showname S01 1080p BluRay x264-GRP"}
 
         result = self.mod.extract_download(stream.getvalue(), payload)
+        with zipfile.ZipFile(io.BytesIO(base64.b64decode(result["archive_b64"]))) as archive:
+            members = archive.namelist()
+        decision = self.mod.Subs4SeriesProvider().select_archive_member(payload, {"alpha3": "ell"}, members, {})
 
-        self.assertEqual(result["member"], "Showname.S01E02.1080p.BluRay.x264-GRP.srt")
+        self.assertEqual(decision, {"member": "Showname.S01E02.1080p.BluRay.x264-GRP.srt", "decision": "pin"})
 
     def test_search_rejects_movies(self):
         provider = self.mod.Subs4SeriesProvider()

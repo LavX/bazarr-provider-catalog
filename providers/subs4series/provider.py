@@ -101,14 +101,20 @@ _X_EPISODE_RE = re.compile(r"\bs?0*(?P<season>\d{1,2})x0*(?P<episode>\d{1,3})\b"
 _SEASON_EPISODE_WORDS_RE = re.compile(
     r"\bseason ?0*(?P<season>\d{1,2}) (?:episode|ep) ?0*(?P<episode>\d{1,3})\b", re.I
 )
+# The episode before its season, on the raw lowercased name: "Showname-13-(SEASON 2)",
+# "Showname 11-Season2", "Showname-7(Season 2)". The "-" or "(" is required, so a title ending
+# in a number, "Showname 24 Season 1", stays a pack.
+_EPISODE_SEASON_RE = re.compile(
+    r"(?<![a-z0-9.])0*(?P<episode>\d{1,3})\s*(?:-\s*\(?|\()\s*season\s*0*(?P<season>\d{1,2})(?!\d)"
+)
 # A miniseries names no season: "E05", "Episode 5", "Part5", "Episodes 1-10", "1-5 episodes".
+# "Season 2 10 Episodes" counts a season's episodes and names no range.
 _EPISODE_ONLY_RE = re.compile(rf"\b(?:episode|ep|e|part) ?0*(?P<episode>\d{{1,3}}){_EPISODE_END}")
 _EPISODE_RANGE_WORDS_RES = (
     re.compile(r"\bepisodes 0*(?P<first>\d{1,3}) 0*(?P<last>\d{1,3})\b"),
-    re.compile(r"\b0*(?P<first>\d{1,3}) 0*(?P<last>\d{1,3}) episodes\b"),
+    re.compile(r"(?<!season )\b0*(?P<first>\d{1,3}) 0*(?P<last>\d{1,3}) episodes\b"),
 )
-# A name that says it holds the whole season: "(All Episodes)", or "Complete Season" after an
-# episode range in the show's absolute numbering, "S04E60-81".
+# A miniseries name that says it holds every episode: "(All Episodes)", "Complete Season".
 _WHOLE_SEASON_RE = re.compile(r"\b(?:all episodes|(?:complete|full) season)\b")
 # The rest of a double episode, "S01E24-25", "Episode24,25" or "S04E01E02", or of an episode
 # range, "S01E01-E10", "S01E01-S01E10", "1x01-1x10" or "S1x01-11". This one runs on the raw
@@ -140,9 +146,10 @@ _SEASON_RANGE_RES = (
 )
 # A lone season on _normalize()d text. A number right after it is an episode, "Season 1 - 05",
 # while "S01 720p" or "S01 1080p" is still a pack.
-# "S01E" with no episode number is a pack too. Audio channels, "S02 5.1", are no episode.
+# "S01E" with no episode number is a pack too. Audio channels, "S02 5.1", and an episode
+# count, "Season 2 10 Episodes", are no episode.
 _SEASON_ONLY_RE = re.compile(
-    r"\b(?:s|season ?)0*(?P<season>\d{1,2})e?\b(?! (?:episode |ep |e )?\d{1,3}\b(?! \d\b))", re.I
+    r"\b(?:s|season ?)0*(?P<season>\d{1,2})e?\b(?! (?:episode |ep |e )?\d{1,3}\b(?! \d\b| episodes\b))", re.I
 )
 _META_REFRESH_RE = re.compile(
     r"""<meta\s+http-equiv=["']refresh["']\s+content=["'](?P<delay>\d+);\s*url=(?P<url>[^"']+)["']""",
@@ -434,7 +441,7 @@ def extract_download(body, payload=None):
     if _is_html_body(body):
         raise ValueError("subs4series returned an HTML/error page instead of a subtitle")
     if payload.get("season_pack"):
-        _require_pack_episode(body, payload)
+        return _season_pack_download(body, payload)
     if _is_archive_body(body):
         # Host-side extraction (Provider Hub v1.1+): hand the raw archive bytes back to
         # the host, which lists it, detects encoding, and picks the member. A Subs4Series
@@ -458,27 +465,59 @@ def extract_download(body, payload=None):
     return _content_payload(body, _format_from_filename(payload.get("filename")))
 
 
-def _require_pack_episode(body, payload):
-    """Fail a season-pack download that cannot hold the requested episode.
+def _season_pack_download(body, payload):
+    """The archive payload of a season pack from the season listing.
 
     A pack is told apart by its release name alone, and a name like "Showname S01 - The
-    Pilot" can be one episode's subtitle. Handed on, it would be delivered as whatever episode
-    was asked for. So a pack must be an archive, and a zip whose members name episodes must
-    name this one. A RAR cannot be listed here; the host picks its member by episode.
+    Pilot" can be one episode's subtitle, so a single subtitle file is refused. An archive is
+    handed back with select_member: the host lists it, zip and rar alike, and calls
+    select_archive_member, which pins the member of the episode or refuses the pack.
     """
+    season, episode = payload.get("season"), payload.get("episode")
+    if not _is_archive_body(body):
+        wanted = f"S{_safe_int(season) or 0:02d}E{_safe_int(episode) or 0:02d}"
+        raise ValueError(f"subs4series season pack is a single subtitle, not a pack holding {wanted}")
+    return {
+        "archive_b64": base64.b64encode(body).decode("ascii"),
+        "archive_sha256": hashlib.sha256(body).hexdigest(),
+        "select_member": True,
+        "season": season,
+        "episode": episode,
+    }
+
+
+def pick_pack_member(members, payload):
+    """(member, decision) for a season pack: pin a member, defer to the host, or reject.
+
+    The member of the episode is pinned, the one closest to the release name when several
+    hold it. A pack that names other episodes but not this one, or holds a single subtitle
+    naming none, is rejected: handing on any of its members would deliver another episode.
+    Members naming no episode at all are left to the host's own pick, unless the pack covers
+    several seasons, where an episode number alone could take another season's subtitle.
+    """
+    payload = payload or {}
+    candidates = [name for name in members or () if _is_subtitle_member(name)]
+    if not candidates:
+        return None, "reject"
     season, episode = _safe_int(payload.get("season")), _safe_int(payload.get("episode"))
     if season is None or episode is None:
-        return
-    wanted = f"S{season:02d}E{episode:02d}"
-    if not _is_archive_body(body):
-        raise ValueError(f"subs4series season pack is a single subtitle, not a pack holding {wanted}")
-    if _is_rar_archive(body):
-        return
-    members = _zip_subtitle_members(body)
-    if any(_member_matches_episode(name, season, episode) for name in members):
-        return
-    if any(_member_has_episode_marker(name) for name in members):
-        raise ValueError(f"subs4series season pack has no subtitle for {wanted}")
+        return None, "defer"
+    seasons = pack_seasons(payload.get("release_info"))
+    # A file named only "Episode 3" belongs to the pack's one season, or to a miniseries.
+    seasonless = len(seasons) <= 1
+    matching = [name for name in candidates if _member_matches_episode(name, season, episode, seasonless)]
+    if matching:
+        release_tokens = set(_tokens(payload.get("release_info")))
+        return max(matching, key=lambda name: _member_release_score(name, release_tokens)), "pin"
+    if len(candidates) == 1 or len(seasons) > 1:
+        return None, "reject"
+    if any(_member_has_episode_marker(name) or (seasonless and _member_season_episodes(name)[1]) for name in candidates):
+        return None, "reject"
+    return None, "defer"
+
+
+def _is_subtitle_member(name):
+    return not name.endswith("/") and bool(_subtitle_extension(name)) and not name.rsplit("/", 1)[-1].startswith(".")
 
 
 def _zip_subtitle_members(body):
@@ -486,7 +525,7 @@ def _zip_subtitle_members(body):
         return [
             name
             for name in archive.namelist()
-            if not name.endswith("/") and _subtitle_extension(name) and not name.rsplit("/", 1)[-1].startswith(".")
+            if _is_subtitle_member(name)
         ]
 
 
@@ -552,7 +591,12 @@ def _member_release_score(name, release_tokens):
     return len(release_tokens.intersection(name_tokens))
 
 
-def _member_matches_episode(name, season, episode):
+def _member_matches_episode(name, season, episode, seasonless=False):
+    """True when an archive member is the subtitle of that episode of that season.
+
+    seasonless also takes a member that names the episode alone, "Showname.Episode.3.srt",
+    as one of a season pack or a miniseries pack whose folder gives no other season.
+    """
     # Tolerate separated SxxExx tokens (S01.E02, S01 E02, S01-E02) as well as contiguous
     # S01E02; keep (?!\d) so "e02" never matches "e020". The (?<![a-z0-9]) left boundary
     # stops the "s" of a title word (e.g. "Originals1E02") from being read as the season
@@ -565,8 +609,8 @@ def _member_matches_episode(name, season, episode):
     if re.search(rf"(?<![a-z0-9]){season}x0*{episode}(?!\d)", text):
         return True
     # Every other form the release names use too: "Season1-Episode01", "S01E24-25".
-    name_season, name_episodes = _season_episodes(text)
-    if name_season == season and episode in name_episodes:
+    name_season, name_episodes = _member_season_episodes(name)
+    if episode in name_episodes and (name_season == season or (name_season is None and seasonless)):
         return True
     # Whole-token NNN form (e.g. S07E20 written as "720"): compare against delimited tokens
     # so "720" never matches inside "720p" and "264" never matches "x264".
@@ -578,11 +622,27 @@ def _member_episode_text(name):
     """The part of a zip member's path to read its episode from.
 
     A folder can name the whole pack, "Showname.S01E01-E10.WEB/", while each file names its
-    own episode, so the file name is read alone when it has an episode marker.
+    own episode, so the file name is read alone when it names one. A bare three-digit number,
+    as in "H.264", is no reason to leave the folder out.
     """
     name = name or ""
     file_name = name.rsplit("/", 1)[-1]
-    return file_name if _member_has_episode_marker(file_name) else name
+    return file_name if _season_episodes(file_name)[1] else name
+
+
+def _member_season_episodes(name):
+    """(season, episodes) of an archive member, the folder giving a season its file name leaves out."""
+    name = name or ""
+    folder, _, file_name = name.rpartition("/")
+    season, episodes = _season_episodes(file_name)
+    if not episodes:
+        return _season_episodes(name)
+    if season is None and folder:
+        season = _season_episodes(folder)[0]
+        if season is None:
+            seasons = pack_seasons(folder.rsplit("/", 1)[-1])
+            season = next(iter(seasons)) if len(seasons) == 1 else None
+    return season, episodes
 
 
 def _member_has_episode_marker(name):
@@ -699,39 +759,70 @@ class Subs4SeriesProvider:
         # with a video year the shows compete on it as usual. Without one there is nothing to
         # tell a same-title show apart, so a show without the episode counts only when no show
         # has it.
+        # With episode pages found, a show without the episode joins only within a year of the
+        # video's: a same-title show of another year would add the wrong show's packs.
+        video_year = _safe_int(video.get("year"))
+        found_episode = any(item["language"] in requested for page in pages for item in page[2])
         listings = {}
-        if video.get("year") or not pages:
+        if video_year is not None or not pages:
             for show_path, exact_title in without_episode:
                 listing_url = _season_url(show_path, season)
-                text = self._listing_page(listing_url, BASE_URL, config) if listing_url else None
+                try:
+                    text = self._listing_page(listing_url, BASE_URL, config) if listing_url else None
+                except (APIThrottled, CloudflareBlockedError, ServiceUnavailable) as error:
+                    if not found_episode:
+                        raise
+                    logger.warning("subs4series stopped reading season listings: %s", error)
+                    break
                 if text is None:
                     continue
+                year = _series_year_from_page(text)
+                if pages and (year is None or abs(year - video_year) > 1):
+                    continue
                 listings[show_path] = text
-                pages.append((listing_url, _series_year_from_page(text), [], exact_title, show_path))
+                pages.append((listing_url, year, [], exact_title, show_path))
         results = []
         seen = set()
 
-        def add(item, page_link, season_pack=False):
+        def add(item, page_link, season_pack=False, from_listing=False):
             if item["language"] not in requested:
                 return
             key = (item["detail_url"], item["language"])
             if key in seen:
                 return
             seen.add(key)
-            results.append(self._result(video, item, page_link, season_pack=season_pack))
+            results.append(self._result(video, item, page_link, season_pack=season_pack, from_listing=from_listing))
 
         selected = _select_pages(pages, video.get("year"))
         for episode_url, _year, items, _exact, _show_path in selected:
             for item in items:
-                # The site can file a pack under one of its episodes.
+                # The site can file a pack under one of its episodes. It is scored as one, but
+                # downloaded as any subtitle of the episode: a name like "Showname S01 720p"
+                # there is as often the episode's own subtitle.
                 add(item, episode_url, season_pack=pack_holds(item["release_info"], season, episode))
         # An episode page lists only the subtitles filed under that episode. The other season
         # packs are on the season listing; the host takes the episode out of the pack.
         for _url, _year, _items, _exact, show_path in selected:
-            listing_url, items = self._season_packs(show_path, season, episode, config, listings.get(show_path))
+            try:
+                listing_url, items = self._season_packs(show_path, season, episode, config, listings.get(show_path))
+            except (APIThrottled, CloudflareBlockedError, ServiceUnavailable) as error:
+                # The listing only adds packs: keep what was found rather than lose it all.
+                if not results:
+                    raise
+                logger.warning("subs4series stopped reading season listings: %s", error)
+                break
             for item in items:
-                add(item, listing_url, season_pack=True)
+                add(item, listing_url, season_pack=True, from_listing=True)
         return sorted(results, key=lambda result: result["score"], reverse=True)
+
+    def select_archive_member(self, provider_payload, language, members, config):
+        """Pick a season pack's member for the episode; the host lists the archive and calls this.
+
+        Returns {"member", "decision"}, the decision being pin, defer or reject.
+        """
+        del language, config
+        member, decision = pick_pack_member(members, provider_payload or {})
+        return {"member": member, "decision": decision}
 
     def _season_packs(self, show_path, season, episode, config, first_page=None):
         """(listing_url, rows) for the season packs on a show's season listing that hold the episode.
@@ -758,8 +849,8 @@ class Subs4SeriesProvider:
         """A season listing page's text, or None when the site has no such page or will not serve it.
 
         The listing only adds season packs, so a page that fails is logged and the search goes
-        on with what it has. A block, a spent time budget or a 429 is raised instead, so the
-        host backs off rather than calling again.
+        on with what it has. A block, a spent time budget or a 429 is raised instead; the search
+        raises it on when it has found nothing, so the host backs off rather than calling again.
         """
         _sleep(config)
         try:
@@ -867,7 +958,7 @@ class Subs4SeriesProvider:
                 return shows
         return []
 
-    def _result(self, video, item, episode_url, season_pack=False):
+    def _result(self, video, item, episode_url, season_pack=False, from_listing=False):
         # Every item here comes from a show _find_shows matched by title and year.
         matches = derive_matches(video, item, show_matched=True, season_pack=season_pack)
         score = compute_score(video, item, show_matched=True, season_pack=season_pack)
@@ -890,7 +981,7 @@ class Subs4SeriesProvider:
             "year": item.get("year"),
             "uploader": item.get("uploader"),
         }
-        if season_pack:
+        if from_listing:
             payload["season_pack"] = True
         return {
             "id": hashlib.sha1(f"{item['detail_url']}|{item['language']}".encode("utf-8")).hexdigest(),
@@ -1446,12 +1537,13 @@ def pack_holds(release, season, episode):
     """True when a release name is a season pack that holds that episode of that season.
 
     A pack of a whole season holds every episode. A range such as "S01E01-E10" holds only
-    its own episodes.
+    its own episodes, even when the name calls it the complete season: "S04E60-81 - Complete
+    Season" numbers its files 60 to 81, so no other episode number can be taken out of it.
     """
     pack_season, episodes = _season_episodes(release)
     if season in pack_seasons(release):
         # A whole season ("S01", "S01E0"), or a range of it: "S01E01-E10", "Season 1 Episodes 13-22".
-        if not episodes or episodes == (0,) or _WHOLE_SEASON_RE.search(_normalize(release)):
+        if not episodes or episodes == (0,):
             return True
         return len(episodes) > 2 and episode in episodes
     # A miniseries pack names no season, "Episodes 1-10" or "(All Episodes)". The site files it
@@ -1795,6 +1887,9 @@ def _season_episodes(name):
         if match:
             season, episode = int(match.group("season")), int(match.group("episode"))
             return season, _episode_run(text, episode)
+    match = _EPISODE_SEASON_RE.search(text.lower())
+    if match:
+        return int(match.group("season")), (int(match.group("episode")),)
     for pattern in _EPISODE_RANGE_WORDS_RES:
         match = pattern.search(normalized)
         if match and int(match.group("first")) < int(match.group("last")) <= int(match.group("first")) + MAX_EPISODE_RANGE:
