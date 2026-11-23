@@ -5938,7 +5938,7 @@
       "manifest": {
         "anti_captcha": true,
         "api_version": "bazarr.provider-hub.v1",
-        "bundle_sha256": "015105c900ac8d9ea73e8d1ebecf3c170377f2bf002eb3317b93c33be795d5e0",
+        "bundle_sha256": "1b6ddf3a822577488a0c13043ba9784afc186394597a0327b7007c5e20ebd80b",
         "config_schema": {
           "additionalProperties": false,
           "properties": {
@@ -6274,11 +6274,11 @@
             }
           ]
         },
-        "description": "Scrapes Subs4Series for Greek and English episode subtitles. Uses ai-cloudscraper by default with inline Anubis solving, optional FlareSolverr fallback for Cloudflare blocks, anti-block requests, optional captcha helper responses, ZIP, RAR, and direct subtitle downloads.",
+        "description": "Scrapes Subs4Series for Greek and English episode subtitles, season packs included. Uses ai-cloudscraper by default with inline Anubis solving, optional FlareSolverr fallback for Cloudflare blocks, anti-block requests, optional captcha helper responses, ZIP, RAR, and direct subtitle downloads.",
         "entry_class": "Subs4SeriesProvider",
         "entry_module": "provider",
         "files": {
-          "provider.py": "58b36fa642dfe3df62b3a74316031aebe9b5ae21c65ab10d84a0806726fa0291"
+          "provider.py": "1e28a100195dab10feac2a4d977a2a91675c41339e451e0dcb93aca61046e151"
         },
         "flaresolverr": true,
         "languages": [
@@ -6304,7 +6304,7 @@
         "supported_media": [
           "episode"
         ],
-        "version": "0.2.1"
+        "version": "0.3.0"
       }
     },
     {
